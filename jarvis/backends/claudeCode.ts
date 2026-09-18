@@ -117,6 +117,20 @@ export function buildClaudeArgs(
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit']);
 
+/**
+ * Paths belonging to the CLI's own state rather than to the user's work.
+ *
+ * Plan mode writes its plan into `~/.claude/plans/…`. Reporting that as a
+ * file change made a run the user had explicitly asked not to change anything
+ * announce "Создан файл" — technically true, and exactly the wrong thing to
+ * tell someone who said «ничего не меняй».
+ */
+const VENDOR_STATE_SEGMENTS = ['/.claude/', '\\.claude\\', '/.codex/', '\\.codex\\'];
+
+export function isVendorInternalPath(filePath: string): boolean {
+  return VENDOR_STATE_SEGMENTS.some((segment) => filePath.includes(segment));
+}
+
 function describeToolInput(input: Record<string, unknown>): string | undefined {
   for (const key of ['file_path', 'command', 'pattern', 'url', 'description'] as const) {
     const value = input[key];
@@ -162,6 +176,11 @@ export function consumeClaudeStreamLine(
 
       if (block.type === 'tool_use' && typeof block.name === 'string') {
         const input = (block.input as Record<string, unknown> | undefined) ?? {};
+        const filePath = typeof input.file_path === 'string' ? input.file_path : undefined;
+
+        // The CLI's own bookkeeping is not work the user asked for.
+        if (filePath && isVendorInternalPath(filePath)) continue;
+
         emit({
           type: 'tool',
           backend: BACKEND_ID,
@@ -173,9 +192,9 @@ export function consumeClaudeStreamLine(
           state.commands.push(input.command);
           emit({ type: 'command', backend: BACKEND_ID, command: input.command });
         }
-        if (EDIT_TOOLS.has(block.name) && typeof input.file_path === 'string') {
+        if (EDIT_TOOLS.has(block.name) && filePath) {
           const change: BackendFileChange = {
-            path: input.file_path,
+            path: filePath,
             action: block.name === 'Write' ? 'created' : 'modified',
           };
           state.filesChanged.push(change);

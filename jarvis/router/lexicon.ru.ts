@@ -62,6 +62,10 @@ export const CAPABILITY_RULES: CapabilityRule[] = [
       'скрипт', 'деплой', 'deploy', 'линт', 'lint', 'типизац', 'типы', 'падает',
       'падал', 'краш', 'crash', 'стектрейс', 'трейс', 'исключен', 'проект',
       'зависимост', 'npm', 'pnpm', 'yarn', 'pip', 'cargo', 'docker', 'ci', 'pr',
+      // Naming a source file is naming code. «Что делает файл policy.ts»
+      // routed to the desktop runtime until these were here.
+      'ts', 'tsx', 'js', 'jsx', 'py', 'rs', 'java', 'cpp', 'php', 'sql',
+      'json', 'yaml', 'yml', 'toml',
     ],
     phrases: [['не', 'собира'], ['не', 'проход'], ['не', 'работа'], ['pull', 'request']],
   },

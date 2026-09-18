@@ -233,6 +233,24 @@ describe('route', () => {
     expect(preference.codingPreference).toBe('auto');
   });
 
+  it('treats naming a source file as coding work', () => {
+    // Found by running the real pipeline: this routed to the desktop runtime,
+    // which cannot read a repository.
+    const decision = route('Скажи одним предложением, что делает файл jarvis/risk/policy.ts');
+    expect(decision.needs).toContain('coding');
+    expect(decision.target).toBe('claude-code');
+  });
+
+  it('recognises other common source extensions too', () => {
+    for (const utterance of [
+      'посмотри main.py',
+      'что в config.yaml',
+      'открой lib.rs и объясни',
+    ]) {
+      expect(route(utterance).needs).toContain('coding');
+    }
+  });
+
   it('mixes Russian and English technical terms in one sentence', () => {
     const decision = route('запусти tests и посмотри почему падает build');
     expect(decision.needs).toEqual(expect.arrayContaining(['coding', 'shell']));

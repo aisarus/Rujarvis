@@ -12,6 +12,7 @@ import {
   ClaudeCodeBackend,
   buildClaudeArgs,
   consumeClaudeStreamLine,
+  isVendorInternalPath,
   selectPermissionMode,
 } from './claudeCode';
 import {
@@ -241,6 +242,34 @@ describe('Claude Code adapter', () => {
     ]);
     expect(state.errorMessage).toBeUndefined();
     expect(events.filter((event) => event.type === 'command')).toHaveLength(1);
+  });
+
+  it('does not report the CLI\'s own plan file as a change to the user\'s work', () => {
+    // Observed in a real run: plan mode writes ~/.claude/plans/… and the
+    // progress list announced "Создан файл" to someone who had just said
+    // «ничего не меняй».
+    expect(isVendorInternalPath('/root/.claude/plans/some-plan.md')).toBe(true);
+    expect(isVendorInternalPath('C:\\Users\\me\\.codex\\sessions\\x.json')).toBe(true);
+    expect(isVendorInternalPath('/home/user/project/src/a.ts')).toBe(false);
+
+    const state = createStreamState();
+    const events: BackendEvent[] = [];
+    consumeClaudeStreamLine(
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'tool_use', name: 'Write', input: { file_path: '/root/.claude/plans/p.md' } },
+            { type: 'tool_use', name: 'Edit', input: { file_path: '/home/user/project/a.ts' } },
+          ],
+        },
+      },
+      state,
+      (event) => events.push(event),
+    );
+
+    expect(state.filesChanged).toEqual([{ path: '/home/user/project/a.ts', action: 'modified' }]);
+    expect(events.some((event) => event.type === 'tool' && event.detail?.includes('.claude'))).toBe(false);
   });
 
   it('flags a quota refusal so the manager can fall back', () => {
@@ -640,6 +669,43 @@ describe('BackendManager', () => {
     const plan = manager.plan(request({ capabilities: ['computer'] }), { requested: 'codex' });
     expect(plan.order[0]).toBe('codex');
     expect(plan.rationale).toContain('codex');
+  });
+
+  it('keeps the other coding backend behind an explicitly requested one', () => {
+    // «Отдай Кодексу» plus an exhausted Codex must still reach Claude Code;
+    // otherwise naming a backend silently gives up the coding fallback.
+    const manager = managerWith(
+      stubBackend('interpreter', result({ ok: true })),
+      stubBackend('claude-code', result({ ok: true })),
+      stubBackend('codex', result({ ok: true })),
+    );
+    const plan = manager.plan(request(), { requested: 'codex' });
+    expect(plan.order.slice(0, 2)).toEqual(['codex', 'claude-code']);
+    expect(plan.order.indexOf('claude-code')).toBeLessThan(plan.order.indexOf('interpreter'));
+  });
+
+  it('does not drag coding backends into a desktop request', () => {
+    const manager = managerWith(
+      stubBackend('interpreter', result({ ok: true })),
+      stubBackend('claude-code', result({ ok: true })),
+      stubBackend('codex', result({ ok: true })),
+    );
+    const plan = manager.plan(request({ capabilities: ['computer'] }));
+    expect(plan.order[0]).toBe('interpreter');
+  });
+
+  it('falls back from a named Codex to Claude Code when Codex cannot connect', async () => {
+    const codex = stubBackend(
+      'codex',
+      result({ backend: 'codex', error: 'Codex не может подключиться к сети.' }),
+    );
+    const claude = stubBackend('claude-code', result({ ok: true, text: 'Готово.' }));
+    const manager = managerWith(codex, claude, stubBackend('interpreter', result({ ok: true })));
+
+    const final = await manager.run(request(), { requested: 'codex' }).result();
+    expect(codex.runs).toBe(1);
+    expect(claude.runs).toBe(1);
+    expect(final.ok).toBe(true);
   });
 
   it('drops an excluded backend from the whole chain', () => {

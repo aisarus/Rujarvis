@@ -132,6 +132,15 @@ export class BackendManager {
     if (preference.requested && !excluded.has(preference.requested)) {
       push(preference.requested);
       rationale = `Пользователь попросил ${preference.requested}`;
+      // A named coding backend still gets the other one behind it. «Отдай
+      // Кодексу» plus an exhausted Codex should reach Claude Code before
+      // giving up on coding entirely — that is what the fallback is for.
+      if (
+        CODING_BACKEND_IDS.includes(preference.requested) ||
+        needsCoding(request.capabilities)
+      ) {
+        for (const id of CODING_BACKEND_IDS) push(id);
+      }
     } else if (needsComputer(request.capabilities)) {
       push('interpreter');
       rationale = 'Задача требует управления компьютером или браузером';
