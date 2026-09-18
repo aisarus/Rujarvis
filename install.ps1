@@ -226,6 +226,55 @@ function Assert-NodeVersion {
 "@
 }
 
+<#
+    pnpm version.
+
+    Same trap as Node: checking that pnpm merely exists let a machine with
+    pnpm 11 through while package.json pins 9.15.9 and declares ">=9 <10".
+    pnpm 11 silently ignores the `pnpm` block in package.json — including
+    onlyBuiltDependencies — so native modules are treated differently and the
+    install diverges from what the lockfile was resolved against.
+#>
+function Assert-PnpmVersion {
+    param([Parameter(Mandatory)] [string] $SourceDir)
+
+    $packageJson = Join-Path $SourceDir 'package.json'
+    if (-not (Test-Path $packageJson)) { return }
+
+    $wanted = (Get-Content $packageJson -Raw | ConvertFrom-Json).packageManager
+    if (-not $wanted) { return }
+
+    $wantedVersion = ($wanted -split '@')[-1]
+    $wantedMajor = [int] ($wantedVersion -split '\.')[0]
+    $current = (pnpm --version).Trim()
+    $currentMajor = [int] ($current -split '\.')[0]
+
+    if ($currentMajor -eq $wantedMajor) {
+        Write-Ok "pnpm $current"
+        return
+    }
+
+    Write-Note "Установлен pnpm $current, нужен $wantedVersion — переключаю через corepack."
+    corepack enable 2>&1 | Out-Null
+    corepack prepare "pnpm@$wantedVersion" --activate 2>&1 | Out-Null
+
+    $switched = (pnpm --version).Trim()
+    if ([int] ($switched -split '\.')[0] -ne $wantedMajor) {
+        throw @"
+Нужен pnpm $wantedVersion, установлен $switched, и corepack не смог переключить.
+
+Выполните:
+
+    corepack enable
+    corepack prepare pnpm@$wantedVersion --activate
+    pnpm --version
+
+Затем запустите установщик снова.
+"@
+    }
+    Write-Ok "pnpm $switched (через corepack)"
+}
+
 function New-Shortcut {
     param(
         [Parameter(Mandatory)] [string] $Path,
@@ -268,7 +317,8 @@ if (-not (Test-Command 'pnpm')) {
     corepack enable | Out-Null
     corepack prepare pnpm@9.15.9 --activate | Out-Null
 }
-Write-Ok "pnpm $(pnpm --version)"
+# The exact version is checked after the clone, against the packageManager
+# field the repository pins.
 
 Write-Step 'Получаю исходники'
 if (Test-Path (Join-Path $SourceDir '.git')) {
@@ -290,6 +340,7 @@ if (-not (Test-Path (Join-Path $SourceDir 'jarvis/core.ts'))) {
 Write-Ok "Исходники: $SourceDir"
 
 Assert-NodeVersion -SourceDir $SourceDir
+Assert-PnpmVersion -SourceDir $SourceDir
 
 Push-Location $SourceDir
 try {
