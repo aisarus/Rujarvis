@@ -32,6 +32,15 @@ export const PROGRESS_MARKS: Record<ProgressStatus, string> = {
   failed: '✗',
 };
 
+/**
+ * Tools that always arrive alongside a dedicated `command` event.
+ *
+ * Rendering both produced every shell call twice in the progress list — once
+ * as "Выполняю команду: …" and once as "Команда: …". The command event carries
+ * the exit status, so it is the one worth keeping.
+ */
+const COMMAND_TOOL_NAMES = new Set(['Bash', 'local_shell_call', 'shell']);
+
 /** Russian labels for the tools a coding backend uses most. */
 const TOOL_LABELS: Record<string, string> = {
   Read: 'Читаю файл',
@@ -84,6 +93,7 @@ export function buildProgress(
         pushStep(steps, { id, label: event.text, status: 'done' });
         break;
       case 'tool':
+        if (COMMAND_TOOL_NAMES.has(event.name)) break;
         pushStep(steps, {
           id,
           label: labelForTool(event.name, event.detail),

@@ -64,6 +64,33 @@ describe('backend mentions', () => {
   it('leaves an unrelated sentence alone', () => {
     expect(detectBackendMentions('открой хром').requested).toBeUndefined();
   });
+
+  it('does not let a negation reach across a sentence boundary', () => {
+    // Found by running the real pipeline: the «не» belongs to «меняй», but it
+    // was removing Claude Code from the chain entirely.
+    const decision = detectBackendMentions(
+      'Посмотри сколько файлов, только ничего не меняй. Через Клод Код.',
+    );
+    expect(decision.requested).toBe('claude-code');
+    expect(decision.excluded).toEqual([]);
+  });
+
+  it('does not let a negation reach across a comma either', () => {
+    const decision = detectBackendMentions('ничего не ломай, сделай через Кодекс');
+    expect(decision.requested).toBe('codex');
+    expect(decision.excluded).toEqual([]);
+  });
+
+  it('still negates within the same clause', () => {
+    expect(detectBackendMentions('почини билд, не используй Клод').excluded).toContain('claude-code');
+    expect(detectBackendMentions('сделай без клода').excluded).toContain('claude-code');
+  });
+
+  it('handles an exclusion and a request in different clauses', () => {
+    const decision = detectBackendMentions('не используй Клод, отдай Кодексу');
+    expect(decision.excluded).toContain('claude-code');
+    expect(decision.requested).toBe('codex');
+  });
 });
 
 describe('project detection', () => {
@@ -139,6 +166,16 @@ describe('route', () => {
     const sworn = route('посмотри почему эта хуйня не собирается');
     expect(sworn.needs).toEqual(expect.arrayContaining(plain.needs));
     expect(sworn.intent).toBe(plain.intent);
+  });
+
+  it('keeps a read-only constraint and a named backend from the same utterance', () => {
+    const decision = route(
+      'Посмотри сколько файлов в проекте, только ничего не меняй. Через Клод Код.',
+    );
+    expect(decision.requestedBackend).toBe('claude-code');
+    expect(decision.target).toBe('claude-code');
+    expect(decision.permissions.edit).toBe(false);
+    expect(decision.constraints).toContain('Сначала осмотреть, не менять');
   });
 
   it('reads the inspect-only constraint out of a conversational sentence', () => {

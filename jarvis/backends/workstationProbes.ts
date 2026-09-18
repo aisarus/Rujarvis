@@ -10,6 +10,11 @@
  * in the whole server module graph.
  */
 
+import {
+  hasClaudeEnvironmentAuth,
+  hasCodexEnvironmentAuth,
+  resolveAuthState,
+} from './authHints';
 import type { ClaudeCliProbe } from './claudeCode';
 import type { CodexCliProbe } from './codex';
 
@@ -30,20 +35,32 @@ async function loadProviders(): Promise<ProvidersModule> {
   return (await import('../../server/handlers/providers')) as unknown as ProvidersModule;
 }
 
-export function createWorkstationClaudeProbe(): ClaudeCliProbe {
+export function createWorkstationClaudeProbe(
+  env: NodeJS.ProcessEnv = process.env,
+): ClaudeCliProbe {
   return {
     async status() {
       const providers = await loadProviders();
-      return providers.getClaudeCodeStatus();
+      const status = await providers.getClaudeCodeStatus();
+      return {
+        ...status,
+        loggedIn: resolveAuthState(status.loggedIn, hasClaudeEnvironmentAuth(env)),
+      };
     },
   };
 }
 
-export function createWorkstationCodexProbe(): CodexCliProbe {
+export function createWorkstationCodexProbe(
+  env: NodeJS.ProcessEnv = process.env,
+): CodexCliProbe {
   return {
     async status() {
       const providers = await loadProviders();
-      return providers.getCodexStatus();
+      const status = await providers.getCodexStatus();
+      return {
+        ...status,
+        loggedIn: resolveAuthState(status.loggedIn, hasCodexEnvironmentAuth(env)),
+      };
     },
   };
 }

@@ -37,6 +37,7 @@ import {
   hasStem,
   indexOfStem,
   isNegatedBefore,
+  splitClauses,
   tokenize,
 } from './text';
 
@@ -95,25 +96,33 @@ export interface RoutingDecision {
   confidence: number;
 }
 
-/** Finds a backend the user named, and any they ruled out. */
+/**
+ * Finds a backend the user named, and any they ruled out.
+ *
+ * Negation is resolved per clause. A «не» in one sentence must not reach a
+ * backend named in the next: «только ничего не меняй. Через Клод Код» is a
+ * request for Claude Code with a read-only constraint, not a refusal of it.
+ */
 export function detectBackendMentions(utterance: string): {
   requested?: BackendId;
   excluded: BackendId[];
 } {
-  const tokens = tokenize(utterance);
   const excluded: BackendId[] = [];
   let requested: BackendId | undefined;
 
-  for (const mention of BACKEND_MENTIONS) {
-    for (const stem of mention.stems) {
-      const index = indexOfStem(tokens, stem);
-      if (index === -1) continue;
-      if (isNegatedBefore(tokens, index)) {
-        if (!excluded.includes(mention.backend)) excluded.push(mention.backend);
-      } else if (!requested) {
-        requested = mention.backend;
+  for (const clause of splitClauses(utterance)) {
+    const tokens = tokenize(clause);
+    for (const mention of BACKEND_MENTIONS) {
+      for (const stem of mention.stems) {
+        const index = indexOfStem(tokens, stem);
+        if (index === -1) continue;
+        if (isNegatedBefore(tokens, index)) {
+          if (!excluded.includes(mention.backend)) excluded.push(mention.backend);
+        } else if (!requested) {
+          requested = mention.backend;
+        }
+        break;
       }
-      break;
     }
   }
 

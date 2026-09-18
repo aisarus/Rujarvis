@@ -342,6 +342,27 @@ describe('progress', () => {
     expect(steps[2]?.status).toBe('failed');
   });
 
+  it('shows a shell call once, not twice', () => {
+    // Claude Code emits a tool event and a command event for the same Bash
+    // call; rendering both doubled every shell line in the real pipeline.
+    const steps = buildProgress(
+      [
+        { type: 'tool', backend: 'claude-code', name: 'Bash', detail: 'pnpm build' },
+        { type: 'command', backend: 'claude-code', command: 'pnpm build' },
+      ],
+      'completed',
+    );
+    expect(steps.map((step) => step.label)).toEqual(['Команда: pnpm build']);
+  });
+
+  it('still shows non-shell tools', () => {
+    const steps = buildProgress(
+      [{ type: 'tool', backend: 'claude-code', name: 'Read', detail: 'a.ts' }],
+      'completed',
+    );
+    expect(steps).toHaveLength(1);
+  });
+
   it('omits streamed assistant text from the step list', () => {
     const steps = buildProgress(
       [{ type: 'assistant-text', backend: 'codex', text: 'Сейчас посмотрю конфигурацию…' }],

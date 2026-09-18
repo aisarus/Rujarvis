@@ -8,6 +8,7 @@
  * authenticated and reachable.
  */
 
+import type { AuthState } from './authHints';
 import type { JarvisCapability } from '../types';
 import { buildBackendPrompt } from './prompt';
 import { looksUsageLimited } from './process';
@@ -27,6 +28,9 @@ import {
 } from './types';
 
 const BACKEND_ID = 'claude-code' as const;
+
+const AUTH_UNKNOWN_REASON =
+  'Claude Code установлен, но вход не подтверждён. Пробую запустить — если вход не выполнен, запустите claude и войдите в аккаунт.';
 
 const CAPABILITIES: ReadonlySet<JarvisCapability> = new Set<JarvisCapability>([
   'reasoning',
@@ -49,7 +53,8 @@ export type ClaudePermissionMode = 'plan' | 'acceptEdits' | 'default' | 'bypassP
 export interface ClaudeCliProbe {
   status(): Promise<{
     installed: boolean;
-    loggedIn: boolean;
+    /** `'unknown'` means "no proof either way" — see `authHints.ts`. */
+    loggedIn: AuthState;
     version?: string;
     path?: string;
     error?: string;
@@ -230,6 +235,19 @@ export class ClaudeCodeBackend implements AgentBackend {
             'Claude Code CLI не установлен. Установите его и войдите командой claude.',
           { checkedAt: this.now() },
         );
+      } else if (status.loggedIn === 'unknown') {
+        // No proof either way. Running and letting the CLI object is better
+        // than refusing a backend that very likely works.
+        availability = {
+          id: BACKEND_ID,
+          installed: true,
+          authenticated: false,
+          ready: true,
+          version: status.version,
+          path: status.path,
+          reason: AUTH_UNKNOWN_REASON,
+          checkedAt: this.now(),
+        };
       } else if (!status.loggedIn) {
         availability = {
           id: BACKEND_ID,

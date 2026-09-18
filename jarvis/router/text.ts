@@ -76,6 +76,24 @@ export function hasAnyPhrase(tokens: readonly string[], phrases: readonly (reado
   return phrases.some((phrase) => hasPhrase(tokens, phrase));
 }
 
+/**
+ * Splits an utterance into clauses.
+ *
+ * Needed because negation does not travel across a clause boundary. In
+ *
+ *   «…только ничего не меняй. Через Клод Код.»
+ *
+ * the «не» belongs to «меняй», not to «Клод» — reading it as a negation
+ * silently removed Claude Code from the backend chain, which is exactly the
+ * opposite of what was asked. Splitting first makes that impossible.
+ */
+export function splitClauses(text: string): string[] {
+  return text
+    .split(/[.!?;,]+|\s+(?:—|--)\s+|\n+/u)
+    .map((clause) => clause.trim())
+    .filter((clause) => clause.length > 0);
+}
+
 /** Negation words that flip a nearby mention: «не используй клод», «без клода». */
 const NEGATION_STEMS = ['не', 'без', 'кроме', 'никак'];
 

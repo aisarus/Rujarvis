@@ -273,6 +273,44 @@ describe('Claude Code adapter', () => {
     expect(calls[0]?.options.args.join(' ')).not.toContain('посмотри');
   });
 
+  it('runs anyway when authentication cannot be proven either way', async () => {
+    // A real installed CLI with no credential file still works in managed and
+    // env-authenticated setups; refusing it outright loses a working backend.
+    const { spawn } = fakeSpawn([
+      '{"type":"result","subtype":"success","result":"Готово."}',
+    ]);
+    const backend = new ClaudeCodeBackend({
+      probe: {
+        status: async () => ({
+          installed: true,
+          loggedIn: 'unknown' as const,
+          path: '/usr/bin/fake',
+        }),
+      },
+      spawnCli: spawn,
+    });
+
+    const availability = await backend.checkAvailability();
+    expect(availability.ready).toBe(true);
+    expect(availability.authenticated).toBe(false);
+    expect(availability.reason).toContain('вход не подтверждён');
+
+    const result = await backend.run(request()).result();
+    expect(result.ok).toBe(true);
+  });
+
+  it('still refuses when the CLI is definitely not signed in', async () => {
+    const backend = new ClaudeCodeBackend({
+      probe: { status: async () => ({ installed: true, loggedIn: false }) },
+      spawnCli: () => {
+        throw new Error('should not spawn');
+      },
+    });
+    const availability = await backend.checkAvailability();
+    expect(availability.ready).toBe(false);
+    expect(availability.reason).toContain('вход не выполнен');
+  });
+
   it('reports an unavailable CLI as a result instead of throwing', async () => {
     const backend = new ClaudeCodeBackend({
       probe: { status: async () => ({ installed: false, loggedIn: false }) },
