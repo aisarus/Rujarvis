@@ -20,7 +20,7 @@ git merge upstream/main
 Почти весь код Jarvis лежит в каталоге `jarvis/`, которого в upstream нет.
 Новые файлы в новом каталоге не конфликтуют никогда.
 
-Правок в файлах upstream ровно шесть, и все они точечные:
+Правок в файлах upstream ровно семь, и все они точечные:
 
 | Файл | Изменение | Риск конфликта |
 | --- | --- | --- |
@@ -29,6 +29,7 @@ git merge upstream/main
 | `server/configStore.ts` | `isSttBackendSupportedOnWindows` вместо проверки на `'moonshine'` | низкий |
 | `server/handlers/stt.ts` | та же проверка платформы | низкий |
 | `electron/services/voice-extension.ts` | ветка установки Whisper | средний |
+| `server/agentTaskService.ts` | проброс `abortSignal` в headless-задачу | низкий — две строки |
 | `tsconfig.electron.json`, `vitest.config.ts`, `package.json` | подключение `jarvis/` | низкий — по одной строке |
 
 `README.md` заменён; оригинал сохранён как `README.upstream.md`, чтобы при
@@ -61,4 +62,6 @@ upstream активно правит.
 
 **Runtime Interpreter инжектируется, а не импортируется.** `InterpreterBackend`
 принимает драйвер, поэтому ядро Jarvis не зависит от внутренних модулей
-Workstation и тестируется без них.
+Workstation и тестируется без них. Сам драйвер и сборка ядра лежат в
+`server/jarvis/` — это новые файлы в существующем каталоге, а новые файлы не
+конфликтуют.

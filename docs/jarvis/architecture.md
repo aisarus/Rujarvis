@@ -93,11 +93,12 @@ CLI, на упавшем процессе.
 | `jarvis/voice` | Wake word, управляющие слова, устный ответ, Whisper STT |
 | `jarvis/setup` | План онбординга |
 | `jarvis/core.ts` | Оркестратор — то, что вызывает приложение |
+| `server/jarvis` | Сборка ядра и мост к runtime Workstation (новые файлы, не правки upstream) |
 
 ## Изменения в коде upstream
 
 Форк намеренно держит правки upstream минимальными, чтобы `git pull upstream
-main` оставался дешёвым. Всего затронуто шесть файлов:
+main` оставался дешёвым. Всего затронуто семь файлов:
 
 | Файл | Изменение |
 | --- | --- |
@@ -106,6 +107,7 @@ main` оставался дешёвым. Всего затронуто шест�
 | `server/configStore.ts` | Windows разрешает `whisper` (было: только `moonshine`) |
 | `server/handlers/stt.ts` | та же проверка платформы |
 | `electron/services/voice-extension.ts` | установка и проверка модели Whisper |
+| `server/agentTaskService.ts` | проброс `abortSignal` в headless-задачу, чтобы «стоп» работал |
 | `tsconfig.electron.json`, `vitest.config.ts`, `package.json` | подключение каталога `jarvis/` |
 
 Подробности и порядок слияния — в [upstream-sync.md](upstream-sync.md).

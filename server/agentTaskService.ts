@@ -45,6 +45,11 @@ export interface StartAgentTaskOptions {
   broadcastCreateRequestToAllWindows?: boolean;
   notifyStarted?: boolean;
   onProgress?: (event: AgentTaskProgressEvent) => void;
+  /**
+   * Aborts a headless run in flight. The subagent runner already honours a
+   * signal; this forwards one so a caller can stop a long task on request.
+   */
+  abortSignal?: AbortSignal;
   createHeadedTask?: typeof agentTabManager.createAgentTask;
 }
 
@@ -240,6 +245,7 @@ async function startHeadlessAgentTask(
     allowedToolNames: options.allowedToolNames,
     parentOwner: options.parentOwner,
     threadId: options.threadId,
+    abortSignal: options.abortSignal,
     onEvent: (event) => {
       if (event.kind === 'thread') {
         options.onProgress?.({
