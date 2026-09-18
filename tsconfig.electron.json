@@ -16,6 +16,7 @@
   },
   "include": [
     "electron/**/*",
+    "jarvis/**/*",
     "server/**/*",
     "apps/interpreter-overlay/electron/**/*",
     "apps/interpreter-overlay/runtime/**/*",

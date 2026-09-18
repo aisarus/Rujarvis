@@ -16,11 +16,12 @@ export default defineConfig({
       'agent/**/*.ui.test.tsx',
       'agent/**/*.vitest.test.ts',
       'server/**/*.vitest.test.ts',
+      'jarvis/**/*.vitest.test.ts',
     ],
     environment: 'jsdom',
     // Server-side tests exercise real child processes and file IO; they run in
     // the plain node environment instead of jsdom.
-    environmentMatchGlobs: [['server/**', 'node']],
+    environmentMatchGlobs: [['server/**', 'node'], ['jarvis/**', 'node']],
     setupFiles: ['./tests/setup/vitest.ts'],
     css: true,
     clearMocks: true,
