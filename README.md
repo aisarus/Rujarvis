@@ -47,6 +47,7 @@ pnpm run jarvis:try
 
 ## Документация
 
+- [Что дальше и известные грабли](docs/jarvis/handoff.md) — начинать отсюда
 - [Архитектура Jarvis](docs/jarvis/architecture.md)
 - [Голосовой UX и русский язык](docs/jarvis/voice-ru.md)
 - [Backends подписочных агентов](docs/jarvis/backends.md)
