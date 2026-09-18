@@ -1,0 +1,4 @@
+interface:
+  display_name: "PowerPoint"
+  short_description: "Create and edit editable PowerPoint decks"
+  default_prompt: "Use $slides to create or edit this presentation with local code execution and verify every slide."

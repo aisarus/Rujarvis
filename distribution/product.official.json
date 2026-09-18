@@ -1,0 +1,33 @@
+{
+  "distribution": {
+    "id": "official",
+    "hostedApiBaseUrl": "https://oi-new-api.fly.dev",
+    "auth": {
+      "provider": "supabase",
+      "url": "https://neyguovvcjxfzhqpkicj.supabase.co/",
+      "anonKey": "sb_publishable_3zeX1uSC1M3C3pLuv7_F-Q_wNVRQfJU",
+      "storageKey": "sb-workstation-auth-token"
+    },
+    "telemetry": {
+      "sentryDsn": "https://08dfb810b5cbe0897400cd839f715727@o4506046614667264.ingest.us.sentry.io/4510858434969600",
+      "eventsUrl": "https://neyguovvcjxfzhqpkicj.supabase.co",
+      "eventsAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJIUzI1NiIsInJlZiI6Im5leWd1b3Z2Y2p4ZnpocXBraWNqIiwicm9sZSI6ImFub24iLCJpYXQiOjE2OTcyNjM2MTIsImV4cCI6MjAxMjgzOTYxMn0.yIvfhbJ1FQ-q9VFIds8YvKJkMs-5vFiDgZPLcPGxeIw"
+    },
+    "newsletterUrl": "https://neyguovvcjxfzhqpkicj.functions.supabase.co/addEmailToWaitlist",
+    "interviewBookingUrl": "https://cal.com/killianlucas/30min",
+    "billingApiBaseUrl": "https://oi-new-server.fly.dev",
+    "updates": {
+      "provider": "s3",
+      "bucket": "workstationupdater",
+      "endpoint": "https://neyguovvcjxfzhqpkicj.supabase.co/storage/v1/object/public",
+      "path": "releases",
+      "internalPath": "releasesinternal",
+      "region": "us-west-1",
+      "acl": "public-read"
+    },
+    "documentEngine": {
+      "releaseRepository": "openinterpreter/oo-editors",
+      "installDirectoryName": "oo-editors"
+    }
+  }
+}

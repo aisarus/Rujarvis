@@ -1,0 +1,5 @@
+interface:
+  display_name: "PDF"
+  short_description: "Create, edit, and review PDF files"
+  icon_large: "./assets/pdf.png"
+  default_prompt: "Use $pdf to create, edit, or review this PDF and summarize the key output or changes."

@@ -1,0 +1,164 @@
+import { describe, expect, test } from 'bun:test';
+import type { v2 } from '../handlers/codex-generated-types';
+import {
+  applyPublicThreadUiEvents,
+  buildPublicThreadSnapshot,
+  matchesPublicThreadToken,
+  sanitizePublicThreadText,
+} from './publicThreadSnapshot';
+
+describe('public thread snapshots', () => {
+  test('compares relay tokens without exposing them', () => {
+    expect(matchesPublicThreadToken('correct', 'correct')).toBe(true);
+    expect(matchesPublicThreadToken('wrong', 'correct')).toBe(false);
+    expect(matchesPublicThreadToken(undefined, 'correct')).toBe(false);
+  });
+
+  test('redacts common credentials from displayable text', () => {
+    expect(sanitizePublicThreadText('Authorization: Bearer secret-value')).toBe('[redacted]');
+    expect(sanitizePublicThreadText('api_key=sk_examplelongsecret')).toBe('[redacted]');
+  });
+
+  test('removes private filesystem paths while preserving public links', () => {
+    const sanitized = sanitizePublicThreadText([
+      '[Translation](/workspace/projects/science/translation.md)',
+      'Saved another copy at /Users/example/private/result.md.',
+      'Windows copy: C:\\Users\\example\\result.md',
+      '[Open paper](https://example.org/paper)',
+    ].join('\n'));
+
+    expect(sanitized).toContain('Translation (saved in the workspace)');
+    expect(sanitized).toContain('Saved another copy at [private path omitted]');
+    expect(sanitized).toContain('Windows copy: [private path omitted]');
+    expect(sanitized).toContain('[Open paper](https://example.org/paper)');
+    expect(sanitized).not.toContain('/workspace/');
+    expect(sanitized).not.toContain('/Users/');
+    expect(sanitized).not.toContain('C:\\Users\\');
+  });
+
+  test('rewrites allowlisted workspace links to endpoint-relative public files', () => {
+    const sanitized = sanitizePublicThreadText(
+      [
+        '[English PDF](/workspace/projects/science/public-artifacts/papers/00295/english.pdf)',
+        '[Private note](/workspace/projects/science/private/note.md)',
+        '[Traversal](/workspace/projects/science/public-artifacts/../private/note.md)',
+      ].join('\n'),
+      100_000,
+      '/workspace/projects/science/public-artifacts',
+    );
+
+    expect(sanitized).toContain('[English PDF](file?path=papers%2F00295%2Fenglish.pdf)');
+    expect(sanitized).toContain('Private note (saved in the workspace)');
+    expect(sanitized).toContain('Traversal (saved in the workspace)');
+    expect(sanitized).not.toContain('/workspace/projects/science');
+  });
+
+  test('replaces internal citation tokens with a public-safe label', () => {
+    expect(sanitizePublicThreadText('Finding. citeturn123search0')).toBe(
+      'Finding. [source citation]',
+    );
+  });
+
+  test('reports active OIX threads as working and omits reasoning details', () => {
+    const thread = {
+      id: 'thread-1',
+      name: 'Long task',
+      updatedAt: 100,
+      status: { type: 'active', activeFlags: [] },
+      turns: [{
+        id: 'turn-1',
+        status: 'inProgress',
+        error: null,
+        items: [
+          { id: 'user-1', type: 'userMessage', content: [{ type: 'text', text: 'keep going' }] },
+          { id: 'reason-1', type: 'reasoning', summary: ['private chain'], content: null },
+          {
+            id: 'command-1',
+            type: 'commandExecution',
+            command: 'curl -H "Authorization: Bearer secret-value" https://private.invalid',
+            status: 'completed',
+          },
+          {
+            id: 'files-1',
+            type: 'fileChange',
+            status: 'completed',
+            changes: [
+              { path: '/workspace/translations/paper.md', kind: { type: 'add' } },
+              { path: '/workspace/index.json', kind: { type: 'update' } },
+            ],
+          },
+          { id: 'agent-1', type: 'agentMessage', text: 'Public result' },
+        ],
+      }],
+    } as unknown as v2.Thread;
+    const snapshot = buildPublicThreadSnapshot({
+      thread,
+      goal: null,
+      title: 'Long task',
+      nextCursor: null,
+      hasMore: false,
+    });
+
+    expect(snapshot.status).toBe('working');
+    expect(JSON.stringify(snapshot)).not.toContain('private chain');
+    expect(JSON.stringify(snapshot)).not.toContain('secret-value');
+    expect(JSON.stringify(snapshot)).not.toContain('private.invalid');
+    expect(JSON.stringify(snapshot)).toContain('Ran a command');
+    expect(JSON.stringify(snapshot)).toContain('Created paper.md and 1 more');
+    expect(JSON.stringify(snapshot)).not.toContain('/workspace/translations');
+    expect(JSON.stringify(snapshot)).toContain('Public result');
+  });
+
+  test('advances a public snapshot from live OIX events without exposing tool payloads', () => {
+    const initial = buildPublicThreadSnapshot({
+      thread: {
+        id: 'thread-1',
+        name: 'Long task',
+        updatedAt: 100,
+        status: { type: 'idle' },
+        turns: [],
+      } as unknown as v2.Thread,
+      goal: null,
+      title: 'Long task',
+      nextCursor: null,
+      hasMore: false,
+      publicWorkspaceRoot: '/workspace/public',
+    });
+
+    const updated = applyPublicThreadUiEvents({
+      snapshot: initial,
+      turnId: 'turn-live',
+      publicWorkspaceRoot: '/workspace/public',
+      now: 1234,
+      events: [
+        {
+          event: 'tool',
+          payload: {
+            phase: 'completed',
+            type: 'fileChange',
+            item: {
+              id: 'file-one',
+              type: 'fileChange',
+              status: 'completed',
+              changes: [{ path: '/workspace/public/papers/one.pdf', kind: { type: 'add' } }],
+            } as unknown as v2.ThreadItem,
+          },
+        },
+        {
+          event: 'final',
+          payload: {
+            itemId: 'message-one',
+            text: '[Paper](/workspace/public/papers/one.pdf) is ready. api_key=sk_examplelongsecret',
+          },
+        },
+      ],
+    });
+
+    expect(updated.status).toBe('working');
+    expect(updated.updatedAt).toBe(1234);
+    expect(updated.messages).toHaveLength(1);
+    expect(JSON.stringify(updated)).toContain('Created one.pdf');
+    expect(JSON.stringify(updated)).toContain('[Paper](file?path=papers%2Fone.pdf)');
+    expect(JSON.stringify(updated)).not.toContain('sk_examplelongsecret');
+  });
+});

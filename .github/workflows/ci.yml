@@ -1,0 +1,174 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main, codex/oss-migration]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # @vscode/ripgrep resolves its prebuilt release through the GitHub API during
+  # pnpm install. Authenticate that read so clean jobs do not consume the
+  # shared anonymous API quota and fail intermittently with HTTP 403.
+  GITHUB_TOKEN: ${{ github.token }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          token: ${{ github.token }}
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.2.20
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: node --test scripts/ci/release-workflow.test.mjs
+      - run: pnpm run test:unit
+      - run: pnpm run test:vitest
+      - run: pnpm run test:qwen-download-contract
+      - run: pnpm audit --audit-level=high
+      - name: Verify the standalone shadcn preset
+        run: |
+          pnpm --dir shadcn-preset/preset-app install --frozen-lockfile
+          pnpm --dir shadcn-preset/preset-app audit --audit-level=high
+          pnpm --dir shadcn-preset/preset-app build
+      - name: Generate production dependency license inventory
+        run: pnpm run --silent release:licenses > production-license-inventory.json
+      - name: Enforce reviewed production license policy
+        run: |
+          node --test scripts/release-license-cli.test.mjs
+          pnpm run release:licenses:check -- production-license-inventory.json
+      - name: Upload production dependency license inventory
+        uses: actions/upload-artifact@v7
+        with:
+          name: production-license-inventory
+          path: production-license-inventory.json
+          if-no-files-found: error
+
+  electron-e2e:
+    runs-on: macos-26
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          token: ${{ github.token }}
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.2.20
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run download:oix -- --current-platform
+      - run: pnpm run test:e2e:ci
+
+  voice-e2e:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          token: ${{ github.token }}
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.2.20
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Use a Visual Studio 2026-compatible node-gyp
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          npm install --global node-gyp@12.3.0
+          "npm_config_node_gyp=$(npm root --global)\node-gyp\bin\node-gyp.js" >> $env:GITHUB_ENV
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run download:oix -- --current-platform
+      - run: pnpm run test:e2e:voice:ci
+      - name: Upload voice test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: voice-e2e-diagnostics
+          path: |
+            test-runs/**/logs
+            test-runs/**/test-results
+          if-no-files-found: warn
+
+  package-smoke:
+    name: package-smoke (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-26, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          token: ${{ github.token }}
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.2.20
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Use a Visual Studio 2026-compatible node-gyp
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          npm install --global node-gyp@12.3.0
+          "npm_config_node_gyp=$(npm root --global)\node-gyp\bin\node-gyp.js" >> $env:GITHUB_ENV
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev \
+            libopenblas-dev
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run download:oix -- --current-platform
+      - run: pnpm run download:pdfcpu -- --current-platform
+      - run: pnpm run download:qwen-asr -- --current-platform
+      - run: pnpm run build:js-repl-runtime
+      - run: pnpm run build
+      # Exercise the distribution wrapper on every supported runner. This is
+      # especially important on Windows, where package-manager shims require
+      # platform-shell resolution.
+      - run: pnpm run package:smoke:official

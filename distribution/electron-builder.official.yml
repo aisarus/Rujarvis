@@ -1,0 +1,20 @@
+extends: ./electron-builder.yml
+
+mac:
+  sign: ./scripts/electron-builder/sign-mac.cjs
+  notarize: true
+
+win:
+  signtoolOptions:
+    sign: ./scripts/electron-builder/sign-windows.cjs
+    signingHashAlgorithms:
+      - sha256
+
+publish:
+  - provider: s3
+    bucket: workstationupdater
+    endpoint: https://neyguovvcjxfzhqpkicj.storage.supabase.co/storage/v1/s3
+    path: releases
+    channel: latest
+    region: us-west-1
+    acl: public-read

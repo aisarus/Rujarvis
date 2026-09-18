@@ -1,0 +1,19 @@
+diff --git a/lib/Compatibility/proto-runtime.js b/lib/Compatibility/proto-runtime.js
+index de431dc23e210132771b67369d65dd803a036906..5696ff7c327ed3d183eb0b347a4bea5072439ee2 100644
+--- a/lib/Compatibility/proto-runtime.js
++++ b/lib/Compatibility/proto-runtime.js
+@@ -1,5 +1,5 @@
+ import { Buffer } from 'node:buffer';
+-import { createRequire } from 'node:module';
++import LongRuntime from 'long';
+ import { BinaryReader } from 'whatsapp-rust-bridge';
+ import { PROTO_ENUM_SCHEMAS, PROTO_FIELD_FLAG, PROTO_FIELD_KIND, PROTO_MESSAGE_SCHEMAS } from '../WAProto/compatibility-schema.js';
+ const INSTANCE_SCHEMA = Symbol('proto compatibility schema');
+@@ -11,7 +11,6 @@ const WORD_BASE = 1n << BigInt(WORD_BITS);
+ // protobufjs resolves the CommonJS Long constructor internally. Loading that
+ // same export keeps `instanceof` and prototype identity aligned without
+ // loading protobufjs itself or adding a second wire runtime.
+-const LongRuntime = createRequire(import.meta.url)('long');
+ const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+ const isObject = (value) => typeof value === 'object' && value !== null;
+ const isReaderLike = (value) => isObject(value) && value.buf instanceof Uint8Array && typeof value.pos === 'number' && typeof value.len === 'number';

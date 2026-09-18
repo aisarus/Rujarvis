@@ -1,0 +1,4 @@
+interface:
+  display_name: "Excel"
+  short_description: "Create and edit spreadsheet workbooks"
+  default_prompt: "Use $spreadsheets to create or edit this workbook with local code execution and verify the saved file."

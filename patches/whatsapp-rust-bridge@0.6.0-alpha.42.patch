@@ -1,0 +1,17 @@
+diff --git a/package.json b/package.json
+index 935fc29554ea69c5b70d58e148cf3b2993e894a8..bfd7d47dd1a918110c0db81e248561e6d8424fd8 100644
+--- a/package.json
++++ b/package.json
+@@ -17,10 +17,12 @@
+     "exports": {
+         ".": {
+             "import": "./dist/index.js",
++            "require": "./dist/index.js",
+             "types": "./dist/index.d.ts"
+         },
+         "./proto-types": {
+             "import": "./dist/proto-types.js",
++            "require": "./dist/proto-types.js",
+             "types": "./dist/proto-types.d.ts"
+         }
+     },
