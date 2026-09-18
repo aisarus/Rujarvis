@@ -66,6 +66,60 @@ try {
 }
 Assert-That 'Invoke-Checked пропускает нулевой код выхода' $passed
 
+
+# --- Проверка версии Node ---------------------------------------------------
+# Раньше проверялась только нижняя граница, поэтому машина с Node 24 проходила
+# насквозь, а падало гораздо позже — на сборке нативных модулей.
+
+$nodeProbe = Join-Path ([System.IO.Path]::GetTempPath()) ("rujarvis-nvmrc-" + [guid]::NewGuid())
+New-Item -ItemType Directory -Path $nodeProbe -Force | Out-Null
+Set-Content -Path (Join-Path $nodeProbe '.nvmrc') -Value '22.22.1'
+
+function Write-Ok { param([string] $Message) }
+
+try {
+    function global:node { 'v22.22.1' }
+    $accepted = $true
+    try { Assert-NodeVersion -SourceDir $nodeProbe } catch { $accepted = $false }
+    Assert-That 'закреплённая версия Node принимается' $accepted
+
+    function global:node { 'v22.9.0' }
+    $accepted = $true
+    try { Assert-NodeVersion -SourceDir $nodeProbe } catch { $accepted = $false }
+    Assert-That 'другой патч того же мажора принимается' $accepted
+
+    function global:node { 'v24.18.0' }
+    $rejected = $false
+    $nodeMessage = ''
+    try { Assert-NodeVersion -SourceDir $nodeProbe } catch { $rejected = $true; $nodeMessage = $_.Exception.Message }
+    Assert-That 'более новый мажор отклоняется' $rejected
+    Assert-That 'сообщение называет обе версии' ($nodeMessage -match '22' -and $nodeMessage -match '24\.18\.0')
+    Assert-That 'сообщение подсказывает, как переключиться' ($nodeMessage -match 'fnm')
+
+    function global:node { 'v20.11.0' }
+    $rejected = $false
+    try { Assert-NodeVersion -SourceDir $nodeProbe } catch { $rejected = $true }
+    Assert-That 'более старый мажор отклоняется' $rejected
+
+    $survived = $true
+    try { Assert-NodeVersion -SourceDir (Join-Path $nodeProbe 'missing') } catch { $survived = $false }
+    Assert-That 'без .nvmrc проверка пропускается' $survived
+}
+finally {
+    Remove-Item -Path $nodeProbe -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path 'function:global:node' -ErrorAction SilentlyContinue
+}
+
+# --- Обнаружение компилятора C++ -------------------------------------------
+# Без MSVC node-gyp не соберёт нативные аддоны. Детектор обязан отвечать
+# честным false там, где Visual Studio нет, а не падать.
+
+$vsDetected = $null
+$vsThrew = $false
+try { $vsDetected = Test-VisualStudioBuildTools } catch { $vsThrew = $true }
+Assert-That 'детектор MSVC не падает там, где Visual Studio нет' (-not $vsThrew)
+Assert-That 'детектор MSVC возвращает булево' ($vsDetected -is [bool])
+
 if ($failures -gt 0) {
     Write-Host "Провалено проверок: $failures" -ForegroundColor Red
     exit 1

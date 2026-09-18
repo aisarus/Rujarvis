@@ -106,6 +106,103 @@ function Get-RecommendedWhisperModel {
     return 'tiny'
 }
 
+function Get-VsWherePath {
+    # Join-Path throws on a null root, and these variables are simply absent
+    # off Windows — a detector must answer "no", not take the installer down.
+    $roots = @(${env:ProgramFiles(x86)}, $env:ProgramFiles) |
+        Where-Object { $_ -and $_.Trim() }
+
+    foreach ($root in $roots) {
+        $candidate = Join-Path $root 'Microsoft Visual Studio\Installer\vswhere.exe'
+        if (Test-Path $candidate) { return $candidate }
+    }
+    return $null
+}
+
+<#
+    The project compiles native Node addons on Windows (interpreter-window-pin,
+    node-pty, uiohook-napi), so node-gyp needs a real MSVC toolchain. It is not
+    on PATH, so Get-Command cannot find it — vswhere is the supported way to
+    ask whether the C++ workload is present.
+#>
+function Test-VisualStudioBuildTools {
+    $vswhere = Get-VsWherePath
+    if (-not $vswhere) { return $false }
+
+    try {
+        $found = & $vswhere -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath 2>$null
+    } catch {
+        return $false
+    }
+    return [bool] ($found -and ($found | Out-String).Trim())
+}
+
+function Install-VisualStudioBuildTools {
+    if (Test-VisualStudioBuildTools) {
+        Write-Ok 'Компилятор C++ (MSVC) уже установлен.'
+        return
+    }
+
+    if (-not (Test-Command 'winget')) {
+        throw 'Нужны Visual Studio Build Tools с рабочей нагрузкой "Разработка классических приложений на C++", но winget недоступен. Установите их вручную: https://visualstudio.microsoft.com/visual-cpp-build-tools/'
+    }
+
+    Write-Note 'Ставлю Visual Studio Build Tools (C++). Это несколько гигабайт и самый долгий шаг.'
+    winget install --id Microsoft.VisualStudio.2022.BuildTools --source winget `
+        --accept-source-agreements --accept-package-agreements `
+        --override '--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended'
+
+    if (-not (Test-VisualStudioBuildTools)) {
+        throw @'
+Visual Studio Build Tools установлены, но рабочая нагрузка C++ не найдена.
+Откройте Visual Studio Installer, нажмите «Изменить» и отметьте
+«Разработка классических приложений на C++», затем запустите установщик снова.
+'@
+    }
+    Write-Ok 'Компилятор C++ готов.'
+}
+
+<#
+    Node version.
+
+    The repository pins an exact version in .nvmrc and package.json declares
+    ">=22 <23". Checking only the lower bound let a machine with Node 24 through,
+    and the failure surfaced much later as a native build error — so the check
+    is a range, and it reads the requirement from the checkout instead of
+    hardcoding it.
+#>
+function Assert-NodeVersion {
+    param([Parameter(Mandatory)] [string] $SourceDir)
+
+    $nvmrc = Join-Path $SourceDir '.nvmrc'
+    if (-not (Test-Path $nvmrc)) { return }
+
+    $wanted = (Get-Content $nvmrc -Raw).Trim()
+    $wantedMajor = [int] ($wanted -split '\.')[0]
+    $current = (node --version).Trim()
+    $currentMajor = [int] (($current -replace '^v', '') -split '\.')[0]
+
+    if ($currentMajor -eq $wantedMajor) {
+        Write-Ok "Node.js $current"
+        return
+    }
+
+    throw @"
+Нужен Node.js $wantedMajor.x (проект закрепляет $wanted), а установлен $current.
+Нативные модули не соберутся под другой мажорной версией.
+
+Проще всего через менеджер версий:
+
+    winget install Schniz.fnm
+    fnm install $wanted
+    fnm use $wanted
+
+Затем запустите установщик снова — он продолжит с этого места.
+"@
+}
+
 function New-Shortcut {
     param(
         [Parameter(Mandatory)] [string] $Path,
@@ -138,12 +235,10 @@ Install-WithWinget -Id 'Git.Git'        -Command 'git'   -DisplayName 'Git'
 Install-WithWinget -Id 'OpenJS.NodeJS.LTS' -Command 'node' -DisplayName 'Node.js'
 Install-WithWinget -Id 'Rustlang.Rustup' -Command 'cargo' -DisplayName 'Rust'
 Install-WithWinget -Id 'Oven-sh.Bun'    -Command 'bun'   -DisplayName 'Bun'
+Install-VisualStudioBuildTools
 
-$nodeMajor = [int](((node --version) -replace '^v', '') -split '\.')[0]
-if ($nodeMajor -lt 22) {
-    throw "Нужен Node.js 22 или новее, найден $(node --version). Обновите Node.js и повторите."
-}
-Write-Ok "Node.js $(node --version)"
+# The exact Node version is checked after the clone, against the .nvmrc the
+# repository pins, rather than guessed here.
 
 if (-not (Test-Command 'pnpm')) {
     Write-Note 'Включаю pnpm через corepack…'
@@ -170,6 +265,8 @@ if (-not (Test-Path (Join-Path $SourceDir 'jarvis/core.ts'))) {
     throw "В ветке '$Branch' нет слоя Jarvis (каталог jarvis/). Укажите ветку с этим кодом через -Branch."
 }
 Write-Ok "Исходники: $SourceDir"
+
+Assert-NodeVersion -SourceDir $SourceDir
 
 Push-Location $SourceDir
 try {

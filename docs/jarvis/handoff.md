@@ -15,9 +15,17 @@
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/aisarus/Rujarvis/claude/jarvis-workstation-vk6nx1/install.ps1))) -Branch claude/jarvis-workstation-vk6nx1
 ```
 
-Проверено только: синтаксис под PowerShell 7.4, чистые функции
-(`scripts/check-install-script.ps1`), доступность URL и наличие всех четырёх
-параметров. Сам путь — winget, сборка, ярлык — нет.
+Первый живой прогон дошёл до `pnpm install` и упал на двух вещах, обе
+исправлены, но заново не проверены:
+
+- На машине стоял Node 24, а проект требует ровно 22.x. Проверка смотрела
+  только нижнюю границу, поэтому пропускала — падало гораздо позже, на сборке
+  нативных модулей.
+- Не было Visual Studio Build Tools с нагрузкой C++, без которых `node-gyp` не
+  соберёт `interpreter-window-pin`, `node-pty` и `uiohook-napi`.
+
+Обе проверки теперь делаются до тяжёлых шагов. Остальной путь — winget,
+сборка, ярлык — всё ещё не выполнялся.
 
 Дальше есть чем проверить сам слой без микрофона:
 
