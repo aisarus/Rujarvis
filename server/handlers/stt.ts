@@ -13,6 +13,7 @@ import {
   type SttSettings,
 } from '../../shared/types/stt';
 import * as configStore from '../configStore';
+import { isSttBackendSupportedOnWindows } from '../configStore';
 import { broadcastEvent } from './broadcast';
 
 function coerceNumber(value: unknown, fallback: number): number {
@@ -47,8 +48,8 @@ function validateSettings(settings: SttSettings): void {
     throw new Error(`Invalid STT backend: ${settings.backend}`);
   }
 
-  if (process.platform === 'win32' && settings.backend !== 'moonshine') {
-    throw new Error('Windows only supports the moonshine STT backend');
+  if (process.platform === 'win32' && !isSttBackendSupportedOnWindows(settings.backend)) {
+    throw new Error('Windows supports only the moonshine and whisper STT backends');
   }
 
   if (settings.silenceTimeoutMs < STT_MIN_SILENCE_TIMEOUT_MS || settings.silenceTimeoutMs > STT_MAX_SILENCE_TIMEOUT_MS) {

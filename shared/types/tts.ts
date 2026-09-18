@@ -4,7 +4,8 @@ export type TtsProvider = (typeof TTS_PROVIDERS)[number];
 export const TTS_MODEL_FAMILIES = ['kitten', 'kokoro', 'vits'] as const;
 export type TtsModelFamily = (typeof TTS_MODEL_FAMILIES)[number];
 export type TtsModelSize = 'nano' | 'mini' | 'medium' | 'large';
-export const DEFAULT_TTS_MODEL_ID = 'vits-piper-en_US-libritts_r-medium' as const;
+// Jarvis speaks Russian, so the default voice is a Russian one.
+export const DEFAULT_TTS_MODEL_ID = 'vits-piper-ru_RU-irina-medium' as const;
 
 export const TTS_MODELS = [
   {
@@ -141,6 +142,58 @@ export const TTS_MODELS = [
     tokensFile: 'tokens.txt',
     dataDir: 'espeak-ng-data',
     downloadBytes: 67214254,
+  },
+  {
+    id: 'vits-piper-ru_RU-irina-medium',
+    family: 'vits',
+    size: 'medium',
+    label: 'Piper Ирина (ru_RU medium)',
+    description: 'Женский русский голос. Голос Джарвиса по умолчанию.',
+    assetName: 'vits-piper-ru_RU-irina-medium.tar.bz2',
+    rootDirName: 'vits-piper-ru_RU-irina-medium',
+    modelFile: 'ru_RU-irina-medium.onnx',
+    tokensFile: 'tokens.txt',
+    dataDir: 'espeak-ng-data',
+    downloadBytes: 67153308,
+  },
+  {
+    id: 'vits-piper-ru_RU-dmitri-medium',
+    family: 'vits',
+    size: 'medium',
+    label: 'Piper Дмитрий (ru_RU medium)',
+    description: 'Мужской русский голос.',
+    assetName: 'vits-piper-ru_RU-dmitri-medium.tar.bz2',
+    rootDirName: 'vits-piper-ru_RU-dmitri-medium',
+    modelFile: 'ru_RU-dmitri-medium.onnx',
+    tokensFile: 'tokens.txt',
+    dataDir: 'espeak-ng-data',
+    downloadBytes: 67188551,
+  },
+  {
+    id: 'vits-piper-ru_RU-ruslan-medium',
+    family: 'vits',
+    size: 'medium',
+    label: 'Piper Руслан (ru_RU medium)',
+    description: 'Второй мужской русский голос, ниже тембром.',
+    assetName: 'vits-piper-ru_RU-ruslan-medium.tar.bz2',
+    rootDirName: 'vits-piper-ru_RU-ruslan-medium',
+    modelFile: 'ru_RU-ruslan-medium.onnx',
+    tokensFile: 'tokens.txt',
+    dataDir: 'espeak-ng-data',
+    downloadBytes: 67210684,
+  },
+  {
+    id: 'vits-piper-ru_RU-denis-medium',
+    family: 'vits',
+    size: 'medium',
+    label: 'Piper Денис (ru_RU medium)',
+    description: 'Третий мужской русский голос.',
+    assetName: 'vits-piper-ru_RU-denis-medium.tar.bz2',
+    rootDirName: 'vits-piper-ru_RU-denis-medium',
+    modelFile: 'ru_RU-denis-medium.onnx',
+    tokensFile: 'tokens.txt',
+    dataDir: 'espeak-ng-data',
+    downloadBytes: 67190991,
   },
   {
     id: 'vits-piper-fr_FR-siwis-medium',

@@ -551,8 +551,23 @@ function createDefaultConfig(): AppConfig {
   };
 }
 
+// Whisper is the Russian-capable backend and runs on every platform, so it is
+// the default everywhere. Moonshine stays the English-only Windows option.
 function getDefaultSttBackendForPlatform(): SttBackend {
-  return process.platform === 'win32' ? 'moonshine' : 'qwen';
+  return 'whisper';
+}
+
+/**
+ * Backends Windows can run.
+ *
+ * Qwen ASR ships a platform binary that has no Windows build, so it stays
+ * excluded. Whisper runs through the bundled sherpa-onnx runtime and works
+ * there, which is what makes a Windows-first Russian assistant possible.
+ */
+const WINDOWS_STT_BACKENDS: readonly SttBackend[] = ['moonshine', 'whisper'];
+
+export function isSttBackendSupportedOnWindows(backend: SttBackend): boolean {
+  return WINDOWS_STT_BACKENDS.includes(backend);
 }
 
 function hasValidTtsSettings(settings: TtsSettings | undefined): settings is TtsSettings {
@@ -662,7 +677,8 @@ function repairBuiltins(config: AppConfig): boolean {
     const hasValidPreviewDelay = Number.isFinite(config.stt.previewBeforeSendMs)
       && config.stt.previewBeforeSendMs >= STT_MIN_PREVIEW_BEFORE_SEND_MS
       && config.stt.previewBeforeSendMs <= STT_MAX_PREVIEW_BEFORE_SEND_MS;
-    const hasValidWindowsBackend = process.platform !== 'win32' || config.stt.backend === 'moonshine';
+    const hasValidWindowsBackend = process.platform !== 'win32'
+      || isSttBackendSupportedOnWindows(config.stt.backend);
 
     if (!hasValidBackend || !hasValidSilenceTimeout || !hasValidFastSentenceTimeout || !hasValidPreviewDelay || !hasValidWindowsBackend) {
       config.stt = { ...DEFAULT_STT_SETTINGS, backend: getDefaultSttBackendForPlatform() };
@@ -1980,8 +1996,10 @@ export async function setSttSettings(settings: SttSettings): Promise<void> {
     throw new Error(`Invalid STT backend: ${settings.backend}`);
   }
 
-  if (process.platform === 'win32' && settings.backend !== 'moonshine') {
-    throw new Error('Windows only supports the moonshine STT backend');
+  if (process.platform === 'win32' && !isSttBackendSupportedOnWindows(settings.backend)) {
+    throw new Error(
+      `Windows supports only these STT backends: ${WINDOWS_STT_BACKENDS.join(', ')}`,
+    );
   }
 
   if (!Number.isFinite(settings.silenceTimeoutMs)

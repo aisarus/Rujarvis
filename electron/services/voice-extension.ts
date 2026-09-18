@@ -5,6 +5,14 @@ import http from 'node:http';
 import https from 'node:https';
 import path from 'node:path';
 import { IPC_CHANNELS } from '../ipc/registry';
+import * as configStore from '../../server/configStore';
+import {
+  DEFAULT_WHISPER_MODEL,
+  WHISPER_MODEL_IDS,
+  type WhisperModelId,
+} from '../../jarvis/voice/sttModels';
+import { installWhisperModel } from '../../jarvis/voice/whisperInstall';
+import { isWhisperModelInstalled } from '../../jarvis/voice/whisperRecognizer';
 
 const DEFAULT_MODEL_DIR = 'qwen3-asr-0.6b';
 const DEFAULT_QWEN_MODEL_ID = 'Qwen/Qwen3-ASR-0.6B';
@@ -37,7 +45,7 @@ export interface VoiceExtensionInstallProgress {
   error?: string;
 }
 
-type VoiceExtensionBackend = 'qwen' | 'moonshine';
+type VoiceExtensionBackend = 'qwen' | 'moonshine' | 'whisper';
 const installInFlight = new Map<VoiceExtensionBackend, Promise<void>>();
 
 function getBinaryName(): string {
@@ -50,15 +58,37 @@ function getPlatformKey(): string {
 }
 
 function getDefaultVoiceExtensionBackend(): VoiceExtensionBackend {
-  return process.platform === 'win32' ? 'moonshine' : 'qwen';
+  return 'whisper';
 }
 
 function resolveVoiceExtensionBackend(requestedBackend?: VoiceExtensionBackend): VoiceExtensionBackend {
   const backend = requestedBackend ?? getDefaultVoiceExtensionBackend();
-  if (process.platform === 'win32' && backend !== 'moonshine') {
-    throw new Error('Windows only supports the moonshine STT backend');
+  // Qwen ASR ships no Windows binary. Moonshine and Whisper both run there.
+  if (process.platform === 'win32' && backend === 'qwen') {
+    throw new Error('Windows supports only the moonshine and whisper STT backends');
   }
   return backend;
+}
+
+export function getWhisperInstallRoot(): string {
+  const testInstallRoot = process.env.TEST_WHISPER_INSTALL_ROOT?.trim();
+  if (testInstallRoot) {
+    return path.resolve(testInstallRoot);
+  }
+  return path.join(app.getPath('userData'), 'whisper-models');
+}
+
+async function resolveWhisperModelId(): Promise<WhisperModelId> {
+  try {
+    const settings = await configStore.getSttSettings();
+    const requested = settings.whisperModelId;
+    if (requested && (WHISPER_MODEL_IDS as readonly string[]).includes(requested)) {
+      return requested as WhisperModelId;
+    }
+  } catch {
+    // Fall through to the default when settings cannot be read.
+  }
+  return DEFAULT_WHISPER_MODEL;
 }
 
 async function resolveQwenModelConfig(manifestPath: string): Promise<QwenModelConfig> {
@@ -163,9 +193,10 @@ export function getMoonshineInstallRoot(): string {
 }
 
 export function getVoiceExtensionInstallRoot(requestedBackend?: VoiceExtensionBackend): string {
-  return resolveVoiceExtensionBackend(requestedBackend) === 'moonshine'
-    ? getMoonshineInstallRoot()
-    : getQwenAsrInstallRoot();
+  const backend = resolveVoiceExtensionBackend(requestedBackend);
+  if (backend === 'moonshine') return getMoonshineInstallRoot();
+  if (backend === 'whisper') return getWhisperInstallRoot();
+  return getQwenAsrInstallRoot();
 }
 
 function getQwenInstallPlatformDir(): string {
@@ -173,8 +204,12 @@ function getQwenInstallPlatformDir(): string {
 }
 
 export async function isVoiceExtensionInstalled(requestedBackend?: VoiceExtensionBackend): Promise<boolean> {
-  if (resolveVoiceExtensionBackend(requestedBackend) === 'moonshine') {
+  const backend = resolveVoiceExtensionBackend(requestedBackend);
+  if (backend === 'moonshine') {
     return hasMoonshineAssets(getMoonshineInstallRoot());
+  }
+  if (backend === 'whisper') {
+    return isWhisperModelInstalled(getWhisperInstallRoot(), await resolveWhisperModelId());
   }
   return hasValidPlatformInstall(getQwenInstallPlatformDir());
 }
@@ -189,6 +224,26 @@ export async function installVoiceExtension(requestedBackend?: VoiceExtensionBac
   const installPromise = (async () => {
     if (backend === 'moonshine') {
       await installMoonshineAssets();
+      return;
+    }
+
+    if (backend === 'whisper') {
+      await installWhisperModel({
+        installRoot: getWhisperInstallRoot(),
+        modelId: await resolveWhisperModelId(),
+        onProgress: (progress) => {
+          if (progress.stage === 'error') {
+            emitInstallProgress({ stage: 'error', error: progress.message });
+            return;
+          }
+          emitInstallProgress({
+            stage: progress.stage === 'downloading' ? 'downloading'
+              : progress.stage === 'complete' ? 'complete'
+              : 'preparing',
+            message: progress.message,
+          });
+        },
+      });
       return;
     }
 

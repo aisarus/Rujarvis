@@ -337,8 +337,11 @@ function scoreConfidence(
   tokens: string[],
   needsWorldState: boolean,
 ): number {
-  // 'reasoning' is always present and says nothing about recognition.
-  const recognised = capabilities.size - 1;
+  // 'reasoning' is always present, and 'memory' only means the request leans on
+  // context. Neither says anything about whether the request was understood, so
+  // neither counts towards confidence.
+  const uninformative = 1 + (capabilities.has('memory') ? 1 : 0);
+  const recognised = capabilities.size - uninformative;
   if (tokens.length === 0) return 0;
   let score = Math.min(1, 0.35 + recognised * 0.2);
   if (needsWorldState && recognised === 0) score = Math.min(score, 0.4);
