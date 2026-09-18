@@ -16,6 +16,7 @@ const smokeSpecs = [
   "**/pane-system.spec.ts",
 ];
 const deterministicSpecs = [
+  "**/jarvis-ai-accounts.spec.ts",
   "**/workspace-switching.spec.ts",
   "**/agent-file-drop.spec.ts",
   "**/agent-file-permissions.spec.ts",

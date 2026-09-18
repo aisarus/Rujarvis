@@ -22,6 +22,7 @@ import { InboxSectionContent } from "./settings/InboxSection";
 import { StyleSectionContent } from "./settings/StyleSection";
 import { TelemetrySectionContent } from "./settings/TelemetrySection";
 import { SettingsPane, SettingsSection } from "./settings/SettingsSection";
+import { AiAccountsSection } from "./settings/AiAccountsSection";
 import { NativeToolsSection } from "./settings/NativeToolsSection";
 import { EditorSectionContent } from './settings/EditorSection';
 import { ExtensionsSectionContent } from './settings/ExtensionsSection';
@@ -535,11 +536,16 @@ export function GlobalSettings({
                 )}
 
                 {activeTab === "models" && (
-                  <ProfilesSectionContent
-                    onProfileUpdate={onProfileUpdate}
-                    selectedProfileId={openProfileId}
-                    listClassName={blinkProfiles ? "animate-blink-border" : ""}
-                  />
+                  <>
+                    <ProfilesSectionContent
+                      onProfileUpdate={onProfileUpdate}
+                      selectedProfileId={openProfileId}
+                      listClassName={blinkProfiles ? "animate-blink-border" : ""}
+                    />
+                    {/* Subscription coding agents live beside the model
+                        profiles: they are where coding work is sent. */}
+                    <AiAccountsSection />
+                  </>
                 )}
 
                 {activeTab === "tools" && (
