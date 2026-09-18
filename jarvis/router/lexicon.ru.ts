@@ -1,0 +1,189 @@
+/**
+ * The Russian lexicon the router matches against.
+ *
+ * Kept as data, separately from the routing logic, because this is the part
+ * that grows every time a real user says something new. Entries are stems, so
+ * «вкладк» covers «вкладка», «вкладке», «вкладку», «вкладок».
+ *
+ * English technical terms are first-class: people say «пофикси билд», «открой
+ * тот PR», «запусти тесты» in the same sentence as Russian.
+ */
+
+import type { JarvisCapability } from '../types';
+import type { BackendId } from '../backends/types';
+
+export interface CapabilityRule {
+  capability: JarvisCapability;
+  stems: string[];
+  /** Multi-word phrases whose individual words are too common to match alone. */
+  phrases?: string[][];
+}
+
+export const CAPABILITY_RULES: CapabilityRule[] = [
+  {
+    capability: 'computer',
+    stems: [
+      'окн', 'окно', 'окош', 'сверн', 'разверн', 'закро', 'переключ', 'кликн', 'клик',
+      'мышк', 'мыш', 'курсор', 'клавиатур', 'нажм', 'нажат', 'набер', 'напечата',
+      'приложен', 'программ', 'запусти', 'открой', 'откр', 'сочетан', 'горяч',
+      'проводник', 'explorer', 'калькулятор', 'блокнот', 'диалог', 'кнопк',
+      'скопиру', 'вставь', 'буфер', 'перетащ', 'прокрут', 'скролл', 'alt', 'ctrl',
+      'рабоч', 'трей', 'панел', 'значок', 'ярлык',
+    ],
+    phrases: [['рабоч', 'стол'], ['буфер', 'обмен']],
+  },
+  {
+    capability: 'vision',
+    stems: ['экран', 'скриншот', 'видиш', 'разгляд', 'распозна', 'изображен', 'картинк'],
+    phrases: [
+      ['что', 'на', 'экран'],
+      ['что', 'сейчас', 'на'],
+      ['посмотр', 'на', 'экран'],
+      ['что', 'тут', 'написа'],
+      ['что', 'там', 'написа'],
+      ['что', 'здесь', 'написа'],
+    ],
+  },
+  {
+    capability: 'browser',
+    stems: [
+      'браузер', 'вкладк', 'chrome', 'хром', 'firefox', 'едж', 'edge', 'сайт',
+      'страниц', 'ссылк', 'url', 'http', 'https', 'гугл', 'google', 'ютуб', 'youtube',
+      'github', 'гитхаб', 'форм', 'залог', 'логин', 'веб',
+    ],
+  },
+  {
+    capability: 'coding',
+    stems: [
+      'код', 'кодинг', 'билд', 'build', 'сборк', 'собира', 'скомпил', 'компил',
+      'баг', 'bug', 'пофикс', 'фикс', 'fix', 'почин', 'чин', 'исправ', 'дебаж', 'debug',
+      'тест', 'test', 'рефактор', 'refactor', 'репозитор', 'repo', 'коммит', 'commit',
+      'git', 'гит', 'ветк', 'branch', 'мерж', 'merge', 'функц', 'класс', 'метод',
+      'скрипт', 'деплой', 'deploy', 'линт', 'lint', 'типизац', 'типы', 'падает',
+      'падал', 'краш', 'crash', 'стектрейс', 'трейс', 'исключен', 'проект',
+      'зависимост', 'npm', 'pnpm', 'yarn', 'pip', 'cargo', 'docker', 'ci', 'pr',
+    ],
+    phrases: [['не', 'собира'], ['не', 'проход'], ['не', 'работа'], ['pull', 'request']],
+  },
+  {
+    capability: 'files',
+    stems: [
+      'файл', 'папк', 'директор', 'каталог', 'скача', 'загруз', 'сохран', 'переименов',
+      'удал', 'переме', 'скопиру', 'архив', 'zip', 'docx', 'xlsx', 'pdf', 'документ',
+      'путь', 'диск',
+    ],
+  },
+  {
+    capability: 'shell',
+    stems: [
+      'команд', 'терминал', 'консол', 'шелл', 'shell', 'powershell', 'cmd', 'bash',
+      'установ', 'переустанов', 'запуст', 'процесс', 'сервис', 'служб', 'порт',
+    ],
+  },
+  {
+    capability: 'web',
+    stems: ['загугл', 'погугл', 'интернет', 'новост', 'погод', 'курс', 'узна', 'поиск', 'поищ'],
+    phrases: [['найд', 'в', 'интернет'], ['что', 'пиш', 'про']],
+  },
+  {
+    capability: 'communication',
+    stems: [
+      'отправ', 'перешл', 'пересла', 'сообщен', 'написа', 'напиш', 'телеграм', 'telegram',
+      'вотсап', 'whatsapp', 'почт', 'письм', 'email', 'мейл', 'позвон', 'звонок', 'слак', 'slack',
+    ],
+  },
+  {
+    capability: 'system',
+    stems: [
+      'настройк', 'громкост', 'яркост', 'wifi', 'вайфай', 'bluetooth', 'блютуз',
+      'перезагруз', 'выключ', 'спящ', 'батаре', 'драйвер', 'обновлен', 'разрешен',
+      'монитор', 'звук', 'микрофон', 'наушник',
+    ],
+  },
+  {
+    capability: 'creative',
+    stems: ['придума', 'сочин', 'стих', 'нарису', 'сгенерир', 'текст', 'слоган', 'идей'],
+  },
+  {
+    capability: 'memory',
+    stems: [
+      'вчера', 'утром', 'недавн', 'опять', 'снова', 'обычно', 'прошл', 'котор',
+      'тот', 'та', 'те', 'этот', 'эта', 'это', 'эти', 'туда', 'там', 'его', 'её', 'ее',
+      'продолж', 'дальш', 'другой', 'друго', 'левее', 'правее', 'сначала',
+    ],
+  },
+];
+
+/** Words that only make sense against the current world state. */
+export const REFERENTIAL_STEMS = [
+  'это', 'этот', 'эта', 'эти', 'этим', 'этого', 'тот', 'того', 'туда', 'там',
+  'его', 'ее', 'их', 'тут', 'здесь', 'вот', 'такой', 'продолж', 'дальш',
+  'другой', 'друго', 'левее', 'правее', 'выше', 'ниже', 'предыдущ', 'последн',
+];
+
+/** Spoken names for each backend, including how they are declined in speech. */
+export const BACKEND_MENTIONS: Array<{ backend: BackendId; stems: string[] }> = [
+  {
+    backend: 'claude-code',
+    stems: ['клод', 'клауд', 'claude', 'клодкод', 'клодом', 'клоду', 'клода'],
+  },
+  {
+    backend: 'codex',
+    stems: ['кодекс', 'codex', 'кодексом', 'кодексу', 'кодекса'],
+  },
+  {
+    backend: 'interpreter',
+    stems: ['интерпретер', 'interpreter', 'воркстейшн', 'workstation'],
+  },
+];
+
+/** Explicit read-only intent: «только посмотри», «ничего не ломай». */
+export const INSPECT_ONLY_PHRASES: string[][] = [
+  ['не', 'лома'],
+  ['ничего', 'не', 'лома'],
+  ['не', 'мен'],
+  ['ничего', 'не', 'мен'],
+  ['не', 'трог'],
+  ['не', 'прав'],
+  ['не', 'редактир'],
+  ['только', 'посмотр'],
+  ['просто', 'посмотр'],
+  ['сначала', 'посмотр'],
+  ['только', 'глян'],
+  ['не', 'исправл'],
+  ['без', 'изменен'],
+];
+
+/** Explicit "do not run anything" intent. */
+export const NO_EXECUTE_PHRASES: string[][] = [
+  ['ничего', 'не', 'запуска'],
+  ['не', 'запуска'],
+  ['не', 'выполня'],
+  ['не', 'устанавлива'],
+];
+
+/** Leading filler that carries no instruction: «слушай», «короче», «ну». */
+export const LEADING_FILLER_STEMS = [
+  'слушай', 'слышь', 'короче', 'ну', 'вот', 'так', 'значит', 'эй', 'джарвис',
+  'давай', 'блин', 'блядь', 'бля', 'ладно', 'окей', 'ок',
+];
+
+/** Phrases that mean "carry on with what you were doing". */
+export const CONTINUATION_PHRASES: string[][] = [
+  ['продолж'],
+  ['дальш'],
+  ['давай', 'дальш'],
+  ['что', 'делал'],
+];
+
+/**
+ * Words used as emphasis rather than content.
+ *
+ * They are matched so the router can ignore them, and deliberately not removed
+ * from the utterance: «эта хуйня не собирается» is how the user talks, and the
+ * strong backend sees it exactly as it was said.
+ */
+export const EMPHASIS_STEMS = [
+  'блят', 'блядс', 'хуй', 'хуев', 'хуйн', 'ебан', 'ебал', 'ебуч', 'отъеб', 'пизд',
+  'нахер', 'нахрен', 'фиг', 'дурац', 'сран', 'чертов',
+];
