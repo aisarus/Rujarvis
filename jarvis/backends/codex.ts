@@ -90,6 +90,34 @@ export function buildCodexArgs(
   return args;
 }
 
+/**
+ * Notices Codex emits while it retries a connection.
+ *
+ * These are progress, not failures: reporting each one as an error filled the
+ * event stream with red lines for a request that was still perfectly alive.
+ */
+const RETRY_NOTICE_PATTERNS = [
+  /^reconnecting/i,
+  /waiting for network/i,
+  /falling back from websockets/i,
+  /stream disconnected before completion/i,
+];
+
+export function isRetryNotice(message: string): boolean {
+  return RETRY_NOTICE_PATTERNS.some((pattern) => pattern.test(message.trim()));
+}
+
+/**
+ * How many retry notices in a row mean the network is simply unavailable.
+ *
+ * Observed against the real CLI with a blocked endpoint: it retries five
+ * times, falls back to another transport, then waits for a network that never
+ * arrives — with no terminal event of its own. Without this the run sat until
+ * its timeout, which is both a long silence for the user and a fallback that
+ * never happens.
+ */
+export const MAX_CONSECUTIVE_RETRY_NOTICES = 6;
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -156,6 +184,10 @@ function consumeCodexItem(
 
   if (itemType === 'error') {
     const message = typeof item.message === 'string' ? item.message : 'Ошибка Codex';
+    if (isRetryNotice(message)) {
+      emit({ type: 'status', backend: BACKEND_ID, text: 'Переподключаюсь…' });
+      return;
+    }
     state.errorMessage = message;
     if (looksUsageLimited(message)) state.usageLimited = true;
     emit({ type: 'error', backend: BACKEND_ID, message, retryable: true });
@@ -197,6 +229,12 @@ export function consumeCodexStreamLine(
       (typeof raw.message === 'string' ? raw.message : undefined) ??
       (nested && typeof nested.message === 'string' ? nested.message : undefined) ??
       'Ошибка Codex';
+
+    if (isRetryNotice(message)) {
+      emit({ type: 'status', backend: BACKEND_ID, text: 'Переподключаюсь…' });
+      return;
+    }
+
     state.errorMessage = message;
     if (looksUsageLimited(message)) state.usageLimited = true;
     emit({ type: 'error', backend: BACKEND_ID, message, retryable: true });
@@ -247,10 +285,46 @@ export function consumeCodexStreamLine(
   }
   if (msgType === 'error') {
     const message = typeof msg.message === 'string' ? msg.message : 'Ошибка Codex';
+    if (isRetryNotice(message)) {
+      emit({ type: 'status', backend: BACKEND_ID, text: 'Переподключаюсь…' });
+      return;
+    }
     state.errorMessage = message;
     if (looksUsageLimited(message)) state.usageLimited = true;
     emit({ type: 'error', backend: BACKEND_ID, message, retryable: true });
   }
+}
+
+/**
+ * Wraps the line consumer with the connectivity check.
+ *
+ * Counts consecutive retry notices and, once they pass the threshold with no
+ * real progress in between, declares the run fatally stuck so the runner can
+ * stop it and the manager can try another backend.
+ */
+export function createCodexLineConsumer(): (
+  raw: Record<string, unknown>,
+  state: StreamState,
+  emit: (event: BackendEvent) => void,
+) => void {
+  let consecutiveRetries = 0;
+
+  return (raw, state, emit) => {
+    consumeCodexStreamLine(raw, state, (event) => {
+      if (event.type === 'status' && event.text === 'Переподключаюсь…') {
+        consecutiveRetries += 1;
+      } else if (event.type !== 'started') {
+        // Any real progress means the connection is alive after all.
+        consecutiveRetries = 0;
+      }
+      emit(event);
+    });
+
+    if (consecutiveRetries >= MAX_CONSECUTIVE_RETRY_NOTICES && !state.fatalMessage) {
+      state.fatalMessage =
+        'Codex не может подключиться к сети. Проверьте интернет или вход через ChatGPT.';
+    }
+  };
 }
 
 export class CodexBackend implements AgentBackend {
@@ -341,7 +415,7 @@ export class CodexBackend implements AgentBackend {
       cwd: request.cwd,
       timeoutMs: request.timeoutMs ?? this.options.defaultTimeoutMs ?? 20 * 60_000,
       stdin: buildBackendPrompt(request),
-      consumeLine: consumeCodexStreamLine,
+      consumeLine: createCodexLineConsumer(),
       messages: {
         unavailable: 'Codex недоступен',
         spawnFailed: (detail) => `Не удалось запустить Codex: ${detail}`,

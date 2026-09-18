@@ -16,8 +16,11 @@ import {
 } from './claudeCode';
 import {
   CodexBackend,
+  MAX_CONSECUTIVE_RETRY_NOTICES,
   buildCodexArgs,
   consumeCodexStreamLine,
+  createCodexLineConsumer,
+  isRetryNotice,
   selectSandbox,
 } from './codex';
 import { createStreamState } from './cliRunner';
@@ -460,6 +463,89 @@ describe('Codex adapter', () => {
     expect(result.ok).toBe(true);
     expect(result.text).toBe('Сделал.');
     expect(result.sessionId).toBe('t7');
+  });
+
+  it('tells a retry notice apart from a real failure', () => {
+    // Taken verbatim from a real run against a blocked endpoint.
+    for (const notice of [
+      'Reconnecting... 2/5 (stream disconnected before completion: URL error: Proxy connection failed)',
+      'Reconnecting... waiting for network (Connection failed: error sending request)',
+      'Falling back from WebSockets to HTTPS transport. stream disconnected before completion',
+    ]) {
+      expect(isRetryNotice(notice)).toBe(true);
+    }
+    expect(isRetryNotice('You have hit your usage limit')).toBe(false);
+    expect(isRetryNotice('SyntaxError: unexpected token')).toBe(false);
+  });
+
+  it('shows a retry as progress, not as a red error line', () => {
+    const state = createStreamState();
+    const events: BackendEvent[] = [];
+    consumeCodexStreamLine(
+      { type: 'error', message: 'Reconnecting... 2/5 (stream disconnected before completion)' },
+      state,
+      (event) => events.push(event),
+    );
+    expect(events).toEqual([
+      { type: 'status', backend: 'codex', text: 'Переподключаюсь…' },
+    ]);
+    expect(state.errorMessage).toBeUndefined();
+  });
+
+  it('classifies a retry notice the same way whichever schema carries it', () => {
+    const notice = 'Reconnecting... waiting for network';
+    for (const line of [
+      { type: 'error', message: notice },
+      { type: 'item.completed', item: { type: 'error', message: notice } },
+      { id: '1', msg: { type: 'error', message: notice } },
+    ]) {
+      const state = createStreamState();
+      const events: BackendEvent[] = [];
+      consumeCodexStreamLine(line, state, (event) => events.push(event));
+      expect(events.map((event) => event.type)).toEqual(['status']);
+      expect(state.errorMessage).toBeUndefined();
+    }
+  });
+
+  it('gives up once retries make clear the network is unavailable', () => {
+    // Without this the run sat until its timeout: the CLI retries, falls back
+    // to another transport, then waits for a network that never arrives, with
+    // no terminal event of its own.
+    const consume = createCodexLineConsumer();
+    const state = createStreamState();
+    for (let index = 0; index < MAX_CONSECUTIVE_RETRY_NOTICES; index += 1) {
+      expect(state.fatalMessage).toBeUndefined();
+      consume({ type: 'error', message: 'Reconnecting... waiting for network' }, state, () => {});
+    }
+    expect(state.fatalMessage).toContain('не может подключиться к сети');
+  });
+
+  it('does not give up while real progress keeps arriving between retries', () => {
+    const consume = createCodexLineConsumer();
+    const state = createStreamState();
+    for (let index = 0; index < MAX_CONSECUTIVE_RETRY_NOTICES * 2; index += 1) {
+      consume({ type: 'error', message: 'Reconnecting... waiting for network' }, state, () => {});
+      consume(
+        { type: 'item.completed', item: { type: 'assistant_message', text: 'ещё работаю' } },
+        state,
+        () => {},
+      );
+    }
+    expect(state.fatalMessage).toBeUndefined();
+  });
+
+  it('stops the process and reports the reason rather than calling it a cancel', async () => {
+    const retries = Array.from(
+      { length: MAX_CONSECUTIVE_RETRY_NOTICES },
+      () => '{"type":"error","message":"Reconnecting... waiting for network"}',
+    );
+    const { spawn } = fakeSpawn(retries, { cancelled: true });
+    const backend = new CodexBackend({ probe: readyProbe, spawnCli: spawn });
+
+    const result = await backend.run(request()).result();
+    expect(result.ok).toBe(false);
+    expect(result.cancelled).toBeUndefined();
+    expect(result.error).toContain('не может подключиться к сети');
   });
 
   it('reports a missing sign-in without spawning', async () => {

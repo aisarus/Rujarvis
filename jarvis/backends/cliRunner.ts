@@ -33,6 +33,13 @@ export interface StreamState {
   commands: string[];
   errorMessage?: string;
   usageLimited: boolean;
+  /**
+   * Set by an adapter that has concluded, mid-stream, that the run cannot
+   * succeed — a CLI stuck retrying an unreachable network, for instance. The
+   * runner stops the process and reports this instead of waiting out the
+   * timeout, so the manager can fall back to another backend promptly.
+   */
+  fatalMessage?: string;
 }
 
 export function createStreamState(sessionId?: string): StreamState {
@@ -84,6 +91,8 @@ export function createCliRun(spec: CliRunSpec): BackendRun {
   const state = createStreamState();
 
   let cancelled = false;
+  /** True once the adapter's own fatal condition stopped the process. */
+  let stoppedEarly = false;
   let child: CliHandle | null = null;
   let settle: (result: BackendResult) => void = () => {};
   const resultPromise = new Promise<BackendResult>((resolve) => {
@@ -132,6 +141,10 @@ export function createCliRun(spec: CliRunSpec): BackendRun {
         const parsed = parseJsonLine(line);
         if (!parsed) return;
         spec.consumeLine(parsed, state, (event) => channel.push(event));
+        if (state.fatalMessage && !stoppedEarly) {
+          stoppedEarly = true;
+          child?.cancel();
+        }
       },
     });
 
@@ -140,6 +153,7 @@ export function createCliRun(spec: CliRunSpec): BackendRun {
     const exitFailed = outcome.exitCode !== 0 && outcome.exitCode !== null;
     const failed =
       outcome.spawnError !== undefined ||
+      state.fatalMessage !== undefined ||
       outcome.cancelled ||
       outcome.timedOut ||
       exitFailed ||
@@ -148,6 +162,10 @@ export function createCliRun(spec: CliRunSpec): BackendRun {
     let error: string | undefined;
     if (outcome.spawnError !== undefined) {
       error = spec.messages.spawnFailed(outcome.spawnError);
+    } else if (state.fatalMessage !== undefined) {
+      // The adapter stopped this run itself. That is a failure with a reason,
+      // not a user cancellation, and the reason is what the user needs.
+      error = state.fatalMessage;
     } else if (outcome.cancelled) {
       error = 'Отменено';
     } else if (outcome.timedOut) {
@@ -162,7 +180,7 @@ export function createCliRun(spec: CliRunSpec): BackendRun {
       ...baseResult(),
       ok: !failed,
       exitCode: outcome.exitCode,
-      cancelled: outcome.cancelled || undefined,
+      cancelled: (outcome.cancelled && !stoppedEarly) || undefined,
       timedOut: outcome.timedOut || undefined,
       usageLimited: usageLimited || undefined,
       error,
