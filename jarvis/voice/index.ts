@@ -5,3 +5,4 @@ export * from './acknowledgement';
 export * from './sttModels';
 export * from './whisperRecognizer';
 export * from './whisperInstall';
+export * from './session';
