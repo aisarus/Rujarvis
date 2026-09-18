@@ -189,17 +189,40 @@ function Assert-NodeVersion {
         return
     }
 
+    # A version manager can fix this without sending the user away. fnm needs
+    # its environment loaded into the current session first — `fnm use` alone
+    # changes nothing in a shell that never ran `fnm env`.
+    if (Test-Command 'fnm') {
+        Write-Note "Установлен Node $current, нужен $wantedMajor.x — переключаю через fnm."
+        try {
+            fnm install $wanted 2>&1 | Out-Null
+            fnm env --shell power-shell | Out-String | Invoke-Expression
+            fnm use $wanted 2>&1 | Out-Null
+
+            $switched = (node --version).Trim()
+            if ([int] (($switched -replace '^v', '') -split '\.')[0] -eq $wantedMajor) {
+                Write-Ok "Node.js $switched (через fnm)"
+                return
+            }
+        } catch {
+            # Fall through to the instructions below.
+        }
+    }
+
     throw @"
 Нужен Node.js $wantedMajor.x (проект закрепляет $wanted), а установлен $current.
 Нативные модули не соберутся под другой мажорной версией.
 
-Проще всего через менеджер версий:
+Выполните по одной команде:
 
     winget install Schniz.fnm
     fnm install $wanted
+    fnm env --shell power-shell | Out-String | Invoke-Expression
     fnm use $wanted
 
-Затем запустите установщик снова — он продолжит с этого места.
+Третья строка обязательна: без неё `fnm use` не меняет версию в текущем окне.
+Проверьте `node --version` и запустите установщик снова — он продолжит
+с этого места.
 "@
 }
 

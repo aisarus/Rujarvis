@@ -95,6 +95,9 @@ try {
     Assert-That 'более новый мажор отклоняется' $rejected
     Assert-That 'сообщение называет обе версии' ($nodeMessage -match '22' -and $nodeMessage -match '24\.18\.0')
     Assert-That 'сообщение подсказывает, как переключиться' ($nodeMessage -match 'fnm')
+    # Без `fnm env` команда `fnm use` ничего не меняет в текущем окне —
+    # инструкция без этой строки отправляет человека по кругу.
+    Assert-That 'инструкция включает fnm env' ($nodeMessage -match 'fnm env')
 
     function global:node { 'v20.11.0' }
     $rejected = $false
