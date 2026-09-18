@@ -163,6 +163,12 @@ if (Test-Path (Join-Path $SourceDir '.git')) {
     New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
     Invoke-Checked -FilePath 'git' -Arguments @('clone', '--recurse-submodules', '--branch', $Branch, $RepoUrl, $SourceDir) -What 'git clone'
 }
+# The Jarvis layer lives in jarvis/. If it is missing, the branch that was
+# cloned does not carry this work — installing on regardless would produce a
+# plain Workstation that looks like a broken Jarvis.
+if (-not (Test-Path (Join-Path $SourceDir 'jarvis/core.ts'))) {
+    throw "В ветке '$Branch' нет слоя Jarvis (каталог jarvis/). Укажите ветку с этим кодом через -Branch."
+}
 Write-Ok "Исходники: $SourceDir"
 
 Push-Location $SourceDir

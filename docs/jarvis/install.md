@@ -2,6 +2,15 @@
 
 ## Windows 11 — одной командой
 
+Пока эта работа живёт в ветке `claude/jarvis-workstation-vk6nx1`, а не в `main`, поэтому и ссылка, и
+ветка указываются явно:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/aisarus/Rujarvis/claude/jarvis-workstation-vk6nx1/install.ps1))) -Branch claude/jarvis-workstation-vk6nx1
+```
+
+После слияния в `main` команда станет короче:
+
 ```powershell
 irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 | iex
 ```
@@ -12,17 +21,33 @@ pnpm через corepack, клонирует репозиторий в `%LOCALAP
 собирает приложение, скачивает русские модели речи и создаёт ярлык в меню
 «Пуск». Повторный запуск обновляет уже установленное.
 
-Параметры:
+После клонирования он проверяет, что в ветке действительно есть каталог
+`jarvis/`, и останавливается с понятной ошибкой, если её там нет — иначе
+установилась бы обычная Workstation, которая выглядела бы как сломанный Jarvis.
+
+### Параметры
+
+`irm ... | iex` параметры принимать не умеет — их можно передать только через
+scriptblock:
 
 ```powershell
+$installer = [scriptblock]::Create((irm https://raw.githubusercontent.com/aisarus/Rujarvis/claude/jarvis-workstation-vk6nx1/install.ps1))
+
 # Своя модель распознавания вместо выбранной по объёму памяти
-irm .../install.ps1 | iex -Args @{ WhisperModel = 'small' }
+& $installer -Branch claude/jarvis-workstation-vk6nx1 -WhisperModel small
 
 # Только зависимости и модели, без сборки
-./install.ps1 -SkipBuild
+& $installer -Branch claude/jarvis-workstation-vk6nx1 -SkipBuild
 
-# Другая ветка или каталог
-./install.ps1 -Branch dev -InstallRoot D:\Rujarvis
+# Другой каталог установки
+& $installer -Branch claude/jarvis-workstation-vk6nx1 -InstallRoot D:\Rujarvis
+```
+
+Либо скачать файл и запустить обычным способом:
+
+```powershell
+irm https://raw.githubusercontent.com/aisarus/Rujarvis/claude/jarvis-workstation-vk6nx1/install.ps1 -OutFile install.ps1
+./install.ps1 -Branch claude/jarvis-workstation-vk6nx1 -WhisperModel small
 ```
 
 ## Сборка из исходников
@@ -30,7 +55,7 @@ irm .../install.ps1 | iex -Args @{ WhisperModel = 'small' }
 Требуется Node.js 22, pnpm 9, Bun, Rust stable и Git с поддержкой подмодулей.
 
 ```bash
-git clone --recurse-submodules https://github.com/aisarus/Rujarvis.git
+git clone --recurse-submodules -b claude/jarvis-workstation-vk6nx1 https://github.com/aisarus/Rujarvis.git
 cd Rujarvis
 pnpm install
 pnpm run download:oix -- --current-platform
@@ -62,18 +87,52 @@ codex login   # вход в Codex через ChatGPT
 Jarvis не хранит ключи, не читает OAuth-токены и не просит вставить секрет.
 Он проверяет только: установлен ли CLI, выполнен ли вход, запускается ли он.
 
-## Первый запуск
+## Что уже можно попробовать
 
-1. Зажмите **Ctrl + Space** и говорите. Отпустите — задача уйдёт в работу.
-2. Или скажите «Джарвис», а после этого — что нужно сделать.
-3. «Стоп», «отмена», «пауза», «продолжай» срабатывают мгновенно.
+Голосовой ввод в приложении пока **не подключён** — горячей клавиши, трея и
+оверлея ещё нет. Но весь слой под ними готов, и его можно гонять с клавиатуры:
 
-Специальных команд учить не нужно. Говорите обычными словами:
+```bash
+pnpm run jarvis:try
+```
 
-> «закрой это окно»
-> «посмотри что на экране и объясни»
-> «почини билд в аегисе через Клод Код»
-> «а пока открой Телеграм»
+Открывается диалог, куда пишешь обычной русской речью. Работает всё, кроме
+самого микрофона: маршрутизация, разбор ограничений, политика риска, память,
+задачи, backend-ы и короткий «устный» ответ.
+
+```
+> Закрой это окно
+> Посмотри что сейчас на экране и объясни
+> Скажи что делает файл jarvis/risk/policy.ts. Ничего не меняй.
+> Почини билд через Клод Код
+```
+
+Только разобрать реплику, ничего не выполняя:
+
+```bash
+pnpm run jarvis:try -- --dry "посмотри в аегисе почему билд отъебнулся, только не ломай ничего"
+```
+
+Покажет, какие capabilities распознаны, какой backend выбран, какой класс
+риска и какие права выведены из фразы.
+
+Одна реплика без диалога:
+
+```bash
+pnpm run jarvis:try -- "открой хром"
+pnpm run jarvis:try -- --workspace D:\Projects\aegis "почему не собирается"
+```
+
+### Раздел AI-аккаунтов
+
+В собранном приложении: **Settings → Models → AI-аккаунты**. Показывает,
+установлены ли Claude Code и Codex, выполнен ли вход и готовы ли они к работе.
+
+### Чего ещё нет
+
+Голоса. Ни push-to-talk, ни слова «Джарвис», ни трея, ни оверлея — это
+следующая работа. Распознавание и синтез речи установлены и проверены
+отдельно, но с микрофоном приложения пока не соединены.
 
 ## Проверка установщика
 

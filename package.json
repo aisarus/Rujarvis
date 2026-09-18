@@ -78,6 +78,7 @@
     "install:qwen-asr-model": "node scripts/install-qwen-asr-runtime-model.mjs",
     "jarvis:setup": "tsx scripts/jarvis-setup.ts",
     "jarvis:setup:dry-run": "tsx scripts/jarvis-setup.ts --dry-run",
+    "jarvis:try": "tsx scripts/jarvis-try.ts",
     "build:js-repl-runtime": "node scripts/build-js-repl-runtime.mjs",
     "ensure:js-repl-runtime-assets": "node scripts/ensure-js-repl-runtime-assets.mjs",
     "build:browser-extension-relay-runtime": "node scripts/build-browser-extension-relay-runtime.mjs",

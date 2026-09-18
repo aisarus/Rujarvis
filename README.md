@@ -31,10 +31,19 @@ shell, skills, permissions, voice pipeline, desktop UI) используется
 Windows 11, одна команда в PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 | iex
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/aisarus/Rujarvis/claude/jarvis-workstation-vk6nx1/install.ps1))) -Branch claude/jarvis-workstation-vk6nx1
 ```
 
-Подробности и ручная сборка — [docs/jarvis/install.md](docs/jarvis/install.md).
+Ветка указывается явно, пока эта работа не слита в `main`.
+
+Голосовой ввод в приложении ещё не подключён. Слой под ним готов и гоняется
+с клавиатуры:
+
+```bash
+pnpm run jarvis:try
+```
+
+Подробности, параметры и ручная сборка — [docs/jarvis/install.md](docs/jarvis/install.md).
 
 ## Документация
 
