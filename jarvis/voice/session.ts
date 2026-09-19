@@ -81,6 +81,14 @@ export interface VoiceSessionOptions {
 
 export class VoiceSession {
   private indicator: VoiceIndicator = 'idle';
+  /**
+   * Счётчик просьб замолчать.
+   *
+   * Речь, начатая до просьбы, не должна на своём завершении снова открыть окно
+   * слушания. Сравнивается билет, а не время: остановка речи и её завершение
+   * приходят в одну микрозадачу, и порогом по часам их не разделить.
+   */
+  private silenceTicket = 0;
   private activeTaskTitle: string | undefined;
   private mode: VoiceMode;
   private readonly wake: WakeWordListener;
@@ -244,6 +252,36 @@ export class VoiceSession {
     if (this.indicator === 'working') this.setIndicator('idle');
   }
 
+  /**
+   * Keeps the conversation open after work the desktop layer did itself.
+   *
+   * Some things are answered without the core — launching a program is one —
+   * and those turns never reach the wake listener. Without this the assistant
+   * falls asleep in the middle of a conversation: observed as «открой Steam»
+   * working, and the «закрой Steam» that followed being ignored in silence.
+   */
+  keepAwake(): void {
+    this.wake.wake();
+    this.options.onStatus?.(this.status);
+  }
+
+  /**
+   * Closes the listening window at once, without waiting for it to expire.
+   *
+   * «Тишина» — the assistant stops listening for commands until it is named
+   * again. Speech that is already playing stops too: being told to be quiet
+   * and then finishing the sentence would be its own kind of rude.
+   */
+  sleep(): void {
+    // Билет меняется первым: речь, оборванная этой просьбой, не должна на
+    // своём завершении снова открыть окно слушания.
+    this.silenceTicket += 1;
+    this.options.playback?.stop();
+    this.wake.reset();
+    if (this.indicator !== 'working') this.setIndicator('idle');
+    this.options.onStatus?.(this.status);
+  }
+
   /** The interrupt button, and what «стоп» reaches when speech is playing. */
   stopSpeaking(): void {
     this.options.playback?.stop();
@@ -254,12 +292,32 @@ export class VoiceSession {
   async speak(text: string): Promise<void> {
     if (!this.options.playback || !text.trim()) return;
     const previous = this.indicator;
+    const ticket = this.silenceTicket;
     this.setIndicator('speaking');
     try {
       await this.options.playback.speak(text);
     } finally {
       // Work that is still running should go back to showing that it is.
       this.setIndicator(previous === 'working' ? 'working' : 'idle', this.activeTaskTitle);
+
+      // Окно слушания отсчитывается заново от конца фразы, а не от её начала.
+      //
+      // Замер из журнала: Джарвис говорил двенадцать секунд, окно у него
+      // восьмисекундное, и следующая реплика человека — «Что внутри
+      // брейншторма, в конце там три вопроса, да» — пришла при `awake=false` и
+      // была выброшена молча. Человек решил, что потерян контекст; на деле
+      // потерян был его вопрос.
+      //
+      // Пока помощник говорит, человек и не может ответить. Считать это время
+      // его молчанием — значит закрывать окно ровно тогда, когда он наконец
+      // получил возможность заговорить.
+      //
+      // Кроме одного случая: если за время речи его попросили замолчать.
+      // «Тишина» обрывает фразу, и обещание тут же снова начать слушать
+      // отменило бы ровно то, о чём попросили. Билет сравнивается, а не время:
+      // остановка и завершение речи приходят в одну и ту же микрозадачу, и
+      // никакой порог по часам их не разделит.
+      if (this.silenceTicket === ticket) this.keepAwake();
     }
   }
 

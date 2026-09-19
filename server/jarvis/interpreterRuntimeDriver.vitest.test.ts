@@ -4,6 +4,7 @@ import {
   toRuntimeEvents,
 } from './interpreterRuntimeDriver';
 import { InterpreterBackend } from '../../jarvis/backends/interpreter';
+import { agentTabManager } from '../agentTabManager';
 import type { AgentTaskProgressEvent } from '../agentTaskService';
 import type { AgentTaskResult } from '../agentTaskService';
 import type { BackendRequest } from '../../jarvis/backends/types';
@@ -163,6 +164,24 @@ describe('createInterpreterRuntimeDriver', () => {
     });
     expect(outcome.ok).toBe(true);
     expect(outcome.threadId).toBe('th-9');
+  });
+
+  it('identifies itself, because the computer-use tools reject an unknown caller', async () => {
+    // Without a caller token the desktop driver refuses with "Unknown
+    // interpreter caller token", so «открой хром» fails after the model has
+    // already decided what to do. The token has to be registered, not merely
+    // invented, for the runtime to recognise it.
+    const start = vi.fn(async () => taskResult());
+    const driver = createInterpreterRuntimeDriver({
+      defaultWorkspace: 'D:\\Work',
+      start: start as never,
+    });
+
+    await driver.start({ message: 'открой хром' }).done;
+
+    const callerToken = (start.mock.calls[0]?.[0] as { callerToken?: string } | undefined)?.callerToken;
+    expect(callerToken).toMatch(/^agtok_/);
+    expect(agentTabManager.getBindingForCallerToken(callerToken!)).toBeDefined();
   });
 
   it('streams progress and carries the final answer through', async () => {

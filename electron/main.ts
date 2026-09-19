@@ -2716,6 +2716,16 @@ app.whenReady().then(async () => {
     appReady = true;
     console.log('Application started successfully');
 
+    // Jarvis is opt-in while it settles: a broken microphone or a missing
+    // speech model must not be able to stop the app from starting.
+    if (process.env.JARVIS_VOICE !== 'off') {
+      void import('./jarvis/voiceBridge')
+        .then(({ startJarvisVoiceBridge }) => startJarvisVoiceBridge({}))
+        .catch((error: unknown) => {
+          console.error('[Main] Jarvis не запустился:', error);
+        });
+    }
+
     if (app.isPackaged) {
       void ensureShellIntegrationInstalled({
         executablePath: process.execPath,

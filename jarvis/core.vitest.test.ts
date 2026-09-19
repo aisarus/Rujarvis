@@ -109,6 +109,7 @@ interface Harness {
 function harness(options: {
   settings?: Partial<JarvisSettings>;
   respond?: Partial<Record<BackendId, (request: BackendRequest) => Partial<BackendResult> | 'hang'>>;
+  recentActions?: string[];
 } = {}): Harness {
   const recorded: Recorded[] = [];
   const spoken: string[] = [];
@@ -131,6 +132,7 @@ function harness(options: {
     memory,
     world,
     settings: () => settings,
+    recentActions: () => options.recentActions ?? [],
     speak: (text) => {
       if (text) spoken.push(text);
     },
@@ -150,12 +152,35 @@ describe('Test A — «Открой Chrome»', () => {
 
     expect(turn.kind).toBe('task');
     expect(h.recorded).toHaveLength(1);
-    expect(h.recorded[0]?.backend).toBe('interpreter');
+    // Экранная работа идёт к агенту: инструменты рабочего стола и скиллы под
+    // программы есть только у него.
+    expect(h.recorded[0]?.backend).toBe('claude-code');
     // The acknowledgement was spoken before the backend produced anything.
     expect(h.spoken[0]).toBeTruthy();
     expect(h.spoken[0]?.toLowerCase()).not.toContain('готово');
     // The user's own words reach the backend verbatim.
     expect(h.recorded[0]?.request.utterance).toBe('Открой Chrome');
+  });
+});
+
+describe('память о своих действиях', () => {
+  it('передаёт агенту, что делал только что', async () => {
+    // Без этого «а где он?» и «переделай» повисают в пустоте: ассистент не
+    // помнит собственных действий и честно не понимает, о чём речь.
+    const h = harness({ recentActions: ['Только что: открыл Chrome; сделал закат.png.'] });
+
+    await h.core.handleUtterance('Открой Chrome');
+
+    const context = h.recorded[0]?.request.context ?? [];
+    expect(context.some((line) => line.includes('сделал закат.png'))).toBe(true);
+  });
+
+  it('не выдумывает память, когда её нет', async () => {
+    const h = harness();
+    await h.core.handleUtterance('Открой Chrome');
+
+    const context = h.recorded[0]?.request.context ?? [];
+    expect(context.some((line) => line.startsWith('Только что'))).toBe(false);
   });
 });
 
@@ -166,7 +191,7 @@ describe('Test B — browser work', () => {
 
     const request = h.recorded[0]?.request;
     expect(request?.capabilities).toEqual(expect.arrayContaining(['browser']));
-    expect(h.recorded[0]?.backend).toBe('interpreter');
+    expect(h.recorded[0]?.backend).toBe('claude-code');
   });
 });
 
@@ -186,7 +211,7 @@ describe('Test D — «Посмотри что сейчас на экране»'
   it('asks for vision and answers in Russian', async () => {
     const h = harness({
       respond: {
-        interpreter: () => ({ text: 'На экране открыт VS Code с ошибкой сборки.' }),
+        'claude-code': () => ({ text: 'На экране открыт VS Code с ошибкой сборки.' }),
       },
     });
 
@@ -235,11 +260,16 @@ describe('Test E — «В проекте Aegis ... почини через Claud
     expect(h.recorded[0]?.request.cwd).toBe('D:\\Projects\\aegis');
     expect(h.recorded[0]?.request.project).toBe('aegis');
 
-    // The screen gets everything; the voice gets one to three short sentences.
+    // Голос читает ответ, а не его первые три фразы.
+    //
+    // Предел был три предложения, и на вопросах это резало по живому: человек
+    // слышал первый пункт списка, оборванный посреди фразы, и решал, что его
+    // не поняли. Теперь читается целиком, пока укладывается в минуту речи, а
+    // перебить можно, просто заговорив.
     const lastSpoken = h.spoken.at(-1) ?? '';
     expect(lastSpoken).toContain('Нашёл проблему.');
-    expect(lastSpoken.split(/(?<=[.!?])\s+/).filter(Boolean).length).toBeLessThanOrEqual(3);
-    expect(lastSpoken).not.toContain('устаревшую зависимость');
+    expect(lastSpoken).toContain('устаревшую зависимость');
+    expect(lastSpoken.length).toBeLessThan(1_100);
     // …while the full text is what the task result carries for the UI.
     if (turn.kind === 'task') {
       expect(turn.task.result?.text).toContain('устаревшую зависимость');
@@ -302,7 +332,7 @@ describe('Test G — «А пока открой Telegram» during a long coding 
 
 describe('Test H — «Стоп» during a running task', () => {
   it('stops immediately without waiting for a model', async () => {
-    const h = harness({ respond: { interpreter: () => 'hang' } });
+    const h = harness({ respond: { 'claude-code': () => 'hang' } });
 
     const started = await h.core.handleUtterance('Открой Chrome и найди там документацию');
     await tick();
@@ -483,6 +513,13 @@ describe('failure reporting', () => {
   it('speaks a short failure line rather than a stack trace', async () => {
     const h = harness({
       respond: {
+        // Оба: у экранной задачи есть запасной backend, и пока хоть один
+        // отвечает успехом, человек услышит «готово», а не разбор ошибки.
+        'claude-code': () => ({
+          ok: false,
+          text: '',
+          error: 'Не удалось запустить: spawn ENOENT\n  at ChildProcess.handle',
+        }),
         interpreter: () => ({
           ok: false,
           text: '',
@@ -498,5 +535,214 @@ describe('failure reporting', () => {
     const last = h.spoken.at(-1) ?? '';
     expect(last).toContain('Не получилось');
     expect(last).not.toContain('ChildProcess');
+  });
+});
+
+describe('продолжение разговора', () => {
+  it('понимает короткую просьбу как продолжение свежей задачи', async () => {
+    // «Переделай» само по себе не значит ничего и значит
+    // всё — после «создай в блендере красную сферу». Раньше Джарвис отвечал
+    // «не понял».
+    const h = harness();
+    await h.memory.recordTask({
+      id: 'т1',
+      utterance: 'Создай в блендере красную сферу',
+      outcome: 'Готово',
+      ok: true,
+      backend: 'claude-code',
+      sessionId: 'сессия-1',
+    });
+
+    const turn = await h.core.handleUtterance('Переделай');
+
+    expect(turn.kind).toBe('task');
+    const request = h.recorded[0]?.request;
+    // Продолжает ту же сессию агента: там он помнит, какую сферу сделал.
+    expect(request?.sessionId).toBe('сессия-1');
+    // И получает инструменты, которых у «болтовни» не было.
+    expect(request?.capabilities).toContain('computer');
+  });
+
+  it('передаёт агенту, о чём шла речь', async () => {
+    const h = harness();
+    await h.memory.recordTask({
+      id: 'т1',
+      utterance: 'Создай в блендере красную сферу',
+      outcome: 'Готово',
+      ok: true,
+      backend: 'claude-code',
+      sessionId: 'сессия-1',
+    });
+
+    await h.core.handleUtterance('Поменяй цвет на зелёный');
+
+    const context = h.recorded[0]?.request.context ?? [];
+    expect(context.some((line) => line.includes('красную сферу'))).toBe(true);
+  });
+
+  it('не цепляется за давнюю задачу', async () => {
+    // Через час «поменяй цвет» относится уже к чему-то другому.
+    const h = harness();
+    await h.memory.recordTask({
+      id: 'т1',
+      utterance: 'Создай в блендере красную сферу',
+      outcome: 'Готово',
+      ok: true,
+      backend: 'claude-code',
+      sessionId: 'сессия-1',
+      finishedAt: Date.now() - 60 * 60_000,
+    });
+
+    const turn = await h.core.handleUtterance('Переделай');
+    expect(turn.kind).toBe('clarify');
+  });
+
+  it('не мешает понятной просьбе', async () => {
+    const h = harness();
+    await h.memory.recordTask({
+      id: 'т1',
+      utterance: 'Создай в блендере красную сферу',
+      outcome: 'Готово',
+      ok: true,
+      backend: 'claude-code',
+      sessionId: 'сессия-1',
+    });
+
+    const turn = await h.core.handleUtterance('Открой Chrome');
+
+    // Ясная просьба разбирается сама, а не как продолжение прошлой:
+    // в контексте нет строки «это продолжение».
+    if (turn.kind !== 'task') throw new Error('ожидалась задача');
+    const context = h.recorded[0]?.request.context ?? [];
+    expect(context.some((line) => line.startsWith('Это продолжение'))).toBe(false);
+
+    // Но сессия агента та же — это и есть непрерывный разговор.
+    expect(h.recorded[0]?.request.sessionId).toBe('сессия-1');
+  });
+});
+
+describe('непрерывный разговор', () => {
+  async function withRecentTask(minutesAgo: number) {
+    const h = harness();
+    await h.memory.recordTask({
+      id: 'т1',
+      utterance: 'Создай в блендере красную сферу',
+      outcome: 'Готово',
+      ok: true,
+      backend: 'claude-code',
+      sessionId: 'сессия-1',
+      finishedAt: Date.now() - minutesAgo * 60_000,
+    });
+    return h;
+  }
+
+  it('продолжает ту же сессию агента, а не начинает заново', async () => {
+    // Это и есть непрерывный диалог: агент помнит, что делал, без пересказа.
+    const h = await withRecentTask(1);
+    await h.core.handleUtterance('Добавь рядом синий куб');
+
+    expect(h.recorded[0]?.request.sessionId).toBe('сессия-1');
+  });
+
+  it('продолжает даже понятную самостоятельную просьбу', async () => {
+    const h = await withRecentTask(2);
+    await h.core.handleUtterance('Сделай таблицу с расходами');
+
+    expect(h.recorded[0]?.request.sessionId).toBe('сессия-1');
+  });
+
+  it('начинает заново, когда разговор давно закончился', async () => {
+    // Через полчаса это уже другой разговор, и тащить в него старый контекст
+    // значит платить временем и путать агента.
+    const h = await withRecentTask(40);
+    await h.core.handleUtterance('Сделай таблицу с расходами');
+
+    expect(h.recorded[0]?.request.sessionId).toBeUndefined();
+  });
+
+  it.each([
+    'Сделай её зелёной',
+    'А теперь синюю',
+    'Нет, другую',
+    'Что у меня получилось?',
+    'Ау, жив?',
+  ])('«%s» — это ход разговора, а не «не понял»', async (utterance) => {
+    // Человек сказал прямо: «просто говорить с ним нельзя, а надо». Все эти
+    // фразы сами по себе весят меньше порога уверенности и получали
+    // «Не понял, что именно сделать». Но их понимает тот, кто минуту назад
+    // сделал сферу, — и вопрос надо задавать ему, а не человеку.
+    const h = await withRecentTask(1);
+    const answer = await h.core.handleUtterance(utterance);
+
+    expect(answer.kind).toBe('task');
+    expect(h.recorded[0]?.request.sessionId).toBe('сессия-1');
+  });
+
+  it('ведёт продолжение к тому, у кого лежит сессия', async () => {
+    // «Сделай её зелёной» маршрутизируется в интерпретатор: сама по себе она
+    // ни на что не похожа. Но сессия со сферой — у Claude Code, и продолжать
+    // её где-то ещё бессмысленно.
+    const h = await withRecentTask(1);
+    await h.core.handleUtterance('Сделай её зелёной');
+
+    expect(h.recorded[0]?.backend).toBe('claude-code');
+  });
+
+  it('без открытого разговора по-прежнему переспрашивает', async () => {
+    // Вне разговора «сделай её зелёной» действительно не значит ничего, и
+    // честный вопрос лучше выдуманной догадки.
+    const h = harness();
+    const answer = await h.core.handleUtterance('Сделай её зелёной');
+
+    expect(answer.kind).toBe('clarify');
+  });
+
+  it('не поднимает агента ради вежливости', async () => {
+    // «Спасибо» — не ход разговора. Запуск агента ради него стоит секунд.
+    const h = await withRecentTask(1);
+    await h.core.handleUtterance('Спасибо');
+
+    expect(h.recorded).toHaveLength(0);
+  });
+
+  it('не тащит сессию неудавшейся задачи', async () => {
+    // Если прошлая попытка провалилась, её контекст — история ошибки.
+    const h = harness();
+    await h.memory.recordTask({
+      id: 'т1',
+      utterance: 'Создай сферу',
+      outcome: 'Не получилось',
+      ok: false,
+      backend: 'claude-code',
+      sessionId: 'сессия-плохая',
+    });
+
+    await h.core.handleUtterance('Сделай таблицу с расходами');
+    expect(h.recorded[0]?.request.sessionId).toBeUndefined();
+  });
+});
+
+describe('подтверждение доезжает до бэкенда', () => {
+  it('согласие человека уходит вместе с задачей', async () => {
+    // Иначе бэкенд запустится в режиме, где каждая запись молча отклоняется, и
+    // согласие не купит ничего. Живой случай: час перевода без единого
+    // сохранённого файла.
+    const h = harness();
+    h.approve.value = true;
+
+    await h.core.handleUtterance('Оплати счёт и сохрани квитанцию в папку');
+
+    expect(h.approvals.length).toBeGreaterThan(0);
+    expect(h.recorded).not.toHaveLength(0);
+    expect(h.recorded[0]?.request.approved).toBe(true);
+  });
+
+  it('обычная задача едет без согласия и без вопроса', async () => {
+    const h = harness();
+
+    await h.core.handleUtterance('Сделай таблицу с расходами');
+
+    expect(h.approvals).toHaveLength(0);
+    expect(h.recorded[0]?.request.approved).toBe(false);
   });
 });

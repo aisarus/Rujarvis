@@ -27,6 +27,7 @@ import {
 import { createStreamState } from './cliRunner';
 import { BackendManager, isBackendLevelFailure } from './manager';
 import { buildBackendPrompt } from './prompt';
+import { describeLessons, lessonsFrom } from '../memory/lessons';
 import { DEFAULT_PERMISSIONS, READ_ONLY_PERMISSIONS } from '../types';
 import type {
   AgentBackend,
@@ -170,8 +171,85 @@ describe('buildBackendPrompt', () => {
     expect(prompt).toContain('Do NOT modify, create or delete any file');
   });
 
+  it('говорит, куда класть файлы, когда папка задана', () => {
+    // Без этого агент раскладывает результаты по временным каталогам, и
+    // человек их больше не находит.
+    const prompt = buildBackendPrompt(request({ outputDir: 'C:\\Users\\ariel\\Desktop\\Джарвис' }));
+    expect(prompt).toContain('C:\\Users\\ariel\\Desktop\\Джарвис');
+  });
+
+  it('требует назвать путь и запрещает ссылаться на несуществующий чат', () => {
+    // Человек слышит ответ голосом. «Файл в чате» для него — это «файла нет».
+    const prompt = buildBackendPrompt(request({ outputDir: 'C:\\Users\\ariel\\Desktop\\Джарвис' }));
+    expect(prompt).toContain('назови в ответе его полный путь');
+    expect(prompt).toContain('«в чате»');
+  });
+
+  it('разбивает указания про файлы на строки, а не склеивает их', () => {
+    // Этот блок однажды склеился литеральным «\n» и приехал одной кашей,
+    // которую модель перестала замечать.
+    const prompt = buildBackendPrompt(request({ outputDir: 'C:\\Users\\ariel\\Desktop\\Джарвис' }));
+    expect(prompt).not.toContain('\\n');
+    expect(prompt).toContain('WHERE FINISHED FILES GO:\nГотовые файлы');
+  });
+
+  it('не выдумывает папку, когда её не задали', () => {
+    expect(buildBackendPrompt(request())).not.toContain('Готовые файлы');
+  });
+
   it('asks for a Russian answer by default', () => {
     expect(buildBackendPrompt(request())).toContain('Write the final answer in Russian');
+  });
+});
+
+/** Минимальный бэкенд: нужен только для того, чтобы он числился у менеджера. */
+function stubBackend(id: 'interpreter' | 'claude-code' | 'codex'): AgentBackend {
+  return {
+    id,
+    name: id,
+    capabilities: new Set(),
+    checkAvailability: async () => ({
+      id,
+      installed: true,
+      authenticated: true,
+      ready: true,
+      checkedAt: 0,
+    }),
+    run: (): BackendRun => {
+      throw new Error('этот бэкенд только числится');
+    },
+  };
+}
+
+describe('задача про рабочий стол не уходит тому, у кого нет инструментов', () => {
+  it('управление экраном не откатывается на интерпретер', () => {
+    // Живой случай. Claude Code сорвался, задача «открой блендер» ушла
+    // интерпретеру — а у того нет ни одного инструмента Джарвиса. Он пять
+    // минут дёргал СВОЙ драйвер рабочего стола, упёрся в «blocked by policy» и
+    // сказал человеку «нужен режим Full Access». Всё это неправда: дело было
+    // не в правах, а в том, что работать было нечем.
+    //
+    // Помощник, который не может сделать работу, обязан сказать это, а не
+    // изображать работу другим способом.
+    const manager = new BackendManager();
+    for (const id of ['interpreter', 'claude-code', 'codex'] as const) {
+      manager.register(stubBackend(id));
+    }
+
+    const plan = manager.plan(request({ capabilities: ['computer', 'reasoning'] }));
+
+    expect(plan.order[0]).toBe('claude-code');
+    expect(plan.order).not.toContain('interpreter');
+  });
+
+  it('но разговор и файлы откат сохраняют', () => {
+    // Там интерпретер способен на работу, и молчать вместо ответа незачем.
+    const manager = new BackendManager();
+    for (const id of ['interpreter', 'claude-code'] as const) {
+      manager.register(stubBackend(id));
+    }
+
+    expect(manager.plan(request({ capabilities: ['reasoning'] })).order).toContain('interpreter');
   });
 });
 
@@ -181,6 +259,34 @@ describe('Claude Code adapter', () => {
     expect(selectPermissionMode(request({ risk: 'normal' }), false)).toBe('acceptEdits');
     expect(selectPermissionMode(request({ risk: 'sensitive' }), false)).toBe('default');
     expect(selectPermissionMode(request({ risk: 'dangerous' }), true)).toBe('default');
+  });
+
+  it('подтверждение человека даёт право писать', () => {
+    // Живой случай, стоивший часа работы. Джарвис спросил голосом, человек
+    // согласился — и задача всё равно запустилась в режиме `default`. В
+    // безголовом запуске он ничего не спрашивает: он молча отклоняет каждую
+    // запись. Агент час переводил тексты и отчитался, что положить их никуда
+    // не смог.
+    //
+    // Подтверждение, которое ничего не разрешает, — это не осторожность, а
+    // театр: работа идёт, время тратится, результата нет.
+    expect(selectPermissionMode(request({ risk: 'sensitive' }), false)).toBe('default');
+    expect(selectPermissionMode(request({ risk: 'sensitive', approved: true }), false)).toBe(
+      'acceptEdits',
+    );
+  });
+
+  it('без подтверждения опасное так и остаётся спрашивающим', () => {
+    expect(selectPermissionMode(request({ risk: 'dangerous' }), false)).toBe('default');
+  });
+
+  it('подтверждение не открывает то, что человек закрыл', () => {
+    // Запрет на правку сильнее любого «да»: человек мог просить посмотреть, а
+    // не менять.
+    const looking = request({ risk: 'sensitive', approved: true });
+    looking.permissions = { ...looking.permissions, edit: false };
+
+    expect(selectPermissionMode(looking, false)).toBe('plan');
   });
 
   it('never selects bypassPermissions unless it was explicitly enabled', () => {
@@ -197,6 +303,171 @@ describe('Claude Code adapter', () => {
     expect(args).toEqual(expect.arrayContaining(['--permission-mode', 'acceptEdits']));
     expect(args).toEqual(expect.arrayContaining(['--model', 'opus']));
     expect(args).toEqual(expect.arrayContaining(['--resume', 'sess-1']));
+  });
+
+  it('hands Claude Code the desktop tools when the work needs the screen', () => {
+    // Computer use lives behind an MCP server that Jarvis passes per run,
+    // rather than registering it globally: a mouse-and-keyboard tool should be
+    // available to the assistant's own agent, not to every Claude Code session
+    // the user starts for unrelated work.
+    const args = buildClaudeArgs(request({ capabilities: ['computer'] }), {
+      permissionMode: 'acceptEdits',
+      desktopMcpConfig: 'C:/jarvis/desktop.json',
+    });
+    expect(args).toEqual(expect.arrayContaining(['--mcp-config', 'C:/jarvis/desktop.json']));
+
+    // Headless Claude Code withholds the web tools unless they are named, and
+    // an assistant that cannot look anything up is half an assistant.
+    const allowed = args[args.indexOf('--allowedTools') + 1] ?? '';
+    expect(allowed).toContain('WebSearch');
+    expect(allowed).toContain('WebFetch');
+    expect(allowed).toContain('mcp__jarvis-desktop__screenshot');
+    expect(allowed).toContain('mcp__jarvis-desktop__remember');
+  });
+
+  it('грузит только свой MCP-сервер, а не чужие из настроек', () => {
+    // В глобальных настройках человека висят мёртвые серверы: один отказывает,
+    // другой ждёт таймаута тридцать секунд. Эта плата бралась с каждой задачи.
+    const args = buildClaudeArgs(request({ capabilities: ['computer'] }), {
+      permissionMode: 'acceptEdits',
+      desktopMcpConfig: 'C:/jarvis/desktop.json',
+    });
+    expect(args).toContain('--strict-mcp-config');
+  });
+
+  it('показывает агенту, на чём он уже спотыкался', () => {
+    // Самонаращивающийся кусок промпта: неудача из журнала сама становится
+    // строкой следующего поручения, без обучения и без денег.
+    const prompt = buildBackendPrompt({
+      ...request({}),
+      lessons: ['НА ЧЁМ ТЫ УЖЕ СПОТЫКАЛСЯ (не повторяй):', '- кириллица в скрипте'].join('\n'),
+    });
+
+    expect(prompt).toContain('НА ЧЁМ ТЫ УЖЕ СПОТЫКАЛСЯ');
+    expect(prompt).toContain('кириллица в скрипте');
+  });
+
+  it('держит уроки в узде по размеру', () => {
+    // Вход — самая дорогая часть работы агента. Кусок, растущий без предела,
+    // съедает и время, и квоту на каждой задаче.
+    const walls: string[] = [];
+    for (let i = 0; i < 50; i += 1) {
+      walls.push(`совершенно разная стена о которую бились ${'очень '.repeat(20)}${i}`);
+    }
+    const events = walls.flatMap((wall, index) => [
+      { at: 1_700_000_000_000 + index, kind: 'error' as const, text: wall },
+      { at: 1_700_000_000_000 + index + 86_400_000, kind: 'error' as const, text: wall },
+    ]);
+
+    const block = describeLessons(lessonsFrom({ events })) ?? '';
+    expect(block.length).toBeLessThan(1_000);
+  });
+
+  it('велит составить план и не останавливаться на полпути', () => {
+    // «Получил команду, составил план и работает» — это и есть требование.
+    // Помощник, спрашивающий разрешения на двадцатой минуте, ждёт у
+    // клавиатуры, за которой никого нет.
+    const prompt = buildBackendPrompt(request({}));
+
+    expect(prompt).toContain('set_plan');
+    expect(prompt).toContain('mark_step');
+    expect(prompt).toContain('show_plan');
+    expect(prompt).toContain('Не спрашивай разрешения посреди работы');
+  });
+
+  it('велит заглядывать, не сказал ли человек чего-нибудь', () => {
+    const prompt = buildBackendPrompt(request({}));
+
+    expect(prompt).toContain('check_notes');
+    expect(prompt).toContain('две минуты');
+  });
+
+  it('рассказывает агенту, где он живёт', () => {
+    // Права без знания бесполезны: агент, которому можно читать свою папку, но
+    // который не знает, что она у него есть, туда не заглянет.
+    const prompt = buildBackendPrompt({
+      ...request({}),
+      homeDir: 'C:/Users/ariel/AppData/Local/Rujarvis',
+    });
+    expect(prompt).toContain('C:/Users/ariel/AppData/Local/Rujarvis');
+    expect(prompt).toContain('характер.md');
+    expect(prompt).toContain('journal.json');
+  });
+
+  it('не выдумывает папку, которой не назвали', () => {
+    expect(buildBackendPrompt(request({}))).not.toContain('ГДЕ ТЫ ЖИВЁШЬ');
+  });
+
+  it('даёт агенту читать собственную папку Джарвиса', () => {
+    // «Дай ему права свободно читать собственную папку, чтоб он всё знал о
+    // себе». Без этого он заперт в папке задачи: спросить «почему ты так
+    // ответил» или «что у тебя в настройках» некому — свой же код и свой
+    // журнал он прочитать не может.
+    const args = buildClaudeArgs(request({}), {
+      permissionMode: 'acceptEdits',
+      homeDir: 'C:/Users/ariel/AppData/Local/Rujarvis',
+    });
+    expect(args).toEqual(
+      expect.arrayContaining(['--add-dir', 'C:/Users/ariel/AppData/Local/Rujarvis']),
+    );
+  });
+
+  it('даёт читать свою папку и там, где экран не нужен', () => {
+    // Знание о себе не зависит от того, просили ли трогать мышь.
+    const args = buildClaudeArgs(request({ capabilities: ['code'] }), {
+      permissionMode: 'acceptEdits',
+      homeDir: 'C:/жарвис',
+    });
+    expect(args).toContain('--add-dir');
+  });
+
+  it('не добавляет папку, которой не назвали', () => {
+    const args = buildClaudeArgs(request({}), { permissionMode: 'acceptEdits' });
+    expect(args).not.toContain('--add-dir');
+  });
+
+  it('называет папку один раз, даже если она же и рабочая', () => {
+    // Повтор безвреден, но мусорит в командной строке и путает при разборе
+    // логов запуска.
+    const args = buildClaudeArgs(request({ cwd: 'C:/жарвис' }), {
+      permissionMode: 'acceptEdits',
+      homeDir: 'C:/жарвис',
+    });
+    expect(args.filter((arg) => arg === '--add-dir')).toHaveLength(0);
+  });
+
+  it('leaves the desktop tools out of work that does not touch the screen', () => {
+    const args = buildClaudeArgs(request({ capabilities: ['code'] }), {
+      permissionMode: 'acceptEdits',
+      desktopMcpConfig: 'C:/jarvis/desktop.json',
+    });
+    expect(args).not.toContain('--mcp-config');
+  });
+
+  it.each(['vision', 'files', 'browser', 'system'] as const)(
+    'даёт инструменты рабочего стола задаче про %s',
+    (capability) => {
+      // Условие было «только capability computer», и из-за этого «нарисуй
+      // картинку» (vision) и «положи файл в папку» (files) доходили до агента
+      // вообще без инструментов: он не мог сделать ровно то, о чём просили.
+      const args = buildClaudeArgs(request({ capabilities: [capability] }), {
+        permissionMode: 'acceptEdits',
+        desktopMcpConfig: 'C:/jarvis/desktop.json',
+      });
+      expect(args).toContain('--mcp-config');
+    },
+  );
+
+  it('даёт агенту файловые инструменты, иначе он теряет то, что сделал', () => {
+    const args = buildClaudeArgs(request({ capabilities: ['files'] }), {
+      permissionMode: 'acceptEdits',
+      desktopMcpConfig: 'C:/jarvis/desktop.json',
+    });
+    const allowed = args[args.indexOf('--allowedTools') + 1] ?? '';
+    expect(allowed).toContain('mcp__jarvis-desktop__output_folder');
+    expect(allowed).toContain('mcp__jarvis-desktop__move_to_output');
+    expect(allowed).toContain('mcp__jarvis-desktop__show_file');
+    expect(allowed).toContain('mcp__jarvis-desktop__blender_python');
   });
 
   it('turns the stream into files, commands and a final answer', () => {
@@ -641,12 +912,35 @@ describe('BackendManager', () => {
     return manager;
   }
 
-  it('sends screen and browser work to the Workstation runtime', () => {
+  it('отдаёт работу с экраном агенту, у которого есть инструменты и скиллы', () => {
+    // Инструменты рабочего стола и скиллы под программы есть только у Claude
+    // Code. Рантайм, получавший такие задачи раньше, не видел ни того ни
+    // другого — и не мог ни собрать сцену в Blender, ни положить файл человеку.
     const manager = managerWith(
       stubBackend('interpreter', result({ ok: true })),
       stubBackend('claude-code', result({ ok: true })),
     );
     const plan = manager.plan(request({ capabilities: ['computer', 'vision'] }));
+    expect(plan.order[0]).toBe('claude-code');
+  });
+
+  it('оставляет рантайм запасным для экранной работы', () => {
+    // У него есть то, чего нет у агента; когда агент не установлен или
+    // исчерпан, работа должна доехать, а не упасть.
+    const manager = managerWith(
+      stubBackend('interpreter', result({ ok: true })),
+      stubBackend('claude-code', result({ ok: true })),
+    );
+    const plan = manager.plan(request({ capabilities: ['files'] }));
+    expect(plan.order).toEqual(['claude-code', 'interpreter']);
+  });
+
+  it('отправляет переписку в рантайм — там живые учётные записи', () => {
+    const manager = managerWith(
+      stubBackend('interpreter', result({ ok: true })),
+      stubBackend('claude-code', result({ ok: true })),
+    );
+    const plan = manager.plan(request({ capabilities: ['communication'] }));
     expect(plan.order[0]).toBe('interpreter');
   });
 
@@ -691,7 +985,7 @@ describe('BackendManager', () => {
       stubBackend('codex', result({ ok: true })),
     );
     const plan = manager.plan(request({ capabilities: ['computer'] }));
-    expect(plan.order[0]).toBe('interpreter');
+    expect(plan.order).not.toContain('codex');
   });
 
   it('falls back from a named Codex to Claude Code when Codex cannot connect', async () => {
@@ -808,5 +1102,46 @@ describe('isBackendLevelFailure', () => {
     expect(isBackendLevelFailure({ ...base, cancelled: true })).toBe(false);
     expect(isBackendLevelFailure({ ...base, timedOut: true })).toBe(false);
     expect(isBackendLevelFailure({ ...base, ok: true })).toBe(false);
+  });
+});
+
+describe('самозапись навыков', () => {
+  it('объясняет агенту, когда записывать найденное', () => {
+    // Иначе выясненное с трудом живёт до конца задачи, а в следующий раз
+    // выясняется заново — человеком, вручную.
+    const prompt = buildBackendPrompt(request({ capabilities: ['computer'] }));
+    expect(prompt).toContain('write_skill');
+    expect(prompt).toContain('list_skills');
+  });
+
+  it('не зовёт записывать навыки там, где нет инструментов', () => {
+    expect(buildBackendPrompt(request({ capabilities: ['reasoning'] }))).not.toContain('write_skill');
+  });
+});
+
+describe('свои постоянные указания', () => {
+  it('подмешивает их в каждый запрос', () => {
+    // Человек правит файл характера — и это должно действовать сразу,
+    // без пересборки и без меня.
+    const prompt = buildBackendPrompt(
+      request({ instructions: 'Отвечай коротко. Не извиняйся.' }),
+    );
+    expect(prompt).toContain('Отвечай коротко. Не извиняйся.');
+  });
+
+  it('ставит их раньше остального — они главнее', () => {
+    const prompt = buildBackendPrompt(
+      request({ instructions: 'ПОСТОЯННОЕ УКАЗАНИЕ', utterance: 'сделай что-нибудь' }),
+    );
+    expect(prompt.indexOf('ПОСТОЯННОЕ УКАЗАНИЕ')).toBeLessThan(prompt.indexOf('сделай что-нибудь'));
+  });
+
+  it('не оставляет пустого места, когда указаний нет', () => {
+    const prompt = buildBackendPrompt(request());
+    expect(prompt).not.toContain('ПОСТОЯННЫЕ УКАЗАНИЯ');
+  });
+
+  it('не ломается на пробельных указаниях', () => {
+    expect(buildBackendPrompt(request({ instructions: '   ' }))).not.toContain('ПОСТОЯННЫЕ УКАЗАНИЯ');
   });
 });

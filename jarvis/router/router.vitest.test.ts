@@ -125,13 +125,32 @@ describe('permission derivation', () => {
 });
 
 describe('route', () => {
-  it('routes «Открой Chrome» to the computer runtime', () => {
+  it('routes «Открой Chrome» to the agent that holds the desktop tools', () => {
     const decision = route('Открой Chrome');
     expect(decision.needs).toContain('computer');
     expect(decision.needs).toContain('browser');
-    expect(decision.target).toBe('interpreter');
+    expect(decision.target).toBe('claude-code');
     expect(decision.intent).toBe('browse');
     expect(decision.risk).toBe('safe');
+  });
+
+  it.each([
+    ['Нарисуй картинку с закатом', 'нарисуй'],
+    ['Сделай модель домика в блендере', 'блендер'],
+    ['Отрендери сцену', 'рендер'],
+    ['Начерти схему базы данных', 'схема'],
+  ])('понимает «%s» как работу с машиной', (utterance) => {
+    // Этих слов в словаре не было вовсе: задача про Blender не получала ни
+    // одного инструмента рабочего стола и была обречена до начала.
+    const decision = route(utterance);
+    expect(decision.needs).toContain('computer');
+    expect(decision.target).toBe('claude-code');
+  });
+
+  it('отдаёт работу с файлами туда, где есть папка для готовых файлов', () => {
+    const decision = route('Положи этот файл в папку');
+    expect(decision.needs).toContain('files');
+    expect(decision.target).toBe('claude-code');
   });
 
   it('routes «Закрой это окно» to window control and flags the missing context', () => {
@@ -139,14 +158,14 @@ describe('route', () => {
     expect(decision.needs).toContain('computer');
     expect(decision.intent).toBe('control_window');
     expect(decision.needsWorldState).toBe(true);
-    expect(decision.target).toBe('interpreter');
+    expect(decision.target).toBe('claude-code');
   });
 
   it('routes «Посмотри что сейчас на экране» to vision', () => {
     const decision = route('Посмотри что сейчас на экране и объясни мне');
     expect(decision.needs).toContain('vision');
     expect(decision.intent).toBe('query_screen');
-    expect(decision.target).toBe('interpreter');
+    expect(decision.target).toBe('claude-code');
   });
 
   it('routes a build failure in a known project to a coding backend', () => {
@@ -377,5 +396,120 @@ describe('local router model', () => {
     };
     const router = new LocalRouterModel({ client, model: 'qwen3:1.7b' });
     await expect(router.refine('почини билд')).resolves.toBeNull();
+  });
+});
+
+describe('намерение «сделать», а не «открыть»', () => {
+  it.each([
+    'создай в блендере красную сферу',
+    'нарисуй схему базы данных',
+    'сделай таблицу с расходами',
+    'построй график продаж',
+  ])('«%s» — это работа, а не запуск программы', (utterance) => {
+    // Отвечать «Открываю» на «создай сферу» — значит обещать не то, что будет.
+    expect(route(utterance).intent).toBe('make');
+  });
+
+  it('запуск программы остаётся запуском', () => {
+    expect(route('открой блендер').intent).toBe('open_app');
+    expect(route('запусти стим').intent).toBe('open_app');
+  });
+
+  it('закрытие окна остаётся управлением окном', () => {
+    expect(route('закрой это окно').intent).toBe('control_window');
+  });
+});
+
+describe('четыре красные линии', () => {
+  it.each([
+    'купи это на амазоне',
+    'оплати подписку',
+    'переведи деньги на карту',
+  ])('деньги спрашивают: «%s»', (utterance) => {
+    expect(route(utterance).risk).not.toBe('safe');
+    expect(route(utterance).risk).not.toBe('normal');
+  });
+
+  it.each([
+    'напиши маме в телеграм что я опоздаю',
+    'отправь письмо клиенту',
+  ])('общение с людьми спрашивает: «%s»', (utterance) => {
+    expect(['sensitive', 'dangerous']).toContain(route(utterance).risk);
+  });
+
+  it.each([
+    'удали всё в папке windows',
+    'почисти system32',
+    'сотри реестр',
+  ])('системные файлы спрашивают: «%s»', (utterance) => {
+    expect(route(utterance).risk).toBe('dangerous');
+  });
+
+  it.each([
+    'сделай громче',
+    'включи вайфай',
+    'убавь яркость',
+    'открой блендер',
+    'создай в блендере сферу',
+    'сохрани таблицу',
+    'прокрути вниз',
+  ])('остальное не спрашивает: «%s»', (utterance) => {
+    // Разрешения на каждый чих превращают голосового помощника в анкету.
+    expect(['safe', 'normal']).toContain(route(utterance).risk);
+  });
+
+  it('перезагрузка компьютера всё же спрашивает', () => {
+    // Это не «настройка звука»: несохранённое пропадёт у всех программ сразу.
+    expect(route('перезагрузи компьютер').risk).toBe('sensitive');
+  });
+});
+
+describe('распознаватель искажает слова', () => {
+  it.each([
+    'создая в Глендире красную сферу',
+    'сделай в глендер красную сферу',
+    'открой блэндер',
+  ])('«%s» всё равно про блендер', (utterance) => {
+    // Снято с живого распознавателя: «в блендере» он слышит как «в Глендире».
+    // Словарь этого не знал, и задача уходила в болтовню с ответом «не понял».
+    expect(route(utterance).needs).toContain('computer');
+  });
+
+  it.each([
+    'отправь привет в чат Джипетти',
+    'напиши в чатгпт привет',
+  ])('«%s» всё равно про ЧатГПТ', (utterance) => {
+    expect(route(utterance).needs).toContain('browser');
+  });
+
+  it('понимает глагол в неопределённой форме', () => {
+    // «Поменяй» распознаватель слышит как «поменять».
+    expect(route('поменять цвет сферы на зелёный').intent).toBe('make');
+  });
+});
+
+describe('«перевести» — это два разных дела', () => {
+  it('перевод текста не считается тратой денег', () => {
+    // Живой случай: «переведи все рассказы и портфолио на английский» попало
+    // под красную линию «трата денег», Claude Code запустился в режиме, где в
+    // безголовом запуске каждая запись молча отклоняется, и час работы ушёл в
+    // никуда. Слово одно, дела два.
+    for (const phrase of [
+      'переведи все рассказы на английский',
+      'переведи этот текст на иврит',
+      'сделай перевод документа на английский',
+    ]) {
+      expect(route(phrase, { basePermissions: DEFAULT_PERMISSIONS }).risk).not.toBe('sensitive');
+    }
+  });
+
+  it('денежный перевод по-прежнему спрашивает', () => {
+    for (const phrase of [
+      'переведи тысячу рублей на карту',
+      'переведи деньги на счёт',
+      'сделай перевод пятьсот шекелей',
+    ]) {
+      expect(route(phrase, { basePermissions: DEFAULT_PERMISSIONS }).risk).toBe('sensitive');
+    }
   });
 });

@@ -26,8 +26,23 @@ export interface SpokenSplitOptions {
   maxChars?: number;
 }
 
-const DEFAULT_MAX_SENTENCES = 3;
-const DEFAULT_MAX_CHARS = 280;
+/**
+ * Сколько говорить вслух.
+ *
+ * Было три предложения и 280 знаков, и это оказалось мало до вреда. Замер из
+ * журнала: на вопрос «какие три вопроса в конце брейншторма» ответ обрывался
+ * на первом же пункте, посреди фразы — человек услышал огрызок и решил, что
+ * помощник не понял вопроса.
+ *
+ * Восемь предложений и девятьсот знаков — это около минуты речи. Много для
+ * подтверждения «готово», в самый раз для ответа на вопрос. Перебить можно в
+ * любой момент: достаточно заговорить.
+ */
+const DEFAULT_MAX_SENTENCES = 8;
+const DEFAULT_MAX_CHARS = 900;
+
+/** Чем сказать, что сказано не всё. Молчаливый обрыв читается как поломка. */
+const THERE_IS_MORE = 'Дальше — на экране.';
 
 /** Removes anything that is noise when read aloud. */
 export function stripUnspeakable(text: string): string {
@@ -103,14 +118,37 @@ export function toSpokenResponse(
 
   const picked: string[] = [];
   let length = 0;
+  let dropped = false;
+
   for (const sentence of sentences) {
-    if (picked.length >= maxSentences) break;
+    if (picked.length >= maxSentences) {
+      dropped = true;
+      break;
+    }
     const remaining = maxChars - length;
-    if (remaining <= 20) break;
-    const candidate = shorten(sentence, remaining);
-    picked.push(candidate);
-    length += candidate.length + 1;
+    if (remaining <= 20) {
+      dropped = true;
+      break;
+    }
+
+    // Целыми предложениями, а не по знакам.
+    //
+    // Обрыв посреди фразы — худший вид ответа: человек слышит огрызок и не
+    // может отличить его от поломки. Длинное предложение всё же режем, но
+    // только если оно первое: иначе сказать было бы вовсе нечего.
+    if (sentence.length > remaining) {
+      if (picked.length === 0) {
+        picked.push(shorten(sentence, remaining));
+      }
+      dropped = true;
+      break;
+    }
+
+    picked.push(sentence);
+    length += sentence.length + 1;
   }
+
+  if (dropped && picked.length > 0) picked.push(THERE_IS_MORE);
 
   const spoken = picked.join(' ').trim();
   return {

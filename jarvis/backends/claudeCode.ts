@@ -70,6 +70,15 @@ export interface ClaudeCodeBackendOptions {
    * derived from model output: only an explicit user setting turns it on.
    */
   allowBypassPermissions?: boolean;
+  /** Enables computer use by handing the agent the desktop MCP server. */
+  desktopMcpConfig?: string;
+  /**
+   * Папка, в которой Джарвис живёт.
+   *
+   * Даётся агенту на чтение всегда, чтобы он знал о себе: свой код, свои
+   * настройки, свой журнал, свои навыки.
+   */
+  homeDir?: string;
   defaultTimeoutMs?: number;
   availabilityTtlMs?: number;
   spawnCli?: SpawnCli;
@@ -96,13 +105,36 @@ export function selectPermissionMode(
   if (request.risk === 'safe' || request.risk === 'normal') {
     return 'acceptEdits';
   }
-  // Sensitive and dangerous work keeps the CLI's own prompting behaviour.
+
+  // Человек уже сказал «да» — значит работу надо делать, а не спрашивать снова.
+  //
+  // Режим `default` в безголовом запуске не спрашивает: спрашивать некого. Он
+  // молча отклоняет каждую запись, и задача идёт до конца, тратит время и не
+  // оставляет ничего. Подтверждение, которое ничего не разрешает, — не
+  // осторожность, а театр.
+  //
+  // Спрашивает Джарвис сам и голосом (`core.ts`, шаг 4), и спрашивает ДО
+  // запуска. Второй раз спрашивать некому и незачем.
+  if (request.approved === true) {
+    return 'acceptEdits';
+  }
+
+  // Без подтверждения опасное остаётся спрашивающим — и в безголовом запуске
+  // это означает отказ. Так и задумано: несогласованную опасную работу лучше не
+  // сделать, чем сделать.
   return 'default';
 }
 
 export function buildClaudeArgs(
   request: BackendRequest,
-  options: { model?: string; permissionMode: ClaudePermissionMode },
+  options: {
+    model?: string;
+    permissionMode: ClaudePermissionMode;
+    /** Path to the MCP config that gives the agent the screen and the mouse. */
+    desktopMcpConfig?: string;
+    /** Папка, в которой Джарвис живёт: его код, настройки, журнал, навыки. */
+    homeDir?: string;
+  },
 ): string[] {
   const args = ['-p', '--output-format', 'stream-json', '--verbose'];
   args.push('--permission-mode', options.permissionMode);
@@ -112,8 +144,136 @@ export function buildClaudeArgs(
   if (request.sessionId) {
     args.push('--resume', request.sessionId);
   }
+
+  // Собственная папка — всегда, независимо от того, что за работа.
+  //
+  // Человек попросил прямо: «дай ему права свободно читать собственную папку,
+  // чтоб он всё знал о себе». Без этого агент заперт в папке задачи, и на
+  // вопросы вроде «почему ты так ответил», «что у тебя в настройках», «какие у
+  // тебя навыки» он может только гадать — притом что ответ лежит на диске в
+  // двух шагах.
+  //
+  // Это доступ на чтение к своему же коду и своим же данным, а не к чужим
+  // файлам: папка одна и известна заранее.
+  if (options.homeDir && !sameFolder(options.homeDir, request.cwd)) {
+    args.push('--add-dir', options.homeDir);
+  }
+
+  // Passed per run rather than registered once for the whole machine. A tool
+  // that moves the mouse and types should reach the assistant's own agent, not
+  // every Claude Code session the user opens for unrelated work — and the
+  // narrower grant is also the one worth asking for.
+  if (options.desktopMcpConfig && needsDesktopTools(request.capabilities)) {
+    args.push('--mcp-config', options.desktopMcpConfig);
+    // Только наш сервер, и ничей больше.
+    //
+    // Без этого к каждой задаче добавляются MCP-серверы из глобальных
+    // настроек человека. У него там два мёртвых: obsidian отказывает в
+    // соединении, colab-mcp ждёт таймаута тридцать секунд. Эта плата берётся
+    // с каждой задачи, и голосовой помощник от неё перестаёт быть быстрым.
+    args.push('--strict-mcp-config');
+    // Headless Claude Code withholds the web tools and anything that runs
+    // commands unless they are named. Naming them is the difference between an
+    // agent that can look something up mid-task and one that can only guess.
+    args.push('--allowedTools', DESKTOP_RUN_TOOLS.join(','));
+  }
   return args;
 }
+
+/**
+ * Одна ли это папка.
+ *
+ * Рабочая папка задачи часто и есть папка Джарвиса — тогда называть её второй
+ * раз незачем. Windows не различает регистр и пишет пути обоими видами косой
+ * черты, поэтому сравнение не строковое.
+ */
+function sameFolder(a: string, b: string | undefined): boolean {
+  if (!b) return false;
+  const norm = (value: string): string =>
+    value.split(/[\\/]+/u).filter(Boolean).join('/').toLowerCase();
+  return norm(a) === norm(b);
+}
+
+/**
+ * Когда агенту нужны инструменты рабочего стола.
+ *
+ * Условие было «capability computer», и это оказалось слишком узко до
+ * бесполезности. «Нарисуй картинку» роутер относит к `vision`, «положи файл в
+ * папку» — к `files`, задача про Blender — к `computer` только если в ней
+ * прозвучало слово вроде «открой». Во всех остальных случаях агент получал
+ * ноль инструментов рабочего стола и честно не мог сделать ровно то, о чём его
+ * попросили: ни файл положить, ни сцену собрать.
+ */
+function needsDesktopTools(capabilities: readonly JarvisCapability[]): boolean {
+  return DESKTOP_CAPABILITIES.some((capability) => capabilities.includes(capability));
+}
+
+const DESKTOP_CAPABILITIES: readonly JarvisCapability[] = [
+  'computer',
+  'vision',
+  'browser',
+  'files',
+  'system',
+];
+
+/**
+ * What the agent may use while working on the screen.
+ *
+ * The desktop tools, the web, and the ordinary file and shell tools it needs to
+ * finish a job it started — a task that begins with a click often ends with a
+ * file.
+ */
+const DESKTOP_RUN_TOOLS = [
+  'mcp__jarvis-desktop__screenshot',
+  'mcp__jarvis-desktop__click',
+  'mcp__jarvis-desktop__type_text',
+  'mcp__jarvis-desktop__press_key',
+  'mcp__jarvis-desktop__scroll',
+  'mcp__jarvis-desktop__list_windows',
+  'mcp__jarvis-desktop__focus_window',
+  'mcp__jarvis-desktop__remember',
+  'mcp__jarvis-desktop__recall',
+  'mcp__jarvis-desktop__recent_actions',
+  'mcp__jarvis-desktop__check_notes',
+  'mcp__jarvis-desktop__set_plan',
+  'mcp__jarvis-desktop__mark_step',
+  'mcp__jarvis-desktop__show_plan',
+  'mcp__jarvis-desktop__page_ride',
+  'mcp__jarvis-desktop__page_depth',
+  'mcp__jarvis-desktop__blender_live_start',
+  'mcp__jarvis-desktop__blender_live',
+  'mcp__jarvis-desktop__write_skill',
+  'mcp__jarvis-desktop__list_skills',
+  'mcp__jarvis-desktop__forget',
+  'mcp__jarvis-desktop__browser_open',
+  'mcp__jarvis-desktop__browser_read',
+  'mcp__jarvis-desktop__browser_controls',
+  'mcp__jarvis-desktop__browser_click',
+  'mcp__jarvis-desktop__browser_fill',
+  'mcp__jarvis-desktop__browser_key',
+  'mcp__jarvis-desktop__browser_tabs',
+  'mcp__jarvis-desktop__browser_download',
+  'mcp__jarvis-desktop__browser_wait_for',
+  'mcp__jarvis-desktop__blender_python',
+  'mcp__jarvis-desktop__output_folder',
+  'mcp__jarvis-desktop__list_files',
+  'mcp__jarvis-desktop__move_to_output',
+  'mcp__jarvis-desktop__show_file',
+  'WebSearch',
+  'WebFetch',
+  'Bash',
+  'Read',
+  'Write',
+  'Edit',
+  'Glob',
+  'Grep',
+  // Список инструментов заодно отсекает всё, что в него не попало. Работа по
+  // коду с файлами тоже проходит этой веткой, поэтому её обычные инструменты
+  // должны быть здесь, иначе она молча теряет половину своих возможностей.
+  'MultiEdit',
+  'NotebookEdit',
+  'TodoWrite',
+];
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit']);
 
@@ -315,10 +475,18 @@ export class ClaudeCodeBackend implements AgentBackend {
     return createCliRun({
       backend: BACKEND_ID,
       availability: () => this.checkAvailability(),
-      buildArgs: () => buildClaudeArgs(request, { model: this.options.model, permissionMode }),
+      buildArgs: () =>
+        buildClaudeArgs(request, {
+          model: this.options.model,
+          permissionMode,
+          desktopMcpConfig: this.options.desktopMcpConfig,
+          homeDir: this.options.homeDir,
+        }),
       cwd: request.cwd,
       timeoutMs: request.timeoutMs ?? this.options.defaultTimeoutMs ?? 20 * 60_000,
-      stdin: buildBackendPrompt(request),
+      // Собственная папка — свойство ассистента, а не отдельной просьбы,
+      // поэтому подставляется здесь, а не тащится через всё ядро.
+      stdin: buildBackendPrompt({ ...request, homeDir: this.options.homeDir }),
       consumeLine: consumeClaudeStreamLine,
       messages: {
         unavailable: 'Claude Code недоступен',

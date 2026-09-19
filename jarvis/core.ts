@@ -19,13 +19,23 @@
  */
 
 import { BackendManager, type BackendPreference } from './backends/manager';
+import { BACKEND_IDS } from './backends/types';
 import type {
   BackendId,
   BackendRequest,
   BackendResult,
 } from './backends/types';
 import { WorldStateStore, selectWorldStateLines } from './context/worldState';
-import { JarvisMemory } from './memory/store';
+import { JarvisMemory, type TaskMemory } from './memory/store';
+
+/**
+ * Сколько задача остаётся «той самой».
+ *
+ * Пять минут — столько человек помнит, чем только что занимался, и столько
+ * фраза вроде «поменяй цвет» ещё относится к сделанному.
+ */
+const CONTINUATION_WINDOW_MS = 5 * 60_000;
+
 import {
   DEFAULT_RISK_POLICY,
   reconcileModelRiskClaim,
@@ -46,7 +56,13 @@ import {
 } from './router/router';
 import { TaskManager, type JarvisTask } from './tasks/manager';
 import { DEFAULT_PERMISSIONS, riskRank, type TaskPermissions } from './types';
+import {
+  continuesConversation,
+  openConversation,
+  type OpenConversation,
+} from './dialogue/conversation';
 import { acknowledgementFor, clarificationFor } from './voice/acknowledgement';
+import { isPleasantry } from './voice/noise';
 import {
   applyVoiceControl,
   matchVoiceControl,
@@ -93,12 +109,36 @@ export interface JarvisCoreOptions {
   speak?(text: string): void;
   /** Asks the user to approve sensitive or dangerous work. */
   approve?(request: ApprovalRequest): Promise<boolean>;
+  /** Папка, куда складывать готовые файлы. Показывается агенту в запросе. */
+  outputDir?: string;
+  /**
+   * Что Джарвис делал в последнее время — свежее дословно, старое сводкой.
+   *
+   * Пассивная память, в отличие от `memory`: та хранит выводы, которые агент
+   * записал сам, а эта — события, случившиеся без его участия. Без неё «а где
+   * он?» и «переделай» повисают в пустоте.
+   */
+  recentActions?(): string[];
+  /**
+   * Постоянные указания человека — его собственный системный промпт.
+   *
+   * Функцией, а не строкой: файл читается на каждую задачу, поэтому правка
+   * действует сразу, без перезапуска.
+   */
+  instructions?(): string | undefined;
+  /**
+   * На чём уже спотыкались. Функцией по той же причине, что и указания:
+   * собирается из журнала на каждую задачу, поэтому свежая неудача учитывается
+   * в следующей же.
+   */
+  lessons?(): string | undefined;
   now?: () => number;
 }
 
 export type JarvisTurn =
   | { kind: 'control'; outcome: ControlOutcome; spoken: string }
   | { kind: 'clarify'; spoken: string; decision: RoutingDecision }
+  | { kind: 'chat'; spoken: string }
   | { kind: 'refused'; spoken: string; decision: RoutingDecision }
   | {
       kind: 'task';
@@ -107,6 +147,23 @@ export type JarvisTurn =
       task: JarvisTask;
       normalized: NormalizedTask;
     };
+
+/**
+ * Продолжение разговора идёт к тому, у кого лежит сессия.
+ *
+ * Иначе получается бессмыслица: сессия со сферой у Claude Code, а «сделай её
+ * зелёной» сама по себе маршрутизируется в интерпретатор — и продолжать там
+ * нечего. Бэкенд записан вместе с сессией; если в памяти оказалось незнакомое
+ * имя, решение остаётся как было.
+ */
+function withConversationBackend(
+  decision: RoutingDecision,
+  conversation: OpenConversation,
+): RoutingDecision {
+  const backend = BACKEND_IDS.find((id) => id === conversation.backend);
+  if (!backend) return decision;
+  return { ...decision, target: backend, requestedBackend: backend };
+}
 
 /** Short Russian label for the task list, built from the request itself. */
 export function taskTitle(decision: RoutingDecision, utterance: string): string {
@@ -126,6 +183,23 @@ export class JarvisCore {
 
   constructor(private readonly options: JarvisCoreOptions) {
     this.now = options.now ?? Date.now;
+  }
+
+  /** Идёт ли сейчас разговор: голосовому слою это нужно, чтобы не глушить его. */
+  hasOpenConversation(): boolean {
+    return openConversation(this.options.memory.lastTask(), this.now()) !== null;
+  }
+
+  /**
+   * Задача, которую человек, скорее всего, имеет в виду.
+   *
+   * Только свежая: через час «поменяй цвет» относится уже к чему-то другому, и
+   * цепляться за вчерашнее хуже, чем переспросить.
+   */
+  private recentTask(): TaskMemory | null {
+    const last = this.options.memory.lastTask();
+    if (!last) return null;
+    return this.now() - last.finishedAt <= CONTINUATION_WINDOW_MS ? last : null;
   }
 
   /**
@@ -186,6 +260,7 @@ export class JarvisCore {
     // 4. Ask before anything sensitive. A model's own risk claim can raise the
     //    class but never lower it.
     const risk = reconcileModelRiskClaim(decision.risk, undefined);
+    let approvedByHuman = false;
     if (riskRank(risk) >= riskRank(settings.riskPolicy.approvalFrom)) {
       const approved = this.options.approve
         ? await this.options.approve({
@@ -199,10 +274,65 @@ export class JarvisCore {
         this.say(spoken, settings);
         return { kind: 'refused', spoken, decision };
       }
+      approvedByHuman = true;
     }
 
-    // 5. Ask rather than guess when the words carried almost nothing.
-    const clarification = clarificationFor(decision);
+    // 5. Вежливость — не поручение.
+    //
+    // Без этой проверки «спасибо» после сделанной сферы уходило в шаг 6: там
+    // маршрут пересчитывался по обеим фразам сразу, «Создай в блендере
+    // красную сферу. Спасибо» получало высокую уверенность — и Джарвис делал
+    // вторую сферу в ответ на благодарность.
+    if (isPleasantry(utterance)) {
+      const spoken = 'Пожалуйста.';
+      this.say(spoken, settings);
+      return { kind: 'chat', spoken };
+    }
+
+    // 6. Фраза, опирающаяся на сказанное раньше.
+    //
+    // «Поменяй цвет сферы на зелёный» само по себе не значит ничего: ни одной
+    // capability, уверенность 0.35, и ассистент честно отвечал «не понял». Но
+    // после «создай в блендере красную сферу» оно значит всё.
+    //
+    // Поэтому маршрут пересчитывается по обеим фразам сразу, а агенту
+    // передаётся его же прошлая сессия — там он помнит, какую сферу сделал, и
+    // объяснять ему это заново не нужно.
+    const conversation = openConversation(this.options.memory.lastTask(), this.now());
+    const continuesTalk = continuesConversation(utterance, decision, conversation);
+
+    let clarification = clarificationFor(decision);
+    let continuing: TaskMemory | null = null;
+
+    if (clarification || continuesTalk) {
+      const recent = this.recentTask();
+      if (recent) {
+        continuing = recent;
+        decision = route(`${recent.utterance}. ${utterance}`, {
+          basePermissions: settings.basePermissions,
+          context: {
+            knownProjects: this.options.memory.knownProjects(),
+            currentProject: this.options.world.snapshot().currentProject,
+            hasRunningTask: this.options.tasks.active().length > 0,
+            codingPreference: settings.codingPreference,
+            mainPreference: settings.mainPreference,
+          },
+        });
+        clarification = clarificationFor(decision);
+      }
+    }
+
+    // Пока разговор открыт, переспрашивать некого.
+    //
+    // Непонятную фразу понимает не человек, а тот, кто эту работу делал: у
+    // него в сессии лежит всё, что уже было сказано. Спрашивать «уточни?» в
+    // разговоре — то же самое, что переспрашивать собеседника на каждой
+    // второй реплике.
+    if (continuesTalk && conversation) {
+      clarification = null;
+      decision = withConversationBackend(decision, conversation);
+    }
+
     if (clarification) {
       this.say(clarification, settings);
       return { kind: 'clarify', spoken: clarification, decision };
@@ -215,6 +345,8 @@ export class JarvisCore {
         needsWorldState: decision.needsWorldState,
         limit: 5,
       }),
+      ...(this.options.recentActions?.() ?? []),
+      ...(continuing ? [`Это продолжение: «${continuing.utterance}» — ${continuing.outcome}`] : []),
     ];
 
     const resumable =
@@ -231,8 +363,15 @@ export class JarvisCore {
       capabilities: decision.needs,
       risk,
       permissions: normalized.permissions,
-      sessionId: resumable?.sessionId,
+      // Та же сессия агента: продолжая свою работу, он помнит её без пересказа.
+      sessionId: resumable?.sessionId ?? continuing?.sessionId ?? conversation?.sessionId,
       language: 'ru',
+      outputDir: this.options.outputDir,
+      instructions: this.options.instructions?.(),
+      lessons: this.options.lessons?.(),
+      // Согласие человека едет с задачей: иначе бэкенд запустится в режиме, где
+      // каждая запись отклоняется, и согласие не купит ничего.
+      approved: approvedByHuman,
     };
 
     const preference: BackendPreference = toBackendPreference(decision, {

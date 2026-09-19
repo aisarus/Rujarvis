@@ -226,6 +226,118 @@ function Assert-NodeVersion {
 "@
 }
 
+function Get-PinnedBunVersion {
+    # Версия Bun закреплена в CI, а не здесь: так требование живёт в одном
+    # месте и не расходится с тем, что проект действительно проверяет.
+    param([Parameter(Mandatory)] [string] $SourceDir)
+
+    $workflow = Join-Path $SourceDir '.github/workflows/ci.yml'
+    if (-not (Test-Path $workflow)) { return $null }
+
+    $match = [regex]::Match((Get-Content $workflow -Raw), 'bun-version:\s*([0-9]+\.[0-9]+\.[0-9]+)')
+    if (-not $match.Success) { return $null }
+    return $match.Groups[1].Value
+}
+
+function Get-BunVersionProblem {
+    # Чистая функция: решает, годится ли версия, и ничего не делает с машиной.
+    # Возвращает $null, когда всё в порядке, иначе — готовое сообщение.
+    param(
+        [Parameter(Mandatory)] [string] $SourceDir,
+        [Parameter(Mandatory)] [string] $CurrentVersion
+    )
+
+    $wanted = Get-PinnedBunVersion -SourceDir $SourceDir
+    if (-not $wanted) { return $null }
+
+    $wantedLine = ($wanted -split '\.')[0..1] -join '.'
+    $currentLine = ($CurrentVersion.Trim() -split '\.')[0..1] -join '.'
+    if ($currentLine -eq $wantedLine) { return $null }
+
+    return @"
+Нужен Bun линии $wantedLine (CI закрепляет $wanted), а установлен $CurrentVersion.
+Начиная с 1.3 Bun отказывается запускать pnpm.cmd без shell: true, и сборка
+подмодуля interpreter-extension падает с ошибкой EINVAL.
+
+Выполните:
+
+    winget install --id Oven-sh.Bun --version $wanted --force
+
+Если этой версии нет в winget, подойдёт любая из линии ${wantedLine}:
+
+    winget show Oven-sh.Bun --versions
+"@
+}
+
+function Assert-BunVersion {
+    param([Parameter(Mandatory)] [string] $SourceDir)
+
+    $wanted = Get-PinnedBunVersion -SourceDir $SourceDir
+    if (-not $wanted) { return }
+
+    $current = (bun --version).Trim()
+    if (-not (Get-BunVersionProblem -SourceDir $SourceDir -CurrentVersion $current)) {
+        Write-Ok "Bun $current"
+        return
+    }
+
+    # winget чаще всего может это починить сам, не отправляя человека читать
+    # инструкцию. Точной версии из CI в каталоге может не быть, поэтому берём
+    # самую свежую из нужной линии.
+    if (Test-Command 'winget') {
+        $wantedLine = ($wanted -split '\.')[0..1] -join '.'
+        Write-Note "Установлен Bun $current, нужна линия $wantedLine — ставлю через winget."
+
+        $candidates = @($wanted)
+        $available = winget show Oven-sh.Bun --versions 2>$null |
+            Where-Object { $_ -match "^$([regex]::Escape($wantedLine))\." } |
+            ForEach-Object { $_.Trim() }
+        if ($available) { $candidates += $available }
+
+        foreach ($candidate in ($candidates | Select-Object -Unique)) {
+            winget install --id Oven-sh.Bun --version $candidate --source winget `
+                --accept-source-agreements --accept-package-agreements --silent --scope user --force 2>&1 | Out-Null
+
+            $switched = (bun --version).Trim()
+            if (-not (Get-BunVersionProblem -SourceDir $SourceDir -CurrentVersion $switched)) {
+                Write-Ok "Bun $switched"
+                return
+            }
+        }
+    }
+
+    throw (Get-BunVersionProblem -SourceDir $SourceDir -CurrentVersion $current)
+}
+
+function Get-GitUnixToolsDir {
+    # Скрипты сборки подмодуля interpreter-extension написаны под Unix и зовут
+    # `rm`. pnpm на Windows запускает их через cmd.exe, где `rm` нет, — сборка
+    # падает с кодом 127. Git для Windows приносит эти утилиты с собой.
+    $git = Get-Command git -ErrorAction SilentlyContinue
+    if (-not $git) { return $null }
+
+    $root = Split-Path -Parent (Split-Path -Parent $git.Source)
+    if (-not $root) { return $null }
+
+    $candidate = Join-Path $root 'usr\bin'
+    if (Test-Path (Join-Path $candidate 'rm.exe')) { return $candidate }
+    return $null
+}
+
+function Add-GitUnixToolsToPath {
+    $tools = Get-GitUnixToolsDir
+    if (-not $tools) {
+        Write-Note 'Unix-утилиты Git не найдены — сборка подмодуля может упасть на `rm`.'
+        return
+    }
+    if (($env:Path -split ';') -contains $tools) { return }
+
+    # Только в КОНЕЦ PATH. В начале этот каталог перекрыл бы системный tar.exe
+    # версией из MSYS, которая принимает пути вида C:\... за имя удалённого
+    # хоста и роняет распаковку рантайма.
+    $env:Path = $env:Path.TrimEnd(';') + ';' + $tools
+}
+
 function New-Shortcut {
     param(
         [Parameter(Mandatory)] [string] $Path,
@@ -290,6 +402,7 @@ if (-not (Test-Path (Join-Path $SourceDir 'jarvis/core.ts'))) {
 Write-Ok "Исходники: $SourceDir"
 
 Assert-NodeVersion -SourceDir $SourceDir
+Assert-BunVersion -SourceDir $SourceDir
 
 Push-Location $SourceDir
 try {
@@ -302,6 +415,7 @@ try {
 
     if (-not $SkipBuild) {
         Write-Step 'Собираю приложение (это самая долгая часть)'
+        Add-GitUnixToolsToPath
         Invoke-Checked -FilePath 'pnpm' -Arguments @('run', 'build') -What 'pnpm run build'
         Write-Ok 'Сборка готова.'
     }
@@ -322,6 +436,10 @@ $launcher = Join-Path $InstallRoot 'Rujarvis.cmd'
 @"
 @echo off
 cd /d "$SourceDir"
+rem Без этой переменной распакованный Electron идёт за интерфейсом на
+rem localhost:5173, то есть на dev-сервер Vite, которого у пользователя нет,
+rem и приложение закрывается с ERR_CONNECTION_REFUSED.
+set INTERPRETER_USE_BUILT_RENDERER=true
 call pnpm start
 "@ | Set-Content -Path $launcher -Encoding ASCII
 
@@ -333,7 +451,7 @@ Write-Host ''
 Write-Host '  Готово.' -ForegroundColor Green
 Write-Host ''
 Write-Host '  Запуск:  меню «Пуск» → Rujarvis' -ForegroundColor White
-Write-Host "  Или:     cd `"$SourceDir`" ; pnpm start" -ForegroundColor DarkGray
+Write-Host "  Или:     cd `"$SourceDir`" ; `$env:INTERPRETER_USE_BUILT_RENDERER='true' ; pnpm start" -ForegroundColor DarkGray
 Write-Host ''
 Write-Host '  Зажмите Ctrl + Space и говорите. Или скажите «Джарвис».' -ForegroundColor White
 Write-Host ''

@@ -62,6 +62,33 @@ export interface CreateJarvisOptions {
    * and never inferred from anything a model said.
    */
   allowUnrestrictedCli?: boolean;
+  /**
+   * Path to an MCP config giving the coding backend the screen and the mouse.
+   *
+   * Passed per run rather than registered for the whole machine, so the tools
+   * reach Jarvis's own agent and not every Claude Code session the user opens.
+   */
+  desktopMcpConfig?: string;
+  /**
+   * Папка, в которой Джарвис живёт: его код, настройки, журнал, навыки.
+   *
+   * Агент получает её на чтение всегда — чтобы на вопрос о себе отвечать по
+   * своим файлам, а не по догадкам.
+   */
+  homeDir?: string;
+  /** Папка на рабочем столе, куда агент складывает готовые файлы. */
+  outputDir?: string;
+  /**
+   * Журнал собственных действий — пассивная память.
+   *
+   * Передаётся функцией, а не объектом: ядру нужны только готовые строки, и
+   * оно не должно знать ни про диск, ни про то, как они устроены.
+   */
+  recentActions?(): string[];
+  /** Постоянные указания человека, читаемые на каждую задачу. */
+  instructions?(): string | undefined;
+  /** На чём уже спотыкались — собирается из журнала на каждую задачу. */
+  lessons?(): string | undefined;
 }
 
 export interface Jarvis {
@@ -88,6 +115,8 @@ export function createJarvis(options: CreateJarvisOptions = {}): Jarvis {
       probe: createWorkstationClaudeProbe(),
       model: options.claudeModel,
       allowBypassPermissions: options.allowUnrestrictedCli === true,
+      desktopMcpConfig: options.desktopMcpConfig,
+      homeDir: options.homeDir,
     }),
   );
 
@@ -142,6 +171,10 @@ export function createJarvis(options: CreateJarvisOptions = {}): Jarvis {
     settings: options.settings ?? (() => DEFAULT_JARVIS_SETTINGS),
     speak: options.speak,
     approve: options.approve,
+    outputDir: options.outputDir,
+    recentActions: options.recentActions,
+    instructions: options.instructions,
+    lessons: options.lessons,
   });
 
   return {

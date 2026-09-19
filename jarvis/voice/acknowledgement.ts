@@ -21,6 +21,8 @@ import type { JarvisIntent, RoutingDecision } from '../router/router';
  */
 const ACKNOWLEDGEMENTS: Record<JarvisIntent, string[]> = {
   open_app: ['Открываю.', 'Сейчас открою.', 'Секунду, открываю.'],
+  // «Открываю» в ответ на «создай сферу» обещает не то, что произойдёт.
+  make: ['Делаю.', 'Сейчас сделаю.', 'Принялся.'],
   control_window: ['Сейчас.', 'Готово, делаю.', 'Ага, делаю.'],
   modify_project: ['Понял, берусь.', 'Так, смотрю проект.', 'Ок, займусь этим.'],
   inspect_project: ['Сейчас посмотрю проект.', 'Да, смотрю.', 'Гляну.'],

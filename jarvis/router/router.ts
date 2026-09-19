@@ -43,6 +43,7 @@ import {
 
 export type JarvisIntent =
   | 'open_app'
+  | 'make'
   | 'control_window'
   | 'modify_project'
   | 'inspect_project'
@@ -173,16 +174,57 @@ function detectIntent(
   if (capabilities.has('communication')) return 'communicate';
   if (capabilities.has('vision')) return 'query_screen';
   if (capabilities.has('coding')) return editing ? 'modify_project' : 'inspect_project';
+
+  // «Сделать» важнее того, где именно: и таблица, и сцена, и картинка — это
+  // работа, а не запуск программы и не поиск файла. Отвечать «Открываю» на
+  // «создай сферу» значит обещать не то, что произойдёт.
+  if (
+    hasAnyStem(tokens, MAKING_VERBS) &&
+    (capabilities.has('computer') || capabilities.has('files') || capabilities.has('browser'))
+  ) {
+    return 'make';
+  }
+
   if (capabilities.has('browser')) return 'browse';
   if (capabilities.has('system')) return 'system';
   if (capabilities.has('files')) return 'file_task';
   if (capabilities.has('computer')) {
-    return hasAnyStem(tokens, ['закро', 'сверн', 'разверн', 'переключ']) ? 'control_window' : 'open_app';
+    return hasAnyStem(tokens, ['закро', 'сверн', 'разверн', 'переключ'])
+      ? 'control_window'
+      : 'open_app';
   }
   return 'chat';
 }
 
-/** Words that promise wide destruction — enough to start at the top class. */
+/**
+ * Глаголы созидания.
+ *
+ * Отличают работу в программе от её запуска. Проверяются после слов закрытия,
+ * но до «открыть»: «открой блендер и создай сферу» — это всё-таки работа.
+ */
+const MAKING_VERBS = [
+  'созда', 'сдела', 'нарисуй', 'нарисова', 'рисуй', 'начерт', 'постро',
+  'собер', 'собра', 'отрендер', 'напиши', 'сгенерир', 'смоделир', 'слепи',
+  'перекрас', 'помен', 'измен', 'испра', 'переде',
+  // Неопределённая форма: распознаватель слышит «поменять» вместо «поменяй».
+  'сделать', 'создать', 'нарисовать', 'построить', 'поменять', 'изменить',
+];
+
+/**
+ * Четыре красные линии — и больше ничего.
+ *
+ * Разрешение на каждый чих превращает голосового помощника в анкету: человек
+ * говорит «сделай громче» и ждёт вопроса «выполнять?». Поэтому спрашиваем
+ * только там, где ошибка необратима или стоит денег:
+ *
+ *   1. трата денег;
+ *   2. общение от его имени с другими людьми;
+ *   3. системные файлы Windows и чужие большие проекты;
+ *   4. выключение и перезагрузка машины.
+ *
+ * Всё остальное — громкость, окна, файлы в своей папке, работа в программах —
+ * делается молча.
+ */
 const DESTRUCTIVE_HINT_PHRASES: string[][] = [
   ['удал', 'все'],
   ['удал', 'всё'],
@@ -196,16 +238,74 @@ const DESTRUCTIVE_HINT_PHRASES: string[][] = [
   ['отключ', 'брандмауэр'],
 ];
 
+/** Системные места Windows: ошибка здесь чинится переустановкой. */
+const SYSTEM_PLACE_STEMS = [
+  'windows', 'виндов', 'system32', 'систем32', 'реестр', 'registry',
+  'program', 'загрузчик', 'boot', 'драйвер',
+];
+
+/** Слова, за которыми стоят деньги. */
+const MONEY_STEMS = [
+  'куп', 'покуп', 'оплат', 'плат', 'платеж', 'платёж', 'подписк', 'заказ',
+  'карт', 'счёт', 'счет', 'банк', 'кошел', 'биткоин',
+  'крипт', 'продай', 'ставк',
+];
+
+/**
+ * «Перевести» — это два разных дела, и одно из них про деньги.
+ *
+ * Слово стояло в списке денежных прямо, и живой случай показал цену: «переведи
+ * все рассказы и портфолио на английский» попало под красную линию «трата
+ * денег». Дальше Claude Code запустился в режиме, который в безголовом запуске
+ * не спрашивает, а молча отклоняет каждую запись, — и час работы ушёл в никуда
+ * с бодрым отчётом о сделанном.
+ *
+ * Различает не слово, а то, что стоит рядом. Деньги переводят на счёт, на
+ * карту, в рублях; тексты — на язык.
+ */
+const TRANSFER_STEMS = ['переведи', 'перевод', 'переведён', 'переведен'];
+
+const MONEY_NEIGHBOURS = [
+  'деньг', 'рубл', 'доллар', 'евро', 'шекел', 'гривн', 'тенге', 'сум',
+  'карт', 'счёт', 'счет', 'банк', 'кошел', 'крипт', 'биткоин', 'зарплат',
+];
+
+/** Действия с машиной, у которых цена ошибки — чужая несохранённая работа. */
+const MACHINE_STEMS = ['перезагруз', 'выключ', 'выруб', 'заверш', 'выйти'];
+
 function aprioriRisk(
   capabilities: ReadonlySet<JarvisCapability>,
   tokens: string[],
   editing: boolean,
 ): RiskLevel {
   if (hasAnyPhrase(tokens, DESTRUCTIVE_HINT_PHRASES)) return 'dangerous';
+
+  // Третья красная линия: системные места Windows. Стирание в них не
+  // откатывается ничем, кроме переустановки.
+  const touchesSystemPlace = hasAnyStem(tokens, SYSTEM_PLACE_STEMS);
+  // Приставки важны: «почисти» не начинается с «очист», и без этого слова
+  // «почисти system32» проходило как безопасное.
+  const destroys = hasAnyStem(tokens, [
+    'удал', 'сотр', 'снеси', 'очист', 'почист', 'вычист', 'перезапиш', 'перепиш', 'формат',
+  ]);
+  if (touchesSystemPlace && destroys) return 'dangerous';
+
   let level: RiskLevel = 'safe';
+
+  // Первая и вторая линии.
   if (capabilities.has('communication')) level = maxRisk(level, 'sensitive');
-  if (capabilities.has('system')) level = maxRisk(level, 'sensitive');
-  if (hasAnyStem(tokens, ['push', 'запуш', 'запушь', 'опублик', 'оплат', 'куп'])) {
+  if (hasAnyStem(tokens, MONEY_STEMS)) level = maxRisk(level, 'sensitive');
+  // Перевод — деньги только рядом с деньгами. Иначе это язык.
+  if (hasAnyStem(tokens, TRANSFER_STEMS) && hasAnyStem(tokens, MONEY_NEIGHBOURS)) {
+    level = maxRisk(level, 'sensitive');
+  }
+  if (hasAnyStem(tokens, ['push', 'запуш', 'запушь', 'опублик'])) {
+    level = maxRisk(level, 'sensitive');
+  }
+
+  // Четвёртая: выключение и перезагрузка. Само по себе наличие capability
+  // «system» больше ничего не значит — громкость и вайфай спрашивать незачем.
+  if (hasAnyStem(tokens, MACHINE_STEMS) && capabilities.has('system')) {
     level = maxRisk(level, 'sensitive');
   }
   if (editing && (capabilities.has('coding') || capabilities.has('files'))) {
@@ -311,14 +411,13 @@ function pickTarget(input: {
 }): BackendId {
   if (input.requested) return input.requested;
 
-  const needsComputer =
-    input.capabilities.has('computer') ||
-    input.capabilities.has('browser') ||
-    input.capabilities.has('vision') ||
-    input.capabilities.has('communication') ||
-    input.capabilities.has('system');
-  if (needsComputer) return 'interpreter';
+  // Переписка — единственное, что остаётся рантайму по умолчанию: у него живые
+  // учётные записи в мессенджерах, а у агента только мышь.
+  if (input.capabilities.has('communication')) return 'interpreter';
 
+  // Код проверяется раньше экрана: у задачи по коду почти всегда есть заодно
+  // capability «файлы», и экранная ветка иначе отменяла бы выбор кодового
+  // backend в настройках.
   if (input.capabilities.has('coding')) {
     const preferred = input.codingPreference;
     if (preferred && preferred !== 'auto' && !input.excluded.includes(preferred)) {
@@ -327,6 +426,18 @@ function pickTarget(input: {
     if (!input.excluded.includes('claude-code')) return 'claude-code';
     if (!input.excluded.includes('codex')) return 'codex';
   }
+
+  // Экран, окна, файлы, браузер, 3D — к Claude Code. Инструменты рабочего
+  // стола и скиллы под программы есть только там; рантайм, получив такую
+  // задачу, не мог ни открыть Blender, ни положить файл в папку человека.
+  const needsScreen =
+    input.capabilities.has('computer') ||
+    input.capabilities.has('browser') ||
+    input.capabilities.has('vision') ||
+    input.capabilities.has('files') ||
+    input.capabilities.has('system');
+  if (needsScreen && !input.excluded.includes('claude-code')) return 'claude-code';
+  if (needsScreen) return 'interpreter';
 
   const main = input.mainPreference;
   if (main && main !== 'auto' && !input.excluded.includes(main)) return main;

@@ -530,6 +530,33 @@ await esbuild.build({
   target: 'node18',
 });
 
+// MCP-сервер рабочего стола — отдельной сборкой.
+//
+// Его запускает Claude Code при каждой задаче, и делал это через `npx tsx`,
+// то есть заново находил пакет и компилировал TypeScript. Замер на живой
+// задаче: 18,7 секунды до первого действия агента — на каждой задаче, всегда.
+// Собранный заранее файл запускается обычным node за десятые доли секунды.
+await esbuild.build({
+  entryPoints: ['jarvis/desktop/serve.ts'],
+  bundle: true,
+  platform: 'node',
+  format: 'cjs',
+  outfile: 'dist-electron/jarvis/desktop/mcp.cjs',
+  // Playwright тянет свои браузеры и грузится динамически — пусть остаётся
+  // внешним, иначе сборка распухает и ломается на его нативных частях.
+  external: ['playwright'],
+  sourcemap: true,
+  target: 'node18',
+});
+
+// Скрипт драйвера кладётся рядом: собранный сервер ищет его первым делом
+// возле себя.
+fs.mkdirSync(path.join('dist-electron', 'jarvis', 'desktop'), { recursive: true });
+fs.copyFileSync(
+  path.join('jarvis', 'desktop', 'win32-driver.ps1'),
+  path.join('dist-electron', 'jarvis', 'desktop', 'win32-driver.ps1'),
+);
+
 console.log('[build] Electron build complete');
 
 // NOTE: Sentry source map upload happens in CI after version is set

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   WakeWordListener,
@@ -49,6 +50,27 @@ describe('wake word', () => {
     expect(findWakeWord('джар вис закрой окно')?.command).toBe('закрой окно');
   });
 
+  it('hears the manglings a live microphone actually produced', () => {
+    // Every one of these was recorded from real speech into the room mic and
+    // was missed: the person said the name and nothing happened.
+    for (const heard of ['Жаравес', 'Ужарвес', 'жарвес', 'Джарвес', 'Бжаргес']) {
+      expect(findWakeWord(heard), heard).not.toBeNull();
+    }
+  });
+
+  it('still refuses words that merely rhyme', () => {
+    // The consonant skeleton is deliberately tight: widening it until
+    // «Жаравес» matched must not drag ordinary speech in with it.
+    for (const other of [
+      'сервис', 'дерево', 'привет', 'джинсы', 'нравится',
+      // These do contain the «ж» the matcher leans on, and must still fail on
+      // the shape of the word.
+      'скажи', 'можешь', 'жизнь', 'пожалуйста', 'уже', 'джинсы',
+    ]) {
+      expect(findWakeWord(other), other).toBeNull();
+    }
+  });
+
   it('does not wake on short or unrelated words', () => {
     for (const phrase of ['да', 'сервис', 'привет', 'джаз', 'нарвись на неприятности']) {
       expect(findWakeWord(phrase)).toBeNull();
@@ -83,6 +105,24 @@ describe('WakeWordListener', () => {
       type: 'command',
       command: 'закрой это окно',
     });
+  });
+
+  it('keeps the conversation open, so the name is said once and not per sentence', () => {
+    let clock = 0;
+    const listener = new WakeWordListener({ awakeWindowMs: 5_000, now: () => clock });
+    listener.accept('Джарвис');
+
+    // Each thing said refreshes the window: a person mid-task should not have
+    // to name the assistant again between two sentences.
+    for (const command of ['открой хром', 'теперь закрой окно', 'открой телеграм']) {
+      clock += 4_000;
+      expect(listener.accept(command)).toEqual({ type: 'command', command });
+      expect(listener.currentState).toBe('awake');
+    }
+
+    // Silence, not speech, is what ends the conversation.
+    clock += 6_000;
+    expect(listener.accept('закрой это окно')).toEqual({ type: 'ignored' });
     expect(listener.currentState).toBe('idle');
   });
 
@@ -176,7 +216,10 @@ describe('spoken response', () => {
     expect(stripped).toContain('Смотри конфиг');
   });
 
-  it('speaks one to three short sentences from a long answer', () => {
+  it('обычный ответ читает целиком, а не первые три фразы', () => {
+    // Предел был три предложения, и это резало ответы на вопросы. Замер из
+    // журнала: на «какие три вопроса в конце брейншторма» человек услышал
+    // первый пункт, оборванный посреди фразы, и решил, что его не поняли.
     const full = [
       'Нашёл проблему.',
       'Она в конфигурации запуска: vite.config.ts указывал на несуществующий алиас.',
@@ -187,9 +230,34 @@ describe('spoken response', () => {
 
     const split = toSpokenResponse(full);
     expect(split.full).toBe(full);
-    expect(splitSentences(split.spoken)).toHaveLength(3);
     expect(split.spoken).toContain('Нашёл проблему.');
-    expect(split.spoken).not.toContain('прогнал тесты');
+    expect(split.spoken).toContain('прогнал тесты');
+    expect(split.spoken).not.toContain('на экране');
+  });
+
+  it('длинный ответ режет по границам предложений и говорит, что есть ещё', () => {
+    // Молчаливый обрыв читается как поломка. Если сказано не всё, об этом надо
+    // сказать.
+    const long = Array.from(
+      { length: 40 },
+      (_, index) => `Пункт номер ${index}, и в нём достаточно слов, чтобы занять место.`,
+    ).join(' ');
+
+    const split = toSpokenResponse(long);
+
+    expect(split.spoken.length).toBeLessThan(1_100);
+    expect(split.spoken).toContain('Дальше — на экране.');
+    // Ни одно предложение не оборвано на полуслове.
+    expect(split.spoken).not.toContain('…');
+  });
+
+  it('одно очень длинное предложение всё же сокращает', () => {
+    // Иначе сказать было бы вовсе нечего.
+    const single = `Это одно предложение без единой точки ${'и очень длинное '.repeat(80)}конец`;
+    const split = toSpokenResponse(single);
+
+    expect(split.spoken.length).toBeGreaterThan(50);
+    expect(split.spoken.length).toBeLessThan(1_100);
   });
 
   it('keeps the spoken part under the character budget', () => {
@@ -307,15 +375,33 @@ describe('audio handling', () => {
 });
 
 describe('archive extraction safety', () => {
+  // Пути сравниваются через `path.join`, а не строками в стиле Unix.
+  //
+  // Раньше здесь стояло «/models/...», и на Windows оно превращалось в
+  // «C:\models\...» — тесты падали всегда. Сама защита при этом работала,
+  // но постоянно красный набор приучает не смотреть на падения, и настоящая
+  // поломка в нём потерялась бы незамеченной.
+  const root = path.join(path.sep, 'models');
+
   it('keeps entries inside the destination directory', () => {
-    expect(resolveArchiveEntry('/models', 'sherpa-onnx-whisper-base/base-encoder.onnx')).toBe(
-      '/models/sherpa-onnx-whisper-base/base-encoder.onnx',
+    expect(resolveArchiveEntry(root, 'sherpa-onnx-whisper-base/base-encoder.onnx')).toBe(
+      path.resolve(root, 'sherpa-onnx-whisper-base', 'base-encoder.onnx'),
     );
   });
 
   it('refuses an entry that climbs out of it', () => {
-    expect(() => resolveArchiveEntry('/models', '../../etc/passwd')).toThrow(/escapes/);
-    expect(() => resolveArchiveEntry('/models', '/etc/passwd')).not.toThrow();
-    expect(resolveArchiveEntry('/models', '/etc/passwd')).toBe('/models/etc/passwd');
+    expect(() => resolveArchiveEntry(root, '../../etc/passwd')).toThrow(/escapes/);
+  });
+
+  it('обезвреживает ведущий слеш, а не отвергает его', () => {
+    // Запись «/etc/passwd» внутри архива — обычное дело; она должна лечь
+    // внутрь назначенной папки, а не в корень диска.
+    expect(resolveArchiveEntry(root, '/etc/passwd')).toBe(path.resolve(root, 'etc', 'passwd'));
+  });
+
+  it('не выпускает наружу через обратные слеши', () => {
+    // На Windows разделителем работает и «\», и попытка выхода выглядит иначе.
+    const climb = ['..', '..', 'windows', 'system32'].join(path.sep);
+    expect(() => resolveArchiveEntry(root, climb)).toThrow(/escapes/);
   });
 });

@@ -17,6 +17,9 @@ export default defineConfig({
       'agent/**/*.vitest.test.ts',
       'server/**/*.vitest.test.ts',
       'jarvis/**/*.vitest.test.ts',
+      // Код в electron/ до сих пор не проверялся ничем, а меняется чаще всего
+      // остального: страница микрофона и голосовой мост живут именно здесь.
+      'electron/**/*.vitest.test.ts',
       'scripts/**/*.vitest.test.ts',
     ],
     environment: 'jsdom',

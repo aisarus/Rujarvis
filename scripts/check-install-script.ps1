@@ -123,6 +123,52 @@ try { $vsDetected = Test-VisualStudioBuildTools } catch { $vsThrew = $true }
 Assert-That 'детектор MSVC не падает там, где Visual Studio нет' (-not $vsThrew)
 Assert-That 'детектор MSVC возвращает булево' ($vsDetected -is [bool])
 
+# --- Проверка версии Bun ----------------------------------------------------
+# Bun 1.4.x не умеет запускать pnpm.cmd без shell: true и роняет сборку
+# подмодуля с EINVAL. CI закрепляет линию 1.2, и установщик обязан проверять
+# её так же, как версию Node, — иначе winget приносит последнюю.
+
+$bunProbe = Join-Path ([System.IO.Path]::GetTempPath()) ("rujarvis-bun-" + [guid]::NewGuid())
+New-Item -ItemType Directory -Path (Join-Path $bunProbe '.github/workflows') -Force | Out-Null
+Set-Content -Path (Join-Path $bunProbe '.github/workflows/ci.yml') -Encoding utf8 -Value @'
+jobs:
+  voice-e2e:
+    steps:
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.2.20
+'@
+
+try {
+    Assert-That 'закреплённая версия Bun читается из ci.yml' ((Get-PinnedBunVersion -SourceDir $bunProbe) -eq '1.2.20')
+    Assert-That 'без ci.yml версия Bun не выдумывается' ($null -eq (Get-PinnedBunVersion -SourceDir (Join-Path $bunProbe 'missing')))
+
+    Assert-That 'закреплённая версия Bun принимается' ($null -eq (Get-BunVersionProblem -SourceDir $bunProbe -CurrentVersion '1.2.20'))
+    Assert-That 'другой патч той же линии принимается' ($null -eq (Get-BunVersionProblem -SourceDir $bunProbe -CurrentVersion '1.2.21'))
+
+    $bunMessage = Get-BunVersionProblem -SourceDir $bunProbe -CurrentVersion '1.4.2'
+    Assert-That 'более новая линия Bun отклоняется' ($null -ne $bunMessage)
+    Assert-That 'сообщение про Bun называет обе версии' ($bunMessage -match '1\.4\.2' -and $bunMessage -match '1\.2')
+    Assert-That 'сообщение про Bun подсказывает команду установки' ($bunMessage -match 'winget install' -and $bunMessage -match 'Oven-sh\.Bun')
+
+    Assert-That 'более старая линия Bun тоже отклоняется' ($null -ne (Get-BunVersionProblem -SourceDir $bunProbe -CurrentVersion '1.1.30'))
+    Assert-That 'без ci.yml проверка Bun пропускается' ($null -eq (Get-BunVersionProblem -SourceDir (Join-Path $bunProbe 'missing') -CurrentVersion '1.4.2'))
+}
+finally {
+    Remove-Item -Path $bunProbe -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# --- Unix-утилиты из Git для сборки подмодуля -------------------------------
+# Скрипты сборки interpreter-extension зовут `rm`, а pnpm на Windows запускает
+# их через cmd.exe. На образах GitHub Actions каталог Git\usr\bin лежит в PATH,
+# поэтому CI собирается, а чистая машина — нет.
+
+$gitTools = $null
+$gitThrew = $false
+try { $gitTools = Get-GitUnixToolsDir } catch { $gitThrew = $true }
+Assert-That 'поиск Unix-утилит Git не падает там, где их нет' (-not $gitThrew)
+Assert-That 'поиск Unix-утилит Git возвращает путь или null' ($null -eq $gitTools -or $gitTools -is [string])
+
 if ($failures -gt 0) {
     Write-Host "Провалено проверок: $failures" -ForegroundColor Red
     exit 1

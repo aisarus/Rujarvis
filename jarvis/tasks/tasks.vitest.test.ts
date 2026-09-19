@@ -164,7 +164,9 @@ describe('TaskManager', () => {
     await tick();
     const front = tasks.start({
       title: 'перед',
-      request: request({ capabilities: ['computer'] }),
+      // Переписка — единственная работа, что осталась за рантаймом, поэтому
+      // здесь это два разных backend, как и задумано в проверке.
+      request: request({ capabilities: ['communication'] }),
     });
     await tick();
 

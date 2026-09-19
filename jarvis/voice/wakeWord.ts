@@ -75,11 +75,40 @@ function toleranceFor(token: string): number {
   return 2;
 }
 
+/**
+ * The word with its vowels removed.
+ *
+ * Russian ASR mangles the vowels of an isolated name far more than its
+ * consonants: «Джарвис» came back from a live microphone as «Жаравес» and
+ * «Ужарвес», both three or fewer edits away as written but identical once the
+ * vowels are gone. Comparing skeletons catches that family without loosening
+ * the whole-word tolerance, which would start admitting ordinary speech.
+ */
+function consonantSkeleton(token: string): string {
+  return token.replace(/[аеёиоуыэюяьъ]/gu, '');
+}
+
+const WAKE_SKELETON = consonantSkeleton('джарвис');
+
 function matchesWakeToken(token: string): boolean {
   if (WAKE_WORD_VARIANTS.includes(token)) return true;
   // Only test tokens of a plausible length — «да» must never wake Jarvis.
-  if (token.length < 5 || token.length > 9) return false;
-  return editDistance(token, 'джарвис', 3) <= toleranceFor(token);
+  if (token.length < 5 || token.length > 10) return false;
+  if (editDistance(token, 'джарвис', 3) <= toleranceFor(token)) return true;
+
+  const skeleton = consonantSkeleton(token);
+  // One consonant may go missing — the leading «д» routinely does.
+  if (editDistance(skeleton, WAKE_SKELETON, 2) <= 1) return true;
+
+  // Two may go wrong only when the name's two distinctive marks both survived:
+  // the «ж», and one of the «рв» in the middle. «Бжаргес» — a real microphone
+  // recording of the name — keeps both. «Джинсы» keeps only the «ж», and
+  // without this second condition it wakes the assistant.
+  return (
+    token.includes('ж') &&
+    /[рв]/u.test(skeleton) &&
+    editDistance(skeleton, WAKE_SKELETON, 3) <= 2
+  );
 }
 
 export interface WakeWordMatch {
@@ -208,7 +237,11 @@ export class WakeWordListener {
     if (this.isAwake()) {
       const command = transcript.trim();
       if (!command) return { type: 'ignored' };
-      this.state = 'idle';
+      // Speaking keeps the conversation open. Naming the assistant before
+      // every sentence is fine for a one-off command and unusable for someone
+      // working by voice, so the window is ended by silence, not by having
+      // been used once.
+      this.arm();
       return { type: 'command', command };
     }
 

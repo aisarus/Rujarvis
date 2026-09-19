@@ -65,7 +65,8 @@ irm https://raw.githubusercontent.com/aisarus/Rujarvis/claude/jarvis-workstation
 
 ## Сборка из исходников
 
-Требуется Node.js 22, pnpm 9, Bun, Rust stable и Git с поддержкой подмодулей.
+Требуется Node.js 22, pnpm 9, **Bun линии 1.2**, Rust stable и Git с поддержкой
+подмодулей.
 
 ```bash
 git clone --recurse-submodules -b claude/jarvis-workstation-vk6nx1 https://github.com/aisarus/Rujarvis.git
@@ -75,8 +76,27 @@ pnpm run download:oix -- --current-platform
 pnpm run download:pdfcpu -- --current-platform
 pnpm run build
 pnpm run jarvis:setup
-pnpm start
+INTERPRETER_USE_BUILT_RENDERER=true pnpm start
 ```
+
+Две вещи, на которых спотыкается сборка под Windows — обе проверены живым
+прогоном, и установщик их обходит сам:
+
+- **Bun должен быть линии 1.2** (CI закрепляет 1.2.20). Начиная с 1.3 Bun
+  отказывается запускать `pnpm.cmd` без `shell: true`, и сборка подмодуля
+  `interpreter-extension` падает с `EINVAL`. `winget install Oven-sh.Bun` без
+  указания версии приносит последнюю — то есть заведомо неподходящую.
+- **`C:\Program Files\Git\usr\bin` должен быть в PATH.** Скрипты сборки того же
+  подмодуля написаны под Unix и зовут `rm`, а pnpm на Windows запускает их через
+  `cmd.exe`. На образах GitHub Actions этот каталог в PATH лежит, поэтому CI
+  собирается, а чистая машина — нет. Добавлять его надо в конец PATH: в начале
+  он перекроет системный `tar.exe` версией из MSYS, которая принимает `C:\...`
+  за имя удалённого хоста.
+
+`INTERPRETER_USE_BUILT_RENDERER=true` обязательна при запуске из исходников без
+dev-сервера: без неё распакованный Electron идёт за интерфейсом на
+`localhost:5173` и закрывается с `ERR_CONNECTION_REFUSED`. В PowerShell это
+`$env:INTERPRETER_USE_BUILT_RENDERER='true'` отдельной командой перед `pnpm start`.
 
 `pnpm run jarvis:setup` — единственный шаг, которого нет у upstream. Он смотрит
 на машину, говорит, что собирается скачать и сколько это весит, ставит модель

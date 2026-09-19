@@ -61,17 +61,41 @@ function needsCoding(capabilities: readonly JarvisCapability[]): boolean {
   return CODING_CAPABILITIES.some((capability) => capabilities.includes(capability));
 }
 
-/** Capabilities only the Workstation runtime can serve. */
-const COMPUTER_CAPABILITIES: readonly JarvisCapability[] = [
+/**
+ * Работа с машиной: экран, мышь, окна, файлы, браузер, 3D.
+ *
+ * Раньше всё это уходило в рантайм Workstation. Так больше нельзя: инструменты
+ * рабочего стола — снимок экрана, клик, браузер, Blender, папка для готовых
+ * файлов — живут в MCP-сервере, который отвечает только Claude Code, и там же
+ * лежат скиллы под каждую программу. Рантайм ни того ни другого не видит,
+ * поэтому задача «сделай модель в блендере», попав к нему, была обречена ещё
+ * до того, как началась.
+ *
+ * Рантайм остаётся следующим в очереди: он умеет то, чего нет у Claude Code, и
+ * подхватит работу, если тот не установлен или исчерпал лимит.
+ */
+const SCREEN_CAPABILITIES: readonly JarvisCapability[] = [
   'computer',
   'browser',
   'vision',
-  'communication',
+  'files',
   'system',
 ];
 
-function needsComputer(capabilities: readonly JarvisCapability[]): boolean {
-  return COMPUTER_CAPABILITIES.some((capability) => capabilities.includes(capability));
+/**
+ * Мессенджеры и почта — наоборот.
+ *
+ * У рантайма для них настоящие интеграции с живыми учётными записями, а у
+ * агента только мышь и клавиатура. Здесь порядок обратный.
+ */
+const COMMUNICATION_CAPABILITIES: readonly JarvisCapability[] = ['communication'];
+
+function needsScreen(capabilities: readonly JarvisCapability[]): boolean {
+  return SCREEN_CAPABILITIES.some((capability) => capabilities.includes(capability));
+}
+
+function needsCommunication(capabilities: readonly JarvisCapability[]): boolean {
+  return COMMUNICATION_CAPABILITIES.some((capability) => capabilities.includes(capability));
 }
 
 export class BackendManager {
@@ -141,10 +165,14 @@ export class BackendManager {
       ) {
         for (const id of CODING_BACKEND_IDS) push(id);
       }
-    } else if (needsComputer(request.capabilities)) {
+    } else if (needsCommunication(request.capabilities)) {
       push('interpreter');
-      rationale = 'Задача требует управления компьютером или браузером';
+      push('claude-code');
+      rationale = 'Переписка и почта — через рантайм, там живые учётные записи';
     } else if (needsCoding(request.capabilities)) {
+      // Код проверяется раньше экрана, и это не мелочь: почти у каждой задачи
+      // по коду заодно есть capability «файлы», и экранная ветка перехватывала
+      // её, отменяя выбор кодового backend в настройках.
       const preferred = preference.codingPreference;
       if (preferred && preferred !== 'auto') {
         push(preferred);
@@ -154,6 +182,22 @@ export class BackendManager {
       }
       for (const id of CODING_BACKEND_IDS) push(id);
       push('interpreter');
+    } else if (needsScreen(request.capabilities)) {
+      push('claude-code');
+      // Управление экраном — только туда, где есть инструменты.
+      //
+      // Живой случай: Claude Code сорвался, задача «открой блендер» ушла
+      // интерпретеру, а у того нет ни одного инструмента Джарвиса. Он пять
+      // минут дёргал СВОЙ драйвер рабочего стола, упёрся в «blocked by policy»
+      // и сказал человеку «нужен режим Full Access». Всё это неправда: дело
+      // было не в правах, а в том, что работать было нечем.
+      //
+      // Помощник, который не может сделать работу, обязан сказать это, а не
+      // изображать работу другим способом. Поэтому отката здесь нет — но
+      // только для настоящего управления (`computer`): «положи файл в папку»
+      // интерпретер сделать способен, и молчать там незачем.
+      if (!request.capabilities.includes('computer')) push('interpreter');
+      rationale = 'Задача про экран, файлы или программы — там, где инструменты и скиллы';
     } else {
       const preferred = preference.mainPreference;
       if (preferred && preferred !== 'auto') {
@@ -167,7 +211,10 @@ export class BackendManager {
 
     // Everything falls back to the runtime, then to a plain reasoning backend,
     // so Jarvis keeps answering even with no cloud subscription at all.
-    push('interpreter');
+    //
+    // Кроме настоящего управления экраном: там откат означал бы обещание,
+    // которое некому выполнить.
+    if (!request.capabilities.includes('computer')) push('interpreter');
     push('openai-compatible');
     push('local');
 

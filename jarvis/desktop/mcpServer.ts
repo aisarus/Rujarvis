@@ -1,0 +1,1000 @@
+/**
+ * The desktop, offered to Claude Code as tools.
+ *
+ * This is what makes agentic computer use possible on a subscription rather
+ * than an API key: Claude Code speaks MCP, MCP tools may return images, and so
+ * the model can look at the screen, decide, act, and look again. No key, no
+ * per-token billing — the same subscription the user already pays for.
+ *
+ * It deliberately does not reuse the runtime's own desktop driver. That one
+ * reaches its tools through two nested shells, the JSON argument is destroyed
+ * by quoting, and it reports success anyway — a model cannot work against a
+ * tool that lies about what it did.
+ */
+
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { z } from 'zod';
+
+import { forget, recall, remember } from './agentMemory';
+import * as blender from './blender';
+import * as browser from './browser';
+import * as files from './files';
+import { JournalStore } from '../memory/journalStore';
+import { NoteStore } from '../dialogue/noteStore';
+import { renderNotes } from '../dialogue/notes';
+import { PlanStore } from '../agent/planStore';
+import { inkOfPage, probePage, ridePage } from './pageTravel';
+import * as live from './blenderLive';
+import { makePlan, markStep, renderPlan, type StepState } from '../agent/plan';
+import { buildSkillFile, isSelfAuthored, skillPath } from '../skills/author';
+import { DesktopDriver } from './driver';
+
+const driver = new DesktopDriver();
+const shotDir = mkdtempSync(path.join(os.tmpdir(), 'jarvis-shots-'));
+let shotCounter = 0;
+
+/** Text answer, the shape every tool here returns on success. */
+function say(text: string) {
+  return { content: [{ type: 'text' as const, text }] };
+}
+
+function failed(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  // isError matters: without it a failure reads to the model as a result, and
+  // it proceeds as though the click had landed.
+  return { content: [{ type: 'text' as const, text: `Не удалось: ${message}` }], isError: true };
+}
+
+/**
+ * Где живут навыки.
+ *
+ * Та же папка, что читает Claude Code при запуске: записанное сюда становится
+ * доступно в следующем же запуске, без перезапуска чего-либо.
+ */
+function skillsRoot(): string {
+  return (
+    process.env.JARVIS_SKILLS_DIR?.trim() ||
+    path.join(os.homedir(), '.claude', 'skills')
+  );
+}
+
+/**
+ * Тот же журнал, что ведёт сам Джарвис.
+ *
+ * Путь приходит из окружения: сервер — отдельный процесс и рабочего стола не
+ * знает. Своя отдельная память здесь была бы хуже отсутствия — агент помнил бы
+ * не то, что произошло.
+ */
+/**
+ * Ящик правок, которые человек сказал уже во время работы.
+ *
+ * Тот же файл, в который их кладёт голосовой мост. Путь приходит из окружения
+ * по той же причине, что и путь журнала: сервер — отдельный процесс.
+ */
+function openNotes(): NoteStore {
+  const file =
+    process.env.JARVIS_NOTES?.trim() ||
+    path.join(
+      process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
+      'Rujarvis',
+      'data',
+      'notes.json',
+    );
+  return new NoteStore(file);
+}
+
+/**
+ * План работы. Тот же файл, что показывает окно.
+ */
+function openPlan(): PlanStore {
+  const file =
+    process.env.JARVIS_PLAN?.trim() ||
+    path.join(
+      process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
+      'Rujarvis',
+      'data',
+      'plan.json',
+    );
+  return new PlanStore(file);
+}
+
+function openJournal(): JournalStore {
+  const file =
+    process.env.JARVIS_JOURNAL?.trim() ||
+    path.join(
+      process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
+      'Rujarvis',
+      'data',
+      'journal.json',
+    );
+  return new JournalStore(file);
+}
+
+/**
+ * Дождаться окна Blender, а не поверить в него.
+ *
+ * Программа поднимается несколько секунд, поэтому смотрим несколько раз.
+ * Отсутствие окна — обычный ответ, а не ошибка: бывает, что Blender не успел
+ * или не смог открыть файл.
+ */
+async function blenderWindowAppeared(attempts = 6, everyMs = 1_500): Promise<boolean> {
+  for (let index = 0; index < attempts; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, everyMs));
+    try {
+      const windows = await driver.windows();
+      if (windows.some((item) => /blender/iu.test(item.title))) return true;
+    } catch {
+      // Драйвер мог быть занят — просто пробуем ещё раз.
+    }
+  }
+  return false;
+}
+
+export function createDesktopMcpServer(): McpServer {
+  const server = new McpServer({ name: 'jarvis-desktop', version: '1.0.0' });
+
+  server.registerTool(
+    'screenshot',
+    {
+      title: 'Снимок экрана',
+      description:
+        'Снимает экран и возвращает изображение. Координаты на снимке совпадают с экранными, ' +
+        'поэтому по нему можно сразу кликать. Делай снимок после каждого действия, которое ' +
+        'меняет экран, — иначе решения принимаются по устаревшей картинке.',
+      inputSchema: {
+        region: z
+          .object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() })
+          .optional()
+          .describe('Часть экрана. Без неё снимается весь экран.'),
+      },
+    },
+    async ({ region }) => {
+      try {
+        const file = path.join(shotDir, `shot-${shotCounter++}.png`);
+        const shot = await driver.screenshot(file, region);
+        const data = readFileSync(shot.path).toString('base64');
+        return {
+          content: [
+            { type: 'text' as const, text: `Экран ${shot.width}×${shot.height}, начало в (${shot.x}, ${shot.y}).` },
+            { type: 'image' as const, data, mimeType: 'image/png' },
+          ],
+        };
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'click',
+    {
+      title: 'Клик мышью',
+      description: 'Кликает по экранным координатам. Перед кликом убедись по снимку, что цель там, где ты думаешь.',
+      inputSchema: {
+        x: z.number().describe('Координата X на экране'),
+        y: z.number().describe('Координата Y на экране'),
+        button: z.enum(['left', 'right', 'middle']).optional(),
+        double: z.boolean().optional().describe('Двойной клик'),
+      },
+    },
+    async ({ x, y, button, double }) => {
+      try {
+        await driver.click({ x, y, button, double });
+        return say(`Кликнул в (${x}, ${y})${double ? ' дважды' : ''}.`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'type_text',
+    {
+      title: 'Ввести текст',
+      description:
+        'Печатает текст в активное окно. Работает с любой раскладкой и с кириллицей. ' +
+        'Сначала кликни в поле ввода — текст идёт туда, где курсор.',
+      inputSchema: { text: z.string() },
+    },
+    async ({ text }) => {
+      try {
+        await driver.type(text);
+        return say(`Напечатал ${text.length} символов.`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'press_key',
+    {
+      title: 'Нажать клавиши',
+      description:
+        'Нажимает клавишу или сочетание: «enter», «ctrl+c», «alt+tab», «win», «f5». ' +
+        'Модификаторы через плюс.',
+      inputSchema: { keys: z.string() },
+    },
+    async ({ keys }) => {
+      try {
+        await driver.key(keys);
+        return say(`Нажал ${keys}.`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'scroll',
+    {
+      title: 'Прокрутить',
+      description: 'Крутит колесо мыши. Положительное число — вверх, отрицательное — вниз.',
+      inputSchema: {
+        amount: z.number().describe('Щелчки колеса, обычно от -5 до 5'),
+        x: z.number().optional(),
+        y: z.number().optional(),
+      },
+    },
+    async ({ amount, x, y }) => {
+      try {
+        await driver.scroll(amount, x !== undefined && y !== undefined ? { x, y } : undefined);
+        return say(`Прокрутил на ${amount}.`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'list_windows',
+    {
+      title: 'Список окон',
+      description:
+        'Перечисляет видимые окна с заголовками и координатами. Дешевле снимка экрана, ' +
+        'когда нужно лишь понять, что открыто и где.',
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const windows = await driver.windows();
+        const lines = windows.map(
+          (w) =>
+            `${w.focused ? '→ ' : '  '}${w.title} — (${w.x}, ${w.y}) ${w.width}×${w.height}`,
+        );
+        return say(lines.length ? lines.join('\n') : 'Видимых окон нет.');
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'focus_window',
+    {
+      title: 'Переключиться на окно',
+      description: 'Выводит окно на передний план по части его заголовка.',
+      inputSchema: { title: z.string().describe('Часть заголовка окна') },
+    },
+    async ({ title }) => {
+      try {
+        const result = await driver.focus(title);
+        return say(`Переключился на «${result.title}».`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'remember',
+    {
+      title: 'Запомнить',
+      description:
+        'Сохраняет факт между запусками. Клод начинает каждый запуск с чистого листа, ' +
+        'поэтому записывай сюда то, что пришлось выяснять: где лежит кнопка, как ' +
+        'пользователь называет программу, какой из похожих вариантов верный. ' +
+        'В следующий раз это не придётся искать заново.',
+      inputSchema: {
+        key: z.string().describe('Коротко, о чём факт: «кнопка Play в Riot»'),
+        value: z.string().describe('Сам факт, своими словами'),
+      },
+    },
+    async ({ key, value }) => {
+      try {
+        const notes = remember(key, value);
+        return say(`Запомнил «${key}». Всего записей: ${notes.length}.`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'recall',
+    {
+      title: 'Вспомнить',
+      description:
+        'Показывает, что запомнено. Загляни сюда в начале задачи — возможно, ты уже ' +
+        'решал её и знаешь ответ.',
+      inputSchema: {
+        about: z.string().optional().describe('Тема. Без неё — все записи, свежие первыми.'),
+      },
+    },
+    async ({ about }) => {
+      try {
+        const notes = recall(about);
+        if (notes.length === 0) return say(about ? `Про «${about}» ничего не помню.` : 'Память пуста.');
+        return say(notes.map((note) => `${note.key}: ${note.value}`).join('\n'));
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'forget',
+    {
+      title: 'Забыть',
+      description: 'Удаляет запись, которая оказалась неверной.',
+      inputSchema: { key: z.string() },
+    },
+    async ({ key }) => {
+      try {
+        return say(forget(key) ? `Забыл «${key}».` : `Записи «${key}» и не было.`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'browser_open',
+    {
+      title: 'Открыть страницу',
+      description:
+        'Открывает адрес в браузере и возвращает заголовок. Браузер работает в отдельном ' +
+        'профиле: входы в нём сохраняются между запусками, но окна пользователя не трогаются.',
+      inputSchema: { url: z.string().describe('Адрес, можно без https://') },
+    },
+    async ({ url }) => {
+      try {
+        const page = await browser.openUrl(url);
+        return say(`Открыл «${page.title}» — ${page.url}`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'browser_read',
+    {
+      title: 'Прочитать страницу',
+      description:
+        'Возвращает видимый текст страницы. Бери его вместо снимка экрана: текст точнее ' +
+        'и дешевле, чем разглядывание картинки.',
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        return say(await browser.readPage());
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'browser_controls',
+    {
+      title: 'Что можно нажать',
+      description: 'Перечисляет ссылки и кнопки страницы их видимым текстом — для browser_click.',
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const controls = await browser.listControls();
+        return say(controls.length ? controls.join('\n') : 'Нажимать нечего.');
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'browser_click',
+    {
+      title: 'Нажать на странице',
+      description:
+        'Нажимает ссылку или кнопку по видимому тексту. Не по координатам: страница ' +
+        'прокручивается и вёрстка плывёт, а текст остаётся собой.',
+      inputSchema: { text: z.string().describe('Текст ссылки или кнопки') },
+    },
+    async ({ text }) => {
+      try {
+        return say(`Нажал «${text}». Сейчас: ${await browser.clickText(text)}`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'browser_fill',
+    {
+      title: 'Заполнить поле',
+      description: 'Вводит текст в поле по его подписи или подсказке внутри.',
+      inputSchema: {
+        label: z.string().describe('Подпись поля или текст-подсказка'),
+        value: z.string(),
+      },
+    },
+    async ({ label, value }) => {
+      try {
+        await browser.fillField(label, value);
+        return say(`Заполнил «${label}».`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'browser_key',
+    {
+      title: 'Клавиша в браузере',
+      description: 'Нажимает клавишу на странице: «Enter», «Escape», «Tab».',
+      inputSchema: { key: z.string() },
+    },
+    async ({ key }) => {
+      try {
+        await browser.pressKey(key);
+        return say(`Нажал ${key}.`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'browser_tabs',
+    {
+      title: 'Вкладки',
+      description: 'Перечисляет открытые вкладки браузера.',
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const tabs = await browser.listTabs();
+        return say(tabs.length ? tabs.map((t) => `${t.title} — ${t.url}`).join('\n') : 'Вкладок нет.');
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'blender_live_start',
+    {
+      title: 'Открыть живой Blender',
+      description:
+        'Открывает окно Blender, которое остаётся стоять и принимает твои скрипты прямо в нём. ' +
+        'Дальше blender_live делает правки В ЭТОМ ЖЕ окне: человек видит, как меняется сцена, ' +
+        'и файл не закрывается. Именно этого он просил: «не закрывая файл, при мне». ' +
+        'Зови один раз в начале работы над сценой. Если окно уже живое, второй раз не нужно.',
+      inputSchema: {
+        file: z.string().optional().describe('Открыть этот .blend. Без него — пустая сцена.'),
+      },
+    },
+    async ({ file }) => {
+      try {
+        if (live.isLive()) return say('Живой Blender уже открыт — шли скрипты через blender_live.');
+
+        const exe = blender.findBlender();
+        if (!exe) return say('Blender не найден на этой машине.');
+
+        live.startLive(exe, file);
+        const up = await live.waitLive();
+        return say(
+          up
+            ? 'Живой Blender открыт и слушает. Дальше работай через blender_live — окно не закроется.'
+            : 'Blender запущен, но слушатель не отозвался за минуту. Проверь окно глазами.',
+        );
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'blender_live',
+    {
+      title: 'Выполнить Python в открытом Blender',
+      description:
+        'Исполняет скрипт ВНУТРИ уже открытого окна Blender — человек видит изменение сразу, ' +
+        'файл не закрывается и не открывается заново. Это главный способ работы со сценой: ' +
+        'сделал ракету, человек говорит «пусть летит в космос» — ты добавляешь анимацию сюда же. ' +
+        'Печатай результат через print(). Сохраняй только когда просили: ' +
+        'bpy.ops.wm.save_as_mainfile(filepath=...).',
+      inputSchema: {
+        code: z.string().describe('Код на Python с использованием bpy'),
+      },
+    },
+    async ({ code }) => {
+      try {
+        const answer = await live.sendLive(code);
+        const text = [answer.printed, answer.error].filter(Boolean).join('\n').trim();
+        if (!answer.ok) {
+          return { content: [{ type: 'text' as const, text: text || 'не вышло' }], isError: true };
+        }
+        return say(text || 'Сделано в открытом окне.');
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'blender_python',
+    {
+      title: 'Выполнить Python в Blender',
+      description:
+        'Запускает скрипт в Blender через его официальный Python API (bpy) без открытия окна. ' +
+        'Так делается всё: создание и правка объектов, модификаторы, материалы, ' +
+        'камеры, рендер, экспорт. Печатай результат через print() — он вернётся сюда. ' +
+        'Чтобы работа сохранилась, вызови bpy.ops.wm.save_as_mainfile(filepath=...).',
+      inputSchema: {
+        code: z.string().describe('Код на Python с использованием bpy'),
+        file: z.string().optional().describe('Открыть этот .blend перед выполнением'),
+        show: z
+          .string()
+          .optional()
+          .describe(
+            'Путь к .blend, который надо открыть в окне Blender после работы, чтобы человек ' +
+              'увидел результат. Обычно тот же файл, что ты только что сохранил.',
+          ),
+      },
+    },
+    async ({ code, file, show }) => {
+      try {
+        const result = await blender.runPython(code, file);
+        if (!result.ok) {
+          return { content: [{ type: 'text' as const, text: result.output }], isError: true };
+        }
+
+        // Фоновый запуск ничего не показывает, а человек, для которого делали
+        // сцену, хочет её видеть. Окно открывается и живёт само.
+        //
+        // И проверяется. Один раз инструмент сообщил «открыл», окна не было, и
+        // агент честно повторил человеку неправду — тот справедливо ответил
+        // «ты врёшь». Проверка здесь стоит нескольких секунд ожидания и
+        // избавляет от целого класса ложных докладов.
+        let shown = '';
+        if (show) {
+          blender.openInBlender(show);
+          shown = (await blenderWindowAppeared())
+            ? `\nОткрыл в окне Blender: ${show}`
+            : '\nОкно Blender не появилось — скажи об этом человеку, не утверждай обратное.';
+        }
+
+        return say((result.output || 'Выполнено, скрипт ничего не напечатал.') + shown);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'write_skill',
+    {
+      title: 'Записать навык',
+      description:
+        'Сохраняет найденное как постоянный навык: в следующем запуске он прочитается сам, ' +
+        'до начала работы. Пиши сюда то, что пришлось выяснять и что повторится: каким флагом ' +
+        'запускается программа, где у неё нужная кнопка, какой оператор переименовали в этой ' +
+        'версии, что именно не сработало и почему. Не пиши то, что узнаётся командой за секунду. ' +
+        'Имя — строчными латинскими через дефис: «obs-recording». Навык, написанный человеком, ' +
+        'не перезаписывается без replace=true.',
+      inputSchema: {
+        name: z.string().describe('Имя навыка: строчные латинские буквы и дефис'),
+        description: z.string().describe('Одна строка: когда этот навык нужен'),
+        body: z.string().describe('Тело навыка в Markdown'),
+        replace: z.boolean().optional().describe('Перезаписать чужой навык — только по прямой просьбе'),
+      },
+    },
+    async ({ name, description, body, replace }) => {
+      try {
+        const file = skillPath(skillsRoot(), name);
+
+        if (existsSync(file) && !replace) {
+          const existing = readFileSync(file, 'utf8');
+          if (!isSelfAuthored(existing)) {
+            return failed(
+              new Error(
+                `Навык «${name}» написан человеком. Перезапись стёрла бы его работу; ` +
+                  'если это действительно нужно — вызови с replace=true.',
+              ),
+            );
+          }
+        }
+
+        mkdirSync(path.dirname(file), { recursive: true });
+        writeFileSync(file, buildSkillFile({ name, description, body }), 'utf8');
+        return say(`Записал навык «${name}»: ${file}`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'list_skills',
+    {
+      title: 'Какие навыки уже есть',
+      description:
+        'Перечисляет навыки с их описаниями. Смотри сюда, прежде чем писать новый: дополнить ' +
+        'существующий почти всегда лучше, чем завести второй про то же самое.',
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const root = skillsRoot();
+        if (!existsSync(root)) return say('Навыков пока нет.');
+
+        const lines: string[] = [];
+        for (const entry of readdirSync(root, { withFileTypes: true })) {
+          if (!entry.isDirectory()) continue;
+          const file = path.join(root, entry.name, 'SKILL.md');
+          if (!existsSync(file)) continue;
+
+          const content = readFileSync(file, 'utf8');
+          const description = /^description:\s*(.+)$/mu.exec(content)?.[1]?.trim() ?? '';
+          const mine = isSelfAuthored(content) ? ' (мой)' : '';
+          lines.push(`${entry.name}${mine} — ${description}`);
+        }
+        return say(lines.length > 0 ? lines.sort().join('\n') : 'Навыков пока нет.');
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'recent_actions',
+    {
+      title: 'Что делали недавно',
+      description:
+        'Возвращает, что Джарвис делал в последнее время: свежее дословно, старое сводкой. ' +
+        'Смотри сюда, когда человек говорит «переделай», «а где он», «тот файл», «как в прошлый ' +
+        'раз» — это указывает на уже случившееся, и гадать про него не надо.',
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const lines = openJournal().context();
+        return say(lines.length > 0 ? lines.join('\n') : 'Пока ничего не делали.');
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'page_ride',
+    {
+      title: 'Снять страницу целиком',
+      description:
+        'Проезжает открытую страницу по той оси, где у неё запас, и снимает кадр за кадром. ' +
+        'Обычный снимок показывает один экран — у горизонтальной работы это заставка, и судить ' +
+        'по ней о ней нельзя. Если скриптом страница неподвижна (так устроены горизонтальные ' +
+        'новеллы и сайты вроде Бруно Симон), едет настоящим колесом. ' +
+        'Зови это ВМЕСТО screenshot, когда смотришь на чужую работу или проверяешь свою.',
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const ride = await ridePage();
+        return say(
+          [
+            ride.fact,
+            `ехали ${ride.how}${ride.axis ? `, ось ${ride.axis}` : ''}`,
+            ride.arrived ? 'доехали до конца' : 'упёрлись в потолок кадров: конца не видели',
+            'кадры:',
+            ...ride.files,
+          ].join('\n'),
+        );
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'page_depth',
+    {
+      title: 'Есть ли на странице что делать',
+      description:
+        'Трогает открытую страницу двенадцатью действиями (прокрутка, её же кнопки, мышь, ' +
+        'клавиша) и считает, сколько РАЗНОГО она показала. Отвечает на вопрос, на который не ' +
+        'отвечает ни один снимок: работа это или тридцать секунд. ' +
+        'Проверяй этим свою работу перед тем, как сказать «готово»: страница может быть ' +
+        'безупречной на вид и пустой по сути. Покупки, входы и отправку форм не нажимает.',
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const depth = await probePage();
+        const ink = await inkOfPage();
+        return say(
+          [
+            depth.fact,
+            depth.has === null
+              ? 'запас: мерить нечем'
+              : depth.has
+                ? 'запас есть'
+                : 'запаса нет',
+            ink === null ? 'чернил: мерить нечем' : `нарисовано ${Math.round(ink * 100)}% кадра`,
+          ].join('\n'),
+        );
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'set_plan',
+    {
+      title: 'Записать план работы',
+      description:
+        'Записывает план: ради чего работа и из каких шагов состоит. ' +
+        'Делай это первым делом, если работа больше, чем на пару действий — человек должен ' +
+        'видеть, что ты собираешься делать, а не гадать. План переживает перезапуск: ' +
+        'вернувшись к работе, ты продолжишь с нужного шага, а не начнёшь заново. ' +
+        'Новый вызов заменяет план целиком — для отметки шага есть mark_step.',
+      inputSchema: {
+        goal: z.string().describe('Что просил человек, его словами.'),
+        steps: z.array(z.string()).describe('Шаги по порядку, каждый — одним предложением.'),
+      },
+    },
+    async ({ goal, steps }) => {
+      try {
+        const plan = makePlan(goal, steps, Date.now());
+        openPlan().write(plan);
+        return say(renderPlan(plan));
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'mark_step',
+    {
+      title: 'Отметить шаг плана',
+      description:
+        'Меняет состояние шага: «делаю», когда взялся, «сделано» или «не вышло», когда кончил. ' +
+        'Номер — тот же, что показан в плане. Отмечай сразу, а не в конце всей работы: ' +
+        'человек смотрит на это окно, чтобы понять, идёт ли дело.',
+      inputSchema: {
+        index: z.number().int().describe('Номер шага из плана.'),
+        state: z
+          .enum(['ждёт', 'делаю', 'сделано', 'не вышло'])
+          .describe('Новое состояние шага.'),
+        note: z.string().optional().describe('Чем кончилось: что вышло или обо что споткнулся.'),
+      },
+    },
+    async ({ index, state, note }) => {
+      try {
+        const store = openPlan();
+        const plan = store.read();
+        if (!plan) return say('Плана пока нет — сначала запиши его через set_plan.');
+
+        const updated = markStep(plan, index, state as StepState, Date.now(), note);
+        store.write(updated);
+        return say(renderPlan(updated));
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'show_plan',
+    {
+      title: 'Посмотреть план',
+      description:
+        'Показывает записанный план и то, что уже сделано. ' +
+        'Смотри сюда, вернувшись к длинной работе: продолжать надо с неоконченного шага, ' +
+        'а не с начала.',
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        return say(renderPlan(openPlan().read()));
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'check_notes',
+    {
+      title: 'Что человек сказал, пока ты работал',
+      description:
+        'Забирает реплики, сказанные человеком уже после того, как ты взялся за работу. ' +
+        'Это поправки к тому, что ты делаешь прямо сейчас, а не новая задача. ' +
+        'Вызывай перед каждым крупным шагом длинной работы: человек не должен ждать ' +
+        'полчаса, чтобы сказать «крышу сделай синей». ' +
+        'Забранное исчезает из ящика, поэтому учитывай его сразу — второй раз не покажут.',
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        return say(renderNotes(openNotes().take()));
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'browser_download',
+    {
+      title: 'Скачать файл со страницы',
+      description:
+        'Нажимает кнопку скачивания по её видимому тексту, дожидается файла и кладёт его ' +
+        'в папку ассистента — в раздел по типу файла. Так забирают картинку или ролик, ' +
+        'сделанные на сайте: пока файл не на диске, для человека его не существует.',
+      inputSchema: {
+        text: z.string().describe('Видимый текст кнопки или ссылки скачивания'),
+        seconds: z.number().optional().describe('Сколько ждать файл; по умолчанию 180'),
+      },
+    },
+    async ({ text, seconds }) => {
+      try {
+        const file = await browser.downloadVia(text, Math.round((seconds ?? 180) * 1000));
+        const moved = await files.moveIntoFolder(file.path);
+        return say(`Скачал «${file.name}». Файл здесь: ${moved}`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'browser_wait_for',
+    {
+      title: 'Дождаться текста на странице',
+      description:
+        'Ждёт появления текста на странице до указанного времени. Нужен там, где ответ ' +
+        'готовится долго — генерация картинки или ролика, — и страница всё это время ' +
+        'выглядит законченной. Возвращает, дождался или нет.',
+      inputSchema: {
+        text: z.string().describe('Текст, по которому видно, что готово'),
+        seconds: z.number().optional().describe('Сколько ждать; по умолчанию 180'),
+      },
+    },
+    async ({ text, seconds }) => {
+      try {
+        const found = await browser.waitForText(text, Math.round((seconds ?? 180) * 1000));
+        return say(found ? `Дождался: «${text}».` : `Не дождался «${text}» за отведённое время.`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  // Файлы. Без этих четырёх инструментов агент делал файл и терял его: на
+  // вопрос «где картинка» отвечал, что она «в чате», — в месте, которого нет.
+  server.registerTool(
+    'output_folder',
+    {
+      title: 'Папка для готовых файлов',
+      description:
+        'Возвращает путь к папке ассистента на рабочем столе человека и список того, ' +
+        'что в ней лежит, по разделам. Сюда клади всё, что человек просил получить: ' +
+        'эту папку он видит. Раздел выбирается по типу файла, вручную его называть не надо.',
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const dir = await files.ensureSections();
+        const sections = files.OUTPUT_SECTIONS.join(', ');
+        const tree = await files.readOutputTree(dir);
+        return say(`${dir}\n\nРазделы: ${sections} — файл попадает в свой по типу.\n\n${tree}`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'list_files',
+    {
+      title: 'Посмотреть папку',
+      description:
+        'Перечисляет файлы в папке — свежие сверху, с размером и временем. ' +
+        'Без пути смотрит папку ассистента. Так проверяют, что файл действительно есть.',
+      inputSchema: {
+        dir: z.string().optional().describe('Путь к папке; по умолчанию — папка ассистента'),
+      },
+    },
+    async ({ dir }) => {
+      try {
+        const target = dir?.trim();
+        // Без пути смотрим папку ассистента целиком: плоский список её корня
+        // показал бы пять пустых разделов и ни одного файла.
+        if (!target) {
+          const root = files.outputFolder();
+          return say(`${root}\n\n${await files.readOutputTree(root)}`);
+        }
+        const entries = await files.readFolder(target);
+        return say(`${target}\n\n${files.formatEntries(entries)}`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'move_to_output',
+    {
+      title: 'Переложить файл в папку ассистента',
+      description:
+        'Переносит готовый файл в папку ассистента и возвращает новый путь. ' +
+        'Нужен, когда программа сохранила результат туда, куда умеет, а не туда, где его ' +
+        'найдёт человек. Файл с таким же именем не затирается.',
+      inputSchema: { file: z.string().describe('Полный путь к файлу, который надо перенести') },
+    },
+    async ({ file }) => {
+      try {
+        const moved = await files.moveIntoFolder(file);
+        return say(`Файл теперь здесь: ${moved}`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'show_file',
+    {
+      title: 'Показать файл человеку',
+      description:
+        'Открывает проводник на файле и выделяет его, чтобы человек увидел результат ' +
+        'своими глазами. Вызывай в конце задачи, которая создала файл. ' +
+        'Параметр open=true вместо этого открывает файл программой по умолчанию.',
+      inputSchema: {
+        file: z.string().describe('Полный путь к файлу или папке'),
+        open: z.boolean().optional().describe('Открыть файл, а не показать в проводнике'),
+      },
+    },
+    async ({ file, open }) => {
+      try {
+        if (open) {
+          await files.openPath(file);
+          return say(`Открыл ${file}`);
+        }
+        await files.revealPath(file);
+        return say(`Показал в проводнике: ${file}`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  return server;
+}
+
+/** Entry point for `claude mcp add`. */
+export async function runDesktopMcpServer(): Promise<void> {
+  const server = createDesktopMcpServer();
+  await server.connect(new StdioServerTransport());
+}

@@ -367,3 +367,39 @@ describe('robustness', () => {
     expect((await session.releasePushToTalk())?.kind).toBe('task');
   });
 });
+
+describe('окно слушания и речь', () => {
+  it('открывается заново, когда помощник договорил', async () => {
+    // Замер из журнала: Джарвис говорил двенадцать секунд при восьмисекундном
+    // окне, и следующая реплика человека пришла при awake=false — была
+    // выброшена молча. Человек решил, что потерян контекст; потерян был его
+    // вопрос. Пока помощник говорит, человек и не может ответить.
+    const h = harness({ mode: 'always-listening' });
+    h.session.sleep();
+    expect(h.session.status.awake).toBe(false);
+
+    await h.session.speak('Длинный ответ про три вопроса в конце брейншторма.');
+
+    expect(h.session.status.awake).toBe(true);
+  });
+
+  it('не открывается, если за время речи попросили тишины', async () => {
+    // «Тишина» обрывает фразу. Обещание тут же снова начать слушать отменило
+    // бы ровно то, о чём попросили.
+    const h = harness({ mode: 'always-listening' });
+    const speaking = h.session.speak('Очень длинный ответ, который перебивают.');
+    h.session.sleep();
+    await speaking;
+
+    expect(h.session.status.awake).toBe(false);
+  });
+
+  it('молчание окна не открывает', async () => {
+    const h = harness({ mode: 'always-listening' });
+    h.session.sleep();
+
+    await h.session.speak('   ');
+
+    expect(h.session.status.awake).toBe(false);
+  });
+});

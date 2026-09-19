@@ -95,6 +95,19 @@ export function buildInterpreterSystemPrompt(request: BackendRequest): string {
   if (request.risk === 'sensitive' || request.risk === 'dangerous') {
     lines.push('Не выполняй действия наружу (отправка сообщений, публикация, оплата) без прямой просьбы.');
   }
+  if (process.platform === 'win32') {
+    // Observed on a live Windows run: the model calls the desktop driver as
+    // `pwsh -Command "cmd /c ... --json "{...}""`, the nested quoting destroys
+    // the JSON on the way through two shells, and the CLI answers
+    // «Unknown argument 'app\:\msedge.exe\,...'» — while still exiting 0. The
+    // model therefore reports success for an action that never happened, which
+    // is worse than failing. Stdin carries the same JSON through untouched.
+    lines.push(
+      'Вызывая инструменты builtin-cua-driver на Windows, передавай аргументы через --stdin-json,',
+      'а не через --json: вложенные кавычки ломаются между pwsh и cmd, и драйвер получает мусор.',
+      'Проверяй вывод драйвера: код возврата 0 ещё не значит успех — читай текст ответа.',
+    );
+  }
   if (request.context && request.context.length > 0) {
     lines.push('Контекст:', ...request.context.map((line) => `- ${line}`));
   }

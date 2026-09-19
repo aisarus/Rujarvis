@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#090a0f" />
+    <meta name="description" content="Одностраничный интерактивный набросок портфолио Ариэля." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2308090d'/%3E%3Cpath d='M14 48 28 14h9l14 34H40l-2-7H26l-2 7Zm15-16h7l-3-10Z' fill='%23baff53'/%3E%3C/svg%3E" />
+    <title>ARIEL — Portfolio</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="hero" aria-label="Главная страница портфолио">
+      <header class="topline">
+        <a class="monogram" href="#top" aria-label="Наверх">A<span>°</span></a>
+        <p>Independent creative developer<br />Based in motion &amp; code</p>
+        <a class="availability" href="mailto:hello@example.com">
+          <span aria-hidden="true"></span> Available for selected projects
+        </a>
+      </header>
+
+      <section id="top" class="stage">
+        <p class="eyebrow">Portfolio / 2026</p>
+        <h1 aria-label="Ariel">ARIEL</h1>
+
+        <div class="object-wrap" aria-hidden="true">
+          <div class="halo"></div>
+          <svg class="object" viewBox="0 0 620 620" role="img">
+            <defs>
+              <radialGradient id="body" cx="35%" cy="24%" r="78%">
+                <stop offset="0" stop-color="#fff9dc" />
+                <stop offset=".18" stop-color="#c6ff5e" />
+                <stop offset=".52" stop-color="#6c25ff" />
+                <stop offset=".8" stop-color="#17142b" />
+                <stop offset="1" stop-color="#05060a" />
+              </radialGradient>
+              <radialGradient id="core" cx="44%" cy="35%" r="62%">
+                <stop offset="0" stop-color="#13151d" />
+                <stop offset=".58" stop-color="#050609" />
+                <stop offset="1" stop-color="#000" />
+              </radialGradient>
+              <filter id="soft"><feGaussianBlur stdDeviation="10" /></filter>
+              <filter id="glow"><feGaussianBlur stdDeviation="22" /></filter>
+            </defs>
+            <path class="body" d="M310 34C438 34 557 139 575 270c18 133-75 271-190 316-113 44-278-20-327-129C6 342 40 188 139 103 186 63 248 34 310 34Z" />
+            <path class="shine" d="M123 271c25-93 109-177 215-181 71-3 127 29 164 81-54-32-120-41-182-17-83 31-123 107-137 188-25-12-46-35-60-71Z" />
+            <ellipse class="core" cx="326" cy="322" rx="151" ry="170" />
+            <ellipse class="core-glow" cx="293" cy="250" rx="91" ry="42" />
+            <path class="ring" d="M81 387c73 56 171 82 267 68 101-14 178-69 214-139" />
+          </svg>
+        </div>
+
+        <p class="caption">Ideas made tangible<br />through design &amp; technology.</p>
+      </section>
+
+      <footer>
+        <span>Scroll to explore</span>
+        <span>01 — Selected work</span>
+        <span>Move your cursor</span>
+      </footer>
+    </main>
+    <script src="./script.js"></script>
+  </body>
+</html>

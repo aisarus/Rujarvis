@@ -6,7 +6,10 @@
  * implementation — this file translates between them and nothing else.
  */
 
+import { randomUUID } from 'node:crypto';
+
 import { startAgentTask, type AgentTaskProgressEvent } from '../agentTaskService';
+import { agentTabManager } from '../agentTabManager';
 import { EventChannel } from '../../jarvis/backends/process';
 import type {
   InterpreterRuntimeDriver,
@@ -127,6 +130,19 @@ export function createInterpreterRuntimeDriver(
 ): InterpreterRuntimeDriver {
   const start = options.start ?? startAgentTask;
 
+  // The desktop tools — launching apps, clicking, typing, reading the screen —
+  // check who is calling them and refuse an unregistered caller with "Unknown
+  // interpreter caller token". Jarvis is a real caller, so it registers once
+  // and signs every task it starts. Without this the model plans the action
+  // correctly and the runtime rejects it at the last step.
+  const agentId = `agent-jarvis-${randomUUID()}`;
+  const callerToken = `agtok_${randomUUID()}`;
+  agentTabManager.registerAgentRuntime({
+    agentId,
+    callerToken,
+    workspacePath: options.defaultWorkspace,
+  });
+
   return {
     async isReady() {
       // The runtime ships with the app. A missing workspace is the one
@@ -153,6 +169,7 @@ export function createInterpreterRuntimeDriver(
         message: input.message,
         system: input.system,
         workspace: input.workspace ?? options.defaultWorkspace,
+        callerToken,
         threadId: input.threadId,
         timeoutMs: input.timeoutMs,
         abortSignal: controller.signal,
