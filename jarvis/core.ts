@@ -132,6 +132,8 @@ export interface JarvisCoreOptions {
    * в следующей же.
    */
   lessons?(): string | undefined;
+  /** Работать на виду или в фоне. Человек переключает это голосом. */
+  showWork?(): boolean;
   now?: () => number;
 }
 
@@ -369,6 +371,7 @@ export class JarvisCore {
       outputDir: this.options.outputDir,
       instructions: this.options.instructions?.(),
       lessons: this.options.lessons?.(),
+      showWork: this.options.showWork?.() ?? true,
       // Согласие человека едет с задачей: иначе бэкенд запустится в режиме, где
       // каждая запись отклоняется, и согласие не купит ничего.
       approved: approvedByHuman,

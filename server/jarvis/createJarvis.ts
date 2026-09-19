@@ -89,6 +89,8 @@ export interface CreateJarvisOptions {
   instructions?(): string | undefined;
   /** На чём уже спотыкались — собирается из журнала на каждую задачу. */
   lessons?(): string | undefined;
+  /** Работать на виду или в фоне. Переключается голосом. */
+  showWork?(): boolean;
 }
 
 export interface Jarvis {
@@ -175,6 +177,7 @@ export function createJarvis(options: CreateJarvisOptions = {}): Jarvis {
     recentActions: options.recentActions,
     instructions: options.instructions,
     lessons: options.lessons,
+    showWork: options.showWork,
   });
 
   return {

@@ -134,6 +134,13 @@ function emit(channel, closedBy) {
     sampleRate: audioContext.sampleRate,
     samples: flatten(),
     closedBy: closedBy || 'silence',
+    // Какая доля куска была речью, а не тишиной.
+    //
+    // Whisper обучен на субтитрах к видео и в тишине слышит их концовки:
+    // «Субтитры делал DimaTorzok», «Смотрите продолжение в следующей серии».
+    // Список таких фраз конечен, а Whisper нет. Настоящий признак не в словах,
+    // а в звуке, и он известен только здесь.
+    speechShare: bufferedSamples > 0 ? speechSamples / bufferedSamples : 0,
   });
   resetBuffer();
 }

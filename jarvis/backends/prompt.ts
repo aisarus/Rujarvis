@@ -94,6 +94,51 @@ const HEARTBEAT_GUIDANCE = [
   '  доделывай сначала стены, потому что так было задумано.',
 ].join('\n');
 
+/**
+ * Имена инструментов — сразу, чтобы агент их не искал.
+ *
+ * Замер 19 сентября: `ToolSearch` вызывался четыре раза за одну задачу — на
+ * 12-й, 104-й, 109-й и 115-й секундах. Инструментов тридцать пять, Claude Code
+ * отдаёт их описания по запросу, и агент тратил секунды на поиск того, что у
+ * него уже было.
+ */
+const DESKTOP_CAPABILITIES = ['computer', 'vision', 'browser', 'files', 'system'] as const;
+
+const TOOL_NAMES = [
+  'ИНСТРУМЕНТЫ ПО ДЕЛУ (искать не надо, они уже твои):',
+  '- Blender: blender_live_start, потом blender_live — работа в открытом окне.',
+  '  Фоновый blender_python — только для рендера и пакетной работы.',
+  '- Сайт: page_ride (снять целиком), page_depth (есть ли что делать),',
+  '  browser_open, browser_read, browser_click, browser_fill, browser_key,',
+  '  browser_wait_for, browser_download.',
+  '- Экран: screenshot, click, type_text, press_key, list_windows, focus, run.',
+  '- Файлы: output_folder, move_to_output, show_file, list_files.',
+  '- Работа: set_plan, mark_step, show_plan, check_notes.',
+  '- Память и навыки: recall, remember, forget, list_skills, write_skill.',
+].join('\n');
+
+/**
+ * Работа в фоне: та же работа, но не лезя человеку на экран.
+ *
+ * Он переключает это голосом — «работай в фоне», «показывай всё». Смысл не в
+ * скрытности: он занят своим делом, и окна, открывающиеся у него под руками,
+ * мешают больше, чем помогают.
+ *
+ * Работа при этом остаётся настоящей: файл делается, проверяется и кладётся
+ * куда просили. Не показывается только сам процесс.
+ */
+const QUIET_MODE = [
+  'РАБОТАЙ В ФОНЕ:',
+  '- Человек попросил не лезть на экран. Не открывай окна программ, не выводи',
+  '  файлы на передний план, не переключай фокус.',
+  '- Blender — только фоновый blender_python, без blender_live_start.',
+  '- Сделанное всё равно проверяй: рендер в файл и посмотреть на него глазами.',
+  '  Фон — это про то, что человек не видит процесс, а не про то, что проверок',
+  '  нет.',
+  '- В ответе назови полный путь к готовому файлу: человек откроет его сам,',
+  '  когда освободится.',
+].join('\n');
+
 const COMPUTER_USE_GUIDANCE = [
   'WORKING ON THE SCREEN:',
   '- Start with recall: you may already know where things are from a previous run.',
@@ -203,12 +248,26 @@ ${standing}`);
     parts.push(COMPUTER_USE_GUIDANCE);
   }
 
+  // Режим работы человек переключает голосом. По умолчанию — на виду: он
+  // просил видеть, что происходит.
+  if (request.showWork === false) {
+    parts.push(QUIET_MODE);
+  }
+
   // Уроки — раньше указаний о работе: их немного, и они самое конкретное, что
   // здесь есть. Общие правила без них читаются как общие слова.
   if (request.lessons?.trim()) {
     parts.push(request.lessons.trim());
   }
 
+  // Имена инструментов — только тем задачам, у которых эти инструменты есть.
+  //
+  // Иначе задача «расскажи, что нового» получает перечень рычагов рабочего
+  // стола, которых у неё нет, и платит за него входными токенами на каждом
+  // запросе.
+  if (DESKTOP_CAPABILITIES.some((capability) => request.capabilities.includes(capability))) {
+    parts.push(TOOL_NAMES);
+  }
   parts.push(LONG_WORK_GUIDANCE);
   parts.push(HEARTBEAT_GUIDANCE);
 

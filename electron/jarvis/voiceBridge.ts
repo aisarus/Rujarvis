@@ -103,6 +103,13 @@ interface RecordedAudio {
    * Во втором случае он ещё говорил, и мысль обрывается на полуслове.
    */
   closedBy?: 'silence' | 'length';
+  /**
+   * Какая доля куска была речью, а не тишиной.
+   *
+   * Whisper выдумывает субтитры именно на тишине. Кусок, в котором речи почти
+   * не было, — не фраза, что бы распознаватель ни написал.
+   */
+  speechShare?: number;
 }
 
 function whisperInstallRoot(): string {
@@ -175,6 +182,13 @@ let helpOverlay: HelpOverlay | null = null;
 let logWindow: LogWindow | null = null;
 let notes: NoteStore | null = null;
 let plans: PlanStore | null = null;
+/**
+ * Показывать ли работу.
+ *
+ * По умолчанию да: человек просил видеть, что происходит. «Работай в фоне»
+ * выключает это до следующего «показывай всё».
+ */
+let showWork = true;
 /**
  * Немой режим: Ctrl+M.
  *
@@ -254,6 +268,14 @@ async function runDirectCommand(command: DirectCommand, session: VoiceSession): 
         } else {
           helpOverlay?.hide();
         }
+        break;
+      case 'mode':
+        // Режим работы держится до следующего переключения: человек сказал
+        // «в фоне» не на одну задачу, а потому что сейчас занят.
+        showWork = command.show;
+        console.log(`[jarvis] режим: ${showWork ? 'на виду' : 'в фоне'}`);
+        overlay.note(session.status, showWork ? 'Работаю на виду' : 'Работаю в фоне');
+        await session.speak(showWork ? 'Буду показывать.' : 'Ухожу в фон.');
         break;
       case 'where': {
         // План уже записан на диск. Спрашивать о нём агента значило бы ждать
@@ -364,6 +386,8 @@ function describeDirect(command: DirectCommand): string {
       return command.on ? 'показал окно работы' : 'убрал окно работы';
     case 'where':
       return 'сказал, на каком шаге';
+    case 'mode':
+      return command.show ? 'работаю на виду' : 'работаю в фоне';
     case 'repeat':
       return `${describeDirect(command.command)} ${command.times} раз`;
   }
@@ -554,6 +578,7 @@ export async function startJarvisVoiceBridge(options: {
     instructions: () => instructions.read(),
     // Самонаращивающийся кусок промпта: неудача, записанная в журнал, сама
     // становится строкой следующего поручения. Ни обучения, ни денег.
+    showWork: () => showWork,
     lessons: () =>
       describeLessons(
         lessonsFrom({ events: journal?.recent() ?? [], plans: [plans?.read() ?? null] }),
@@ -697,8 +722,12 @@ export async function startJarvisVoiceBridge(options: {
         // замечено в логе: фраза, сказанная до нажатия, доезжала после него.
         if (muted) return;
         const cut = payload.closedBy === 'length' ? ', обрезано' : '';
+        const share =
+          typeof payload.speechShare === 'number'
+            ? `, речи ${Math.round(payload.speechShare * 100)}%`
+            : '';
         console.log(
-          `[jarvis] услышал за ${Date.now() - started} мс (${seconds} с речи${cut}): ${text}`,
+          `[jarvis] услышал за ${Date.now() - started} мс (${seconds} с речи${cut}${share}): ${text}`,
         );
         overlay.note(session.status, `Услышал: ${short(text)}`);
 

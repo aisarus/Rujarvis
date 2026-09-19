@@ -34,6 +34,7 @@ export type DirectCommand =
   | { kind: 'help'; on: boolean }
   | { kind: 'log'; on: boolean }
   | { kind: 'where' }
+  | { kind: 'mode'; show: boolean }
   | { kind: 'repeat'; times: number; command: RepeatableCommand };
 
 /**
@@ -81,6 +82,22 @@ const LOG_OFF = [
 const WHERE = [
   'где ты', 'на каком шаге', 'какой план', 'покажи план', 'сколько осталось',
   'далеко ещё',
+];
+
+/**
+ * Режим работы: на виду или в фоне.
+ *
+ * «На виду» — блендер открыт, файлы показываются, человек видит каждый шаг.
+ * «В фоне» — та же работа, но молча и не лезя на экран: человек занят своим и
+ * не хочет, чтобы у него под руками открывались окна.
+ */
+const MODE_SHOW = [
+  'показывай всё', 'показывай все', 'работай на виду', 'работай при мне',
+  'открывай окна', 'на виду',
+];
+const MODE_QUIET = [
+  'работай в фоне', 'работай тихо', 'в фоне', 'фоновый режим', 'не показывай',
+  'не открывай окна', 'работай молча',
 ];
 
 /** Сетка с номерами: показать и убрать. */
@@ -292,6 +309,9 @@ function readDirect(phrase: string): DirectCommand | null {
   if (LOG_OFF.includes(phrase)) return { kind: 'log', on: false };
 
   if (WHERE.includes(phrase)) return { kind: 'where' };
+
+  if (MODE_SHOW.includes(phrase)) return { kind: 'mode', show: true };
+  if (MODE_QUIET.includes(phrase)) return { kind: 'mode', show: false };
 
   if (GRID_ON.includes(phrase)) return { kind: 'grid', on: true };
   if (GRID_OFF.includes(phrase)) return { kind: 'grid', on: false };

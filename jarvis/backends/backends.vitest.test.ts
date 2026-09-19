@@ -363,6 +363,34 @@ describe('Claude Code adapter', () => {
     expect(block.length).toBeLessThan(1_000);
   });
 
+  it('в фоне велит не лезть на экран, но проверять по-прежнему', () => {
+    // «Работай в фоне» — про то, что человек не видит процесс, а не про то,
+    // что проверок нет.
+    const prompt = buildBackendPrompt(request({ capabilities: ['computer'], showWork: false }));
+
+    expect(prompt).toContain('РАБОТАЙ В ФОНЕ');
+    expect(prompt).toContain('Не открывай окна программ');
+    expect(prompt).toContain('всё равно проверяй');
+  });
+
+  it('по умолчанию работает на виду', () => {
+    expect(buildBackendPrompt(request({ capabilities: ['computer'] }))).not.toContain(
+      'РАБОТАЙ В ФОНЕ',
+    );
+  });
+
+  it('называет инструменты по делу, чтобы агент их не искал', () => {
+    // Замер 19 сентября: ToolSearch вызывался четыре раза за одну задачу — на
+    // 12-й, 104-й, 109-й и 115-й секундах. Инструментов тридцать пять, их
+    // описания отдаются по запросу, и агент искал то, что у него уже было.
+    const prompt = buildBackendPrompt(request({ capabilities: ['computer'] }));
+
+    expect(prompt).toContain('blender_live_start');
+    expect(prompt).toContain('blender_live');
+    expect(prompt).toContain('page_ride');
+    expect(prompt).toContain('move_to_output');
+  });
+
   it('велит составить план и не останавливаться на полпути', () => {
     // «Получил команду, составил план и работает» — это и есть требование.
     // Помощник, спрашивающий разрешения на двадцатой минуте, ждёт у
