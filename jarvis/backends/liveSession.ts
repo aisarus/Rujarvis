@@ -108,7 +108,15 @@ export interface LiveSessionOptions {
   consumeLine: ConsumeLine;
   env?: NodeJS.ProcessEnv;
   /** Сколько ждать `result` одного хода, прежде чем считать сессию мёртвой. */
+  /** Сколько ходу позволено молчать. */
   turnTimeoutMs?: number;
+  /**
+   * Потолок на весь ход, если он нужен.
+   *
+   * Разговору нужен: человек ждёт ответа сейчас. Работе — нет: она законно
+   * идёт часами, и её границей служит молчание.
+   */
+  turnCeilingMs?: number;
   now?: () => number;
   spawnProcess?: typeof spawn;
 }
@@ -129,6 +137,14 @@ interface Turn {
   sessionId?: string;
   /** Счётчик молчания. Перевзводится на каждом признаке жизни. */
   timer: NodeJS.Timeout;
+  /**
+   * Потолок на весь ход. Не перевзводится никогда.
+   *
+   * Нужен там, где человек ждёт ответа сейчас: у вопроса есть граница, за
+   * которой ответ уже не нужен. Сделав предел счётчиком молчания, эту границу
+   * я снял — отвечающий по букве в секунду разговор тянулся бы бесконечно.
+   */
+  ceiling?: NodeJS.Timeout;
 }
 
 export class LiveSession {
@@ -199,6 +215,7 @@ export class LiveSession {
     this.child = null;
     if (turn) {
       clearTimeout(turn.timer);
+      clearTimeout(turn.ceiling);
       const result: BackendResult = {
         ok: false,
         backend: BACKEND_ID,
@@ -268,6 +285,7 @@ export class LiveSession {
 
     // Ход кончился. Только теперь можно пускать следующий.
     clearTimeout(turn.timer);
+    clearTimeout(turn.ceiling);
     this.turn = null;
 
     const failed = raw.is_error === true || raw.subtype !== 'success';
@@ -321,7 +339,13 @@ export class LiveSession {
       );
       timer.unref?.();
 
-      this.turn = { channel, settle, startedAt: this.now(), text: '', timer };
+      const предел = this.options.turnCeilingMs;
+      const ceiling = предел && предел > 0
+        ? setTimeout(() => this.die('Ответ не уложился во время'), предел)
+        : undefined;
+      ceiling?.unref?.();
+
+      this.turn = { channel, settle, startedAt: this.now(), text: '', timer, ceiling };
       this.spoken = true;
       channel.push({ type: 'started', backend: BACKEND_ID });
       this.child?.stdin?.write(userMessage(prompt));

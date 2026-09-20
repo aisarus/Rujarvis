@@ -598,7 +598,10 @@ export class ClaudeCodeBackend implements AgentBackend {
         : [],
       consumeLine: (raw, emit) => consumeClaudeStreamLine(raw, createStreamState(), emit),
       env: subscriptionEnv(),
+      // Молчание — предел работы, потолок — предел ожидания. Короткий запрос
+      // с явным сроком (вопрос в разговоре) получает и то, и другое.
       turnTimeoutMs: request.timeoutMs ?? this.options.defaultTimeoutMs,
+      turnCeilingMs: request.timeoutMs,
       now: this.now,
     });
     pool.keep(свежая);

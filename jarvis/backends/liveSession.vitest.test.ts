@@ -300,3 +300,67 @@ describe('долгая работа не считается зависанием
     }
   });
 });
+
+/**
+ * У ожидания есть граница, у работы — нет.
+ *
+ * Предел, ставший счётчиком молчания, снял с разговора границу «человек уже не
+ * ждёт»: отвечающий по букве в секунду тянулся бы бесконечно. Потолок
+ * возвращает её — и только там, где срок задан явно.
+ */
+describe('потолок на ход', () => {
+  it('шумящий ход всё равно обрывается по потолку', async () => {
+    vi.useFakeTimers();
+    try {
+      const п = поддельныйПроцесс();
+      const s = new LiveSession({
+        key: KEY,
+        command: 'claude',
+        consumeLine: () => {},
+        spawnProcess: (() => п.child) as never,
+        turnTimeoutMs: 10_000,
+        turnCeilingMs: 1_000,
+      });
+      const ход = s.ask('отвечай по букве');
+      const итог = ход.result();
+
+      for (let i = 0; i < 5; i += 1) {
+        await vi.advanceTimersByTimeAsync(300);
+        п.сказать({ type: 'assistant', буква: i });
+      }
+
+      const r = await итог;
+      expect(r.ok).toBe(false);
+      expect(r.error).toContain('не уложился');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Работе потолок не задаётся, и она живёт ровно по молчанию.
+  it('без потолка долгая работа продолжается', async () => {
+    vi.useFakeTimers();
+    try {
+      const п = поддельныйПроцесс();
+      const s = new LiveSession({
+        key: KEY,
+        command: 'claude',
+        consumeLine: () => {},
+        spawnProcess: (() => п.child) as never,
+        turnTimeoutMs: 1_000,
+      });
+      const ход = s.ask('работай долго');
+      let оборвалось = false;
+      void ход.result().then((r) => { оборвалось = !r.ok; });
+
+      for (let i = 0; i < 10; i += 1) {
+        await vi.advanceTimersByTimeAsync(600);
+        п.сказать({ type: 'assistant', шаг: i });
+      }
+      await vi.advanceTimersByTimeAsync(0);
+      expect(оборвалось).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
