@@ -13,6 +13,7 @@
  */
 
 import { matchVoiceControl } from './interrupts';
+import { stripFiller } from './filler';
 
 /** Bracketed narration, including the unbalanced form Whisper often emits. */
 const ANNOTATION = /[[(【][^\])】]*[\])】]?/gu;
@@ -305,7 +306,8 @@ const SILENCE_PHRASES = [
  * снимать его приходится здесь — иначе обещанная справочником фраза с
  * обращением по имени не работает.
  */
-const SILENCE_FILLER = ['джарвис', 'пожалуйста', 'ну', 'эй', 'да', 'уже', 'блин'];
+/** Своя добавка: «да» рядом с «замолчи» безвредно, но общим списком — нет. */
+const SILENCE_FILLER = ['да'];
 
 /**
  * Сверка целой фразой, а не началом.
@@ -319,10 +321,8 @@ const SILENCE_FILLER = ['джарвис', 'пожалуйста', 'ну', 'эй'
  * срабатывала вообще.)
  */
 export function isSilenceRequest(text: string): boolean {
-  let words = wordsOf(text);
-  while (words.length > 1 && SILENCE_FILLER.includes(words[0])) words = words.slice(1);
-  while (words.length > 1 && SILENCE_FILLER.includes(words[words.length - 1])) {
-    words = words.slice(0, -1);
-  }
+  // Тот же список, что у команд и прерываний. Свой здесь был третьим, и он не
+  // знал «быстро замолчи» и «а теперь тишина».
+  const words = stripFiller(wordsOf(text), SILENCE_FILLER);
   return SILENCE_PHRASES.includes(words.join(' '));
 }

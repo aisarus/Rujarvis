@@ -13,6 +13,7 @@
  */
 
 import { normalizeForMatching, tokenize } from '../router/text';
+import { stripFiller } from './filler';
 
 export type VoiceControl = 'stop' | 'cancel' | 'pause' | 'resume' | 'mute';
 
@@ -83,10 +84,14 @@ const CONTROL_PHRASES: Array<{ control: VoiceControl; phrases: string[] }> = [
 ];
 
 /** Filler that may surround a control word without changing it. */
-const IGNORABLE = new Set([
-  'ну', 'э', 'эй', 'ой', 'так', 'ладно', 'okay', 'ок', 'окей', 'джарвис',
-  'пожалуйста', 'блин', 'блядь', 'бля', 'да', 'нет', 'всё', 'все',
-]);
+/**
+ * Своя добавка к общим заполнителям.
+ *
+ * «Да», «нет», «всё», «ладно» безвредны рядом со «стоп», но не везде:
+ * «показывай всё» — настоящая команда, и общим списком их выбрасывать нельзя.
+ * Поэтому они живут здесь, а не в `SPEECH_FILLER`.
+ */
+const IGNORABLE_HERE = ['так', 'ладно', 'okay', 'ок', 'окей', 'да', 'нет', 'все'];
 
 const MAX_CONTROL_TOKENS = 4;
 
@@ -104,7 +109,10 @@ export function matchVoiceControl(transcript: string): ControlMatch | null {
   const tokens = tokenize(transcript);
   if (tokens.length > MAX_CONTROL_TOKENS) return null;
 
-  const meaningful = tokens.filter((token) => !IGNORABLE.has(token));
+  // Обёртки снимаются тем же списком, что и в разборе команд. Раньше здесь был
+  // свой, и он не знал ни «быстро», ни «а теперь»: из 36 естественных форм
+  // «стоп» и «тишины» не доходили 24.
+  const meaningful = stripFiller(tokens, IGNORABLE_HERE);
   const candidates = [normalized, meaningful.join(' ')].filter(Boolean);
 
   for (const { control, phrases } of CONTROL_PHRASES) {
