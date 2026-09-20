@@ -35,6 +35,7 @@ export type DirectCommand =
   | { kind: 'log'; on: boolean }
   | { kind: 'where' }
   | { kind: 'mode'; show: boolean }
+  | { kind: 'longSpeech' }
   | { kind: 'repeat'; times: number; command: RepeatableCommand };
 
 /**
@@ -138,7 +139,29 @@ const FOCUS_PREFIXES = [
 ];
 
 /** Включение и выключение диктовки. */
-const DICTATION_ON = ['режим диктовки', 'диктую', 'включи диктовку', 'записывай за мной'];
+/**
+ * Печать в активное окно.
+ *
+ * «Диктую» отсюда убрано и отдано длинной мысли: человек попросил именно этим
+ * словом предупреждать, что будет говорить долго. Печать осталась на фразах,
+ * которые ни с чем не спутать.
+ */
+const DICTATION_ON = [
+  'печатай', 'режим диктовки', 'включи диктовку', 'записывай за мной',
+  'печатай за мной', 'пиши за мной',
+];
+
+/**
+ * Длинная мысль: человек предупреждает, что будет говорить с паузами.
+ *
+ * Слушатель ждёт пять секунд между кусками вместо двух с половиной и не
+ * отдаёт мысль на глаголе просьбы посреди фразы. Держится до конца одного
+ * сообщения.
+ */
+const LONG_SPEECH = [
+  'диктую', 'я диктую', 'слушай длинно', 'длинное сообщение', 'длинная мысль',
+  'сейчас длинно', 'буду говорить долго',
+];
 const DICTATION_OFF = ['конец диктовки', 'стоп диктовка', 'хватит диктовать', 'выключи диктовку'];
 
 /**
@@ -296,6 +319,7 @@ function readDirect(phrase: string): DirectCommand | null {
   const click = CLICKS[phrase];
   if (click) return { kind: 'click', ...click };
 
+  if (LONG_SPEECH.includes(phrase)) return { kind: 'longSpeech' };
   if (DICTATION_ON.includes(phrase)) return { kind: 'dictation', on: true };
   if (DICTATION_OFF.includes(phrase)) return { kind: 'dictation', on: false };
 

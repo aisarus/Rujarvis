@@ -206,3 +206,72 @@ describe('UtteranceBuffer и оборванная запись', () => {
     expect(instance.isComplete()).toBe(true);
   });
 });
+
+describe('длинная мысль: «диктую»', () => {
+  it('ждёт пять секунд между кусками, а не две с половиной', () => {
+    // Человек назвал это число сам: «максимальный перерыв между словами у
+    // слушателя становится 5 секунд».
+    const { instance, advance } = buffer();
+    instance.listenLong = true;
+    instance.push('хочу сайт по своей биографии');
+
+    advance(4_000);
+    expect(instance.isComplete()).toBe(false);
+
+    advance(1_100);
+    expect(instance.isComplete()).toBe(true);
+  });
+
+  it('не отдаёт мысль на глаголе просьбы посреди фразы', () => {
+    // Именно это правило рубило длинные фразы пополам: «сделай» встречается в
+    // середине мысли не реже, чем в конце. В журнале это выглядело как
+    // «Сделай вместо зеленой сферы мультяшную красивую разноцветную» — и
+    // отдельно приехавшая «космическую ракету в стиле Бруно Симон».
+    const { instance, advance } = buffer();
+    instance.listenLong = true;
+    instance.push('сделай мне сайт');
+
+    expect(instance.isComplete()).toBe(false);
+
+    advance(5_100);
+    expect(instance.isComplete()).toBe(true);
+  });
+
+  it('собирает длинную речь в одну мысль', () => {
+    const { instance, advance } = buffer();
+    instance.listenLong = true;
+    instance.push('хочу сайт по своей биографии');
+    advance(3_000);
+    instance.push('в концепции Бруно Симон');
+    advance(4_000);
+    instance.push('и чтобы там была физика');
+    advance(5_100);
+
+    expect(instance.isComplete()).toBe(true);
+    const whole = instance.take();
+    expect(whole).toContain('биографии');
+    expect(whole).toContain('Бруно Симон');
+    expect(whole).toContain('физика');
+  });
+
+  it('кончается вместе с мыслью, а не длится весь вечер', () => {
+    // «Диктую» сказано про одно сообщение.
+    const { instance, advance } = buffer();
+    instance.listenLong = true;
+    instance.push('длинная мысль');
+    advance(5_100);
+    instance.take();
+
+    expect(instance.listenLong).toBe(false);
+
+    instance.push('открой блендер');
+    expect(instance.isComplete()).toBe(true);
+  });
+
+  it('обычный режим не трогает', () => {
+    const { instance } = buffer();
+    instance.push('открой блендер');
+
+    expect(instance.isComplete()).toBe(true);
+  });
+});

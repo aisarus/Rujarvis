@@ -269,6 +269,15 @@ async function runDirectCommand(command: DirectCommand, session: VoiceSession): 
           helpOverlay?.hide();
         }
         break;
+      case 'longSpeech':
+        // Слушатель ждёт дольше и не рвёт мысль на глаголе просьбы. Держится
+        // до конца одного сообщения — человек сказал «диктую» про него, а не
+        // про весь вечер.
+        thought.listenLong = true;
+        console.log('[jarvis] слушаю длинную мысль: пауза до пяти секунд');
+        overlay.note(session.status, 'Слушаю длинно — пауза до 5 секунд');
+        await session.speak('Слушаю. Говорите.');
+        break;
       case 'mode':
         // Режим работы держится до следующего переключения: человек сказал
         // «в фоне» не на одну задачу, а потому что сейчас занят.
@@ -388,6 +397,8 @@ function describeDirect(command: DirectCommand): string {
       return 'сказал, на каком шаге';
     case 'mode':
       return command.show ? 'работаю на виду' : 'работаю в фоне';
+    case 'longSpeech':
+      return 'слушаю длинно';
     case 'repeat':
       return `${describeDirect(command.command)} ${command.times} раз`;
   }

@@ -214,13 +214,38 @@ describe('переключение между окнами', () => {
 
 describe('режим диктовки', () => {
   it('включается', () => {
+    // «Диктую» отсюда ушло: человек попросил этим словом предупреждать о
+    // длинной мысли, а не включать печать. Печать — на «печатай».
     expect(parseDirectCommand('режим диктовки')).toEqual({ kind: 'dictation', on: true });
-    expect(parseDirectCommand('диктую')).toEqual({ kind: 'dictation', on: true });
+    expect(parseDirectCommand('печатай')).toEqual({ kind: 'dictation', on: true });
   });
 
   it('выключается', () => {
     expect(parseDirectCommand('конец диктовки')).toEqual({ kind: 'dictation', on: false });
     expect(parseDirectCommand('стоп диктовка')).toEqual({ kind: 'dictation', on: false });
+  });
+});
+
+describe('«диктую» и «печатай» — разные вещи', () => {
+  it('«диктую» включает длинную мысль, а не печать', () => {
+    // Человек просил именно этим словом предупреждать, что будет говорить с
+    // паузами: «максимальный перерыв между словами становится 5 секунд».
+    expect(parseDirectCommand('диктую')).toEqual({ kind: 'longSpeech' });
+    expect(parseDirectCommand('буду говорить долго')).toEqual({ kind: 'longSpeech' });
+  });
+
+  it('«печатай» включает печать в окно', () => {
+    expect(parseDirectCommand('печатай')).toEqual({ kind: 'dictation', on: true });
+    expect(parseDirectCommand('пиши за мной')).toEqual({ kind: 'dictation', on: true });
+    expect(parseDirectCommand('режим диктовки')).toEqual({ kind: 'dictation', on: true });
+  });
+
+  it('«печатай что-то» по-прежнему печатает это что-то', () => {
+    // Односложная форма не должна съесть форму с текстом.
+    expect(parseDirectCommand('печатай привет как дела')).toEqual({
+      kind: 'type',
+      text: 'привет как дела',
+    });
   });
 });
 

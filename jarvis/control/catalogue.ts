@@ -132,6 +132,7 @@ export function commandCatalogue(): CatalogueGroup[] {
         { say: 'что ты умеешь', does: 'показать этот список', layer: 'direct' },
         { say: 'что ты делаешь', does: 'открыть окно с рассказом о работе', layer: 'direct' },
         { say: 'где ты', does: 'сказать, на каком шаге плана', layer: 'direct' },
+        { say: 'диктую', does: 'слушать длинную мысль с паузами до пяти секунд', layer: 'direct' },
         { say: 'работай в фоне', does: 'не открывать окна и не лезть на экран', layer: 'direct' },
         { say: 'показывай всё', does: 'снова работать на виду', layer: 'direct' },
         { say: 'закрой лог', does: 'убрать окно с рассказом', layer: 'direct' },

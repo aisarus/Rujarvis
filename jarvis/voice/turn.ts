@@ -25,6 +25,15 @@
 /** Сколько тишины считать концом мысли. */
 const DEFAULT_GAP_MS = 2_500;
 
+/**
+ * Сколько тишины ждать, когда человек предупредил, что говорит длинно.
+ *
+ * Пять секунд — столько он назвал сам. Это много для обычной команды и в самый
+ * раз для мысли, которую формулируют на ходу: между «сделай сайт по моей
+ * биографии» и «и чтобы там была физика» пауза бывает длиннее двух секунд.
+ */
+const LONG_GAP_MS = 5_000;
+
 export interface UtteranceBufferOptions {
   gapMs?: number;
   now?: () => number;
@@ -37,6 +46,7 @@ export class UtteranceBuffer {
   private lastAt = 0;
   private hasRequest = false;
   private cutOff = false;
+  private longSpeech = false;
 
   constructor(options: UtteranceBufferOptions = {}) {
     this.gapMs = options.gapMs ?? DEFAULT_GAP_MS;
@@ -73,22 +83,42 @@ export class UtteranceBuffer {
    * Ждём только контекст без просьбы: «у тебя в картинках лежит сфера» само по
    * себе не задача, и продолжение к нему почти наверняка будет.
    */
+  /**
+   * Человек предупредил, что говорит длинно.
+   *
+   * Меняются две вещи. Пауза до пяти секунд — её он назвал сам. И отменяется
+   * правило «есть глагол просьбы — отдаём сразу»: именно оно рубило длинные
+   * фразы пополам, потому что «сделай» встречается в середине мысли не реже,
+   * чем в конце.
+   */
+  set listenLong(on: boolean) {
+    this.longSpeech = on;
+  }
+
+  get listenLong(): boolean {
+    return this.longSpeech;
+  }
+
+  private get gap(): number {
+    return this.longSpeech ? LONG_GAP_MS : this.gapMs;
+  }
+
   isComplete(): boolean {
     if (this.parts.length === 0) return false;
     // Обрыв записи важнее любого признака законченности: глагол просьбы в
     // «сделай вместо зелёной сферы мультяшную красивую разноцветную» есть, а
     // мысль обрывается на прилагательном. Ждём продолжения — но не вечно:
     // человека могли обрезать и на последнем слове.
-    if (this.cutOff) return this.now() - this.lastAt >= this.gapMs;
-    if (this.hasRequest) return true;
-    return this.now() - this.lastAt >= this.gapMs;
+    if (this.cutOff) return this.now() - this.lastAt >= this.gap;
+    if (this.hasRequest && !this.longSpeech) return true;
+    return this.now() - this.lastAt >= this.gap;
   }
 
   /** Сколько ещё ждать. Для таймера у вызывающего. */
   msUntilComplete(): number {
     if (this.parts.length === 0) return Number.POSITIVE_INFINITY;
-    if (this.hasRequest && !this.cutOff) return 0;
-    return Math.max(0, this.gapMs - (this.now() - this.lastAt));
+    if (this.hasRequest && !this.cutOff && !this.longSpeech) return 0;
+    return Math.max(0, this.gap - (this.now() - this.lastAt));
   }
 
   /** Что накоплено, не забирая. */
@@ -103,6 +133,9 @@ export class UtteranceBuffer {
     this.lastAt = 0;
     this.hasRequest = false;
     this.cutOff = false;
+    // Длинная мысль кончилась — дальше снова обычный разговор. Человек сказал
+    // «диктую» про одно сообщение, а не про весь вечер.
+    this.longSpeech = false;
     return text;
   }
 }
@@ -164,3 +197,5 @@ function join(parts: readonly string[]): string {
     return `${text}${ended ? '' : '.'} ${next}`;
   });
 }
+
+export { DEFAULT_GAP_MS, LONG_GAP_MS };
