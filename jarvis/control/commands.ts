@@ -18,6 +18,7 @@
  * секунды ожидания; в обратную — нажатого невпопад Ctrl+F посреди работы.
  */
 
+import { WAKE_WORD_VARIANTS } from '../voice/wakeWord';
 import { GRID_CELLS, parseSpokenNumber } from './grid';
 
 export type DirectCommand =
@@ -259,6 +260,15 @@ const KEYS: Record<string, string> = {
   'закрой вкладку': 'ctrl+w',
   'верни вкладку': 'ctrl+shift+t',
   'следующая вкладка': 'ctrl+tab',
+  // Одно и то же люди просят по-разному, и каждая несовпавшая формулировка
+  // стоит тридцати секунд через агента вместо трёхсот миллисекунд.
+  'переключи вкладку': 'ctrl+tab',
+  'переключись на следующую вкладку': 'ctrl+tab',
+  'следующую вкладку': 'ctrl+tab',
+  'дальше вкладка': 'ctrl+tab',
+  'предыдущая вкладка': 'ctrl+shift+tab',
+  'предыдущую вкладку': 'ctrl+shift+tab',
+  'переключись на предыдущую вкладку': 'ctrl+shift+tab',
   'переключись': 'alt+tab', 'переключи окно': 'alt+tab',
   'обнови': 'f5', 'обновить': 'f5', 'перезагрузи страницу': 'f5',
   'закрой окно': 'alt+f4',
@@ -420,6 +430,7 @@ function readFocus(phrase: string): DirectCommand | null {
   return null;
 }
 
+
 function readDictation(phrase: string): DirectCommand | null {
   for (const prefix of DICTATION_PREFIXES) {
     if (!phrase.startsWith(`${prefix} `)) continue;
@@ -451,12 +462,26 @@ function stripPressVerb(phrase: string): string {
  * влияет.
  */
 function normalise(utterance: string): string {
-  const words = utterance
+  let words = utterance
     .toLowerCase()
     .replace(/ё/gu, 'е')
     .replace(/[^\p{L}\p{N}\s+]/gu, ' ')
     .split(/\s+/u)
     .filter(Boolean);
+
+  // Имя в начале — обращение, а не часть команды.
+  //
+  // Живой случай 20.09.2026: окно бодрствования уже открыто, человек всё
+  // равно говорит «Джарвис, переключись на Riot Client» — так естественнее.
+  // Имя оставалось в тексте, ни одна прямая команда не совпадала, и всё
+  // уходило агенту: тридцать секунд вместо трёхсот миллисекунд. В журнале
+  // это выглядело как «не переключает вкладки, не работает ничего».
+  //
+  // Режем только в начале: «напечатай джарвис молодец» — это содержание,
+  // и трогать его нельзя.
+  while (words.length > 1 && WAKE_WORD_VARIANTS.includes(words[0] as string)) {
+    words = words.slice(1);
+  }
 
   // Диктовка сохраняет слова как есть: в продиктованном тексте «пожалуйста»
   // может быть частью фразы.

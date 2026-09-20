@@ -242,6 +242,24 @@ describe('задача про рабочий стол не уходит тому
     expect(plan.order).not.toContain('interpreter');
   });
 
+  // Живой случай 20.09.2026: «Открой блендер и сделай ракету» — это и код, и
+  // управление. Код проверяется раньше экрана, и в кодовой ветке откат на
+  // интерпретер стоял без защиты. Клод Код сорвался, задача ушла туда, ключа
+  // нет — и человек услышал «API Error: 401 API key is invalid» от системы,
+  // у которой ключей нет вовсе. Соврать так — хуже, чем честно не смочь.
+  it('задача про код И управление тоже не откатывается к ключам', () => {
+    const manager = new BackendManager();
+    for (const id of ['interpreter', 'claude-code', 'codex', 'openai-compatible'] as const) {
+      manager.register(stubBackend(id));
+    }
+
+    const plan = manager.plan(request({ capabilities: ['computer', 'code', 'files'] }));
+
+    expect(plan.order[0]).toBe('claude-code');
+    expect(plan.order).not.toContain('interpreter');
+    expect(plan.order).not.toContain('openai-compatible');
+  });
+
   it('но разговор и файлы откат сохраняют', () => {
     // Там интерпретер способен на работу, и молчать вместо ответа незачем.
     const manager = new BackendManager();

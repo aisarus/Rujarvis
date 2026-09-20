@@ -181,7 +181,14 @@ export class BackendManager {
         rationale = 'Задача по коду, backend выбран автоматически';
       }
       for (const id of CODING_BACKEND_IDS) push(id);
-      push('interpreter');
+      // Та же защита, что и в экранной ветке ниже, и по той же причине.
+      //
+      // «Открой блендер и сделай ракету» — это и код, и управление. Код
+      // проверяется раньше, поэтому задача идёт сюда, а здесь откат стоял без
+      // защиты: Клод Код сорвался, работа ушла интерпретеру, ключа нет — и
+      // человек услышал «API Error: 401 API key is invalid» от системы, у
+      // которой ключей нет вовсе.
+      if (!request.capabilities.includes('computer')) push('interpreter');
     } else if (needsScreen(request.capabilities)) {
       push('claude-code');
       // Управление экраном — только туда, где есть инструменты.
@@ -214,8 +221,10 @@ export class BackendManager {
     //
     // Кроме настоящего управления экраном: там откат означал бы обещание,
     // которое некому выполнить.
-    if (!request.capabilities.includes('computer')) push('interpreter');
-    push('openai-compatible');
+    if (!request.capabilities.includes('computer')) {
+      push('interpreter');
+      push('openai-compatible');
+    }
     push('local');
 
     return { order, rationale };

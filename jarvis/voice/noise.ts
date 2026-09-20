@@ -86,8 +86,42 @@ export function meaningfulSpeech(transcript: string): string | null {
 
   const lowered = cleaned.toLowerCase();
   if (HALLUCINATIONS.some((phrase) => lowered.includes(phrase))) return null;
+  if (isSoundCaption(cleaned)) return null;
 
   return cleaned;
+}
+
+/**
+ * Звуки, которые Whisper подписывает вместо того, чтобы промолчать.
+ *
+ * Это не выдумка распознавателя: он честно слышит музыку за окном и честно
+ * её называет. Беда в том, что подпись выглядит как сказанная фраза, и в
+ * журнале 20.09.2026 «ДИНАМИЧНАЯ МУЗЫКА» дважды стала задачей.
+ */
+const SOUND_WORDS = [
+  'музыка', 'музыки', 'музыкa', 'аплодисменты', 'апплодисменты', 'смех',
+  'шум', 'шорох', 'звук', 'звуки', 'гудок', 'звонок', 'тишина', 'пение',
+  'вздох', 'кашель', 'свист', 'гул', 'скрип', 'стук',
+  'music', 'applause', 'laughter', 'silence', 'noise',
+];
+
+/**
+ * Подпись под звуком, а не сказанное.
+ *
+ * Два условия разом, и оба нужны. Заглавные буквы — потому что Whisper
+ * набирает подписи именно так. Звуковое слово — потому что человек тоже
+ * кричит, и крик обязан сработать: «СТОП» заглавными это команда, самая
+ * важная из всех, и съесть её было бы хуже любой лишней задачи.
+ */
+function isSoundCaption(cleaned: string): boolean {
+  const words = cleaned.split(' ').filter(Boolean);
+  if (words.length === 0 || words.length > 4) return false;
+
+  const shouted = cleaned === cleaned.toUpperCase() && /\p{Lu}/u.test(cleaned);
+  if (!shouted) return false;
+
+  const lowered = cleaned.toLowerCase().split(' ');
+  return lowered.some((word) => SOUND_WORDS.includes(word));
 }
 
 /**
@@ -144,6 +178,7 @@ const PLEASANTRIES = [
   'спасибо', 'спасибочки', 'пожалуйста', 'привет', 'здравствуй', 'здравствуйте',
   'пока', 'ага', 'угу', 'окей', 'ок', 'хорошо', 'ладно', 'понятно', 'ясно',
   'класс', 'отлично', 'супер', 'круто', 'ух', 'ого', 'всё', 'все',
+  'понял', 'поняла', 'принял', 'договорились', 'спасибки', 'угушки',
 ];
 
 /**
