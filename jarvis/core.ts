@@ -61,6 +61,14 @@ import {
   openConversation,
   type OpenConversation,
 } from './dialogue/conversation';
+import {
+  asksForPlan,
+  planModeSwitch,
+  planPrompt,
+  readPlanVerdict,
+  stepsFromAnswer,
+} from './dialogue/planMode';
+import { makePlan, planSummary, renderPlan, type Plan } from './agent/plan';
 import { acknowledgementFor, clarificationFor } from './voice/acknowledgement';
 import { isPleasantry } from './voice/noise';
 import {
@@ -159,6 +167,13 @@ export interface JarvisCoreOptions {
    * для этого мало: план живёт в отдельном файле, который пишет другой процесс.
    */
   workNow?(): string[];
+  /**
+   * Куда положить составленный план, чтобы его было видно в окне.
+   *
+   * Функцией, потому что файл плана ведёт другой процесс — тот же, что читает
+   * его при показе.
+   */
+  savePlan?(plan: Plan): void;
   /** Работать на виду или в фоне. Человек переключает это голосом. */
   showWork?(): boolean;
   now?: () => number;
@@ -200,6 +215,7 @@ export type JarvisTurn =
   | { kind: 'control'; outcome: ControlOutcome; spoken: string }
   | { kind: 'clarify'; spoken: string; decision: RoutingDecision }
   | { kind: 'chat'; spoken: string }
+  | { kind: 'plan'; spoken: string; plan: Plan }
   | { kind: 'refused'; spoken: string; decision: RoutingDecision }
   | {
       kind: 'task';
@@ -241,6 +257,27 @@ function describeForApproval(decision: RoutingDecision, utterance: string): stri
 
 export class JarvisCore {
   private readonly now: () => number;
+
+  /**
+   * Режим плана: работа не начинается, пока замысел не утверждён.
+   *
+   * Держится в памяти, а не в настройках, нарочно: это состояние разговора, а
+   * не предпочтение. Перезапустил Джарвиса — начал заново.
+   */
+  private planMode = false;
+
+  /** План, лежащий на столе в ожидании «погнали» или правки. */
+  private pendingPlan: { utterance: string; plan: Plan } | null = null;
+
+  /**
+   * План, по которому запуск идёт прямо сейчас.
+   *
+   * Нужен на один ход. Утверждённая просьба проходит по тому же пути, что и
+   * обычная, — иначе потерялись бы маршрутизация, разрешения и имя задачи, — а
+   * этот признак не даёт ей спланироваться во второй раз и заодно доносит
+   * утверждённый план до запроса.
+   */
+  private approving: Plan | null = null;
 
   constructor(private readonly options: JarvisCoreOptions) {
     this.now = options.now ?? Date.now;
@@ -290,6 +327,39 @@ export class JarvisCore {
       });
       if (outcome.spoken) this.say(outcome.spoken, settings);
       return { kind: 'control', outcome, spoken: outcome.spoken };
+    }
+
+    // 1.5. Режим плана и ответ на лежащий план — раньше любого разбора.
+    //
+    // Раньше нарочно: «погнали» само по себе не значит ничего и уйдёт в
+    // разговор, а «сначала сделай фон» станет отдельной задачей. Оба ответа
+    // имеют смысл только рядом с планом, и рядом с ним их и надо читать.
+    const переключение = planModeSwitch(utterance);
+    if (переключение) {
+      this.planMode = переключение === 'on';
+      const spoken = this.planMode
+        ? 'Режим плана включён. Сначала покажу замысел, работать начну по «погнали».'
+        : 'Режим плана выключен. Работаю сразу.';
+      this.say(spoken, settings);
+      return { kind: 'chat', spoken };
+    }
+
+    if (this.pendingPlan) {
+      const вердикт = readPlanVerdict(utterance);
+      if (вердикт === 'принято') {
+        const принятый = this.pendingPlan;
+        this.pendingPlan = null;
+        return this.startApproved(принятый);
+      }
+      if (вердикт === 'правка') {
+        const прежний = this.pendingPlan;
+        this.pendingPlan = null;
+        // Правка не отменяет задачу — она меняет замысел. Планируем заново,
+        // держа обе фразы: исходную просьбу и поправку к ней.
+        return this.proposePlan(`${прежний.utterance}. Поправка: ${utterance}`, settings);
+      }
+      // «Неясно» — молчим про план и разбираем реплику как обычно: человек мог
+      // сказать вовсе не о нём.
     }
 
     this.options.world.noteUtterance(utterance);
@@ -406,6 +476,13 @@ export class JarvisCore {
     // возможного: спрашивал-то он.
     if (decision.asks && isTalk(decision)) clarification = null;
 
+    // Просьба спланировать — тоже не непонятный приказ.
+    //
+    // «Сначала распиши как будешь делать мультик» набирает мало умений и
+    // получало «Не понял, что именно сделать». Уточнять тут нечего: человек
+    // прямо сказал, чего хочет, и хочет он замысла, а не работы.
+    if (this.planMode || asksForPlan(utterance)) clarification = null;
+
     if (clarification) {
       this.say(clarification, settings);
       return { kind: 'clarify', spoken: clarification, decision };
@@ -432,7 +509,9 @@ export class JarvisCore {
       acceptanceCriteria: normalized.acceptanceCriteria,
       cwd: decision.projectPath ?? this.options.world.snapshot().currentProjectPath,
       project: decision.project,
-      context,
+      // Утверждённый план идёт первой строкой контекста: агент получает не
+      // голую просьбу, а то, на что человек уже посмотрел и сказал «погнали».
+      context: this.approving ? [renderPlan(this.approving), ...context] : context,
       capabilities: decision.needs,
       risk,
       permissions: normalized.permissions,
@@ -452,6 +531,20 @@ export class JarvisCore {
       codingPreference: settings.codingPreference,
       mainPreference: settings.mainPreference,
     });
+
+    // 6.4. Сначала замысел, если так попросили.
+    //
+    // Или режимом («включи режим плана»), или прямо в этой фразе («сначала
+    // распиши»). Работа не начинается: человек увидит план и скажет «погнали»
+    // или поправит. Именно этого он и просил — перестать курировать на каждом
+    // шаге, потому что курируют тогда, когда работа началась раньше согласия.
+    //
+    // ВЫШЕ разговора нарочно: «сначала распиши как будешь делать мультик» не
+    // набирает ни одного умения и потому выглядит разговором. Ответить на неё
+    // словами — значит проговорить план и не запомнить его.
+    if (!this.approving && (this.planMode || asksForPlan(utterance))) {
+      return this.proposePlan(utterance, settings);
+    }
 
     // 6.5. Вопрос и разговор — это ответ словами, а не работа.
     //
@@ -482,6 +575,69 @@ export class JarvisCore {
     this.say(spoken, settings);
 
     return { kind: 'task', spoken, decision, task, normalized };
+  }
+
+  /**
+   * Составить план и положить его на стол.
+   *
+   * Правами только на чтение и без инструментов: планирующий прогон не должен
+   * ничего трогать, и модели об этом сказано прямо — иначе она потратит минуту
+   * на попытки сделать работу и отчитается неудачей.
+   */
+  private async proposePlan(utterance: string, settings: JarvisSettings): Promise<JarvisTurn> {
+    this.options.showIndicator?.('chatting');
+
+    const run = this.options.backends.run(
+      {
+        utterance: planPrompt(utterance),
+        capabilities: ['reasoning'],
+        risk: 'safe',
+        permissions: { read: false, edit: false, execute: false, network: false },
+        language: 'ru',
+        timeoutMs: CHAT_TIMEOUT_MS,
+      },
+      {},
+    );
+
+    let шаги: string[] = [];
+    try {
+      const итог = await run.result();
+      if (итог.ok) шаги = stepsFromAnswer(итог.text);
+    } catch {
+      // Молчание модели — не повод молчать самому: скажем честно ниже.
+    }
+
+    if (шаги.length === 0) {
+      const spoken = 'Не смог составить план. Скажи задачу иначе или «выключи режим плана».';
+      this.say(spoken, settings);
+      return { kind: 'chat', spoken };
+    }
+
+    const plan = makePlan(utterance, шаги, this.now());
+    this.pendingPlan = { utterance, plan };
+    this.options.savePlan?.(plan);
+
+    // Вслух — сводка, на экран — весь план. Семь шагов подряд голосом человек
+    // не удержит, а в окне они уже лежат.
+    const spoken = `${planSummary(plan)} Погнали?`;
+    this.say(spoken, settings);
+    return { kind: 'plan', spoken, plan };
+  }
+
+  /**
+   * Запустить работу по утверждённому плану.
+   *
+   * План уходит в контекст запроса: агент получает не голую просьбу, а то, на
+   * что человек уже посмотрел и согласился. Это и отличает утверждённый план
+   * от плана, который агент придумал себе сам по дороге.
+   */
+  private async startApproved(принятый: { utterance: string; plan: Plan }): Promise<JarvisTurn> {
+    this.approving = принятый.plan;
+    try {
+      return await this.handleUtterance(принятый.utterance);
+    } finally {
+      this.approving = null;
+    }
   }
 
   private say(text: string, settings: JarvisSettings): void {

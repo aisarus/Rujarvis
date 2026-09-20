@@ -769,3 +769,86 @@ describe('разговор помнит свой ответ', () => {
     expect(h.world.snapshot().previousResult?.text).toContain('Толстой');
   });
 });
+
+/**
+ * Режим плана: сначала замысел, потом работа.
+ *
+ * Человек попросил то же, что есть у кодовых агентов, и попросил по делу: его
+ * главная жалоба — «приходится курировать на каждом этапе». Курируют потому,
+ * что работа начинается раньше согласия.
+ */
+describe('режим плана', () => {
+  const планОтвет = () => ({
+    ok: true,
+    text: '1. Собрать референсы\n2. Нарисовать силуэт\n3. Раскрасить',
+  });
+
+  function сПланом() {
+    return harness({
+      respond: {
+        interpreter: планОтвет,
+        'claude-code': планОтвет,
+        codex: планОтвет,
+      },
+    });
+  }
+
+  it('включается и выключается голосом', async () => {
+    const h = сПланом();
+    const вкл = await h.core.handleUtterance('включи режим плана');
+    expect(вкл.kind).toBe('chat');
+    expect(h.spoken.at(-1)).toContain('план');
+
+    const выкл = await h.core.handleUtterance('выключи режим плана');
+    expect(выкл.kind).toBe('chat');
+    expect(h.spoken.at(-1)).toContain('сразу');
+  });
+
+  it('работа не начинается, пока план не утверждён', async () => {
+    const h = сПланом();
+    await h.core.handleUtterance('включи режим плана');
+
+    const ход = await h.core.handleUtterance('нарисуй персонажа в крите');
+    expect(ход.kind).toBe('plan');
+    // Задача не заведена: агент к работе не приступал.
+    expect(h.tasks.active()).toHaveLength(0);
+  });
+
+  it('«погнали» запускает работу', async () => {
+    const h = сПланом();
+    await h.core.handleUtterance('включи режим плана');
+    await h.core.handleUtterance('нарисуй персонажа в крите');
+
+    const ход = await h.core.handleUtterance('погнали');
+    expect(ход.kind).toBe('task');
+  });
+
+  // Правка не отменяет задачу — она меняет замысел, и план собирается заново.
+  it('правка возвращает новый план, а не работу', async () => {
+    const h = сПланом();
+    await h.core.handleUtterance('включи режим плана');
+    await h.core.handleUtterance('нарисуй персонажа в крите');
+
+    const ход = await h.core.handleUtterance('сначала сделай фон а потом персонажа');
+    expect(ход.kind).toBe('plan');
+    expect(h.tasks.active()).toHaveLength(0);
+  });
+
+  // Без режима хватает и одной фразы: «сначала распиши».
+  it('план можно попросить разово', async () => {
+    const h = сПланом();
+    const ход = await h.core.handleUtterance('сначала распиши как будешь делать мультик');
+    expect(ход.kind).toBe('plan');
+  });
+
+  // Утверждённый план обязан дойти до агента: иначе он придумает свой.
+  it('утверждённый план уходит в запрос', async () => {
+    const h = сПланом();
+    await h.core.handleUtterance('включи режим плана');
+    await h.core.handleUtterance('нарисуй персонажа в крите');
+    await h.core.handleUtterance('погнали');
+
+    const запрос = h.recorded.at(-1);
+    expect((запрос?.request.context ?? []).join(' ')).toContain('силуэт');
+  });
+});

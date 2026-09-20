@@ -7,6 +7,7 @@
  * this is it — the function the Electron app calls to get a working assistant.
  */
 
+import type { Plan } from '../../jarvis/agent/plan';
 import { BackendManager } from '../../jarvis/backends/manager';
 import { ClaudeCodeBackend } from '../../jarvis/backends/claudeCode';
 import { SessionPool } from '../../jarvis/backends/sessionPool';
@@ -101,6 +102,8 @@ export interface CreateJarvisOptions {
    * другой процесс в отдельный файл, и в состоянии мира его нет.
    */
   workNow?(): string[];
+  /** Куда положить составленный план, чтобы его было видно в окне. */
+  savePlan?(plan: Plan): void;
   /** Работать на виду или в фоне. Переключается голосом. */
   showWork?(): boolean;
 }
@@ -205,6 +208,7 @@ export function createJarvis(options: CreateJarvisOptions = {}): Jarvis {
     instructions: options.instructions,
     lessons: options.lessons,
     workNow: options.workNow,
+    savePlan: options.savePlan,
     showWork: options.showWork,
   });
 
