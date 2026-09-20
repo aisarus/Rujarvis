@@ -322,6 +322,14 @@ function readDirect(phrase: string): DirectCommand | null {
   const repeated = readRepeat(phrase);
   if (repeated) return repeated;
 
+  // Включение режима — РАНЬШЕ разбора диктуемого текста.
+  //
+  // «Печатай за мной» это просьба включить диктовку, а не напечатать слова «за
+  // мной». Разбор текста стоял первым и съедал команду: сквозная проверка
+  // поймала это первой же строкой.
+  if (DICTATION_ON.includes(phrase)) return { kind: 'dictation', on: true };
+  if (DICTATION_OFF.includes(phrase)) return { kind: 'dictation', on: false };
+
   // Диктовка проверяется до таблиц: у неё есть хвост, и точное совпадение
   // здесь неприменимо.
   const dictated = readDictation(phrase);
@@ -337,8 +345,6 @@ function readDirect(phrase: string): DirectCommand | null {
   if (click) return { kind: 'click', ...click };
 
   if (LONG_SPEECH.includes(phrase)) return { kind: 'longSpeech' };
-  if (DICTATION_ON.includes(phrase)) return { kind: 'dictation', on: true };
-  if (DICTATION_OFF.includes(phrase)) return { kind: 'dictation', on: false };
 
   const focus = readFocus(phrase);
   if (focus) return focus;

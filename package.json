@@ -150,6 +150,7 @@
     "release:licenses:check": "node scripts/check-production-licenses.mjs",
     "fixtures:generate": "node scripts/generate-public-test-fixtures.mjs",
     "lint:selectors": "npx tsx scripts/lint-selectors.ts",
+    "проверка:команды": "npx tsx scripts/проверка-команд.ts",
     "lint": "pnpm run typecheck && pnpm run lint:selectors",
     "check:react-compiler": "cross-env REACT_COMPILER_PANIC_THRESHOLD=all_errors pnpm run build:renderer",
     "schema:validators": "bun run src/lib/validators/compile.ts",

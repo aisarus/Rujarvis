@@ -275,6 +275,20 @@ function askQuickly(question: string): Promise<string | null> {
   });
 }
 
+/**
+ * Убрать обращение в начале — и только в начале.
+ *
+ * Имя внутри фразы это содержание, а не обращение. Сквозная проверка поймала
+ * два случая разом: «переключись на джарвис» превращалось в пустоту, а
+ * «напечатай джарвис молодец» — в «молодец». Оба потому, что имя вырезалось
+ * откуда угодно и бралось то, что после него.
+ */
+function withoutLeadingName(text: string): string {
+  const found = findWakeWord(text);
+  if (!found || found.index !== 0) return text;
+  return found.command || text;
+}
+
 function setDictation(on: boolean): void {
   dictating = on;
   console.log(on ? '[jarvis] диктовка началась' : '[jarvis] диктовка окончена');
@@ -963,7 +977,7 @@ export async function startJarvisVoiceBridge(options: {
         // трёхсот миллисекунд, а во время работы и вовсе становилась заметкой.
         // В журнале это выглядело как «не переключает вкладки, не работает
         // ничего», и так оно и было.
-        const command = awake ? (findWakeWord(text)?.command ?? text) : findWakeWord(text)?.command;
+        const command = awake ? withoutLeadingName(text) : findWakeWord(text)?.command;
 
         // Разбуженный Джарвис слушает без имени и принимает за команду всё
         // подряд — включая разговор в комнате. Там, где имя прозвучало,
