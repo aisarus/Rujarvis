@@ -120,6 +120,8 @@ export interface RunHead {
    * последовательность всё равно видна по событиям «начал» и «переключаюсь». */
   order?: readonly string[];
   rationale?: string;
+  /** Какой драйвер рабочего стола взят и какой он версии. */
+  driver?: { path: string; hash: string };
   at: Date;
 }
 
@@ -133,6 +135,9 @@ export function summarise(head: RunHead): string {
     `умения:     ${head.capabilities.join(', ') || 'нет'}`,
     `порядок:    ${head.order?.join(' → ') || 'по обстоятельствам'}`,
     `почему:     ${head.rationale ?? 'не записано'}`,
+    // Путь и хеш драйвера: расхождение исходника и сборки однажды стоило
+    // суток отладки, и увидеть его надо в первой строке, а не на исходе дня.
+    `драйвер:    ${head.driver ? `${head.driver.hash}  ${head.driver.path}` : 'не записан'}`,
     '',
     'просил:',
     head.prompt,

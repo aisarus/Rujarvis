@@ -175,7 +175,7 @@ export function buildClaudeArgs(
     // Headless Claude Code withholds the web tools and anything that runs
     // commands unless they are named. Naming them is the difference between an
     // agent that can look something up mid-task and one that can only guess.
-    args.push('--allowedTools', DESKTOP_RUN_TOOLS.join(','));
+    args.push('--allowedTools', toolsFor(request.capabilities).join(','));
   }
   return args;
 }
@@ -223,65 +223,91 @@ const DESKTOP_CAPABILITIES: readonly JarvisCapability[] = [
  * finish a job it started — a task that begins with a click often ends with a
  * file.
  */
-const DESKTOP_RUN_TOOLS = [
-  // Работа с окном по именам. Порядок здесь тот же, что и в работе: посмотреть,
-  // найти надпись, нажать по номеру.
+/**
+ * Инструменты — по делу задачи, а не все сразу.
+ *
+ * Список из пятидесяти трёх имён стоил дважды. Во-первых, Клод Код при таком
+ * числе подгружает инструменты лениво, и агент тратил три круга `ToolSearch`
+ * посреди работы. Во-вторых, лишний инструмент — это ловушка: на просьбе
+ * выбрать вкладку в Edge агент семнадцать секунд возился с `browser_tabs`,
+ * который управляет НАШИМ браузером Playwright, а не окном человека.
+ *
+ * Замер 20.09.2026, «выбери вторую вкладку»: 103 секунды, из них семь снимков
+ * экрана, три захода `ToolSearch` и семнадцать секунд не в то окно.
+ */
+
+/** Всегда: память, план, правки на ходу, файлы результата. */
+const ALWAYS = [
+  'mcp__jarvis-desktop__recall',
+  'mcp__jarvis-desktop__remember',
+  'mcp__jarvis-desktop__forget',
+  'mcp__jarvis-desktop__check_notes',
+  'mcp__jarvis-desktop__set_plan',
+  'mcp__jarvis-desktop__mark_step',
+  'mcp__jarvis-desktop__show_plan',
+  'mcp__jarvis-desktop__recent_actions',
+  'mcp__jarvis-desktop__output_folder',
+  'mcp__jarvis-desktop__move_to_output',
+  'mcp__jarvis-desktop__show_file',
+  'mcp__jarvis-desktop__list_files',
+  'mcp__jarvis-desktop__list_skills',
+  'mcp__jarvis-desktop__write_skill',
+  'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'TodoWrite',
+  // Поиск в вебе — всегда: посреди работы на экране может понадобиться
+  // посмотреть, как называется нужная кнопка или что значит ошибка.
+  'WebSearch', 'WebFetch',
+  // Blender тоже всегда: «нарисуй» и «положи файл» приходят без capability
+  // computer, а сделать сцену без этих трёх инструментов нечем.
+  'mcp__jarvis-desktop__blender_live_start',
+  'mcp__jarvis-desktop__blender_live',
+  'mcp__jarvis-desktop__blender_python',
+];
+
+/** Чужое окно: смотреть, искать по имени, нажимать по номеру. */
+const WINDOW_TOOLS = [
   'mcp__jarvis-desktop__window_list',
   'mcp__jarvis-desktop__window_look',
   'mcp__jarvis-desktop__window_find',
   'mcp__jarvis-desktop__window_press',
   'mcp__jarvis-desktop__window_write',
   'mcp__jarvis-desktop__window_key',
+  'mcp__jarvis-desktop__focus_window',
+  'mcp__jarvis-desktop__list_windows',
   'mcp__jarvis-desktop__screenshot',
   'mcp__jarvis-desktop__click',
   'mcp__jarvis-desktop__type_text',
   'mcp__jarvis-desktop__press_key',
   'mcp__jarvis-desktop__scroll',
-  'mcp__jarvis-desktop__list_windows',
-  'mcp__jarvis-desktop__focus_window',
-  'mcp__jarvis-desktop__remember',
-  'mcp__jarvis-desktop__recall',
-  'mcp__jarvis-desktop__recent_actions',
-  'mcp__jarvis-desktop__check_notes',
-  'mcp__jarvis-desktop__set_plan',
-  'mcp__jarvis-desktop__mark_step',
-  'mcp__jarvis-desktop__show_plan',
-  'mcp__jarvis-desktop__page_ride',
-  'mcp__jarvis-desktop__page_depth',
-  'mcp__jarvis-desktop__blender_live_start',
-  'mcp__jarvis-desktop__blender_live',
-  'mcp__jarvis-desktop__write_skill',
-  'mcp__jarvis-desktop__list_skills',
-  'mcp__jarvis-desktop__forget',
+];
+
+/** Наш собственный браузер. Не путать с окном человека. */
+const BROWSER_TOOLS = [
   'mcp__jarvis-desktop__browser_open',
   'mcp__jarvis-desktop__browser_read',
-  'mcp__jarvis-desktop__browser_controls',
   'mcp__jarvis-desktop__browser_click',
   'mcp__jarvis-desktop__browser_fill',
   'mcp__jarvis-desktop__browser_key',
   'mcp__jarvis-desktop__browser_tabs',
+  'mcp__jarvis-desktop__browser_controls',
   'mcp__jarvis-desktop__browser_download',
   'mcp__jarvis-desktop__browser_wait_for',
-  'mcp__jarvis-desktop__blender_python',
-  'mcp__jarvis-desktop__output_folder',
-  'mcp__jarvis-desktop__list_files',
-  'mcp__jarvis-desktop__move_to_output',
-  'mcp__jarvis-desktop__show_file',
-  'WebSearch',
-  'WebFetch',
-  'Bash',
-  'Read',
-  'Write',
-  'Edit',
-  'Glob',
-  'Grep',
-  // Список инструментов заодно отсекает всё, что в него не попало. Работа по
-  // коду с файлами тоже проходит этой веткой, поэтому её обычные инструменты
-  // должны быть здесь, иначе она молча теряет половину своих возможностей.
-  'MultiEdit',
-  'NotebookEdit',
-  'TodoWrite',
+  'mcp__jarvis-desktop__page_ride',
+  'mcp__jarvis-desktop__page_depth',
 ];
+
+/** Что агенту дать под эту задачу. */
+export function toolsFor(capabilities: readonly JarvisCapability[]): string[] {
+  const wanted = new Set(ALWAYS);
+  const has = (name: JarvisCapability): boolean => capabilities.includes(name);
+
+  if (has('computer') || has('vision')) for (const t of WINDOW_TOOLS) wanted.add(t);
+  if (has('browser')) for (const t of BROWSER_TOOLS) wanted.add(t);
+  if (has('coding')) wanted.add('MultiEdit').add('NotebookEdit');
+  // Ни одного признака — значит разговор; хватает памяти и чтения.
+  if (wanted.size === ALWAYS.length) for (const t of WINDOW_TOOLS) wanted.add(t);
+
+  return [...wanted];
+}
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit']);
 

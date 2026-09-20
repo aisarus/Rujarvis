@@ -46,7 +46,7 @@ import { endsDictation, parseDirectCommand, type DirectCommand } from '../../jar
 import { parseDictationEdit, type DictationEdit } from '../../jarvis/control/dictationEdits';
 import { chooseElement } from '../../jarvis/control/elements';
 import { cellCenter, subCellCenter } from '../../jarvis/control/grid';
-import { DesktopDriver } from '../../jarvis/desktop/driver';
+import { DesktopDriver, driverStamp } from '../../jarvis/desktop/driver';
 import { EchoGuard } from '../../jarvis/voice/echo';
 import { StandingInstructions } from '../../jarvis/backends/standingInstructions';
 import { ProgressVoice } from '../../jarvis/voice/progress';
@@ -1282,6 +1282,7 @@ export async function startJarvisVoiceBridge(options: {
         prompt: event.task.request.utterance,
         cwd: event.task.request.cwd ?? '(папка не задана)',
         capabilities: event.task.request.capabilities,
+        driver: driverStamp(),
       });
       runLogs.set(event.task.id, log);
       progress.reset();

@@ -12,7 +12,8 @@
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import type { UiElement } from '../control/elements';
@@ -77,6 +78,23 @@ function findDriverScript(): string {
 }
 
 const DRIVER_SCRIPT = findDriverScript();
+
+/**
+ * Какой драйвер взят и какой он версии.
+ *
+ * Скрипт ищется среди нескольких мест: приложение берёт исходник, MCP-сервер —
+ * собранную копию. Две правды об одном файле однажды разошлись на сутки, и
+ * отладка выглядела как «в исходнике починено, в работе нет». Путь и хеш в
+ * первой строке журнала прогона делают расхождение видимым сразу.
+ */
+export function driverStamp(): { path: string; hash: string } {
+  try {
+    const hash = createHash('sha256').update(readFileSync(DRIVER_SCRIPT)).digest('hex').slice(0, 12);
+    return { path: DRIVER_SCRIPT, hash };
+  } catch {
+    return { path: DRIVER_SCRIPT, hash: 'нет файла' };
+  }
+}
 
 export class DesktopDriver {
   private child: ChildProcessWithoutNullStreams | null = null;
