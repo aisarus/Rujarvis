@@ -43,7 +43,7 @@ export function lineFor(event: BackendEvent): string {
     case 'tool':
       return `${event.backend} инструмент ${event.name}${event.detail ? ` ${event.detail}` : ''}`;
     case 'file-changed':
-      return `${event.backend} файл ${event.change.kind}: ${event.change.path}`;
+      return `${event.backend} файл ${event.change.action}: ${event.change.path}`;
     case 'command':
       return `${event.backend} команда: ${event.command}${
         event.exitCode === undefined || event.exitCode === null ? '' : ` (код ${event.exitCode})`

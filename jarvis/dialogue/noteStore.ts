@@ -53,6 +53,23 @@ export class NoteStore {
     return this.read();
   }
 
+  /**
+   * Убрать одну заметку.
+   *
+   * Нужно, когда сказанное во время работы оказалось не поправкой, а отдельной
+   * задачей: решение принимается в фоне и приходит через несколько секунд.
+   * Возвращает false, если заметки уже нет — значит агент успел её забрать, и
+   * работа по ней идёт. Тогда заводить вторую задачу нельзя: получится дубль.
+   */
+  drop(text: string): boolean {
+    const trimmed = text.trim();
+    const notes = this.read();
+    const left = notes.filter((note) => note.text !== trimmed);
+    if (left.length === notes.length) return false;
+    this.write(left);
+    return true;
+  }
+
   clear(): void {
     this.write([]);
   }

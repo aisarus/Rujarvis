@@ -21,7 +21,7 @@
  * действие — терять две секунды на ровном месте.
  */
 
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -69,7 +69,7 @@ interface Pending {
 }
 
 export class CuaDriver {
-  private child: ChildProcessWithoutNullStreams | null = null;
+  private child: ChildProcess | null = null;
   private ready: Promise<void> | null = null;
   private buffer = '';
   private nextId = 10;
@@ -96,7 +96,7 @@ export class CuaDriver {
       const child = spawn(exe, ['mcp'], { stdio: ['pipe', 'pipe', 'ignore'] });
       this.child = child;
 
-      child.stdout.on('data', (chunk: Buffer) => this.take(chunk.toString('utf8')));
+      child.stdout?.on('data', (chunk: Buffer) => this.take(chunk.toString('utf8')));
       child.on('exit', () => {
         this.child = null;
         this.ready = null;
@@ -119,7 +119,7 @@ export class CuaDriver {
   }
 
   private send(message: unknown): void {
-    this.child?.stdin.write(`${JSON.stringify(message)}\n`);
+    this.child?.stdin?.write(`${JSON.stringify(message)}\n`);
   }
 
   private take(text: string): void {

@@ -69,6 +69,7 @@ import { startLogFile } from './logFile';
 import { createGridOverlay, type GridOverlay } from './gridOverlay';
 import { createHelpOverlay, type HelpOverlay } from './helpOverlay';
 import { createLogWindow, type LogWindow } from './logWindow';
+import { askAbout, obviousAside, readAnswer } from '../../jarvis/dialogue/aside';
 import { RunLogStore } from '../../jarvis/observe/runLogStore';
 import { Storyline } from '../../jarvis/observe/storyline';
 import { StartupTiming } from '../../jarvis/observe/timing';
@@ -190,7 +191,7 @@ let plans: PlanStore | null = null;
  * проверкой, а забытая проверка роняет работу ради журнала — то есть ровно
  * наоборот тому, ради чего он заведён.
  */
-let runs: RunLogStore = new RunLogStore(path.join(os.tmpdir(), 'jarvis-runs'));
+const runLogs = new Map<string, RunLogStore>();
 /**
  * Показывать ли работу.
  *
@@ -211,6 +212,68 @@ let story: Storyline | null = null;
 /** Сколько времени агент тратит на разгон, прежде чем начать дело. */
 let timing: StartupTiming | null = null;
 let lastCell: number | null = null;
+/**
+ * Буфер мысли и накладка состояния — видимые из функций уровня модуля.
+ *
+ * Обе живут внутри start(), но нужны и прямым командам, которые разбираются
+ * снаружи. Ссылки здесь — единственный способ дотянуться, не таща их через
+ * каждый вызов; присваиваются один раз при запуске.
+ */
+let thoughtRef: UtteranceBuffer | null = null;
+let overlayRef: StatusOverlay | null = null;
+
+/** Дольше этого ответ уже не нужен: человек давно говорит о другом. */
+const QUICK_ANSWER_MS = 15_000;
+
+/**
+ * Короткий вопрос к модели без инструментов и без MCP.
+ *
+ * Через тот же Claude Code, что ведёт работу, — то есть по подписке и без
+ * единого ключа. Инструменты и серверы отключены нарочно: вопрос требует
+ * одного слова, а прогрев MCP-сервера стоил бы вдвое дороже самого ответа.
+ *
+ * Возвращает null на любую заминку. Это весь договор: вызывающий обязан уметь
+ * жить без ответа, иначе молчащая модель остановит работу.
+ */
+function askQuickly(question: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (answer: string | null): void => {
+      if (done) return;
+      done = true;
+      resolve(answer);
+    };
+
+    try {
+      const child = spawn('claude', ['-p', '--model', 'haiku', '--strict-mcp-config'], {
+        shell: true,
+        stdio: ['pipe', 'pipe', 'ignore'],
+      });
+      const timer = setTimeout(() => {
+        child.kill();
+        finish(null);
+      }, QUICK_ANSWER_MS);
+      timer.unref?.();
+
+      let out = '';
+      child.stdout?.on('data', (chunk: Buffer) => {
+        out += chunk.toString('utf8');
+      });
+      child.on('error', () => {
+        clearTimeout(timer);
+        finish(null);
+      });
+      child.on('exit', (code) => {
+        clearTimeout(timer);
+        finish(code === 0 && out.trim() ? out.trim() : null);
+      });
+      child.stdin?.write(question);
+      child.stdin?.end();
+    } catch {
+      finish(null);
+    }
+  });
+}
 
 function setDictation(on: boolean): void {
   dictating = on;
@@ -282,9 +345,9 @@ async function runDirectCommand(command: DirectCommand, session: VoiceSession): 
         // Слушатель ждёт дольше и не рвёт мысль на глаголе просьбы. Держится
         // до конца одного сообщения — человек сказал «диктую» про него, а не
         // про весь вечер.
-        thought.listenLong = true;
+        if (thoughtRef) thoughtRef.listenLong = true;
         console.log('[jarvis] слушаю длинную мысль: пауза до пяти секунд');
-        overlay.note(session.status, 'Слушаю длинно — пауза до 5 секунд');
+        overlayRef?.note(session.status, 'Слушаю длинно — пауза до 5 секунд');
         await session.speak('Слушаю. Говорите.');
         break;
       case 'mode':
@@ -292,7 +355,7 @@ async function runDirectCommand(command: DirectCommand, session: VoiceSession): 
         // «в фоне» не на одну задачу, а потому что сейчас занят.
         showWork = command.show;
         console.log(`[jarvis] режим: ${showWork ? 'на виду' : 'в фоне'}`);
-        overlay.note(session.status, showWork ? 'Работаю на виду' : 'Работаю в фоне');
+        overlayRef?.note(session.status, showWork ? 'Работаю на виду' : 'Работаю в фоне');
         await session.speak(showWork ? 'Буду показывать.' : 'Ухожу в фон.');
         break;
       case 'where': {
@@ -507,6 +570,7 @@ export async function startJarvisVoiceBridge(options: {
   // Незаконченная мысль человека. Пауза после фразы — часть фразы, пока он
   // может её продолжить.
   const thought = new UtteranceBuffer();
+  thoughtRef = thought;
   let thoughtTimer: NodeJS.Timeout | null = null;
 
   function scheduleThought(): void {
@@ -534,22 +598,75 @@ export async function startJarvisVoiceBridge(options: {
       //
       // Слова остановки, тишина и прямые команды сюда не доходят: они
       // разобраны выше и обязаны срабатывать всегда.
-      if (jarvis.tasks.foreground()) {
-        // В ящик — только то, что человек и правда сказал по делу.
-        //
-        // Иначе туда падает всё подряд: одно имя «Джарвис», вежливость,
-        // выдумки распознавателя. Потом это становится задачей, и человек
-        // получает работу, о которой не просил.
-        if (isPleasantry(whole) || whole.trim().split(/\s+/u).length < 2) {
-          console.log(`[jarvis] не кладу в ящик: ${whole}`);
+      /**
+       * Завести вторую задачу, не трогая первую.
+       *
+       * Обычный путь и есть нужный: менеджер задач переводит идущую работу в
+       * фон и продолжает её, а новая становится передней. Своего запуска тут
+       * заводить не надо — потеряется маршрутизация и имя задачи.
+       */
+      const startAlongside = (text: string): void => {
+        console.log(`[jarvis] вторая задача: ${text}`);
+        note('command', `параллельно: ${text}`);
+        void session.acceptAmbientTranscript(text).catch((error: unknown) => {
+          console.error('[jarvis] не удалось завести вторую задачу:', error);
+        });
+      };
+
+      /**
+       * Спросить в фоне, не поправка ли это была.
+       *
+       * Ждать ответа нельзя: замер 20.09.2026 дал 7–10 секунд даже у самой
+       * быстрой модели, а человек просил, чтобы работа не спотыкалась. Поэтому
+       * реплика уже засчитана поправкой, а здесь она может быть повышена до
+       * отдельной задачи задним числом.
+       *
+       * Если агент успел забрать заметку раньше ответа — оставляем как есть:
+       * работа по ней уже идёт, и вторая задача была бы дублем.
+       */
+      const maybeSeparate = async (text: string, title: string): Promise<void> => {
+        const answer = await askQuickly(askAbout(text, title));
+        if (!answer) return;
+        if (readAnswer(answer).kind !== 'task') return;
+        if (!notes?.drop(text)) {
+          console.log(`[jarvis] «${short(text)}» уже забрали в работу — оставляю поправкой`);
           return;
         }
+        startAlongside(text);
+      };
+
+      const working = jarvis.tasks.foreground();
+      if (working) {
+        const obvious = obviousAside(whole);
+
+        // Вежливость, обрывки и выдумки распознавателя не значат ничего.
+        // Иначе в ящик падает всё подряд, а потом становится работой, о
+        // которой человек не просил.
+        if (obvious?.kind === 'ignore') {
+          console.log(`[jarvis] мимо (${obvious.why}): ${whole}`);
+          return;
+        }
+
+        // Сказал прямо — делаем прямо, без чужого мнения.
+        if (obvious?.kind === 'task') {
+          startAlongside(whole);
+          return;
+        }
+
+        // Остальное кладём в ящик СЕЙЧАС и спрашиваем в фоне.
+        //
+        // Спросить и подождать ответа нельзя: замер 20.09.2026 дал 7–10 секунд
+        // на решение, а человек просил, чтобы работа не спотыкалась. Поэтому
+        // поправка засчитывается сразу, а если решение окажется «отдельно» —
+        // заметка превратится в задачу задним числом.
         notes?.add(whole);
         note('command', `сказал во время работы: ${whole}`);
         story?.heard(whole, Date.now());
         console.log(`[jarvis] правка на ходу: ${whole}`);
         overlay.note(session.status, `Учту: ${short(whole)}`);
         void session.speak('Учту.');
+
+        if (!obvious) void maybeSeparate(whole, working.title);
         return;
       }
 
@@ -580,7 +697,6 @@ export async function startJarvisVoiceBridge(options: {
   // Разбор прогонов: полный ход каждой задачи, по файлу на задачу. Ради
   // случая, когда работа сорвалась и нужно узнать, на чём именно — а не
   // услышать последнюю по счёту ошибку от того, кто взялся уже после срыва.
-  runs = new RunLogStore(runsDir());
   console.log(`[jarvis] разбор прогонов: ${runsDir()}`);
 
   // План работы — тот же файл, что пишет агент. Старый не стираем: работа
@@ -641,6 +757,7 @@ export async function startJarvisVoiceBridge(options: {
   }
 
   const overlay = createStatusOverlay();
+  overlayRef = overlay;
   gridOverlay = createGridOverlay();
   helpOverlay = createHelpOverlay();
   logWindow = createLogWindow();
@@ -1103,7 +1220,7 @@ export async function startJarvisVoiceBridge(options: {
 
   jarvis.tasks.subscribe((event) => {
     if (event.type === 'task-event') {
-      runs.saw(event.event);
+      runLogs.get(event.task.id)?.saw(event.event);
       progress.saw(event.event);
       story?.saw(event.event, Date.now());
       timing?.saw(event.event, Date.now());
@@ -1127,12 +1244,14 @@ export async function startJarvisVoiceBridge(options: {
       return;
     }
     if (event.type === 'task-created') {
-      runs.begin({
+      const log = new RunLogStore(runsDir());
+      log.begin({
         title: event.task.title,
-        prompt: event.task.request.prompt,
-        cwd: event.task.request.cwd,
+        prompt: event.task.request.utterance,
+        cwd: event.task.request.cwd ?? '(папка не задана)',
         capabilities: event.task.request.capabilities,
       });
+      runLogs.set(event.task.id, log);
       progress.reset();
       // Новая глава: без неё лента сливается в один нечитаемый поток.
       story?.begin(event.task.title, Date.now());
@@ -1162,9 +1281,11 @@ export async function startJarvisVoiceBridge(options: {
 
     // Итог — в журнал прогона, и только потом закрываем файл. Событие
     // завершения до подписчиков не доходит: менеджер обрывает поток на нём.
-    if (result) runs.saw({ type: 'completed', backend: result.backend, result });
-    const runFile = runs.current();
-    runs.end();
+    const log = runLogs.get(event.task.id);
+    if (result) log?.saw({ type: 'completed', backend: result.backend, result });
+    const runFile = log?.current() ?? null;
+    log?.end();
+    runLogs.delete(event.task.id);
 
     const spent = timing?.report();
     if (spent) console.log(`[jarvis] разгон: ${spent}`);
@@ -1223,7 +1344,8 @@ export async function startJarvisVoiceBridge(options: {
     // Последняя реплика — это то, чего человек хочет сейчас. Всё, что он
     // сказал раньше и что никто не забрал, он повторит, если оно ему нужно.
     const leftover = notes?.take() ?? [];
-    const last = leftover.at(-1);
+    // Индексом, а не .at(-1): библиотека типов этой сборки до ES2022 не дотягивает.
+    const last = leftover[leftover.length - 1];
     if (last) {
       const whole = last.text;
       console.log(`[jarvis] беру отложенное: ${whole}`);
