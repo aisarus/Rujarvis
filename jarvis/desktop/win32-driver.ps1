@@ -287,8 +287,22 @@ function Invoke-Command2($message) {
             return @{ ok = $true }
         }
         'focus' {
-            $target = Get-Windows | Where-Object { $_.title -like "*$($message.title)*" } | Select-Object -First 1
-            if (-not $target) { throw "Окно не найдено: $($message.title)" }
+            # Snachala po zagolovku, potom po imeni processa.
+            #
+            # «Pereklyuchis na edzh» prihodit syuda kak "msedge" — eto imya
+            # ispolnyaemogo fayla, a v zagolovke okna napisano "Microsoft Edge".
+            # U Chrome sovpadalo sluchayno, u Edge net, i chelovek slyshal
+            # «ne poluchilos» na komandu, kotoraya obyazana rabotat vsegda.
+            $needle = $message.title
+            $windows = Get-Windows
+            $target = $windows | Where-Object { $_.title -like "*$needle*" } | Select-Object -First 1
+            if (-not $target) {
+                $target = $windows | Where-Object {
+                    $proc = Get-Process -Id $_.pid -ErrorAction SilentlyContinue
+                    $proc -and ($proc.ProcessName -like "*$needle*")
+                } | Select-Object -First 1
+            }
+            if (-not $target) { throw "Окно не найдено: $needle" }
             $handle = [IntPtr]::Zero
             $callback = [Desk+EnumProc] {
                 param($h, $l)

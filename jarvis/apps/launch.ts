@@ -66,6 +66,15 @@ const APP_ALIASES: ReadonlyArray<readonly [readonly string[], string]> = [
   [['дискорд', 'discord'], 'discord'],
   [['ворд', 'word'], 'winword'],
   [['эксель', 'ексель', 'excel'], 'excel'],
+  [['блендер', 'блендере', 'blender'], 'blender'],
+  [['клод', 'клода', 'клауд', 'claude'], 'claude'],
+  [['джарвис', 'жарвис', 'jarvis'], 'Jarvis'],
+  [['риот', 'риот клиент', 'riot'], 'Riot Client'],
+  [['лига', 'лигу', 'лол', 'league'], 'League of Legends'],
+  [['дота', 'доту', 'dota'], 'dota2'],
+  [['стим', 'steam'], 'steam'],
+  [['обс', 'obs'], 'obs64'],
+  [['ворд пад', 'вордпад', 'wordpad'], 'wordpad'],
   [['настройки', 'параметры', 'settings'], 'ms-settings:'],
 ];
 

@@ -299,8 +299,21 @@ async function runDirectCommand(command: DirectCommand, session: VoiceSession): 
       case 'focus': {
         // Псевдоним нужен по той же причине, что и при закрытии: «хром» в
         // заголовке окна не встречается, а "Chrome" встречается.
-        const searchable = aliasTarget(command.title) ?? command.title;
-        const found = await desktop.focus(searchable);
+        const alias = aliasTarget(command.title);
+        // Сначала по псевдониму, потом по сказанному вслух. Псевдоним знает
+        // имя программы, но окно может называться иначе — «Riot Client» в
+        // таблице нет, а сказать про него человек может.
+        let found: { title: string } | null = null;
+        for (const candidate of [alias, command.title]) {
+          if (!candidate) continue;
+          try {
+            found = await desktop.focus(candidate);
+            break;
+          } catch {
+            // Пробуем следующее написание.
+          }
+        }
+        if (!found) throw new Error(`не нашёл окно «${command.title}»`);
         console.log(`[jarvis] переключился на «${found.title}»`);
         break;
       }
