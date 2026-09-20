@@ -110,6 +110,9 @@ const DESKTOP_CAPABILITIES = ['computer', 'vision', 'browser', 'files', 'system'
 const TOOL_NAMES = [
   'ИНСТРУМЕНТЫ ПО ДЕЛУ (искать не надо, они уже твои):',
   '- Blender: blender_live_start, потом blender_live — работа в открытом окне.',
+  '- Крита (рисование, 2D, раскадровки): krita_live_start, потом krita_live —',
+  '  тот же приём, работа в открытом документе. Питон внутри Криты: doc =',
+  '  krita.activeDocument(), после правки пикселей doc.refreshProjection().',
   '  Фоновый blender_python — только для рендера и пакетной работы.',
   '- Сайт: page_ride (снять целиком), page_depth (есть ли что делать),',
   '  browser_open, browser_read, browser_click, browser_fill, browser_key,',

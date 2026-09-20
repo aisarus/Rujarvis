@@ -29,6 +29,7 @@ import { renderNotes } from '../dialogue/notes';
 import { PlanStore } from '../agent/planStore';
 import { inkOfPage, probePage, ridePage } from './pageTravel';
 import * as live from './blenderLive';
+import * as krita from './kritaLive';
 import { makePlan, markStep, renderPlan, type StepState } from '../agent/plan';
 import { buildSkillFile, isSelfAuthored, skillPath } from '../skills/author';
 import { CuaDriver } from './cua';
@@ -1088,6 +1089,84 @@ export function createDesktopMcpServer(): McpServer {
         }
         await files.revealPath(file);
         return say(`Показал в проводнике: ${file}`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'krita_live_start',
+    {
+      title: 'Открыть живую Криту',
+      description:
+        'Открывает Криту, которая остаётся стоять и принимает твои скрипты прямо в ней. ' +
+        'Дальше krita_live рисует В ЭТОМ ЖЕ документе: человек видит, как появляется рисунок. ' +
+        'Зови один раз в начале работы. Если окно уже живое, второй раз не нужно. ' +
+        'ВАЖНО: у Криты нет ключа командной строки для скриптов, слушатель живёт надстройкой. ' +
+        'Если она не включена, человек должен поставить галочку в Настройки → Модули Python → ' +
+        'Jarvis Live и перезапустить Криту. Об этом надо сказать вслух, а не молчать.',
+      inputSchema: {
+        file: z.string().optional().describe('Открыть этот .kra. Без него — пустая Крита.'),
+      },
+    },
+    async ({ file }) => {
+      try {
+        if (krita.isLive()) return say('Живая Крита уже открыта — шли скрипты через krita_live.');
+
+        const exe = krita.findKrita();
+        if (!exe) return say('Крита не найдена на этой машине.');
+        if (!krita.pluginInstalled()) {
+          return say(
+            'Надстройка-слушатель не установлена. Без неё Крита откроется и не ответит.',
+          );
+        }
+
+        krita.startLive(exe, file);
+        const up = await krita.waitLive();
+        return say(
+          up
+            ? 'Живая Крита открыта и слушает. Дальше работай через krita_live.'
+            : 'Крита запущена, но слушатель не отозвался за минуту. Скорее всего выключен модуль: ' +
+              'Настройки → Модули Python → Jarvis Live, галочка, перезапуск Криты. Скажи об этом человеку.',
+        );
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'krita_live',
+    {
+      title: 'Рисовать в открытой Крите',
+      description:
+        'Исполняет Python внутри ОТКРЫТОЙ Криты: слои, кисти, выделения, трансформации, ' +
+        'экспорт кадров. Доступны Krita и krita (готовый Krita.instance()). ' +
+        'Документ берётся так: doc = krita.activeDocument(). ' +
+        'После правки пикселей зови doc.refreshProjection(), иначе человек не увидит изменений. ' +
+        'Файл сам не сохраняется — сохраняет тот, кто об этом попросил.',
+      inputSchema: {
+        code: z.string().describe('Python для исполнения внутри Криты'),
+      },
+    },
+    async ({ code }) => {
+      try {
+        const результат = await krita.sendLive(code);
+        const хвост = результат.printed.trim();
+        if (!результат.ok) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Не удалось: ${результат.error ?? 'неизвестно'}${хвост ? `
+${хвост}` : ''}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        return say(хвост || 'Готово.');
       } catch (error) {
         return failed(error);
       }

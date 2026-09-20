@@ -273,6 +273,8 @@ const ALWAYS = [
   // computer, а сделать сцену без этих трёх инструментов нечем.
   'mcp__jarvis-desktop__blender_live_start',
   'mcp__jarvis-desktop__blender_live',
+  'mcp__jarvis-desktop__krita_live_start',
+  'mcp__jarvis-desktop__krita_live',
   'mcp__jarvis-desktop__blender_python',
 ];
 
