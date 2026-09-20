@@ -14,7 +14,7 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
@@ -31,9 +31,13 @@ import { inkOfPage, probePage, ridePage } from './pageTravel';
 import * as live from './blenderLive';
 import { makePlan, markStep, renderPlan, type StepState } from '../agent/plan';
 import { buildSkillFile, isSelfAuthored, skillPath } from '../skills/author';
+import { CuaDriver } from './cua';
 import { DesktopDriver } from './driver';
 
 const driver = new DesktopDriver();
+// Драйвер компьютер-юза поднимается при первом обращении и живёт дальше:
+// прогрев стоит около двух секунд, каждое следующее действие — десятки мс.
+const cua = new CuaDriver();
 const shotDir = mkdtempSync(path.join(os.tmpdir(), 'jarvis-shots-'));
 let shotCounter = 0;
 
@@ -990,11 +994,255 @@ export function createDesktopMcpServer(): McpServer {
     },
   );
 
+  registerWindowTools(server);
+
   return server;
 }
 
+/**
+ * Работа с окном по именам, а не по координатам.
+ *
+ * Эти четыре инструмента — весь компьютер-юз, и порядок между ними не совет,
+ * а измеренная цена (20.09.2026, окно Электрона на 283 элемента):
+ *
+ *   window_look   снимок 1199×674   1 078 токенов, видно всё нарисованное
+ *   window_find   поиск по имени      190–410, попадание 9 из 9
+ *   полное дерево (наружу не выставлено)  6 877 — то же самое вдесятеро дороже
+ *
+ * Задача в двадцать шагов по одному окну: 7 078 токенов этим путём против
+ * 137 540 полными деревьями. Поэтому дерева целиком здесь нет и не будет:
+ * инструмент, которым можно разориться, рано или поздно тем и кончится.
+ */
+function registerWindowTools(server: McpServer): void {
+  server.registerTool(
+    'window_list',
+    {
+      title: 'Окна',
+      description:
+        'Перечисляет окна, с которыми можно работать: программа, заголовок, pid и номер окна. ' +
+        'Номер окна нужен всем остальным инструментам этой четвёрки.',
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const windows = await cua.windows();
+        if (windows.length === 0) return say('Открытых окон нет.');
+        return say(
+          windows
+            .map((w) => `${w.title} — ${w.app}, pid ${w.pid}, окно ${w.windowId}`)
+            .join('\n'),
+        );
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'window_look',
+    {
+      title: 'Посмотреть в окно',
+      description:
+        'Выводит окно вперёд и возвращает его снимок. С этого начинается работа с незнакомым ' +
+        'окном: на снимке разом видны все надписи, а дальше по ним ищешь window_find. ' +
+        'Повторяй после действий, которые меняют вид окна.',
+      inputSchema: {
+        pid: z.number().describe('pid из window_list'),
+        window_id: z.number().describe('Номер окна из window_list'),
+      },
+    },
+    async ({ pid, window_id }) => {
+      try {
+        const file = path.join(shotDir, `window-${shotCounter++}.png`);
+        const shot = await cua.look(pid, window_id, file);
+        const data = readFileSync(shot.path).toString('base64');
+        return {
+          content: [
+            { type: 'text' as const, text: `Окно ${shot.width}×${shot.height}.` },
+            { type: 'image' as const, data, mimeType: 'image/png' },
+          ],
+        };
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'window_find',
+    {
+      title: 'Найти в окне по имени',
+      description:
+        'Ищет в окне элементы по надписи и возвращает их номера. Имя бери со снимка окна. ' +
+        'Регистр не важен, ищет по вхождению: «Termin» найдёт «Terminal». ' +
+        'Найденный номер отдавай в window_press или window_write.',
+      inputSchema: {
+        pid: z.number(),
+        window_id: z.number(),
+        name: z.string().describe('Надпись на элементе, например «Сохранить»'),
+      },
+    },
+    async ({ pid, window_id, name }) => {
+      try {
+        const found = await cua.find(pid, window_id, name);
+        if (found.length === 0) {
+          return say(
+            `«${name}» в окне нет. Сделай window_look и возьми надпись со снимка — ` +
+              'возможно, она написана иначе.',
+          );
+        }
+        return say(found.map((e) => `[${e.index}] ${e.role} «${e.name}»`).join('\n'));
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'window_press',
+    {
+      title: 'Нажать по номеру',
+      description:
+        'Нажимает элемент по номеру из window_find. Это надёжнее клика по координатам: ' +
+        'номер указывает на сам элемент, а координаты — на точку, которая могла уехать.',
+      inputSchema: {
+        pid: z.number(),
+        window_id: z.number(),
+        element: z.number().describe('Номер из window_find'),
+      },
+    },
+    async ({ pid, window_id, element }) => {
+      try {
+        await cua.press(pid, window_id, element);
+        return say(`Нажал элемент [${element}].`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'window_write',
+    {
+      title: 'Напечатать в поле',
+      description:
+        'Печатает текст в элемент по номеру из window_find. Кириллица и любая раскладка. ' +
+        'Отдельной клавишей (Enter, Escape, Tab) жми через window_key.',
+      inputSchema: {
+        pid: z.number(),
+        window_id: z.number(),
+        element: z.number(),
+        text: z.string(),
+      },
+    },
+    async ({ pid, window_id, element, text }) => {
+      try {
+        await cua.writeInto(pid, window_id, element, text);
+        return say(`Напечатал в [${element}].`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'window_key',
+    {
+      title: 'Клавиша в окне',
+      description: 'Нажимает клавишу в окне: Enter, Escape, Tab, F5 и прочие.',
+      inputSchema: {
+        pid: z.number(),
+        window_id: z.number(),
+        key: z.string().describe('Например Enter или Escape'),
+      },
+    },
+    async ({ pid, window_id, key }) => {
+      try {
+        await cua.key(pid, window_id, key);
+        return say(`Нажал ${key}.`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+}
+
 /** Entry point for `claude mcp add`. */
+/**
+ * Сколько ждать, прежде чем уйти силой.
+ *
+ * Закрытие браузера и драйвера обычно занимает доли секунды. Если не уложились
+ * — значит что-то держит, и висеть дальше хуже, чем уйти невежливо.
+ */
+const GOODBYE_MS = 3_000;
+
+/**
+ * Уйти, когда клиент ушёл.
+ *
+ * ## Зачем
+ *
+ * Сервер живёт, пока открыт его stdin. Claude Code завершает задачу и
+ * отсоединяется, а процесс остаётся: его держат открытый браузер Playwright и
+ * PowerShell-драйвер. Каждый запуск агента оставлял по одному такому.
+ *
+ * Найдено на живой машине: шесть брошенных серверов от 12:19, 18:22, 18:23,
+ * 20:34, 20:45 и 22:55, около гигабайта выделенной памяти. Человек написал
+ * прямо: «диск и память наглухо забиты».
+ *
+ * ## Почему именно stdin
+ *
+ * Это единственный надёжный признак. Родительский процесс на Windows не
+ * оповещает о своей смерти, а stdin закрывается всегда — и когда клиент
+ * отсоединился, и когда его убили.
+ */
+function leaveWhenClientLeaves(): void {
+  let leaving = false;
+
+  const goodbye = (why: string): void => {
+    if (leaving) return;
+    leaving = true;
+    console.error(`[jarvis:desktop] клиент ушёл (${why}) — закрываюсь`);
+
+    // Уходим в любом случае: висящий браузер не повод остаться навсегда.
+    const force = setTimeout(() => process.exit(0), GOODBYE_MS);
+    force.unref?.();
+
+    void (async () => {
+      try {
+        await browser.dispose();
+      } catch {
+        // Браузер мог уже умереть сам.
+      }
+      try {
+        driver.dispose();
+      } catch {
+        // И драйвер тоже.
+      }
+      try {
+        cua.dispose();
+      } catch {
+        // И драйвер компьютер-юза: он отдельный процесс и сам не уйдёт.
+      }
+      try {
+        // Папка снимков заводится на каждый запуск и остаётся навсегда. За
+        // день их накопилось сто пятьдесят две на двадцать мегабайт.
+        rmSync(shotDir, { recursive: true, force: true });
+      } catch {
+        // Файл мог быть занят — не повод остаться.
+      }
+      process.exit(0);
+    })();
+  };
+
+  process.stdin.on('end', () => goodbye('stdin закрыт'));
+  process.stdin.on('close', () => goodbye('stdin закрыт'));
+  process.stdin.on('error', () => goodbye('stdin оборван'));
+  process.on('SIGTERM', () => goodbye('SIGTERM'));
+  process.on('SIGINT', () => goodbye('SIGINT'));
+}
+
 export async function runDesktopMcpServer(): Promise<void> {
   const server = createDesktopMcpServer();
+  leaveWhenClientLeaves();
   await server.connect(new StdioServerTransport());
 }

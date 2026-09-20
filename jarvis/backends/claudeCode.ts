@@ -224,6 +224,14 @@ const DESKTOP_CAPABILITIES: readonly JarvisCapability[] = [
  * file.
  */
 const DESKTOP_RUN_TOOLS = [
+  // Работа с окном по именам. Порядок здесь тот же, что и в работе: посмотреть,
+  // найти надпись, нажать по номеру.
+  'mcp__jarvis-desktop__window_list',
+  'mcp__jarvis-desktop__window_look',
+  'mcp__jarvis-desktop__window_find',
+  'mcp__jarvis-desktop__window_press',
+  'mcp__jarvis-desktop__window_write',
+  'mcp__jarvis-desktop__window_key',
   'mcp__jarvis-desktop__screenshot',
   'mcp__jarvis-desktop__click',
   'mcp__jarvis-desktop__type_text',
