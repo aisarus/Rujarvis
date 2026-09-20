@@ -69,6 +69,7 @@ import { startLogFile } from './logFile';
 import { createGridOverlay, type GridOverlay } from './gridOverlay';
 import { createHelpOverlay, type HelpOverlay } from './helpOverlay';
 import { createLogWindow, type LogWindow } from './logWindow';
+import { RunLogStore } from '../../jarvis/observe/runLogStore';
 import { Storyline } from '../../jarvis/observe/storyline';
 import { StartupTiming } from '../../jarvis/observe/timing';
 import { parseLiveEdit } from '../../jarvis/live/edits';
@@ -182,6 +183,14 @@ let helpOverlay: HelpOverlay | null = null;
 let logWindow: LogWindow | null = null;
 let notes: NoteStore | null = null;
 let plans: PlanStore | null = null;
+/**
+ * Разбор прогонов. Заводится всегда, даже если писать не выйдет.
+ *
+ * Пустышка вместо `null` не из лени: иначе каждое место записи обрастает
+ * проверкой, а забытая проверка роняет работу ради журнала — то есть ровно
+ * наоборот тому, ради чего он заведён.
+ */
+let runs: RunLogStore = new RunLogStore(path.join(os.tmpdir(), 'jarvis-runs'));
 /**
  * Показывать ли работу.
  *
@@ -567,6 +576,12 @@ export async function startJarvisVoiceBridge(options: {
   notes = new NoteStore(notesFile());
   notes.clear();
   console.log(`[jarvis] ящик правок: ${notesFile()}`);
+
+  // Разбор прогонов: полный ход каждой задачи, по файлу на задачу. Ради
+  // случая, когда работа сорвалась и нужно узнать, на чём именно — а не
+  // услышать последнюю по счёту ошибку от того, кто взялся уже после срыва.
+  runs = new RunLogStore(runsDir());
+  console.log(`[jarvis] разбор прогонов: ${runsDir()}`);
 
   // План работы — тот же файл, что пишет агент. Старый не стираем: работа
   // могла прерваться перезапуском, и её надо продолжить, а не забыть.
@@ -1088,6 +1103,7 @@ export async function startJarvisVoiceBridge(options: {
 
   jarvis.tasks.subscribe((event) => {
     if (event.type === 'task-event') {
+      runs.saw(event.event);
       progress.saw(event.event);
       story?.saw(event.event, Date.now());
       timing?.saw(event.event, Date.now());
@@ -1111,6 +1127,12 @@ export async function startJarvisVoiceBridge(options: {
       return;
     }
     if (event.type === 'task-created') {
+      runs.begin({
+        title: event.task.title,
+        prompt: event.task.request.prompt,
+        cwd: event.task.request.cwd,
+        capabilities: event.task.request.capabilities,
+      });
       progress.reset();
       // Новая глава: без неё лента сливается в один нечитаемый поток.
       story?.begin(event.task.title, Date.now());
@@ -1138,8 +1160,16 @@ export async function startJarvisVoiceBridge(options: {
       made && !answer.includes(path.basename(made.paths[0])) ? made.spoken : undefined;
     const full = [answer, spokenLocation].filter(Boolean).join(' ');
 
+    // Итог — в журнал прогона, и только потом закрываем файл. Событие
+    // завершения до подписчиков не доходит: менеджер обрывает поток на нём.
+    if (result) runs.saw({ type: 'completed', backend: result.backend, result });
+    const runFile = runs.current();
+    runs.end();
+
     const spent = timing?.report();
     if (spent) console.log(`[jarvis] разгон: ${spent}`);
+    // Путь к разбору — рядом с итогом, чтобы не искать его потом по папке.
+    if (runFile && !result?.ok) console.log(`[jarvis] разбор прогона: ${runFile}`);
     console.log(`[jarvis] задача «${event.task.title}» — ${event.task.state}: ${full}`);
     if (made) console.log(`[jarvis] файлы: ${made.paths.join(', ')}`);
 
@@ -1714,6 +1744,16 @@ function notesFile(): string {
 /** План работы: общий файл агента и окна. */
 function planFile(): string {
   return path.join(path.dirname(journalFile()), 'plan.json');
+}
+
+/**
+ * Папка с разбором прогонов.
+ *
+ * Рядом с журналом действий, но отдельной папкой: там одна строка на событие
+ * для человека, здесь — полный ход работы для разбора, по файлу на задачу.
+ */
+function runsDir(): string {
+  return path.join(path.dirname(journalFile()), 'runs');
 }
 
 function jarvisHome(): string {
