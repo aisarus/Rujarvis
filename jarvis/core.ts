@@ -164,9 +164,21 @@ export interface JarvisCoreOptions {
  * нельзя, и такое обязано остаться работой.
  */
 export function isTalk(decision: RoutingDecision): boolean {
-  // «Размышление» не требует ничего: ни экрана, ни файлов, ни сети. Всё
-  // остальное — требует, и тогда это работа, даже если прозвучало вопросом.
-  return decision.intent === 'chat' && decision.needs.every((need) => need === 'reasoning');
+  // «Размышление» не требует ничего: ни экрана, ни файлов, ни сети.
+  //
+  // «Память» — тоже разговор, и это не послабление. «А почему не получилось?»
+  // и «это правильно?» опираются на только что сказанное и сделанное, а оно
+  // уже лежит в состоянии мира: предыдущая реплика, предыдущий результат,
+  // недавние окна. Чтобы ответить, не нужен ни агент, ни инструменты — нужны
+  // шесть строк в запросе. Без этого любой вопрос с «это» становился работой,
+  // и человек получал двадцать секунд вместо ответа.
+  //
+  // Всё остальное — требует доступа, и тогда это работа, даже если прозвучало
+  // вопросом.
+  return (
+    decision.intent === 'chat' &&
+    decision.needs.every((need) => need === 'reasoning' || need === 'memory')
+  );
 }
 
 /** Дольше этого человек уже не ждёт ответа на простой вопрос. */
@@ -429,7 +441,7 @@ export class JarvisCore {
     // индикатор жёлтый, чтобы человек с одного взгляда видел, что его поняли
     // как разговор.
     if (isTalk(decision)) {
-      const spoken = await this.answerAloud(utterance, settings);
+      const spoken = await this.answerAloud(utterance, settings, decision.needs.includes('memory'));
       return { kind: 'chat', spoken };
     }
 
@@ -456,18 +468,39 @@ export class JarvisCore {
   /**
    * Ответить словами и ничего не делать.
    *
-   * Запрос нарочно голый: ни инструментов, ни рабочей папки, ни памяти о
-   * прошлых задачах. Вопрос «сколько будет двести на триста» не требует
-   * доступа к экрану, а всё лишнее в запросе — это лишние секунды ожидания у
-   * человека, который просто спросил.
+   * Запрос нарочно голый: ни инструментов, ни рабочей папки, ни задачи. Вопрос
+   * «сколько будет двести на триста» не требует доступа к экрану, а всё лишнее
+   * в запросе — это лишние секунды ожидания у человека, который просто спросил.
+   *
+   * Исключение одно: вопрос, опирающийся на только что случившееся. «А почему
+   * не получилось?» без контекста — это уверенный ответ ни о чём, что хуже
+   * молчания. Такому вопросу даётся состояние мира — предыдущая реплика,
+   * предыдущий результат, недавние окна, — и по-прежнему ни одного
+   * инструмента: несколько строк в запросе, а не работа агента.
    *
    * Отказ не роняет разговор: человек услышит честное «не знаю», а не тишину.
    */
-  private async answerAloud(utterance: string, settings: JarvisSettings): Promise<string> {
+  private async answerAloud(
+    utterance: string,
+    settings: JarvisSettings,
+    needsContext = false,
+  ): Promise<string> {
     this.options.showIndicator?.('chatting');
+
+    const context = needsContext
+      ? selectWorldStateLines(this.options.world.snapshot(), {
+          needsWorldState: true,
+          limit: 6,
+        })
+      : [];
+    const asked =
+      context.length > 0
+        ? `${context.join('\n')}\n\nВопрос: ${utterance}`
+        : utterance;
+
     const run = this.options.backends.run(
       {
-        utterance,
+        utterance: asked,
         capabilities: ['reasoning'],
         risk: 'safe',
         permissions: { read: false, edit: false, execute: false, network: false },

@@ -27,7 +27,16 @@ export function normalizeForMatching(text: string): string {
 
 export function tokenize(text: string): string[] {
   const normalized = normalizeForMatching(text);
-  return normalized.length === 0 ? [] : normalized.split(' ');
+  const words = normalized.length === 0 ? [] : normalized.split(' ');
+
+  // Вопросительный знак доезжает отдельным словом.
+  //
+  // В русском вопрос без вопросительного слова отличается ТОЛЬКО интонацией:
+  // «ты сделал ракету?» и «ты сделал ракету.» — разные вещи, и разбор слов их
+  // не различит. Распознаватель слышит интонацию и записывает её знаком;
+  // нормализация стирала его вместе с остальными знаками, и единственный
+  // доступный нам признак вопроса пропадал.
+  return text.trimEnd().endsWith('?') ? [...words, '?'] : words;
 }
 
 /**

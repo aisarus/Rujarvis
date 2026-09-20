@@ -79,7 +79,12 @@ export function meaningfulSpeech(transcript: string): string | null {
   // Keep letters, digits and the punctuation that carries meaning in speech;
   // drop the rest so a line of stray marks cannot pass as a command.
   const cleaned = withoutAnnotations
-    .replace(/[^\p{L}\p{N}\s'’-]/gu, ' ')
+    // Знак вопроса остаётся. В русском вопрос без вопросительного слова
+    // отличается ТОЛЬКО интонацией — «ты сделал?» и «ты сделал.» это разные
+    // просьбы, — а распознаватель записывает услышанную интонацию именно
+    // знаком. Стирать его значит своими руками выбрасывать единственный
+    // признак вопроса, который у нас есть.
+    .replace(/[^\p{L}\p{N}\s'’?-]/gu, ' ')
     .replace(/\s+/gu, ' ')
     .trim();
 
