@@ -151,6 +151,7 @@
     "fixtures:generate": "node scripts/generate-public-test-fixtures.mjs",
     "lint:selectors": "npx tsx scripts/lint-selectors.ts",
     "проверка:команды": "npx tsx scripts/проверка-команд.ts",
+    "проверка:всё": "npx tsx scripts/проверка-команд.ts && npx tsx scripts/проверка-прямых-команд.ts && npx tsx scripts/проверка-красных-линий.ts && npx tsx scripts/проверка-программ.ts",
     "lint": "pnpm run typecheck && pnpm run lint:selectors",
     "check:react-compiler": "cross-env REACT_COMPILER_PANIC_THRESHOLD=all_errors pnpm run build:renderer",
     "schema:validators": "bun run src/lib/validators/compile.ts",

@@ -63,7 +63,12 @@ const APP_ALIASES: ReadonlyArray<readonly [readonly string[], string]> = [
   [['терминал', 'консоль', 'командную строку', 'cmd'], 'wt'],
   [['код', 'вскод', 'вс код', 'вижуал студио код', 'vscode', 'code'], 'code'],
   [['спотифай', 'спотик', 'spotify'], 'spotify'],
-  [['дискорд', 'discord'], 'discord'],
+  // Дискорда здесь нет намеренно, хотя он установлен.
+  //
+  // `start discord` не работает: Discord не кладёт себя ни в PATH, ни в «App
+  // Paths» реестра, а живёт ярлыком в меню «Пуск». Строчка в этой таблице
+  // перехватывала фразу раньше поиска по ярлыкам и гарантировала отказ — та же
+  // поломка, что «блендер → blender». Пусть ищется среди установленного.
   [['ворд', 'word'], 'winword'],
   [['эксель', 'ексель', 'excel'], 'excel'],
   [['ворд пад', 'вордпад', 'wordpad'], 'wordpad'],
@@ -153,6 +158,7 @@ const WINDOW_ALIASES: ReadonlyArray<readonly [readonly string[], string]> = [
   [['дота', 'доту', 'dota'], 'dota2'],
   [['стим', 'steam'], 'steam'],
   [['обс', 'obs'], 'obs64'],
+  [['дискорд', 'discord'], 'Discord'],
   [['эдж', 'эдже', 'едж', 'edge'], 'msedge'],
   [['хром', 'хрома', 'хроме', 'chrome'], 'chrome'],
   [['телеграм', 'телега', 'телеграмм'], 'telegram'],
@@ -184,3 +190,17 @@ export function matchAppLaunch(utterance: string): AppLaunch | null {
   const target = aliasTarget(phrase);
   return target ? { target, spokenName: phrase } : null;
 }
+
+/**
+ * Обе таблицы целиком — чтобы проверка могла пройти каждое имя.
+ *
+ * Таблица, которую некому перебрать, проверяется только теми строчками, про
+ * которые кто-то вспомнил написать тест. Так и уехало «блендер → blender»:
+ * такой команды в системе нет, а заметили это не тесты, а человек, у которого
+ * перестало открываться.
+ */
+export const LAUNCH_NAMES: ReadonlyArray<readonly [string, string]> =
+  APP_ALIASES.flatMap(([names, target]) => names.map((name) => [name, target] as const));
+
+export const WINDOW_NAMES: ReadonlyArray<readonly [string, string]> =
+  WINDOW_ALIASES.flatMap(([names, target]) => names.map((name) => [name, target] as const));

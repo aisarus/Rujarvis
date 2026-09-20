@@ -15,9 +15,34 @@
  */
 
 import { transliterate } from '../apps/startMenu';
+import { matchVoiceControl } from './interrupts';
+import { isSilenceRequest } from './noise';
 
-/** Перебивание должно работать всегда. */
-const INTERRUPTIONS = /^\s*(стоп|стой|тишина|тише|хватит|замолчи|молчи|отбой|спи)\b/iu;
+/**
+ * Перебивание должно работать всегда.
+ *
+ * Своего списка слов остановки здесь нет нарочно. Он тут был — регулярностью
+ * с `\b`, — и был мёртв целиком: в JavaScript `\b` считает словом только
+ * латиницу, и после кириллического «стоп» границы нет. Ни одно слово
+ * перебивания не совпадало ни разу. Тест на это был и был зелёным: ни одна
+ * из проверявшихся фраз случайно не походила на собственную реплику, и страж
+ * пропускал их по счастливой случайности, а не по правилу.
+ *
+ * Поэтому спрашиваем ровно те слои, которые и решают, что такое остановка.
+ */
+function isInterruption(heard: string): boolean {
+  if (matchVoiceControl(heard) !== null) return true;
+  if (isSilenceRequest(heard)) return true;
+
+  // Человек перебивает и сразу продолжает: «стоп, не это». Слово остановки
+  // идёт первым, потому что перебивают именно им.
+  const words = heard.trim().split(/\s+/u).slice(0, 2);
+  while (words.length > 0) {
+    if (matchVoiceControl(words.join(' ')) !== null) return true;
+    words.pop();
+  }
+  return false;
+}
 
 export interface EchoOptions {
   now?: () => number;
@@ -61,7 +86,7 @@ export class EchoGuard {
   /** Это то, что Джарвис сам только что сказал? */
   isOwnVoice(heard: string): boolean {
     // Перебивание проходит всегда — иначе человек не может остановить речь.
-    if (INTERRUPTIONS.test(heard)) return false;
+    if (isInterruption(heard)) return false;
 
     const words = keysOf(heard);
     if (words.length === 0) return false;

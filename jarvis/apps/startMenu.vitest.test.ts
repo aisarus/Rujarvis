@@ -84,3 +84,95 @@ describe('word shaping', () => {
     expect(candidateKeys('лигу')).toContain('league');
   });
 });
+
+/**
+ * Список с этой машины — тот самый, на котором ложные совпадения и нашлись.
+ *
+ * Имена здесь настоящие, включая скучные: без «Источников данных ODBC» и
+ * «Cloud Tools for PowerShell» проверять нечего, потому что ломалось именно о
+ * них.
+ */
+const REAL = [
+  'Epic Games Launcher',
+  'Blender 5.2',
+  'Steam',
+  'OBS Studio (64bit)',
+  'Riot Client',
+  'Клиент Riot',
+  'League of Legends',
+  'Windows PowerShell',
+  'Windows PowerShell ISE',
+  'Cloud Tools for PowerShell',
+  'Google Cloud SDK Shell',
+  'ODBC Data Sources (32-bit)',
+  'ODBC Data Sources (64-bit)',
+  'Источники данных ODBC (32-разрядная версия)',
+  'AutoHotkey Dash',
+  'Divinity Original Sin 2',
+  'Discord',
+  'Discord',
+  'Dev Home',
+];
+
+const fromReal = (spoken: string) => chooseShortcut(spoken, REAL, (name) => name)?.item ?? null;
+
+describe('ложные совпадения в меню «Пуск»', () => {
+  // Каждое из этих трёх поймано на живой машине. Открыть не ту программу хуже,
+  // чем честно не найти: отказ человек слышит и повторяет, а чужую запущенную
+  // программу замечает не сразу.
+  it('«дота» не открывает «Источники данных ODBC», когда Dota 2 не в списке', () => {
+    expect(fromReal('дота')).toBeNull();
+    expect(fromReal('доту')).toBeNull();
+  });
+
+  it('«клод» не открывает Cloud Tools for PowerShell', () => {
+    expect(fromReal('клод')).toBeNull();
+    expect(fromReal('клода')).toBeNull();
+  });
+
+  it('«эдж» не открывает AutoHotkey Dash', () => {
+    // Отбрасывание гласных съедало начало слова: «эдж» это "edzh", остов
+    // "dsh" — ровно как у "Dash".
+    expect(fromReal('эдж')).toBeNull();
+  });
+
+  it('«стин» не открывает Divinity Original Sin 2', () => {
+    // Недослышанное «стим». Для трёхбуквенного "Sin" одна буква разницы — это
+    // треть слова.
+    expect(fromReal('стин')).toBeNull();
+  });
+
+  it('«хром» не открывает Dev Home', () => {
+    expect(fromReal('хром')).toBeNull();
+  });
+});
+
+describe('верные совпадения, которые обязаны остаться', () => {
+  it.each([
+    ['эпик', 'Epic Games Launcher'],
+    ['блендер', 'Blender 5.2'],
+    ['стим', 'Steam'],
+    ['обс', 'OBS Studio (64bit)'],
+    ['риот', 'Riot Client'],
+    ['повершелл', 'Windows PowerShell'],
+    ['павершелл', 'Windows PowerShell'],
+    ['пауэршелл', 'Windows PowerShell'],
+    ['лол', 'League of Legends'],
+    ['лигу', 'League of Legends'],
+  ])('«%s» находит «%s»', (spoken, want) => {
+    expect(fromReal(spoken)).toBe(want);
+  });
+
+  it('одно имя дважды — это не выбор между программами', () => {
+    // Discord лежит в меню «Пуск» двумя одинаковыми ярлыками. Отказ по
+    // неоднозначности означал бы «не могу выбрать между Discord и Discord».
+    expect(fromReal('дискорд')).toBe('Discord');
+  });
+
+  it('склонённое имя находит ту же программу', () => {
+    // Русский склоняет хвост: «доту» и «дота» отличаются последней буквой.
+    expect(chooseShortcut('доту', ['Dota 2'], (n) => n)?.item).toBe('Dota 2');
+    expect(chooseShortcut('дота', ['Dota 2'], (n) => n)?.item).toBe('Dota 2');
+    expect(chooseShortcut('клод', ['Claude', ...REAL], (n) => n)?.item).toBe('Claude');
+  });
+});

@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { aliasTarget, matchAppLaunch, spokenCloseTarget, spokenTarget } from './launch';
+import {
+LAUNCH_NAMES,
+WINDOW_NAMES,
+aliasTarget,
+matchAppLaunch,
+spokenCloseTarget,
+spokenTarget,
+windowAlias,
+} from './launch';
 
 describe('matchAppLaunch', () => {
   it('recognises the plain request', () => {
@@ -77,5 +85,47 @@ describe('местоимения — не названия программ', ()
     expect(spokenTarget('открой блендер')).toBe('блендер');
     expect(spokenTarget('запусти стим')).toBe('стим');
     expect(spokenTarget('открой гугл хром')).toBe('гугл хром');
+  });
+});
+
+describe('две таблицы, а не одна', () => {
+  it('каждое пусковое имя разбирается и отдаёт своё значение', () => {
+    // Таблица, которую некому перебрать, проверяется только теми строчками,
+    // про которые кто-то вспомнил написать тест.
+    for (const [spoken, target] of LAUNCH_NAMES) {
+      expect(aliasTarget(spoken)).toBe(target);
+      expect(matchAppLaunch(`открой ${spoken}`)?.target).toBe(target);
+    }
+  });
+
+  it('каждое оконное имя разбирается и отдаёт своё значение', () => {
+    for (const [spoken, target] of WINDOW_NAMES) {
+      expect(windowAlias(spoken)).toBe(target);
+      expect(spokenCloseTarget(`закрой ${spoken}`)).toBe(spoken);
+    }
+  });
+
+  it('дискорд запускается ярлыком, а не выдуманной командой', () => {
+    // `start discord` не работает: Discord не кладёт себя ни в PATH, ни в «App
+    // Paths». Строчка в пусковой таблице перехватывала фразу раньше поиска по
+    // ярлыкам и гарантировала отказ — та же поломка, что «блендер → blender».
+    expect(aliasTarget('дискорд')).toBeNull();
+    expect(matchAppLaunch('открой дискорд')).toBeNull();
+    // При этом окно и процесс называются, и закрытие с переключением работают.
+    expect(windowAlias('дискорд')).toBe('Discord');
+  });
+
+  it('блендер тоже не имеет пускового имени', () => {
+    expect(aliasTarget('блендер')).toBeNull();
+    expect(windowAlias('блендер')).toBe('blender');
+  });
+
+  it('пусковое и оконное имя совпадают не всегда', () => {
+    // У Chrome совпали случайно, и это совпадение сбило с толку.
+    expect(aliasTarget('хром')).toBe('chrome');
+    expect(windowAlias('хром')).toBe('chrome');
+    // А у терминала — нет.
+    expect(aliasTarget('терминал')).toBe('wt');
+    expect(windowAlias('терминал')).toBe('WindowsTerminal');
   });
 });

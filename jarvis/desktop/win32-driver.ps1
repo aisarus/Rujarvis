@@ -352,8 +352,14 @@ function Invoke-Command2($message) {
             # Otchityvaemsya tem, chto vperedi na samom dele, a ne tem, chto
             # prosili. Ranshe drayver govoril "pereklyuchilsya" dazhe togda,
             # kogda okno ne dvinulos, i agent tratil minutu na vyyasnenie.
+            #
+            # Sravnivaem deskriptory, a ne zagolovki. Zagolovok - ne imya okna,
+            # a nadpis: dva okna Provodnika nazyvayutsya odinakovo, i proverka
+            # po nadpisi otchitalas by uspehom, podnyav ne to okno. Deskriptor
+            # u kazhdogo okna svoy.
             $nowFront = [Desk]::Raise($handle)
-            if ($nowFront -ne $target.title) {
+            $frontHandle = [Desk]::GetForegroundWindow()
+            if ($frontHandle -ne $handle) {
                 throw "Ne vyshlo podnyat okno. Prosili: $($target.title). Vperedi: $nowFront"
             }
             return @{ ok = $true; title = $nowFront }

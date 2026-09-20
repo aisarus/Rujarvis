@@ -48,6 +48,13 @@ const MEANINGS: Readonly<Record<string, string>> = {
   гпт: 'gpt',
   чат: 'chat',
   ии: 'ai',
+  // Прозвища и написания, до которых буквы не доводят.
+  //
+  // «Лол» — это League of Legends, но ни одна перестановка букв «лол» не
+  // приближается к "league". «Пауэршелл» пишется буквами как "pauershell", а
+  // нужен "powershell": «уэ» и «owe» звучат одинаково и пишутся врозь.
+  лол: 'league',
+  пауэршелл: 'powershell',
 };
 
 /** Endings Russian adds to a name in the accusative and friends. */
@@ -111,6 +118,26 @@ export function candidateKeys(spoken: string): string[] {
 }
 
 /**
+ * Буквы, которые пишутся по-разному, а звучат одинаково, сведены к одной.
+ *
+ * Это разница написания, а не слова: «эпик» переводится буквами как "epik", а
+ * пишется "Epic" — то же слово. Гласные остаются на месте, они различают слова.
+ */
+function spellingFold(word: string): string {
+  return word
+    .replace(/ph/gu, 'f')
+    .replace(/ck/gu, 'k')
+    .replace(/[cq]/gu, 'k')
+    .replace(/z/gu, 's')
+    .replace(/w/gu, 'v');
+}
+
+/** Только гласные, в том же порядке. Ими слова и различаются. */
+function vowelsOf(word: string): string {
+  return word.replace(/[^aeiouy]/gu, '');
+}
+
+/**
  * A word reduced to the consonants it sounds like.
  *
  * Transliteration is lossy about vowels above all: «стим» becomes "stim" while
@@ -120,13 +147,7 @@ export function candidateKeys(spoken: string): string[] {
  * matching.
  */
 function soundSkeleton(word: string): string {
-  return word
-    .replace(/ph/gu, 'f')
-    .replace(/ck/gu, 'k')
-    .replace(/[cq]/gu, 'k')
-    .replace(/z/gu, 's')
-    .replace(/w/gu, 'v')
-    .replace(/[aeiouy]/gu, '');
+  return spellingFold(word).replace(/[aeiouy]/gu, '');
 }
 
 /**
@@ -150,10 +171,46 @@ function scoreWord(key: string, word: string): number {
     return 3;
   }
 
+  const keyFold = spellingFold(key);
+  const wordFold = spellingFold(word);
   const keySound = soundSkeleton(key);
   const wordSound = soundSkeleton(word);
-  if (keySound.length >= 3 && keySound === wordSound) return 2;
-  if (key.length >= 4 && editDistance(key, word, 2) <= 1) return 2;
+
+  // Один и тот же остов согласных — но только если слово ещё и начинается
+  // так же.
+  //
+  // Отбрасывание гласных съедает и начало слова: «эдж» это "edzh", остов
+  // "dsh" — ровно как у "Dash", и меню «Пуск» на «переключись на эдж»
+  // предлагало AutoHotkey Dash. Первый звук имени человек слышит лучше всего и
+  // никогда не путает; сводить слово с гласной в начале и слово с согласной —
+  // значит подменять программу.
+  if (keySound.length >= 3 && keySound === wordSound && keyFold[0] === wordFold[0]) return 2;
+
+  // Расхождение в одну букву — либо в согласной, либо в самом хвосте.
+  //
+  // «Дота» отличается от "Data" одной буквой и находила «Источники данных
+  // ODBC» (ODBC Data Sources), пока Dota 2 не попадала в список. Подмена
+  // гласной делает слово ДРУГИМ словом: программу "Data" по-русски назвали бы
+  // «дата», а не «дота». Согласная же расходится от письма, а не от звука:
+  // «эпик» → "epik" против "Epic" — та же буква, другое написание.
+  //
+  // Хвост — исключение, и ровно по той причине, по которой в этом файле вообще
+  // есть отсечение окончаний: русский склоняет конец слова. «Доту» и «дота»
+  // отличаются последней буквой и означают одно.
+  //
+  // Оба слова должны быть длиной хотя бы в четыре буквы. Для трёхбуквенного
+  // одна буква — это треть слова: «стин» (недослышанное «стим») находило
+  // "Divinity Original Sin 2".
+  const declension = keyFold.length === wordFold.length && keyFold.slice(0, -1) === wordFold.slice(0, -1);
+  const sameVowels = vowelsOf(keyFold) === vowelsOf(wordFold);
+  if (
+    key.length >= 4 &&
+    word.length >= 4 &&
+    (sameVowels || declension) &&
+    editDistance(key, word, 2) <= 1
+  ) {
+    return 2;
+  }
 
   // Near-misses are reported but never acted on alone.
   if (keySound.length >= 3 && editDistance(keySound, wordSound, 2) <= 1) return 1;
@@ -164,15 +221,12 @@ export interface ShortcutChoice<T> {
   item: T;
   score: number;
   /**
-   * True when this match can be acted on without asking.
+   * Совпало ли хоть одно слово имени в точности, а не на слух.
    *
-   * A weak match is one that only sounded similar. Acting on it is how «открой
-   * хром» opened "Dev Home": Chrome is not in the Start menu at all, and the
-   * nearest sound won by default. Opening the wrong program is worse than
-   * saying the name was not recognised, so a weak match counts only when it is
-   * clearly ahead of everything else.
+   * Отдаётся наружу для журнала: по нему видно, чем именно программа найдена.
+   * Решение принимает сама функция — слабое совпадение она не возвращает.
    */
-  confident: boolean;
+  exact: boolean;
 }
 
 /**
@@ -181,6 +235,13 @@ export interface ShortcutChoice<T> {
  * Ties go to the shorter name: asked for «риот», "Riot Client" is a better
  * answer than "Riot Client Services Diagnostics", because the short name is
  * the one people mean.
+ *
+ * Возвращённому совпадению можно верить без переспроса.
+ *
+ * Раньше рядом ехало поле `confident`, и звали его «можно действовать». Не
+ * звал никто: мост открывал то, что вернули, не глядя. Поле, которое некому
+ * читать, не защищает ни от чего — поэтому отказ теперь выражен единственным
+ * способом, который нельзя пропустить: null.
  */
 export function chooseShortcut<T>(
   spoken: string,
@@ -190,20 +251,24 @@ export function chooseShortcut<T>(
   const keys = candidateKeys(spoken);
   if (keys.length === 0) return null;
 
-  let best: { item: T; raw: number; total: number } | null = null;
-  let runnerUp = 0;
+  let best: { item: T; name: string; exact: boolean; total: number } | null = null;
+  let runnerUp = Number.NEGATIVE_INFINITY;
+  let runnerUpName = '';
 
   for (const item of items) {
-    const words = normalise(nameOf(item)).split(' ').filter(Boolean);
+    const name = normalise(nameOf(item));
+    const words = name.split(' ').filter(Boolean);
     if (words.length === 0) continue;
 
     let score = 0;
+    let exact = false;
     for (const key of keys) {
       let bestForKey = 0;
       for (const word of words) {
         const value = scoreWord(key, word);
         if (value > bestForKey) bestForKey = value;
       }
+      if (bestForKey === 3) exact = true;
       score += bestForKey;
     }
     // One solid word is enough. Dividing by the shortcut's length would sink
@@ -216,17 +281,40 @@ export function chooseShortcut<T>(
     const total = score - words.length * 0.1;
 
     if (!best || total > best.total) {
-      if (best) runnerUp = best.total;
-      best = { item, raw: score, total };
+      if (best) {
+        runnerUp = best.total;
+        runnerUpName = best.name;
+      }
+      best = { item, name, exact, total };
     } else if (total > runnerUp) {
       runnerUp = total;
+      runnerUpName = name;
     }
   }
 
   if (!best) return null;
 
-  // A word that actually matched is enough on its own. A merely similar sound
-  // has to be the clear winner.
-  const confident = best.raw >= 2;
-  return { item: best.item, score: best.total, confident };
+  // Совпадение на слух обязано быть единственным.
+  //
+  // Оба ложных попадания, найденных на живой машине, выглядели одинаково: два
+  // РАЗНЫХ имени набрали поровну, и победило то, что раньше лежит в списке.
+  //
+  //   «клод»  → Cloud Tools for PowerShell 1.60 | Google Cloud SDK Shell 1.60
+  //   «дота»  → Источники данных ODBC (32) 1.50 | то же самое (64)      1.50
+  //
+  // Ровный счёт — это не выбор, это монетка. Открыть не то хуже, чем честно
+  // сказать «не нашёл»: человек услышит отказ и повторит, а запущенную не ту
+  // программу он заметит не сразу и не поймёт, почему.
+  //
+  // На точное совпадение слова это не распространяется. «Риот» находит и
+  // "Riot Client", и «Клиент Riot» — тоже поровну, но там сказанное слово
+  // стоит в имени буквально, и обе записи ведут в одну программу.
+  //
+  // И одно имя дважды — это не выбор между программами. Discord лежит в меню
+  // «Пуск» двумя одинаковыми ярлыками, и на «дискорд» отказ по неоднозначности
+  // означал бы «не могу выбрать между Discord и Discord».
+  const ambiguous = best.total - runnerUp < 1e-9 && runnerUpName !== best.name;
+  if (!best.exact && ambiguous) return null;
+
+  return { item: best.item, score: best.total, exact: best.exact };
 }

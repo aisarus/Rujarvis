@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { spokenCloseTarget, spokenTarget } from '../apps/launch';
 import { findWakeWord } from '../voice/wakeWord';
+import { matchVoiceControl } from '../voice/interrupts';
 import { isSilenceRequest } from '../voice/noise';
 import { commandCatalogue } from './catalogue';
 import { parseDictationEdit } from './dictationEdits';
@@ -36,7 +37,9 @@ describe('commandCatalogue', () => {
                   ? findWakeWord(item.say) !== null
                   : item.layer === 'dictation'
                     ? parseDictationEdit(item.say) !== null
-                    : isSilenceRequest(item.say);
+                    : item.layer === 'control'
+                      ? matchVoiceControl(item.say) !== null
+                      : isSilenceRequest(item.say);
 
         expect(handled, `«${item.say}» не разбирается слоем «${item.layer}»`).toBe(true);
       }

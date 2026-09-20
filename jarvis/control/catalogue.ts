@@ -27,7 +27,7 @@ export interface CatalogueItem {
    * Разметка не для человека, а для проверки: тест умеет спросить нужный слой
    * и убедиться, что обещанная фраза действительно разбирается.
    */
-  layer: 'direct' | 'launch' | 'close' | 'wake' | 'silence' | 'dictation';
+  layer: 'direct' | 'launch' | 'close' | 'wake' | 'silence' | 'dictation' | 'control';
 }
 
 export interface CatalogueGroup {
@@ -95,7 +95,10 @@ export function commandCatalogue(): CatalogueGroup[] {
       title: 'Клавиши',
       items: [
         { say: 'enter', does: 'ввод', layer: 'direct' },
-        { say: 'отмена', does: 'escape', layer: 'direct' },
+        // Здесь стояла «отмена». Она разбирается раньше — как отмена задачи,
+        // и так задумано: человек назвал остановку отдельным требованием. До
+        // клавиши фраза не доезжала, а справочник её обещал.
+        { say: 'эскейп', does: 'escape', layer: 'direct' },
         { say: 'таб', does: 'табуляция', layer: 'direct' },
         { say: 'пробел', does: 'пробел', layer: 'direct' },
         { say: 'вниз', does: 'стрелка вниз', layer: 'direct' },
@@ -120,7 +123,9 @@ export function commandCatalogue(): CatalogueGroup[] {
         { say: 'громче', does: 'прибавить звук', layer: 'direct' },
         { say: 'тише звук', does: 'убавить звук', layer: 'direct' },
         { say: 'выключи звук', does: 'приглушить', layer: 'direct' },
-        { say: 'пауза', does: 'пауза и продолжение', layer: 'direct' },
+        // Здесь стояла «пауза». Она разбирается раньше — как пауза работы, и
+        // это красная линия, трогать её нельзя. Музыку останавливает «играй».
+        { say: 'играй', does: 'пауза и продолжение', layer: 'direct' },
         { say: 'следующий трек', does: 'следующая песня', layer: 'direct' },
       ],
     },
@@ -128,7 +133,14 @@ export function commandCatalogue(): CatalogueGroup[] {
       title: 'Разговор',
       items: [
         { say: 'джарвис', does: 'разбудить — дальше можно без имени', layer: 'wake' },
-        { say: 'тишина', does: 'закончить разговор', layer: 'silence' },
+        // Красные линии. Человек сказал о них прямо: «идеально должны
+        // работать команды стоп и тишина». Не обещать их в списке — значит
+        // прятать единственное, что обязано срабатывать всегда; «стоп» здесь
+        // не было вовсе.
+        { say: 'стоп', does: 'немедленно прекратить всё, что делается', layer: 'control' },
+        { say: 'тишина', does: 'замолчать и закончить разговор', layer: 'silence' },
+        { say: 'пауза', does: 'отложить работу, не теряя её', layer: 'control' },
+        { say: 'продолжай', does: 'вернуться к отложенной работе', layer: 'control' },
         { say: 'что ты умеешь', does: 'показать этот список', layer: 'direct' },
         { say: 'что ты делаешь', does: 'открыть окно с рассказом о работе', layer: 'direct' },
         { say: 'где ты', does: 'сказать, на каком шаге плана', layer: 'direct' },
