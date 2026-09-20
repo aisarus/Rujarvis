@@ -79,7 +79,9 @@ import { isLive, sendLive } from '../../jarvis/desktop/blenderLive';
 import { NoteStore } from '../../jarvis/dialogue/noteStore';
 import { describeLessons, lessonsFrom } from '../../jarvis/memory/lessons';
 import { PlanStore } from '../../jarvis/agent/planStore';
-import { planSummary } from '../../jarvis/agent/plan';
+import { planSummary, renderPlan } from '../../jarvis/agent/plan';
+import { isTalk } from '../../jarvis/core';
+import { route } from '../../jarvis/router/router';
 import { createStatusOverlay, type StatusOverlay } from './statusOverlay';
 
 /** Ctrl+Space is what `jarvis:setup` tells the user to press. */
@@ -449,7 +451,19 @@ async function findNamedElement(query: string) {
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Короткий вид фразы для узкой строки индикатора. */
-function short(text: string, limit = 34): string {
+/**
+ * Фраза для плашки состояния.
+ *
+ * Раньше резалась на 34 знака, и человек не мог понять, что именно Джарвис
+ * расслышал: «Начни с того чтобы создать 3D-модель чебураш…» — а дальше могло
+ * стоять что угодно. Он сказал прямо: «должна показывать полный, а не
+ * обрезанный текст».
+ *
+ * Теперь режется только то, что не влезет никуда: плашка растёт под текст до
+ * восьми строк, и предел здесь — страховка от выдумки распознавателя на
+ * полстраницы, а не форматирование.
+ */
+function short(text: string, limit = 400): string {
   const clean = text.trim().replace(/\s+/gu, ' ');
   return clean.length > limit ? `${clean.slice(0, limit - 1)}…` : clean;
 }
@@ -685,6 +699,30 @@ export async function startJarvisVoiceBridge(options: {
           return;
         }
 
+        // Вопрос во время работы — это вопрос, а не поправка.
+        //
+        // Человек спросил «ты понял что надо делать?» и получил «Учту» и
+        // тишину. И был прав, что возмутился: он задал вопрос, а его реплику
+        // положили в ящик поправок, где ответа не предусмотрено вовсе.
+        //
+        // Отвечает Джарвис сам, не трогая агента: план и ход работы лежат в
+        // файле, читаются мгновенно и ничего не стоят. Спрашивать занятого
+        // агента значило бы ждать до конца его хода — то есть до конца работы.
+        //
+        // В ящик такая реплика НЕ кладётся: поправки в ней нет, а положенное
+        // туда агент обязан исполнить.
+        // Разрешения здесь не важны: вопрос отличается намерением и умениями,
+        // а не тем, что ему позволено.
+        const спрошено = route(whole);
+        if (спрошено.asks && isTalk(спрошено)) {
+          console.log(`[jarvis] вопрос во время работы: ${whole}`);
+          overlay.note(session.status, `Отвечаю: ${short(whole)}`);
+          void jarvis.core.answerQuestion(whole).catch((error: unknown) => {
+            console.error('[jarvis] не удалось ответить на вопрос:', error);
+          });
+          return;
+        }
+
         // Остальное кладём в ящик СЕЙЧАС и спрашиваем в фоне.
         //
         // Спросить и подождать ответа нельзя: замер 20.09.2026 дал 7–10 секунд
@@ -749,6 +787,17 @@ export async function startJarvisVoiceBridge(options: {
     homeDir: jarvisHome(),
     outputDir,
     recentActions: () => journal?.context() ?? [],
+    // Чем занята работа прямо сейчас. Нужно, чтобы ответить на вопрос,
+    // заданный во время работы: план лежит в файле, который пишет другой
+    // процесс, и в состоянии мира его нет.
+    workNow: () => {
+      const план = plans?.read();
+      if (!план) return [];
+      return [
+        'Прямо сейчас идёт работа. Вот её план и ход:',
+        renderPlan(план),
+      ];
+    },
     instructions: () => instructions.read(),
     // Самонаращивающийся кусок промпта: неудача, записанная в журнал, сама
     // становится строкой следующего поручения. Ни обучения, ни денег.

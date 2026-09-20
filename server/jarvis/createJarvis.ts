@@ -94,6 +94,13 @@ export interface CreateJarvisOptions {
   instructions?(): string | undefined;
   /** На чём уже спотыкались — собирается из журнала на каждую задачу. */
   lessons?(): string | undefined;
+  /**
+   * Чем занята работа прямо сейчас: план и её ход.
+   *
+   * Нужно, чтобы ответить на вопрос, заданный ВО ВРЕМЯ работы. План пишет
+   * другой процесс в отдельный файл, и в состоянии мира его нет.
+   */
+  workNow?(): string[];
   /** Работать на виду или в фоне. Переключается голосом. */
   showWork?(): boolean;
 }
@@ -197,6 +204,7 @@ export function createJarvis(options: CreateJarvisOptions = {}): Jarvis {
     recentActions: options.recentActions,
     instructions: options.instructions,
     lessons: options.lessons,
+    workNow: options.workNow,
     showWork: options.showWork,
   });
 

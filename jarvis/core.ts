@@ -150,6 +150,15 @@ export interface JarvisCoreOptions {
    * в следующей же.
    */
   lessons?(): string | undefined;
+  /**
+   * Чем занята работа прямо сейчас: план и последние действия.
+   *
+   * Нужно ровно для одного случая, и он оказался самым больным. Человек
+   * спрашивает во время работы — «ты понял что надо делать?», «что ты сейчас
+   * делаешь?» — и ответить на это можно только зная, что идёт. Состояния мира
+   * для этого мало: план живёт в отдельном файле, который пишет другой процесс.
+   */
+  workNow?(): string[];
   /** Работать на виду или в фоне. Человек переключает это голосом. */
   showWork?(): boolean;
   now?: () => number;
@@ -495,6 +504,22 @@ export class JarvisCore {
    *
    * Отказ не роняет разговор: человек услышит честное «не знаю», а не тишину.
    */
+  /**
+   * Ответить на вопрос словами и ничего не делать.
+   *
+   * Отдельный вход, а не `handleUtterance`, и это важно. Пока идёт работа,
+   * голосовой мост перехватывает речь раньше ядра: всё сказанное ложится в
+   * ящик поправок с ответом «Учту». Для поправки это верно, для вопроса — нет.
+   * Человек спросил «ты понял что надо делать?» и получил «Учту» и тишину.
+   *
+   * Через `handleUtterance` вести сюда нельзя: там вопрос сольётся с идущей
+   * задачей как продолжение разговора и снова станет работой.
+   */
+  async answerQuestion(utterance: string): Promise<string> {
+    this.options.world.noteUtterance(utterance);
+    return this.answerAloud(utterance, this.options.settings(), true);
+  }
+
   private async answerAloud(
     utterance: string,
     settings: JarvisSettings,
@@ -502,12 +527,19 @@ export class JarvisCore {
   ): Promise<string> {
     this.options.showIndicator?.('chatting');
 
-    const context = needsContext
-      ? selectWorldStateLines(this.options.world.snapshot(), {
-          needsWorldState: true,
-          limit: 6,
-        })
-      : [];
+    // Чем занята работа — всегда, когда есть. Вопрос, заданный во время
+    // работы, почти всегда про неё: «ты понял что надо делать?» без плана
+    // перед глазами превращается в уверенный ответ ни о чём.
+    const working = this.options.workNow?.() ?? [];
+    const context = [
+      ...working,
+      ...(needsContext
+        ? selectWorldStateLines(this.options.world.snapshot(), {
+            needsWorldState: true,
+            limit: 6,
+          })
+        : []),
+    ];
     const asked =
       context.length > 0
         ? `${context.join('\n')}\n\nВопрос: ${utterance}`

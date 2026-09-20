@@ -10,7 +10,7 @@
  * so a window that has to be moved out of the way would be a defect.
  */
 
-import { BrowserWindow, screen } from 'electron';
+import { BrowserWindow, ipcMain, screen } from 'electron';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,6 +23,16 @@ export const STATUS_OVERLAY_CHANNEL = 'jarvis-overlay:status';
 
 const WIDTH = 320;
 const HEIGHT = 84;
+
+/**
+ * Насколько плашке позволено вырасти.
+ *
+ * Полный текст — это то, о чём просил человек, но плашка плавает поверх всего,
+ * и фраза на пол-экрана закрыла бы саму работу. Двести восемьдесят точек — это
+ * примерно восемь строк: длинная просьба помещается целиком, а экран остаётся
+ * экраном.
+ */
+const MAX_HEIGHT = 280;
 const MARGIN = 24;
 
 function buildOverlayHtml(): string {
@@ -59,11 +69,20 @@ function buildOverlayHtml(): string {
   #dot.speaking { background: #ec4899; animation: pulse 0.7s ease-in-out infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
   #text { min-width: 0; }
+  /* Переносим, а не обрезаем.
+     Человек сказал прямо: «вкладка что делаешь должна показывать полный, а не
+     обрезанный текст». Раньше строка резалась дважды — на 34 знака в мосте и
+     ещё раз многоточием здесь, — и понять, что именно Джарвис расслышал, было
+     нельзя. Плашка теперь растёт под текст, а высоту окна подгоняет главный
+     процесс. */
   #label {
     font-size: 15px; font-weight: 600; line-height: 1.25;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    white-space: pre-wrap; overflow-wrap: anywhere;
   }
-  #hint { font-size: 12px; color: #a1a1aa; margin-top: 3px; }
+  #hint {
+    font-size: 12px; color: #a1a1aa; margin-top: 3px;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
 </style>
 </head>
 <body>
@@ -88,6 +107,21 @@ const hint = document.getElementById('hint');
 // собственная реплика — как эхо. Всё это уходило только в лог.
 let noteUntil = 0;
 
+// Высота окна — по содержимому.
+//
+// Плашка плавает поверх всего, и фиксированная высота означала обрезанный
+// текст. Меряем после отрисовки и просим главный процесс подогнать окно;
+// потолок ставит он же, чтобы длинная фраза не заняла пол-экрана.
+let последняяВысота = 0;
+function подогнатьВысоту() {
+  requestAnimationFrame(() => {
+    const нужно = Math.ceil(document.getElementById('pill').getBoundingClientRect().height) + 16;
+    if (нужно === последняяВысота) return;
+    последняяВысота = нужно;
+    ipcRenderer.send(${JSON.stringify(STATUS_OVERLAY_CHANNEL + ':height')}, нужно);
+  });
+}
+
 ipcRenderer.on(${JSON.stringify(STATUS_OVERLAY_CHANNEL)}, (_event, status) => {
   dot.className = status.indicator;
   label.textContent = status.label;
@@ -96,6 +130,7 @@ ipcRenderer.on(${JSON.stringify(STATUS_OVERLAY_CHANNEL)}, (_event, status) => {
   if (status.note) {
     hint.textContent = status.note;
     noteUntil = Date.now() + 6000;
+    подогнатьВысоту();
     return;
   }
   if (Date.now() < noteUntil) return;
@@ -107,6 +142,7 @@ ipcRenderer.on(${JSON.stringify(STATUS_OVERLAY_CHANNEL)}, (_event, status) => {
   } else {
     hint.textContent = 'Скажите «Джарвис»';
   }
+  подогнатьВысоту();
 });
 </script>
 </body>
@@ -246,6 +282,27 @@ function openWindow(pagePath: string): BrowserWindow {
       contextIsolation: false,
       sandbox: false,
     },
+  });
+
+  // Высота — по содержимому, а не по константе.
+  //
+  // Окно просит ровно столько, сколько занял текст. Ширина не меняется: её
+  // человек привык видеть, и прыгающая по горизонтали плашка раздражает
+  // сильнее обрезанного текста.
+  const onHeight = (event: Electron.IpcMainEvent, height: unknown): void => {
+    if (event.sender !== window.webContents) return;
+    if (typeof height !== 'number' || !Number.isFinite(height)) return;
+    if (window.isDestroyed()) return;
+    const нужно = Math.max(HEIGHT, Math.min(MAX_HEIGHT, Math.round(height)));
+    const было = window.getBounds();
+    if (было.height === нужно) return;
+    // Растём вниз от той же верхней кромки: плашка стоит внизу экрана, и рост
+    // вверх выталкивал бы её за край.
+    window.setBounds({ ...было, height: нужно });
+  };
+  ipcMain.on(`${STATUS_OVERLAY_CHANNEL}:height`, onHeight);
+  window.once('closed', () => {
+    ipcMain.removeListener(`${STATUS_OVERLAY_CHANNEL}:height`, onHeight);
   });
 
   // Above full-screen apps too, otherwise the one moment the user most needs
