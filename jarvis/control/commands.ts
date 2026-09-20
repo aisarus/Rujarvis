@@ -19,6 +19,7 @@
  */
 
 import { WAKE_WORD_VARIANTS } from '../voice/wakeWord';
+import { firstMatch, type Rule } from './grammar';
 import { GRID_CELLS, parseSpokenNumber } from './grid';
 
 export type DirectCommand =
@@ -370,11 +371,80 @@ export function parseDirectCommand(utterance: string): DirectCommand | null {
   return readDirect(exact) ?? readDirect(dropFiller(exact));
 }
 
+/**
+ * Грамматика поверх таблицы: форма просьбы вместо точной строки.
+ *
+ * Стоит ПЕРЕД таблицами и покрывает те семейства, которые ломались чаще
+ * всего: окна, вкладки, прокрутка. Слова сверяются по основе, поэтому
+ * «сверни», «свернуть» и «сворачивай» совпадают сами.
+ *
+ * Порядок значим: частное раньше общего. «Переключи вкладку на хром» должно
+ * попасть в переход к программе, а не в Ctrl+Tab.
+ */
+const ПРАВИЛА: Array<Rule<DirectCommand>> = [
+  // ВКЛАДКИ БЕЗ НАЗВАНИЯ — раньше всего про переключение, иначе общее правило
+  // перехода к программе съедает «переключись на следующую вкладку».
+  {
+    pattern: '[переключи|переключись|перейди|вернись] [на] (следующую|следующая|дальше) вкладку',
+    make: () => ({ kind: 'key', keys: 'ctrl+tab' }),
+  },
+  {
+    pattern: '[переключи|переключись|перейди|вернись] [на] (предыдущую|предыдущая) вкладку',
+    make: () => ({ kind: 'key', keys: 'ctrl+shift+tab' }),
+  },
+  { pattern: '(переключи|смени) вкладку', make: () => ({ kind: 'key', keys: 'ctrl+tab' }) },
+  { pattern: '[открой] новую вкладку', make: () => ({ kind: 'key', keys: 'ctrl+t' }) },
+  { pattern: 'закрой [эту|это] вкладку', make: () => ({ kind: 'key', keys: 'ctrl+w' }) },
+  { pattern: 'верни вкладку', make: () => ({ kind: 'key', keys: 'ctrl+shift+t' }) },
+
+  // ВКЛАДКА С НАЗВАНИЕМ — это переход к программе.
+  {
+    pattern: '(переключи|переключись|перейди) [на] вкладку {куда}',
+    make: (s) => ({ kind: 'focus', title: s.куда as string }),
+  },
+  {
+    pattern: '(переключи|переключись) вкладку на {куда}',
+    make: (s) => ({ kind: 'focus', title: s.куда as string }),
+  },
+
+  // ОКНО ЦЕЛИКОМ.
+  {
+    pattern: '[пожалуйста] (сверни|убери) [это|эту] [окно]',
+    make: () => ({ kind: 'key', keys: 'win+down' }),
+  },
+  {
+    pattern: '[пожалуйста] (разверни|раскрой) [это|эту] [окно]',
+    make: () => ({ kind: 'key', keys: 'win+up' }),
+  },
+  { pattern: 'закрой [это] окно', make: () => ({ kind: 'key', keys: 'alt+f4' }) },
+
+  // ПРОКРУТКА: направление словом, а не таблицей форм.
+  {
+    pattern: '(прокрути|пролистай|промотай) [страницу] вниз',
+    make: () => ({ kind: 'scroll', amount: -3 }),
+  },
+  {
+    pattern: '(прокрути|пролистай|промотай) [страницу] вверх',
+    make: () => ({ kind: 'scroll', amount: 3 }),
+  },
+
+  // ПЕРЕХОД К ПРОГРАММЕ — последним: самое общее правило.
+  {
+    pattern: '(переключись|переключи|перейди|вернись) (на|в) {куда}',
+    make: (s) => ({ kind: 'focus', title: s.куда as string }),
+  },
+  { pattern: 'покажи окно {куда}', make: (s) => ({ kind: 'focus', title: s.куда as string }) },
+];
+
 function readDirect(phrase: string): DirectCommand | null {
   if (!phrase) return null;
 
   const repeated = readRepeat(phrase);
   if (repeated) return repeated;
+
+  // Грамматика раньше таблиц: она покрывает формы, которых в таблице нет.
+  const поГрамматике = firstMatch(ПРАВИЛА, phrase);
+  if (поГрамматике) return поГрамматике;
 
   const encore = readEncore(phrase);
   if (encore) return encore;
