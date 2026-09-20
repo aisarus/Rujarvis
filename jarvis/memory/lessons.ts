@@ -114,13 +114,42 @@ function keyFor(said: string): string {
 }
 
 /** Неудачи из журнала и планов, в одном виде. */
+/**
+ * Неудачи, которые уроком не являются.
+ *
+ * Замер 20.09.2026 на настоящем журнале: из 34 записей об ошибках 21 — это
+ * «Отменено», то есть человек сказал «стоп», а 10 — «API Error» и «Failed to
+ * authenticate», то есть наша собственная поломка окружения, которую в тот же
+ * день и починили. Настоящих стен оставалось две.
+ *
+ * То есть самонаращивающийся промпт на 94% состоял из шума — и за этот шум
+ * платится временем КАЖДОЙ задачи. Хуже того, он врал: «не смог: ДИНАМИЧНАЯ
+ * МУЗЫКА — Отменено» в разделе «на чём ты спотыкался» учит не тому.
+ *
+ * Стена — это то, обо что агент ударился, делая работу. Остановка человека и
+ * сломанное окружение сюда не относятся: первое не ошибка вовсе, второе
+ * чинится в одном месте и повторится ровно до починки.
+ */
+const НЕ_УРОК = [
+  'отменено',
+  'api error',
+  'failed to authenticate',
+  'превысил отведённое время',
+  'usage limit',
+];
+
+function isLesson(said: string): boolean {
+  const lowered = said.toLowerCase();
+  return !НЕ_УРОК.some((мимо) => lowered.includes(мимо));
+}
+
 function wallsIn({ events = [], plans = [] }: LessonSources): Array<{ said: string; at: number }> {
   const walls: Array<{ said: string; at: number }> = [];
 
   for (const event of events) {
     if (event.kind !== 'error') continue;
     const said = clean(event.text ?? '');
-    if (said) walls.push({ said, at: event.at });
+    if (said && isLesson(said)) walls.push({ said, at: event.at });
   }
 
   for (const plan of plans) {
@@ -129,7 +158,7 @@ function wallsIn({ events = [], plans = [] }: LessonSources): Array<{ said: stri
       if (step.state !== 'не вышло') continue;
       // Пометка ценнее самого шага: в ней сказано, обо что споткнулись.
       const said = clean(step.note ? `${step.text} — ${step.note}` : step.text);
-      if (said) walls.push({ said, at: plan.updatedAt || plan.startedAt });
+      if (said && isLesson(said)) walls.push({ said, at: plan.updatedAt || plan.startedAt });
     }
   }
 

@@ -135,3 +135,42 @@ describe('describeLessons', () => {
     expect(text.split('\n')).toHaveLength(4);
   });
 });
+
+/**
+ * Не всякая неудача — урок.
+ *
+ * Замер 20.09.2026 на настоящем журнале: из 34 записей об ошибках 21 была
+ * отменой человека, 10 — нашей поломкой окружения, и только две настоящими.
+ * То есть раздел «на чём ты спотыкался» состоял из шума на 94% — и за этот
+ * шум платится временем каждой задачи.
+ */
+describe('остановка человека уроком не считается', () => {
+  it.each([
+    'не смог: ДИНАМИЧНАЯ МУЗЫКА — Отменено',
+    'не смог: что делаешь — Отменено',
+    'не смог: открой блендер — Failed to authenticate. API Error: 401',
+    'не смог: сделай мультик — Claude Code превысил отведённое время',
+  ])('«%s» в уроки не попадает', (сказано) => {
+    const events: JarvisEvent[] = [error(сказано, AT), error(сказано, AT + APART)];
+    expect(lessonsFrom({ events })).toHaveLength(0);
+  });
+
+  it('настоящая стена остаётся', () => {
+    const стена = 'инструмент scroll: Не удалось: значение не влезает в UInt32';
+    const events: JarvisEvent[] = [error(стена, AT), error(стена, AT + APART)];
+    expect(describeLessons(lessonsFrom({ events }))).toContain('UInt32');
+  });
+
+  // Отмена рядом со стеной не должна уносить стену за собой.
+  it('отмена не заслоняет стену', () => {
+    const стена = 'инструмент window_key: Не удалось: Ctrl потерян';
+    const events: JarvisEvent[] = [
+      error('не смог: что-то — Отменено', AT),
+      error(стена, AT),
+      error(стена, AT + APART),
+    ];
+    const текст = describeLessons(lessonsFrom({ events })) ?? '';
+    expect(текст).toContain('Ctrl потерян');
+    expect(текст).not.toContain('Отменено');
+  });
+});

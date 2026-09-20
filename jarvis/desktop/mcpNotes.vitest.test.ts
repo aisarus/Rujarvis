@@ -15,12 +15,14 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { JournalStore } from '../memory/journalStore';
 import { NoteStore } from '../dialogue/noteStore';
 import { createDesktopMcpServer } from './mcpServer';
 
 const дом = mkdtempSync(path.join(os.tmpdir(), 'jarvis-mcp-notes-'));
 process.env.JARVIS_NOTES = path.join(дом, 'notes.json');
 process.env.JARVIS_PLAN = path.join(дом, 'plan.json');
+process.env.JARVIS_JOURNAL = path.join(дом, 'journal.json');
 
 afterAll(() => {
   rmSync(дом, { recursive: true, force: true });
@@ -89,6 +91,41 @@ describe('правка доезжает на любом инструменте',
     const текст = текстОтвета(ответ);
     expect(текст).toContain('крышу сделай синей');
     expect(текст.split('крышу сделай синей').length - 1).toBe(1);
+    await client.close();
+  });
+});
+
+/**
+ * Стена, о которую ударился инструмент, обязана попасть в журнал.
+ *
+ * Иначе уроки для промпта собирать не из чего: замер 20.09.2026 показал, что
+ * из 34 записей об ошибках настоящими были две, а прокрутка, сочетания с Ctrl
+ * и молчаливое неоткрытие файла — каждая стоила отдельного прогона и не дошла
+ * до следующей задачи.
+ */
+describe('неудача инструмента запоминается', () => {
+  it('падение уходит в журнал с именем инструмента', async () => {
+    const client = await поднять();
+
+    await client.callTool({
+      name: 'list_files',
+      arguments: { dir: path.join(дом, 'такой-папки-нет') },
+    });
+
+    const записи = new JournalStore(process.env.JARVIS_JOURNAL as string).recent();
+    const стены = записи.filter((з) => з.kind === 'error' && з.text.includes('list_files'));
+    expect(стены.length).toBeGreaterThan(0);
+    await client.close();
+  });
+
+  it('удачное действие в журнал не пишется', async () => {
+    const client = await поднять();
+    const было = new JournalStore(process.env.JARVIS_JOURNAL as string).recent().length;
+
+    await client.callTool({ name: 'show_plan', arguments: {} });
+
+    const стало = new JournalStore(process.env.JARVIS_JOURNAL as string).recent().length;
+    expect(стало).toBe(было);
     await client.close();
   });
 });
