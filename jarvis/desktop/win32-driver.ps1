@@ -49,6 +49,48 @@ public class Desk {
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, StringBuilder s, int n);
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc proc, IntPtr lParam);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint processId);
+    [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint attach, uint to, bool join);
+    [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] public static extern void keybd_event(byte key, byte scan, uint flags, IntPtr extra);
+
+    /*
+        Podnyat okno po-nastoyashchemu.
+
+        SetForegroundWindow odin molcha ne srabatyvaet, kogda speredi chuzhoe
+        polnoekrannoe okno: Windows zapreshchaet kradezh fokusa processu, kotoryy
+        im ne vladeet. Vyzov vozvrashchaet false, a drayver ranshe otchityvalsya
+        uspehom - i chelovek slyshal "pereklyuchilsya", glyadya na to zhe okno.
+
+        Tri veshchi vmeste snimayut zapret: kasanie ALT snimaet blokirovku vvoda,
+        AttachThreadInput na vremya delaet nas sosedom aktivnogo potoka, i tolko
+        posle etogo ShowWindow + BringWindowToTop + SetForegroundWindow rabotayut.
+
+        Vozvrashchaem zagolovok togo okna, kotoroe DEYSTVITELNO vperedi posle
+        popytki. Otchitatsya mozhno tolko tem, chto proveril.
+    */
+    public static string Raise(IntPtr h) {
+        keybd_event(0x12, 0, 0, IntPtr.Zero);
+        keybd_event(0x12, 0, 2, IntPtr.Zero);
+
+        uint dummy;
+        uint front = GetWindowThreadProcessId(GetForegroundWindow(), out dummy);
+        uint mine = GetCurrentThreadId();
+        uint target = GetWindowThreadProcessId(h, out dummy);
+
+        AttachThreadInput(mine, front, true);
+        AttachThreadInput(mine, target, true);
+        ShowWindow(h, 9);
+        BringWindowToTop(h);
+        SetForegroundWindow(h);
+        AttachThreadInput(mine, target, false);
+        AttachThreadInput(mine, front, false);
+
+        System.Threading.Thread.Sleep(250);
+        StringBuilder sb = new StringBuilder(512);
+        GetWindowTextW(GetForegroundWindow(), sb, 512);
+        return sb.ToString();
+    }
 
     public delegate bool EnumProc(IntPtr h, IntPtr lParam);
     [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
@@ -158,6 +200,7 @@ function Get-Windows {
                     [void][Desk]::GetWindowThreadProcessId($handle, [ref] $processId)
                     [void]$result.Add([PSCustomObject]@{
                         title = $title
+                        handle = [int64]$handle
                         x = $rect.Left; y = $rect.Top; width = $width; height = $height
                         pid = $processId
                         focused = ($handle -eq [Desk]::GetForegroundWindow())
@@ -300,23 +343,20 @@ function Invoke-Command2($message) {
                 $target = $windows | Where-Object {
                     $proc = Get-Process -Id $_.pid -ErrorAction SilentlyContinue
                     $proc -and ($proc.ProcessName -like "*$needle*")
-                } | Select-Object -First 1
+                } | Sort-Object { $_.width * $_.height } -Descending | Select-Object -First 1
             }
-            if (-not $target) { throw "Окно не найдено: $needle" }
-            $handle = [IntPtr]::Zero
-            $callback = [Desk+EnumProc] {
-                param($h, $l)
-                $sb = New-Object System.Text.StringBuilder 512
-                [void][Desk]::GetWindowTextW($h, $sb, 512)
-                if ($sb.ToString() -eq $target.title) { $script:handle = $h; return $false }
-                return $true
+            if (-not $target) { throw "Okno ne naydeno: $needle" }
+            $handle = [IntPtr][int64]$target.handle
+            if ($handle -eq [IntPtr]::Zero) { throw "U okna net deskriptora: $($target.title)" }
+
+            # Otchityvaemsya tem, chto vperedi na samom dele, a ne tem, chto
+            # prosili. Ranshe drayver govoril "pereklyuchilsya" dazhe togda,
+            # kogda okno ne dvinulos, i agent tratil minutu na vyyasnenie.
+            $nowFront = [Desk]::Raise($handle)
+            if ($nowFront -ne $target.title) {
+                throw "Ne vyshlo podnyat okno. Prosili: $($target.title). Vperedi: $nowFront"
             }
-            [void][Desk]::EnumWindows($callback, [IntPtr]::Zero)
-            if ($handle -ne [IntPtr]::Zero) {
-                [void][Desk]::ShowWindow($handle, 9)
-                [void][Desk]::SetForegroundWindow($handle)
-            }
-            return @{ ok = $true; title = $target.title }
+            return @{ ok = $true; title = $nowFront }
         }
         default { throw "Неизвестная команда: $($message.cmd)" }
     }
