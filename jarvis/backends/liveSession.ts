@@ -130,6 +130,7 @@ export class LiveSession {
   private turn: Turn | null = null;
   private readonly queue: Array<() => void> = [];
   private dead = false;
+  private spoken = false;
 
   constructor(private readonly options: LiveSessionOptions) {}
 
@@ -145,6 +146,16 @@ export class LiveSession {
   /** Занята ли ходом прямо сейчас. */
   isBusy(): boolean {
     return this.turn !== null;
+  }
+
+  /**
+   * Был ли уже ход.
+   *
+   * По этому решают, слать полный промпт или короткий: правила и устройство
+   * работы агент прочитал первым ходом и помнит.
+   */
+  hasSpoken(): boolean {
+    return this.spoken;
   }
 
   private now(): number {
@@ -283,6 +294,7 @@ export class LiveSession {
       timer.unref?.();
 
       this.turn = { channel, settle, startedAt: this.now(), text: '', timer };
+      this.spoken = true;
       channel.push({ type: 'started', backend: BACKEND_ID });
       this.child?.stdin?.write(userMessage(prompt));
     };

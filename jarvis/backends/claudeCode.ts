@@ -10,13 +10,17 @@
 
 import type { AuthState } from './authHints';
 import type { JarvisCapability } from '../types';
-import { buildBackendPrompt } from './prompt';
+import { buildBackendPrompt, buildFollowUpPrompt } from './prompt';
 import { looksUsageLimited } from './process';
 import {
   createCliRun,
+  createStreamState,
   type SpawnCli,
   type StreamState,
 } from './cliRunner';
+import { LiveSession, type SessionKey } from './liveSession';
+import type { SessionPool } from './sessionPool';
+import { subscriptionEnv } from './subscriptionEnv';
 import {
   unavailable,
   type AgentBackend,
@@ -82,6 +86,13 @@ export interface ClaudeCodeBackendOptions {
   defaultTimeoutMs?: number;
   availabilityTtlMs?: number;
   spawnCli?: SpawnCli;
+  /**
+   * Склад живых сессий. Без него каждая реплика поднимает новый процесс.
+   *
+   * Необязателен нарочно: проверки подставляют свой запуск процесса и живых
+   * сессий не хотят.
+   */
+  sessions?: SessionPool;
   now?: () => number;
 }
 
@@ -506,6 +517,9 @@ export class ClaudeCodeBackend implements AgentBackend {
       this.options.allowBypassPermissions === true,
     );
 
+    const живая = this.liveRun(request, permissionMode);
+    if (живая) return живая;
+
     return createCliRun({
       backend: BACKEND_ID,
       availability: () => this.checkAvailability(),
@@ -531,5 +545,59 @@ export class ClaudeCodeBackend implements AgentBackend {
       spawnCli: this.options.spawnCli,
       now: this.now,
     });
+  }
+
+  /**
+   * Ход в уже прогретой сессии, если он тут уместен.
+   *
+   * Замер 20.09.2026: первый ход 28.5 секунды, второй 5.4, третий 3.2.
+   * Холодный старт платится один раз за разговор.
+   *
+   * `null` значит «этой задаче живая сессия не подходит» — тогда работает
+   * обычный разовый прогон, как раньше.
+   */
+  private liveRun(request: BackendRequest, permissionMode: ClaudePermissionMode): BackendRun | null {
+    const pool = this.options.sessions;
+    if (!pool || this.options.spawnCli) return null;
+
+    // Продолжение чужой сессии агента живой сессией не выражается: `--resume`
+    // задаётся при запуске процесса, а процесс уже идёт.
+    if (request.sessionId) return null;
+
+    const path = this.cached?.path;
+    if (!path) return null;
+
+    const key: SessionKey = {
+      cwd: request.cwd,
+      tools: toolsFor(request.capabilities).join(','),
+      permissionMode,
+      mcpConfig: needsDesktopTools(request.capabilities) ? this.options.desktopMcpConfig : undefined,
+      model: this.options.model,
+    };
+
+    const готовая = pool.find(key);
+    if (готовая) {
+      // Правила и устройство работы агент прочитал первым ходом и помнит.
+      // Слать их заново — платить временем человека за уже известное.
+      return готовая.ask(
+        готовая.hasSpoken()
+          ? buildFollowUpPrompt(request)
+          : buildBackendPrompt({ ...request, homeDir: this.options.homeDir }),
+      );
+    }
+
+    const свежая = new LiveSession({
+      key,
+      command: path,
+      extraArgs: this.options.homeDir && !sameFolder(this.options.homeDir, request.cwd)
+        ? ['--add-dir', this.options.homeDir]
+        : [],
+      consumeLine: (raw, emit) => consumeClaudeStreamLine(raw, createStreamState(), emit),
+      env: subscriptionEnv(),
+      turnTimeoutMs: request.timeoutMs ?? this.options.defaultTimeoutMs,
+      now: this.now,
+    });
+    pool.keep(свежая);
+    return свежая.ask(buildBackendPrompt({ ...request, homeDir: this.options.homeDir }));
   }
 }

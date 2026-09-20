@@ -8,6 +8,9 @@
 
 import type { BackendRequest } from './types';
 
+/** Перевод строки постоянной: обратный слеш тут не переживает переписываний. */
+const NEWLINE = String.fromCharCode(10);
+
 function section(title: string, lines: readonly string[]): string | null {
   const kept = lines.map((line) => line.trim()).filter((line) => line.length > 0);
   if (kept.length === 0) return null;
@@ -333,4 +336,36 @@ ${standing}`);
   );
 
   return parts.join('\n\n');
+}
+
+/**
+ * Промпт для продолжения разговора в уже живой сессии.
+ *
+ * Правила, имена инструментов, устройство работы и формат ответа агент уже
+ * прочитал первым ходом и помнит: контекст сессии никуда не делся. Слать всё
+ * это заново — платить временем человека за то, что и так известно.
+ *
+ * Остаётся то, что меняется от реплики к реплике: сама просьба, свежие
+ * постоянные указания человека и уроки из журнала. Их правка должна
+ * действовать сразу, а не со следующего разговора.
+ */
+export function buildFollowUpPrompt(request: BackendRequest): string {
+  const parts = [request.utterance];
+
+  if (request.instructions?.trim()) {
+    parts.push(`ПОСТОЯННЫЕ УКАЗАНИЯ ЧЕЛОВЕКА (могли измениться):${NEWLINE}${request.instructions.trim()}`);
+  }
+  if (request.lessons?.trim()) {
+    parts.push(`НА ЧЁМ ТЫ УЖЕ СПОТЫКАЛСЯ:${NEWLINE}${request.lessons.trim()}`);
+  }
+  if (request.showWork === false) {
+    parts.push('Работай в фоне: не открывай окна и не переключай фокус.');
+  }
+
+  // Краткость приходится напоминать. Без этой строки на «сколько окон» агент
+  // перечислял все девять с программами и номерами: ответ читается вслух, и
+  // лишний список — это лишние секунды, которые человек слушает.
+  parts.push('Ответь коротко: одна фраза с результатом. Подробности — только если просили.');
+
+  return parts.join(`${NEWLINE}${NEWLINE}`);
 }

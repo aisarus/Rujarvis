@@ -9,6 +9,7 @@
 
 import { BackendManager } from '../../jarvis/backends/manager';
 import { ClaudeCodeBackend } from '../../jarvis/backends/claudeCode';
+import { SessionPool } from '../../jarvis/backends/sessionPool';
 import { CodexBackend } from '../../jarvis/backends/codex';
 import { InterpreterBackend } from '../../jarvis/backends/interpreter';
 import {
@@ -105,6 +106,14 @@ export interface Jarvis {
   world: WorldStateStore;
   /** Loads persisted memory. Call once before the first utterance. */
   ready(): Promise<void>;
+  /**
+   * Закрыть живые процессы.
+   *
+   * Каждая живая сессия — это CLI со своим MCP-сервером и PowerShell. За сутки
+   * без такой уборки здесь уже накапливалось шесть осиротевших серверов на
+   * 956 МБ. Зовётся, когда приложение уходит.
+   */
+  dispose(): void;
 }
 
 export function createJarvis(options: CreateJarvisOptions = {}): Jarvis {
@@ -116,6 +125,10 @@ export function createJarvis(options: CreateJarvisOptions = {}): Jarvis {
     }),
   );
 
+  // Склад живых сессий: первая реплика разговора платит холодный старт, все
+  // следующие попадают в прогретый процесс. Замер: 28.5 с, потом 5.4 и 3.2.
+  const sessions = new SessionPool();
+
   backends.register(
     new ClaudeCodeBackend({
       probe: createWorkstationClaudeProbe(),
@@ -123,6 +136,7 @@ export function createJarvis(options: CreateJarvisOptions = {}): Jarvis {
       allowBypassPermissions: options.allowUnrestrictedCli === true,
       desktopMcpConfig: options.desktopMcpConfig,
       homeDir: options.homeDir,
+      sessions,
     }),
   );
 
@@ -198,6 +212,9 @@ export function createJarvis(options: CreateJarvisOptions = {}): Jarvis {
         world.setProject(undefined, options.workspace);
       }
       await world.refresh();
+    },
+    dispose: () => {
+      sessions.disposeAll();
     },
   };
 }

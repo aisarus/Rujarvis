@@ -210,6 +210,8 @@ let showWork = true;
  */
 let muted = false;
 let story: Storyline | null = null;
+/** Джарвис целиком — чтобы закрыть его живые процессы при выходе. */
+let jarvisRef: Jarvis | null = null;
 /** Сколько времени агент тратит на разгон, прежде чем начать дело. */
 let timing: StartupTiming | null = null;
 let lastCell: number | null = null;
@@ -765,6 +767,8 @@ export async function startJarvisVoiceBridge(options: {
         awaitingAnswer = waiter;
       }),
   });
+  // Ссылка наружу: при выходе надо закрыть живые процессы агента.
+  jarvisRef = jarvis;
   await jarvis.ready();
 
   // Speech has failed twice now for want of a file in a place nobody printed.
@@ -2092,4 +2096,6 @@ async function askForApproval(
 
 app.on('will-quit', () => {
   active?.dispose();
+  // Живые сессии агента — отдельные процессы, и сами они не уйдут.
+  jarvisRef?.dispose();
 });
