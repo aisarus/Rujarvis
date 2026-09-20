@@ -118,6 +118,13 @@ export interface JarvisCoreOptions {
    * Замолчать — красная линия. Оно обязано работать всегда и мгновенно.
    */
   stopSpeaking?(): void;
+  /**
+   * Сказать, чем Джарвис сейчас занят.
+   *
+   * Нужно ровно для одного: человек попросил видеть с одного взгляда, поняли
+   * его как разговор или как поручение. Жёлтый — разговор.
+   */
+  showIndicator?(what: 'chatting'): void;
   /** Asks the user to approve sensitive or dangerous work. */
   approve?(request: ApprovalRequest): Promise<boolean>;
   /** Папка, куда складывать готовые файлы. Показывается агенту в запросе. */
@@ -147,6 +154,23 @@ export interface JarvisCoreOptions {
   showWork?(): boolean;
   now?: () => number;
 }
+
+/**
+ * Разговор ли это, а не поручение.
+ *
+ * Два признака разом, и оба нужны. Намерение «разговор» — потому что роутер
+ * уже отличил вопрос от приказа. Ни одного умения — потому что «что у меня в
+ * папке загрузки» тоже вопрос, но ответить на него без доступа к файлам
+ * нельзя, и такое обязано остаться работой.
+ */
+export function isTalk(decision: RoutingDecision): boolean {
+  // «Размышление» не требует ничего: ни экрана, ни файлов, ни сети. Всё
+  // остальное — требует, и тогда это работа, даже если прозвучало вопросом.
+  return decision.intent === 'chat' && decision.needs.every((need) => need === 'reasoning');
+}
+
+/** Дольше этого человек уже не ждёт ответа на простой вопрос. */
+const CHAT_TIMEOUT_MS = 60_000;
 
 export type JarvisTurn =
   | { kind: 'control'; outcome: ControlOutcome; spoken: string }
@@ -393,6 +417,22 @@ export class JarvisCore {
       mainPreference: settings.mainPreference,
     });
 
+    // 6.5. Вопрос и разговор — это ответ словами, а не работа.
+    //
+    // Человек сказал прямо: «он не понимает концепцию вопросов и не может на
+    // них по факту отвечать». Так и было: намерение «разговор» доходило сюда и
+    // превращалось в задачу с агентом и инструментами. «Кто написал войну и
+    // мир» стоило двадцати секунд, окна работы и записи в план.
+    //
+    // Здесь такая фраза уходит отдельным коротким путём: ни инструментов, ни
+    // плана, ни окна — только ответ вслух. Задача при этом не заводится, и
+    // индикатор жёлтый, чтобы человек с одного взгляда видел, что его поняли
+    // как разговор.
+    if (isTalk(decision)) {
+      const spoken = await this.answerAloud(utterance, settings);
+      return { kind: 'chat', spoken };
+    }
+
     // 7. Start the task, and answer immediately — the acknowledgement is
     //    produced from the routing decision, before any model has run.
     const task = this.options.tasks.start({
@@ -411,6 +451,43 @@ export class JarvisCore {
   private say(text: string, settings: JarvisSettings): void {
     if (!settings.speakResponses || !text) return;
     this.options.speak?.(text);
+  }
+
+  /**
+   * Ответить словами и ничего не делать.
+   *
+   * Запрос нарочно голый: ни инструментов, ни рабочей папки, ни памяти о
+   * прошлых задачах. Вопрос «сколько будет двести на триста» не требует
+   * доступа к экрану, а всё лишнее в запросе — это лишние секунды ожидания у
+   * человека, который просто спросил.
+   *
+   * Отказ не роняет разговор: человек услышит честное «не знаю», а не тишину.
+   */
+  private async answerAloud(utterance: string, settings: JarvisSettings): Promise<string> {
+    this.options.showIndicator?.('chatting');
+    const run = this.options.backends.run(
+      {
+        utterance,
+        capabilities: ['reasoning'],
+        risk: 'safe',
+        permissions: { read: false, edit: false, execute: false, network: false },
+        language: 'ru',
+        timeoutMs: CHAT_TIMEOUT_MS,
+      },
+      {},
+    );
+
+    let spoken: string;
+    try {
+      const result = await run.result();
+      spoken = result.ok && result.text.trim() ? result.text.trim() : 'Не знаю.';
+    } catch {
+      spoken = 'Не смог ответить.';
+    }
+
+    const short = toSpokenResponse(spoken, { fallback: 'Не знаю.' }).spoken;
+    this.say(short, settings);
+    return short;
   }
 
   /** Records the outcome and speaks a short summary once a task finishes. */

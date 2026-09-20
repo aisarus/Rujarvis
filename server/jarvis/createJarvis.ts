@@ -50,6 +50,8 @@ export interface CreateJarvisOptions {
   speak?(text: string): void;
   /** Обрывает речь на полуслове. См. stopSpeaking в ядре: «тишина» — красная линия. */
   stopSpeaking?(): void;
+  /** Сказать, чем Джарвис занят: разговор видно жёлтым. */
+  showIndicator?(what: 'chatting'): void;
   /** Asks the user to approve sensitive work. Omitted means such work is refused. */
   approve?(request: ApprovalRequest): Promise<boolean>;
   /** Optional small local model that refines routing. */
@@ -175,6 +177,7 @@ export function createJarvis(options: CreateJarvisOptions = {}): Jarvis {
     settings: options.settings ?? (() => DEFAULT_JARVIS_SETTINGS),
     speak: options.speak,
     stopSpeaking: options.stopSpeaking,
+    showIndicator: options.showIndicator,
     approve: options.approve,
     outputDir: options.outputDir,
     recentActions: options.recentActions,

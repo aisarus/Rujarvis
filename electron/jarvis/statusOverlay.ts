@@ -52,7 +52,10 @@ function buildOverlayHtml(): string {
   #dot.listening { background: #22c55e; animation: pulse 1.2s ease-in-out infinite; }
   #dot.transcribing { background: #38bdf8; animation: pulse 0.9s ease-in-out infinite; }
   #dot.thinking { background: #a78bfa; animation: pulse 0.9s ease-in-out infinite; }
-  #dot.working { background: #f59e0b; animation: pulse 1.6s ease-in-out infinite; }
+  /* Разговор — жёлтый, как попросил человек. Работа — оранжевая: рядом, но
+     различимо, и по подписи тем более. */
+  #dot.chatting { background: #facc15; animation: pulse 1.4s ease-in-out infinite; }
+  #dot.working { background: #f97316; animation: pulse 1.6s ease-in-out infinite; }
   #dot.speaking { background: #ec4899; animation: pulse 0.7s ease-in-out infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
   #text { min-width: 0; }

@@ -758,6 +758,8 @@ export async function startJarvisVoiceBridge(options: {
     speak: (text) => { void playback.speak(text); },
     // Настоящая остановка, а не пустая реплика: см. stopSpeaking в ядре.
     stopSpeaking: () => { session.stopSpeaking(); },
+    // Жёлтый — разговор. Человек попросил видеть разницу с одного взгляда.
+    showIndicator: (what) => { session.showIndicator(what); },
     approve: (request) =>
       askForApproval(request, session, (waiter) => {
         awaitingAnswer = waiter;

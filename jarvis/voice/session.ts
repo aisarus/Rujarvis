@@ -22,6 +22,15 @@ export type VoiceIndicator =
   | 'listening'
   | 'transcribing'
   | 'thinking'
+  /**
+   * Разговор, а не поручение.
+   *
+   * Человек попросил видеть разницу с одного взгляда: жёлтый — значит его
+   * поняли как разговор и сейчас ответят словами; другой цвет — значит поняли
+   * как команду и сейчас будут делать. Без этого он узнавал о неверном
+   * понимании только по тому, что ничего не произошло.
+   */
+  | 'chatting'
   | 'working'
   | 'speaking';
 
@@ -43,6 +52,7 @@ const INDICATOR_LABELS: Record<VoiceIndicator, string> = {
   listening: 'Слушаю…',
   transcribing: 'Распознаю…',
   thinking: 'Думаю…',
+  chatting: 'Разговариваю',
   working: 'Работаю',
   speaking: 'Отвечаю…',
 };
@@ -120,6 +130,16 @@ export class VoiceSession {
       void this.options.capture.stop();
       this.setIndicator('idle');
     }
+  }
+
+  /**
+   * Показать, чем занят, снаружи.
+   *
+   * Ядро решает, разговор это или поручение, а видит человека сессия. Отсюда
+   * один узкий проход вместо доступа ко всему внутреннему состоянию.
+   */
+  showIndicator(indicator: VoiceIndicator): void {
+    this.setIndicator(indicator);
   }
 
   private setIndicator(indicator: VoiceIndicator, taskTitle?: string): void {

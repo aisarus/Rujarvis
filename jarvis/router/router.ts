@@ -406,6 +406,14 @@ export function route(utterance: string, options: RouteOptions = {}): RoutingDec
   const tokens = tokenize(utterance);
   const capabilities = detectCapabilities(tokens);
 
+  // Вопрос — не переписка с людьми.
+  //
+  // «Кто написал войну и мир» получало умение «общение» из-за слова
+  // «написал», и дальше это тянуло за собой и чувствительный риск, и выбор
+  // бэкенда, и превращение вопроса в задачу. Красная линия — отправить
+  // сообщение живому человеку, а не произнести глагол.
+  if (asksSomething(tokens)) capabilities.delete('communication');
+
   const { permissions, constraints } = derivePermissions(
     utterance,
     options.basePermissions ?? DEFAULT_PERMISSIONS,
