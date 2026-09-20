@@ -57,6 +57,34 @@ export type SpawnCli = (options: CliProcessOptions) => CliHandle;
 
 export const defaultSpawnCli: SpawnCli = (options) => new CliProcess(options);
 
+/**
+ * Сколько работе позволено молчать.
+ *
+ * Не угадано, а замерено по 1108 промежуткам между событиями настоящих
+ * прогонов 20.09.2026: медиана 3.9 с, девяносто процентов укладываются в
+ * 13.7 с, девяносто девять — в 47.7 с. Но самая длинная пауза ЖИВОЙ работы —
+ * 590 секунд, почти десять минут на одном шаге (сборка анимации в 3D).
+ *
+ * Значит трёхминутный предел убивал бы настоящую работу. Пятнадцать минут —
+ * полуторный запас над измеренным максимумом: застрявший процесс это поймает,
+ * работающий — нет.
+ */
+export const SILENCE_LIMIT_MS = 15 * 60_000;
+
+/**
+ * Потолок по общему времени.
+ *
+ * Был двадцать минут, и этого хватало ровно до первой настоящей задачи:
+ * прогон «сделать 3D-модель по 2D-видео» убит на 1200.1 секунде посреди
+ * правки файла — двадцать минут работы выброшены, человеку сказано «превысил
+ * отведённое время».
+ *
+ * Теперь от бесконечной работы защищает предел молчания, а это — только
+ * страховка от зацикливания, которое исправно шумит. Отсюда и величина:
+ * полтора часа, а не расписание рабочего дня.
+ */
+export const WORK_CEILING_MS = 90 * 60_000;
+
 export interface CliRunSpec {
   backend: BackendId;
   /** Probe result; a run on a non-ready backend fails fast with its reason. */
@@ -65,6 +93,8 @@ export interface CliRunSpec {
   buildArgs: (executablePath: string) => string[];
   cwd?: string;
   timeoutMs?: number;
+  /** Сколько можно молчать. Обрывает застрявшую работу, но не долгую. */
+  idleTimeoutMs?: number;
   stdin: string;
   /** Translates one parsed NDJSON object into events. */
   consumeLine: (
@@ -150,6 +180,7 @@ export function createCliRun(spec: CliRunSpec): BackendRun {
       cwd: spec.cwd,
       env: subscriptionEnv(),
       timeoutMs: spec.timeoutMs,
+      idleTimeoutMs: spec.idleTimeoutMs,
       stdin: spec.stdin,
       onStdoutLine: (line) => {
         const parsed = parseJsonLine(line);

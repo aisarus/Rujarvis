@@ -17,6 +17,8 @@ import {
   createStreamState,
   type SpawnCli,
   type StreamState,
+  SILENCE_LIMIT_MS,
+  WORK_CEILING_MS,
 } from './cliRunner';
 import { LiveSession, type SessionKey } from './liveSession';
 import type { SessionPool } from './sessionPool';
@@ -531,7 +533,9 @@ export class ClaudeCodeBackend implements AgentBackend {
           homeDir: this.options.homeDir,
         }),
       cwd: request.cwd,
-      timeoutMs: request.timeoutMs ?? this.options.defaultTimeoutMs ?? 20 * 60_000,
+      timeoutMs: request.timeoutMs ?? this.options.defaultTimeoutMs ?? WORK_CEILING_MS,
+      // Предел на молчание, а не на работу: долгий шаг — это не зависание.
+      idleTimeoutMs: request.timeoutMs ? undefined : SILENCE_LIMIT_MS,
       // Собственная папка — свойство ассистента, а не отдельной просьбы,
       // поэтому подставляется здесь, а не тащится через всё ядро.
       stdin: buildBackendPrompt({ ...request, homeDir: this.options.homeDir }),

@@ -78,7 +78,21 @@ export interface CliProcessOptions {
   args: string[];
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  /** Потолок по общему времени. Защита от бесконечной работы, а не от долгой. */
   timeoutMs?: number;
+  /**
+   * Сколько можно молчать.
+   *
+   * Обрывать надо того, кто ничего не делает, а не того, кто делает долго.
+   * 20.09.2026 прогон «сделать 3D-модель по 2D-видео» был убит ровно на
+   * 1200.1 секунде — посреди правки файла, при живом потоке событий. Двадцать
+   * минут работы выброшены, человеку сказано «превысил отведённое время».
+   *
+   * Каждая строка вывода CLI — доказательство жизни, и она сбрасывает этот
+   * счётчик. Потолок общего времени остаётся, но становится тем, чем должен
+   * быть: защитой от зацикливания, а не расписанием.
+   */
+  idleTimeoutMs?: number;
   /** Written to stdin, then stdin is closed. */
   stdin?: string;
   onStdoutLine(line: string): void;
@@ -114,6 +128,7 @@ export class CliProcess implements CliHandle {
   private cancelled = false;
   private timedOut = false;
   private timer: NodeJS.Timeout | null = null;
+  private idleTimer: NodeJS.Timeout | null = null;
   private readonly done: Promise<CliProcessOutcome>;
 
   constructor(private readonly options: CliProcessOptions) {
@@ -132,6 +147,10 @@ export class CliProcess implements CliHandle {
         if (this.timer) {
           clearTimeout(this.timer);
           this.timer = null;
+        }
+        if (this.idleTimer) {
+          clearTimeout(this.idleTimer);
+          this.idleTimer = null;
         }
         resolve(outcome);
       };
@@ -163,6 +182,10 @@ export class CliProcess implements CliHandle {
 
       child.stdout?.setEncoding('utf-8');
       child.stdout?.on('data', (chunk: string) => {
+        // Что-то пришло — значит работа идёт, и счётчик молчания начинается
+        // заново. Именно здесь, до разбора строки: даже нечитаемый вывод
+        // доказывает, что процесс жив.
+        this.touch();
         for (const line of stdoutSplitter.push(chunk)) {
           try {
             this.options.onStdoutLine(line);
@@ -220,7 +243,21 @@ export class CliProcess implements CliHandle {
         }, this.options.timeoutMs);
         this.timer.unref?.();
       }
+
+      this.touch();
     });
+  }
+
+  /** Работа подала признак жизни: счётчик молчания начинается заново. */
+  private touch(): void {
+    const idle = this.options.idleTimeoutMs;
+    if (!idle || idle <= 0) return;
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => {
+      this.timedOut = true;
+      this.kill();
+    }, idle);
+    this.idleTimer.unref?.();
   }
 
   cancel(): void {

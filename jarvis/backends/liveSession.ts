@@ -113,6 +113,12 @@ export interface LiveSessionOptions {
   spawnProcess?: typeof spawn;
 }
 
+/**
+ * Сколько ходу позволено молчать.
+ *
+ * Тот же замер, что у CLI-пути: самая длинная пауза живой работы — 590 секунд.
+ * Пятнадцать минут дают полуторный запас и ловят именно зависание.
+ */
 const TURN_TIMEOUT_MS = 15 * 60_000;
 
 interface Turn {
@@ -121,6 +127,7 @@ interface Turn {
   startedAt: number;
   text: string;
   sessionId?: string;
+  /** Счётчик молчания. Перевзводится на каждом признаке жизни. */
   timer: NodeJS.Timeout;
 }
 
@@ -208,7 +215,28 @@ export class LiveSession {
     for (const waiting of this.queue.splice(0)) waiting();
   }
 
+  /**
+   * Ход подал признак жизни: счётчик молчания начинается заново.
+   *
+   * Таймер назывался «сессия молчит», а считал ВСЁ время хода. Длинная работа
+   * упиралась в него посреди дела: прогон «3D-модель по 2D-видео» убит на
+   * 1200-й секунде при живом потоке событий. Теперь считается именно молчание,
+   * а величина взята из замера настоящих пауз — см. SILENCE_LIMIT_MS.
+   */
+  private touch(): void {
+    const turn = this.turn;
+    if (!turn) return;
+    clearTimeout(turn.timer);
+    turn.timer = setTimeout(
+      () => this.die('Сессия молчит слишком долго'),
+      this.options.turnTimeoutMs ?? TURN_TIMEOUT_MS,
+    );
+    turn.timer.unref?.();
+  }
+
   private take(chunk: string): void {
+    // До разбора: даже нечитаемая строка доказывает, что процесс жив.
+    this.touch();
     this.buffer += chunk;
     let end: number;
     while ((end = this.buffer.indexOf(NL)) >= 0) {

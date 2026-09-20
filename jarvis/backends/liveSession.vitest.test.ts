@@ -240,3 +240,63 @@ describe('события доходят до вызывающего', () => {
     expect(собрано.map((e) => e.type)).toEqual(['started', 'assistant-text', 'completed']);
   });
 });
+
+/**
+ * Предел считает молчание, а не работу.
+ *
+ * Таймер назывался «сессия молчит», а отсчитывал всё время хода. Из-за этого
+ * прогон «3D-модель по 2D-видео» был убит на 1200-й секунде посреди правки
+ * файла — при живом потоке событий. Двадцать минут работы выброшены.
+ */
+describe('долгая работа не считается зависанием', () => {
+  function сессияСПределом(
+    поддельный: ReturnType<typeof поддельныйПроцесс>,
+    предел: number,
+  ): LiveSession {
+    return new LiveSession({
+      key: KEY,
+      command: 'claude',
+      consumeLine: () => {},
+      spawnProcess: (() => поддельный.child) as never,
+      turnTimeoutMs: предел,
+    });
+  }
+
+  it('работа, которая шумит, живёт дольше предела', async () => {
+    vi.useFakeTimers();
+    try {
+      const п = поддельныйПроцесс();
+      const s = сессияСПределом(п, 1_000);
+      const ход = s.ask('собери мультик');
+
+      // Восемь раз по 600 мс: суммарно 4.8 секунды при пределе в одну.
+      for (let i = 0; i < 8; i += 1) {
+        await vi.advanceTimersByTimeAsync(600);
+        п.сказать({ type: 'assistant', шаг: i });
+      }
+
+      let оборвалось = false;
+      void ход.result().then((r) => { оборвалось = !r.ok; });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(оборвалось).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('молчание дольше предела обрывает', async () => {
+    vi.useFakeTimers();
+    try {
+      const п = поддельныйПроцесс();
+      const s = сессияСПределом(п, 1_000);
+      const ход = s.ask('зависни');
+      const итог = ход.result();
+      await vi.advanceTimersByTimeAsync(1_500);
+      const r = await итог;
+      expect(r.ok).toBe(false);
+      expect(r.error).toContain('молчит');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

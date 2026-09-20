@@ -10,7 +10,7 @@ import type { AuthState } from './authHints';
 import type { JarvisCapability } from '../types';
 import { buildBackendPrompt } from './prompt';
 import { looksUsageLimited } from './process';
-import { createCliRun, type SpawnCli, type StreamState } from './cliRunner';
+import { createCliRun, type SpawnCli, type StreamState, SILENCE_LIMIT_MS, WORK_CEILING_MS } from './cliRunner';
 import {
   unavailable,
   type AgentBackend,
@@ -413,7 +413,9 @@ export class CodexBackend implements AgentBackend {
       availability: () => this.checkAvailability(),
       buildArgs: () => buildCodexArgs(request, { model: this.options.model, sandbox }),
       cwd: request.cwd,
-      timeoutMs: request.timeoutMs ?? this.options.defaultTimeoutMs ?? 20 * 60_000,
+      timeoutMs: request.timeoutMs ?? this.options.defaultTimeoutMs ?? WORK_CEILING_MS,
+      // Предел на молчание, а не на работу: долгий шаг — это не зависание.
+      idleTimeoutMs: request.timeoutMs ? undefined : SILENCE_LIMIT_MS,
       stdin: buildBackendPrompt(request),
       consumeLine: createCodexLineConsumer(),
       messages: {
