@@ -53,6 +53,8 @@ public class Desk {
     [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint attach, uint to, bool join);
     [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] public static extern void keybd_event(byte key, byte scan, uint flags, IntPtr extra);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SystemParametersInfo(uint action, uint param, IntPtr value, uint winIni);
 
     /*
         Podnyat okno po-nastoyashchemu.
@@ -70,8 +72,21 @@ public class Desk {
         popytki. Otchitatsya mozhno tolko tem, chto proveril.
     */
     public static string Raise(IntPtr h) {
-        keybd_event(0x12, 0, 0, IntPtr.Zero);
-        keybd_event(0x12, 0, 2, IntPtr.Zero);
+        /*
+            Snyat blokirovku fokusa, no BEZ nazhatiya klavish.
+            
+            Ranshe zdes bylo kasanie ALT - obshcheizvestnyy priyom. Na etoy
+            mashine ono otkryvalo "Pereklyuchenie zadach": proverka deystviy
+            pokazala, chto posle "pereklyuchis na edzh" vperedi okazyvalsya
+            Alt-Tab, a ne Edge. Lechenie okazalos huzhe bolezni.
+            
+            SPI_SETFOREGROUNDLOCKTIMEOUT = 0x2001. Stavim nol na vremya
+            perekhoda i vozvrashchaem kak bylo: nikakogo vvoda, nikakih okon.
+        */
+        const uint GET_LOCK = 0x2000, SET_LOCK = 0x2001, SEND_CHANGE = 0x02;
+        IntPtr was = Marshal.AllocHGlobal(4);
+        SystemParametersInfo(GET_LOCK, 0, was, 0);
+        SystemParametersInfo(SET_LOCK, 0, IntPtr.Zero, SEND_CHANGE);
 
         uint dummy;
         uint front = GetWindowThreadProcessId(GetForegroundWindow(), out dummy);
@@ -85,6 +100,9 @@ public class Desk {
         SetForegroundWindow(h);
         AttachThreadInput(mine, target, false);
         AttachThreadInput(mine, front, false);
+
+        SystemParametersInfo(SET_LOCK, 0, was, SEND_CHANGE);
+        Marshal.FreeHGlobal(was);
 
         System.Threading.Thread.Sleep(250);
         StringBuilder sb = new StringBuilder(512);
