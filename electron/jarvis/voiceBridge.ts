@@ -31,7 +31,7 @@ import {
   type Transcriber,
   type VoiceStatus,
 } from '../../jarvis/voice/session';
-import { aliasTarget, matchAppLaunch, spokenCloseTarget, spokenTarget } from '../../jarvis/apps/launch';
+import { aliasTarget, matchAppLaunch, spokenCloseTarget, spokenTarget, windowAlias } from '../../jarvis/apps/launch';
 import { readConfirmation } from '../../jarvis/voice/confirm';
 import { chooseShortcut } from '../../jarvis/apps/startMenu';
 import { OUTPUT_SECTIONS, revealPath } from '../../jarvis/desktop/files';
@@ -299,7 +299,9 @@ async function runDirectCommand(command: DirectCommand, session: VoiceSession): 
       case 'focus': {
         // Псевдоним нужен по той же причине, что и при закрытии: «хром» в
         // заголовке окна не встречается, а "Chrome" встречается.
-        const alias = aliasTarget(command.title);
+        // Оконное имя вперёд пускового: «блендер» как окно это Blender, а
+        // запустить его надо ярлыком из меню «Пуск» — это разные строки.
+        const alias = windowAlias(command.title) ?? aliasTarget(command.title);
         // Сначала по псевдониму, потом по сказанному вслух. Псевдоним знает
         // имя программы, но окно может называться иначе — «Riot Client» в
         // таблице нет, а сказать про него человек может.
@@ -1531,7 +1533,9 @@ async function closeApplication(
 ): Promise<void> {
   // The alias is what bridges «хром» to the process called chrome: the
   // transliteration of the spoken word is "hrom", which matches nothing.
-  const searchable = [aliasTarget(spoken), spoken].filter(Boolean).join(' ');
+  const searchable = [windowAlias(spoken), aliasTarget(spoken), spoken]
+    .filter(Boolean)
+    .join(' ');
 
   const running = await listRunningProcesses();
   const describe = (process: RunningProcess) => process.name;

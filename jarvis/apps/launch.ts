@@ -66,14 +66,6 @@ const APP_ALIASES: ReadonlyArray<readonly [readonly string[], string]> = [
   [['дискорд', 'discord'], 'discord'],
   [['ворд', 'word'], 'winword'],
   [['эксель', 'ексель', 'excel'], 'excel'],
-  [['блендер', 'блендере', 'blender'], 'blender'],
-  [['клод', 'клода', 'клауд', 'claude'], 'claude'],
-  [['джарвис', 'жарвис', 'jarvis'], 'Jarvis'],
-  [['риот', 'риот клиент', 'riot'], 'Riot Client'],
-  [['лига', 'лигу', 'лол', 'league'], 'League of Legends'],
-  [['дота', 'доту', 'dota'], 'dota2'],
-  [['стим', 'steam'], 'steam'],
-  [['обс', 'obs'], 'obs64'],
   [['ворд пад', 'вордпад', 'wordpad'], 'wordpad'],
   [['настройки', 'параметры', 'settings'], 'ms-settings:'],
 ];
@@ -141,6 +133,43 @@ function targetAfterVerb(utterance: string, verbs: readonly string[]): string | 
  * before it can be matched against a running process, and transliteration
  * alone turns it into "hrom".
  */
+/**
+ * Имена ОКОН и процессов — отдельно от пусковых.
+ *
+ * Эти две вещи легко спутать, и я спутал: добавил сюда «блендер» ради поиска
+ * окна, а таблица пусковая — Джарвис стал пытаться выполнить команду `blender`
+ * вместо поиска ярлыка в меню «Пуск», и перестал открывать то, что открывал.
+ *
+ * Разница простая. Пусковое имя — то, что Windows умеет запустить. Оконное —
+ * то, что написано в заголовке окна или в имени процесса. У Chrome они совпали
+ * случайно, и это совпадение сбило с толку.
+ */
+const WINDOW_ALIASES: ReadonlyArray<readonly [readonly string[], string]> = [
+  [['блендер', 'блендере', 'blender'], 'blender'],
+  [['клод', 'клода', 'клауд', 'claude'], 'claude'],
+  [['джарвис', 'жарвис', 'jarvis'], 'Jarvis'],
+  [['риот', 'риот клиент', 'riot'], 'Riot'],
+  [['лига', 'лигу', 'лол', 'league'], 'League'],
+  [['дота', 'доту', 'dota'], 'dota2'],
+  [['стим', 'steam'], 'steam'],
+  [['обс', 'obs'], 'obs64'],
+  [['эдж', 'эдже', 'едж', 'edge'], 'msedge'],
+  [['хром', 'хрома', 'хроме', 'chrome'], 'chrome'],
+  [['телеграм', 'телега', 'телеграмм'], 'telegram'],
+  [['повершелл', 'павершелл', 'пауэршелл', 'powershell'], 'powershell'],
+  [['терминал', 'консоль'], 'WindowsTerminal'],
+  [['проводник', 'эксплорер'], 'explorer'],
+];
+
+/** Как окно называется на самом деле. Для переключения и закрытия. */
+export function windowAlias(phrase: string): string | null {
+  const wanted = phrase.trim().toLowerCase();
+  for (const [names, target] of WINDOW_ALIASES) {
+    if (names.includes(wanted)) return target;
+  }
+  return null;
+}
+
 export function aliasTarget(phrase: string): string | null {
   for (const [names, target] of APP_ALIASES) {
     if (names.includes(phrase)) return target;
