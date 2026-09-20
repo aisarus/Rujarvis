@@ -120,7 +120,13 @@ public class Desk {
 function Send-Mouse([uint32] $flags, [int] $data) {
     $mouse = New-Object Desk+MOUSEINPUT
     $mouse.dwFlags = $flags
-    $mouse.mouseData = [uint32] $data
+    # Kolesо vniz - eto otricatelnoe chislo, a pole struktury bez znaka.
+    # Pryamoe privedenie [uint32] -600 brosaet, i prokrutka vniz ne rabotala
+    # voobshche: agent poluchal "Ne udaetsya preobrazovat -600 v UInt32".
+    # Perevodim v dopolnitelnyy kod, kak eto i ponimaet Windows.
+    # Bukva L obyazatelna: bez nee PowerShell chitaet 0xFFFFFFFF kak znakovoe
+    # -1, maska nichego ne daet, i privedenie snova brosaet.
+    $mouse.mouseData = [uint32]([int64]$data -band 0xFFFFFFFFL)
 
     $event = New-Object Desk+INPUT
     $event.type = 0
@@ -340,9 +346,13 @@ function Invoke-Command2($message) {
             $windows = Get-Windows
             $target = $windows | Where-Object { $_.title -like "*$needle*" } | Select-Object -First 1
             if (-not $target) {
+                # "Program Manager" - eto rabochiy stol, a ne okno Provodnika.
+                # On vo ves ekran, poetomu sortirovka po ploshchadi stavila ego
+                # pervym: «pereklyuchis na provodnik» pokazyvalo pustoy stol.
                 $target = $windows | Where-Object {
-                    $proc = Get-Process -Id $_.pid -ErrorAction SilentlyContinue
-                    $proc -and ($proc.ProcessName -like "*$needle*")
+                    $_.title -ne 'Program Manager' -and
+                    ($proc = Get-Process -Id $_.pid -ErrorAction SilentlyContinue) -and
+                    ($proc.ProcessName -like "*$needle*")
                 } | Sort-Object { $_.width * $_.height } -Descending | Select-Object -First 1
             }
             if (-not $target) { throw "Okno ne naydeno: $needle" }

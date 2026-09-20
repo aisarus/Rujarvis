@@ -81,7 +81,13 @@ async function listShellApps(): Promise<Array<{ name: string; appId: string }>> 
     return parsed
       .filter((entry) => entry.Name && entry.AppID)
       .map((entry) => ({ name: entry.Name as string, appId: entry.AppID as string }));
-  } catch {
+  } catch (error) {
+    // Молчать нельзя. Пустой список выглядит как «ничего не установлено», а на
+    // деле это половина правды — и половина опасная: без записей из магазина
+    // «дота» не находит Dota 2 и уходит искать среди остального, где ближайшим
+    // по звуку оказываются «Источники данных ODBC». Ложные совпадения ловились
+    // ровно в этом состоянии.
+    console.error('[jarvis] список программ из магазина не получен:', error);
     return [];
   }
 }

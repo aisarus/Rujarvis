@@ -171,6 +171,24 @@ function detectIntent(
   editing: boolean,
 ): JarvisIntent {
   if (hasAnyPhrase(tokens, CONTINUATION_PHRASES) && tokens.length <= 4) return 'continue';
+
+  // Вопрос — это вопрос, а не приказ.
+  //
+  // Человек сказал прямо: «он не понимает концепцию вопросов». Так и было.
+  // «Кто написал войну и мир» попадало в общение с людьми — из-за слова
+  // «написал» — и получало чувствительный риск, то есть Джарвис просил
+  // разрешения ответить на вопрос о книге. А «что это за окно» понималось
+  // как приказ открыть программу.
+  //
+  // Решает первое слово. Вопросительное слово в начале — спрашивают; то же
+  // слово в середине ничего не значит («сделай так, как я сказал»). Вежливое
+  // «можешь открыть хром» вопросом не считается: это просьба.
+  if (asksSomething(tokens)) {
+    if (capabilities.has('vision') || aboutTheScreen(tokens)) return 'query_screen';
+    // Спросить у Джарвиса — не то же, что написать человеку.
+    if (!capabilities.has('files') && !capabilities.has('coding')) return 'chat';
+  }
+
   if (capabilities.has('communication')) return 'communicate';
   if (capabilities.has('vision')) return 'query_screen';
   if (capabilities.has('coding')) return editing ? 'modify_project' : 'inspect_project';
@@ -194,6 +212,32 @@ function detectIntent(
       : 'open_app';
   }
   return 'chat';
+}
+
+/**
+ * Слова, с которых начинают вопрос.
+ *
+ * Только начало фразы: в середине они значат другое. «Что это за окно» —
+ * вопрос, «сделай так, что бы всё работало» — нет.
+ */
+const QUESTION_WORDS = [
+  'что', 'чего', 'чему', 'чем', 'кто', 'кого', 'кому', 'кем', 'чей', 'чья',
+  'где', 'куда', 'откуда', 'когда', 'почему', 'зачем', 'сколько', 'насколько',
+  'какой', 'какая', 'какое', 'какие', 'каков', 'который', 'правда',
+];
+
+/** Спрашивают ли. Решает первое слово фразы. */
+function asksSomething(tokens: readonly string[]): boolean {
+  const first = tokens[0];
+  if (!first) return false;
+  if (QUESTION_WORDS.includes(first)) return true;
+  // «Слышишь ли ты меня» — вопрос по частице, а не по первому слову.
+  return tokens.length > 1 && tokens[1] === 'ли';
+}
+
+/** Спрашивают ли про то, что сейчас на экране. */
+function aboutTheScreen(tokens: readonly string[]): boolean {
+  return hasAnyStem(tokens, ['окн', 'экран', 'программ', 'вкладк', 'видн', 'открыт']);
 }
 
 /**
@@ -293,7 +337,14 @@ function aprioriRisk(
   let level: RiskLevel = 'safe';
 
   // Первая и вторая линии.
-  if (capabilities.has('communication')) level = maxRisk(level, 'sensitive');
+  //
+  // Вопрос — не общение с людьми. «Кто написал войну и мир» получало
+  // чувствительный риск из-за слова «написал», и Джарвис просил разрешения
+  // ответить на вопрос о книге. Красная линия — отправить сообщение живому
+  // человеку, а не произнести слово «написал».
+  if (capabilities.has('communication') && !asksSomething(tokens)) {
+    level = maxRisk(level, 'sensitive');
+  }
   if (hasAnyStem(tokens, MONEY_STEMS)) level = maxRisk(level, 'sensitive');
   // Перевод — деньги только рядом с деньгами. Иначе это язык.
   if (hasAnyStem(tokens, TRANSFER_STEMS) && hasAnyStem(tokens, MONEY_NEIGHBOURS)) {

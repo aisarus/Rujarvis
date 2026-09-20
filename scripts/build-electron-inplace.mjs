@@ -7,6 +7,8 @@
  * и без копирования аддона: он уже на месте и побайтово совпадает с исходным.
  */
 import * as esbuild from 'esbuild';
+import { copyFileSync, mkdirSync } from 'node:fs';
+import path from 'node:path';
 
 const EXTERNAL = [
   'electron', 'electron-updater', 'fsevents', '@vscode/ripgrep', 'canvas',
@@ -75,5 +77,18 @@ await esbuild.build({
   target: 'node18',
   logLevel: 'error',
 });
+
+/**
+ * Скрипт драйвера рабочего стола — рядом со сборкой.
+ *
+ * esbuild собирает только TypeScript, а драйвер это PowerShell: он не
+ * импортируется, а читается с диска по пути рядом с собранным кодом. Копии
+ * в dist-electron было больше суток от роду, и каждая правка драйвера —
+ * подъём окна, прокрутка вниз — молча не доезжала до работающего приложения.
+ * Отладка при этом выглядела так: в исходнике починено, в работе нет.
+ */
+const драйвер = 'jarvis/desktop/win32-driver.ps1';
+mkdirSync(path.dirname(`dist-electron/${драйвер}`), { recursive: true });
+copyFileSync(драйвер, `dist-electron/${драйвер}`);
 
 console.log('[build] собрано поверх работающего приложения');

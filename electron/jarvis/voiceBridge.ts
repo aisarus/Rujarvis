@@ -31,6 +31,7 @@ import {
   type Transcriber,
   type VoiceStatus,
 } from '../../jarvis/voice/session';
+import { listInstalledPrograms } from '../../jarvis/apps/installed';
 import { aliasTarget, matchAppLaunch, spokenCloseTarget, spokenTarget, windowAlias } from '../../jarvis/apps/launch';
 import { readConfirmation } from '../../jarvis/voice/confirm';
 import { chooseShortcut } from '../../jarvis/apps/startMenu';
@@ -1662,96 +1663,10 @@ let shortcutCache: Shortcut[] | null = null;
 
 async function listStartMenuShortcuts(): Promise<Shortcut[]> {
   if (shortcutCache) return shortcutCache;
-
-  const roots = [
-    path.join(process.env.APPDATA ?? '', 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
-    path.join(process.env.ProgramData ?? '', 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
-  ].filter(Boolean);
-
-  const found: Shortcut[] = [];
-  const walk = async (dir: string, depth: number): Promise<void> => {
-    if (depth > 4) return;
-    let entries: Dirent[];
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) await walk(full, depth + 1);
-      else if (entry.name.toLowerCase().endsWith('.lnk')) {
-        found.push({
-          name: entry.name.slice(0, -4),
-          target: full,
-          kind: 'path',
-          folder: path.basename(dir),
-        });
-      }
-    }
-  };
-  for (const root of roots) await walk(root, 0);
-
-  const fromStartMenu = found.length;
-
-  // Store and PWA apps have no .lnk at all — ChatGPT is installed as
-  // "OpenAI.Codex_2p2nqsd0c76g0!App" and was invisible to a file scan, so
-  // «открой ChatGPT» fell through to the agent and failed. Windows keeps the
-  // real list; ask it.
-  for (const app of await listShellApps()) {
-    if (found.some((item) => item.name.toLowerCase() === app.name.toLowerCase())) continue;
-    found.push({ name: app.name, target: app.appId, kind: appIdKind(app.appId) });
-  }
-
-  console.log(
-    `[jarvis] программ найдено: ${found.length} (ярлыков ${fromStartMenu}, из магазина ${found.length - fromStartMenu})`,
-  );
-  shortcutCache = found;
-  return found;
-}
-
-/**
- * How a Start-menu identifier has to be started.
- *
- * Filtering this list was a mistake worth naming: keeping only identifiers
- * with a «!» in them threw away every Steam game, because Dota 2 is listed as
- * "steam://rungameid/570" — a URL. The whole point of asking Windows for the
- * list is not to curate it afterwards.
- */
-function appIdKind(appId: string): 'path' | 'aumid' | 'url' {
-  if (appId.includes('://')) return 'url';
-  return 'aumid';
-}
-
-/** Everything Windows itself considers launchable, including Store apps. */
-async function listShellApps(): Promise<Array<{ name: string; appId: string }>> {
-  try {
-    const { stdout } = await run(
-      'powershell',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        // Кодировка вывода задаётся здесь, а не предполагается.
-        //
-        // PowerShell при перенаправленном выводе пишет в кодовой странице
-        // консоли, а Node читает как UTF-8 — и всё нелатинское превращается в
-        // мусор. «Архиватор Windows» приезжал как «��娢��� Windows», и ни
-        // одна программа с русским именем не находилась голосом. Это и было
-        // причиной жалоб «не может найти ярлык».
-        '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ' +
-          'Get-StartApps | ConvertTo-Json -Compress',
-      ],
-      { windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
-    );
-    const parsed = JSON.parse(stdout) as Array<{ Name?: string; AppID?: string }>;
-    return parsed
-      .filter((entry) => entry.Name && entry.AppID)
-      .map((entry) => ({ name: entry.Name as string, appId: entry.AppID as string }));
-  } catch (error) {
-    console.error('[jarvis] не удалось получить список приложений Windows:', error);
-    return [];
-  }
+  // Один обход на всех: у моста была своя копия, и когда она расходилась
+  // с той, по которой идёт проверка, проверка тихо проверяла не то.
+  shortcutCache = await listInstalledPrograms();
+  return shortcutCache;
 }
 
 /**
