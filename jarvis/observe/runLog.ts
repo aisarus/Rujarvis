@@ -29,6 +29,9 @@ import type { BackendEvent } from '../backends/types';
 /** Сколько прогонов держим. Дальше стираем: журнал пишется на каждую задачу. */
 export const KEEP_RUNS = 50;
 
+/** Перевод строки постоянной: обратный слеш тут не переживает переписываний. */
+const NL = String.fromCharCode(10);
+
 const RUN_FILE = /^\d{4}-\d{2}-\d{2}-\d{6}-.*\.log$/u;
 
 /** Одна строка на событие. Пустой строки не возвращает никогда. */
@@ -57,7 +60,10 @@ export function lineFor(event: BackendEvent): string {
       const seconds = (r.durationMs / 1000).toFixed(1);
       if (r.cancelled) return `${event.backend} отменено за ${seconds} с`;
       if (r.ok) return `${event.backend} готово за ${seconds} с: ${r.text}`;
-      return `${event.backend} не вышло за ${seconds} с: ${r.error ?? 'без причины'}`;
+      const why = `${event.backend} не вышло за ${seconds} с: ${r.error ?? 'без причины'}`;
+      // stderr идёт следом, а не вместо: причина из потока бывает ложной, и
+      // тогда настоящая лежит здесь.
+      return r.diagnostics ? `${why}${NL}         stderr: ${r.diagnostics}` : why;
     }
     default: {
       // Новый вид события не должен пропадать молча: журнал, который что-то

@@ -16,6 +16,7 @@ import {
   type CliHandle,
   type CliProcessOptions,
 } from './process';
+import { strippedKeys, subscriptionEnv } from './subscriptionEnv';
 import type {
   BackendAvailability,
   BackendEvent,
@@ -131,10 +132,23 @@ export function createCliRun(spec: CliRunSpec): BackendRun {
 
     channel.push({ type: 'started', backend: spec.backend, sessionId: state.sessionId });
 
+    // Ключи из окружения убираются всегда: Джарвис работает на подписках, а
+    // случайно оставшийся ключ перебивает вход по подписке и даёт «401 API key
+    // is invalid» — сообщение, которое полдня выглядело как поломка всего.
+    const dropped = strippedKeys();
+    if (dropped.length > 0) {
+      channel.push({
+        type: 'status',
+        backend: spec.backend,
+        text: `Работаю по подписке; убрал из окружения: ${dropped.join(', ')}`,
+      });
+    }
+
     child = spawnCli({
       command: availability.path,
       args: spec.buildArgs(availability.path),
       cwd: spec.cwd,
+      env: subscriptionEnv(),
       timeoutMs: spec.timeoutMs,
       stdin: spec.stdin,
       onStdoutLine: (line) => {
@@ -176,8 +190,14 @@ export function createCliRun(spec: CliRunSpec): BackendRun {
       error = outcome.stderr.trim().slice(-2000) || spec.messages.failed;
     }
 
+    // stderr — в журнал всегда, когда что-то пошло не так, даже если причина
+    // уже записана из потока. Именно так была потеряна настоящая причина
+    // трёхминутного молчания, окончившегося ложным «401 API key is invalid».
+    const diagnostics = failed ? outcome.stderr.trim().slice(-4_000) || undefined : undefined;
+
     finish({
       ...baseResult(),
+      diagnostics,
       ok: !failed,
       exitCode: outcome.exitCode,
       cancelled: (outcome.cancelled && !stoppedEarly) || undefined,
