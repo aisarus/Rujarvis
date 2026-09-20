@@ -739,6 +739,8 @@ export async function startJarvisVoiceBridge(options: {
         lessonsFrom({ events: journal?.recent() ?? [], plans: [plans?.read() ?? null] }),
       ) ?? undefined,
     speak: (text) => { void playback.speak(text); },
+    // Настоящая остановка, а не пустая реплика: см. stopSpeaking в ядре.
+    stopSpeaking: () => { session.stopSpeaking(); },
     approve: (request) =>
       askForApproval(request, session, (waiter) => {
         awaitingAnswer = waiter;

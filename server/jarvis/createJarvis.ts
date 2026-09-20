@@ -48,6 +48,8 @@ export interface CreateJarvisOptions {
   desktopObserver?: DesktopObserver;
   /** Speaks a line. Omitted means text-only. */
   speak?(text: string): void;
+  /** Обрывает речь на полуслове. См. stopSpeaking в ядре: «тишина» — красная линия. */
+  stopSpeaking?(): void;
   /** Asks the user to approve sensitive work. Omitted means such work is refused. */
   approve?(request: ApprovalRequest): Promise<boolean>;
   /** Optional small local model that refines routing. */
@@ -172,6 +174,7 @@ export function createJarvis(options: CreateJarvisOptions = {}): Jarvis {
     localRouter,
     settings: options.settings ?? (() => DEFAULT_JARVIS_SETTINGS),
     speak: options.speak,
+    stopSpeaking: options.stopSpeaking,
     approve: options.approve,
     outputDir: options.outputDir,
     recentActions: options.recentActions,

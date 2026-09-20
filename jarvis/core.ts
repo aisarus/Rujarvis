@@ -107,6 +107,17 @@ export interface JarvisCoreOptions {
   localRouter?: LocalRouterModel;
   /** Speaks a line. Called for acknowledgements and short results. */
   speak?(text: string): void;
+  /**
+   * Обрывает речь на полуслове.
+   *
+   * Отдельно от `speak`, и это не мелочь: заглушение раньше вызывало
+   * `speak('')`, а `speak` на пустой строке сразу выходит, ничего не
+   * остановив. Команда «тишина» срабатывала и не делала ровно ничего —
+   * человек просил замолчать, и его не слушались.
+   *
+   * Замолчать — красная линия. Оно обязано работать всегда и мгновенно.
+   */
+  stopSpeaking?(): void;
   /** Asks the user to approve sensitive or dangerous work. */
   approve?(request: ApprovalRequest): Promise<boolean>;
   /** Папка, куда складывать готовые файлы. Показывается агенту в запросе. */
@@ -227,7 +238,7 @@ export class JarvisCore {
           const resumable = this.options.tasks.resumableTask();
           return resumable ? this.options.tasks.resume(resumable.id) !== null : false;
         },
-        stopSpeaking: () => this.options.speak?.(''),
+        stopSpeaking: () => this.options.stopSpeaking?.(),
       });
       if (outcome.spoken) this.say(outcome.spoken, settings);
       return { kind: 'control', outcome, spoken: outcome.spoken };
