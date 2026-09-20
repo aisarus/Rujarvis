@@ -138,8 +138,67 @@ async function blenderWindowAppeared(attempts = 6, everyMs = 1_500): Promise<boo
   return false;
 }
 
+/**
+ * Правка догоняет агента на первом же действии.
+ *
+ * ## Зачем
+ *
+ * Ящик правок работал по доброй воле: агент заглядывал в него инструментом
+ * check_notes, когда вспоминал. Замер 20.09.2026 по журналу и логам прогонов:
+ * человек сказал 63 поправки на ходу, за 22 из них последовало заглядывание в
+ * ящик в ближайшие пять минут. Сорок одна правка не дошла ни до кого.
+ *
+ * И дело не в дисциплине: крупный шаг длится минуты, а между шагами агент
+ * заглядывает не всегда. Человек это видит как «нет механизмов для внесения
+ * коррективов» — он говорит, ему отвечают «учту», и ничего не меняется.
+ *
+ * ## Как теперь
+ *
+ * Ящик не опрашивают — его доставляют. К ответу ЛЮБОГО инструмента
+ * приклеивается то, что человек успел сказать. Агент вызывает инструменты
+ * постоянно (в тех же прогонах: 46 отметок шага, 33 снимка экрана), поэтому
+ * правка доезжает за одно действие, а не за один приступ сознательности.
+ *
+ * ## Что здесь важно не сломать
+ *
+ * Забирается разом и с очисткой — той же `take()`, что и у check_notes. Иначе
+ * правка приклеится к каждому следующему ответу, и «сделай на два тона темнее»
+ * превратится в чёрный цвет. Сам check_notes пропускается: он и так отдаёт
+ * ящик, и приклеивать ему нечего.
+ */
+function deliverNotesWithEveryTool(server: McpServer): void {
+  const original = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
+
+  const wrapped = (name: string, config: unknown, handler: unknown): unknown => {
+    const call = handler as (...args: unknown[]) => Promise<{ content?: unknown[] }>;
+    const withNotes = async (...args: unknown[]): Promise<{ content?: unknown[] }> => {
+      const result = await call(...args);
+      // check_notes сам отдаёт ящик — второй раз показывать нечего.
+      if (name === 'check_notes') return result;
+
+      let notes;
+      try {
+        notes = openNotes().take();
+      } catch {
+        // Ящик недоступен — это не повод ронять действие, которое удалось.
+        return result;
+      }
+      if (notes.length === 0) return result;
+
+      return {
+        ...result,
+        content: [...(result.content ?? []), { type: 'text' as const, text: renderNotes(notes) }],
+      };
+    };
+    return original(name, config, withNotes);
+  };
+
+  (server as unknown as { registerTool: unknown }).registerTool = wrapped;
+}
+
 export function createDesktopMcpServer(): McpServer {
   const server = new McpServer({ name: 'jarvis-desktop', version: '1.0.0' });
+  deliverNotesWithEveryTool(server);
 
   server.registerTool(
     'screenshot',
