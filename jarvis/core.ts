@@ -184,6 +184,9 @@ export function isTalk(decision: RoutingDecision): boolean {
 /** Дольше этого человек уже не ждёт ответа на простой вопрос. */
 const CHAT_TIMEOUT_MS = 60_000;
 
+/** Чем подписан ответ в разговоре, если бэкенд не назвался. */
+const BACKEND_OF_TALK = 'разговор';
+
 export type JarvisTurn =
   | { kind: 'control'; outcome: ControlOutcome; spoken: string }
   | { kind: 'clarify'; spoken: string; decision: RoutingDecision }
@@ -382,6 +385,18 @@ export class JarvisCore {
       decision = withConversationBackend(decision, conversation);
     }
 
+    // Вопрос — не непонятный приказ.
+    //
+    // Уточнение вешается на низкую уверенность разбора, а у вопроса она низкая
+    // всегда: «кто написал войну и мир» не набирает ни одного умения, потому
+    // что делать ничего и не надо. Через всё ядро это давало «Не понял, что
+    // именно сделать. Уточни?» — на вопрос о книге.
+    //
+    // Человек назвал это прямо: «он не понимает концепцию вопроса и не может
+    // на него по факту отвечать». Переспрашивать в ответ на вопрос — худшее из
+    // возможного: спрашивал-то он.
+    if (decision.asks && isTalk(decision)) clarification = null;
+
     if (clarification) {
       this.say(clarification, settings);
       return { kind: 'clarify', spoken: clarification, decision };
@@ -511,14 +526,26 @@ export class JarvisCore {
     );
 
     let spoken: string;
+    let backend = BACKEND_OF_TALK;
     try {
       const result = await run.result();
       spoken = result.ok && result.text.trim() ? result.text.trim() : 'Не знаю.';
+      backend = result.backend || BACKEND_OF_TALK;
     } catch {
       spoken = 'Не смог ответить.';
     }
 
     const short = toSpokenResponse(spoken, { fallback: 'Не знаю.' }).spoken;
+
+    // Разговор обязан помнить свой же ответ.
+    //
+    // Записывался только итог ЗАДАЧИ, а сказанное в разговоре — нет. Поэтому
+    // «кто написал войну и мир» получало ответ, а следующее «а сколько ему
+    // было лет» спрашивать было не о ком: в состоянии мира лежал вопрос и
+    // ничего больше. Это и есть «нет нормального режима разговора» — реплики
+    // не складывались в разговор.
+    this.options.world.noteResult({ text: short, ok: true, backend });
+
     this.say(short, settings);
     return short;
   }

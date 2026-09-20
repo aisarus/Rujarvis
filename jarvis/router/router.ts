@@ -91,6 +91,16 @@ export interface RoutingDecision {
   excludedBackends: BackendId[];
   /** The utterance leans on «это», «туда», «продолжай» and needs world state. */
   needsWorldState: boolean;
+  /**
+   * Человек спросил, а не велел.
+   *
+   * Вынесено наружу, потому что на этом держится одно решение за пределами
+   * роутера: у вопроса уверенность разбора низкая всегда — делать-то ничего не
+   * надо, — и ядро отвечало «Не понял, что именно сделать. Уточни?» на вопрос
+   * о книге. Переспрашивать в ответ на вопрос нельзя; на невнятное «ну это» —
+   * нужно, и отличить одно от другого может только этот признак.
+   */
+  asks: boolean;
   /** Explicit constraints heard in the utterance, in the user's own terms. */
   constraints: string[];
   /** 0..1 — how confident the rules are. Low values are worth a confirmation. */
@@ -504,6 +514,7 @@ export function route(utterance: string, options: RouteOptions = {}): RoutingDec
     requestedBackend: requested,
     excludedBackends: excluded,
     needsWorldState,
+    asks: asksSomething(tokens),
     constraints,
     confidence: scoreConfidence(capabilities, tokens, needsWorldState),
   };

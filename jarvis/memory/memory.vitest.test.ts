@@ -215,10 +215,15 @@ describe('selectWorldStateLines', () => {
     store.setActiveWindow({ title: 'Блокнот — заметки.txt', app: 'notepad.exe' });
     store.noteUtterance('открой заметки');
     store.noteResult({ text: 'Открыл заметки.txt', ok: true, backend: 'interpreter' });
+    // Вторая реплика — та самая, в которой есть «это». Предыдущей она делает
+    // первую: до неё никакой предыстории и не было.
+    store.noteUtterance('закрой это');
 
     const lines = selectWorldStateLines(store.snapshot(), { needsWorldState: true });
     expect(lines.some((line) => line.includes('Блокнот'))).toBe(true);
-    expect(lines.some((line) => line.includes('Предыдущая реплика'))).toBe(true);
+    expect(lines.some((line) => line.includes('открой заметки'))).toBe(true);
+    // Нынешняя реплика предысторией не притворяется: она и так в самой просьбе.
+    expect(lines.some((line) => line.includes('закрой это'))).toBe(false);
   });
 
   it('stays quiet for a fully specified request', () => {

@@ -39,7 +39,18 @@ export interface WorldState {
   currentProject?: string;
   currentProjectPath?: string;
   runningTaskIds: string[];
+  /**
+   * Что человек сказал ДО нынешней реплики.
+   *
+   * Именно до, а не нынешнюю. Раньше сюда клали текущую — запись делается в
+   * самом начале разбора, — и в промпт уходило «Предыдущая реплика
+   * пользователя: „а сколько ему было лет“» рядом с этим же вопросом. Модель
+   * получала свой собственный вопрос выданным за предысторию, а настоящей
+   * предыстории не видела вовсе.
+   */
   previousUtterance?: string;
+  /** Нынешняя. Наружу не показывается: она и так есть в самой просьбе. */
+  currentUtterance?: string;
   previousResult?: { text: string; ok: boolean; backend: string };
   recentFiles: string[];
   spawnedProcesses: SpawnedProcessInfo[];
@@ -142,7 +153,9 @@ export class WorldStateStore {
   }
 
   noteUtterance(utterance: string): void {
-    this.state.previousUtterance = utterance;
+    // Сдвиг, а не замена: нынешняя становится нынешней, прежняя — предыдущей.
+    this.state.previousUtterance = this.state.currentUtterance;
+    this.state.currentUtterance = utterance;
     this.state.updatedAt = this.now();
   }
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { isTalk } from './core';
 import { route } from './router/router';
+import { WorldStateStore, selectWorldStateLines } from './context/worldState';
 
 /** Как решение выглядит после роутера на настоящей фразе. */
 function решение(said: string) {
@@ -95,5 +96,38 @@ describe('вопрос интонацией', () => {
     const d = решение('откроешь блокнот?');
     expect(d.needs.length).toBeGreaterThan(0);
     expect(isTalk(d)).toBe(false);
+  });
+});
+
+/**
+ * Разговор складывается в разговор.
+ *
+ * Две поломки разом, и обе делали беседу невозможной. Ответ, сказанный в
+ * разговоре, нигде не сохранялся — записывался только итог задачи, — поэтому
+ * «а сколько ему было лет» спрашивать было не о ком. А «предыдущая реплика
+ * пользователя» была НЫНЕШНЕЙ: запись делается в начале разбора, и модель
+ * получала свой же вопрос выданным за предысторию.
+ */
+describe('беседа помнит саму себя', () => {
+  it('сказанное раньше становится предыдущим, а не нынешним', () => {
+    const мир = new WorldStateStore();
+    мир.noteUtterance('кто написал войну и мир');
+    expect(мир.snapshot().previousUtterance).toBeUndefined();
+
+    мир.noteUtterance('а сколько ему было лет');
+    expect(мир.snapshot().previousUtterance).toBe('кто написал войну и мир');
+  });
+
+  it('контекст показывает прошлый вопрос, а не текущий', () => {
+    const мир = new WorldStateStore();
+    мир.noteUtterance('кто написал войну и мир');
+    мир.noteResult({ text: 'Лев Толстой.', ok: true, backend: 'разговор' });
+    мир.noteUtterance('а сколько ему было лет');
+
+    const строки = selectWorldStateLines(мир.snapshot(), { needsWorldState: true });
+    const всё = строки.join(' ');
+    expect(всё).toContain('кто написал войну и мир');
+    expect(всё).toContain('Лев Толстой');
+    expect(всё).not.toContain('а сколько ему было лет');
   });
 });

@@ -746,3 +746,26 @@ describe('подтверждение доезжает до бэкенда', () =
     expect(h.recorded[0]?.request.approved).toBe(false);
   });
 });
+
+/**
+ * Ответ в разговоре обязан попасть в состояние мира.
+ *
+ * Записывался только итог задачи. Из-за этого беседы не получалось: «кто
+ * написал войну и мир» отвечалось, а следующее «а сколько ему было лет»
+ * спрашивать было не о ком.
+ */
+describe('разговор помнит свой ответ', () => {
+  it('сказанное вслух ложится в состояние мира', async () => {
+    const h = harness({
+      respond: {
+        interpreter: () => ({ ok: true, text: 'Лев Толстой.' }),
+        'claude-code': () => ({ ok: true, text: 'Лев Толстой.' }),
+        codex: () => ({ ok: true, text: 'Лев Толстой.' }),
+      },
+    });
+
+    const ход = await h.core.handleUtterance('кто написал войну и мир');
+    expect(ход.kind).toBe('chat');
+    expect(h.world.snapshot().previousResult?.text).toContain('Толстой');
+  });
+});
