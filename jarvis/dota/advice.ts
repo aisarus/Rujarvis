@@ -27,6 +27,7 @@ import type { CampState } from './camps';
 import type { DotaState } from './state';
 import { allyLanding, stackWindow, unseenEnemies, type AllyLanding, type StackWindow, type UnseenEnemy } from './signals';
 import { judgeDanger, judgeGold, type DangerRule, type GoldRule } from './thresholds';
+import { enemyTeam, onEnemyHalf, slotTeam } from './timers';
 
 /** Что человек попросил голосом. */
 export type OverlayMode = 'full' | 'silent' | 'off';
@@ -56,6 +57,13 @@ export interface OverlayView {
   landing: AllyLanding | null;
   /** Можно поставить стак прямо сейчас. */
   stack: StackWindow | null;
+  /**
+   * Сколько секунд назад противник применил глиф, если применял.
+   *
+   * Обратного отсчёта нет намеренно: перезарядка глифа зависит от событий игры,
+   * и зашитое число врало бы. «Применён столько-то назад» — факт.
+   */
+  enemyGlyphAgo: number | null;
   clock: number | null;
 }
 
@@ -68,6 +76,10 @@ export interface AdviceMemory {
   spokenStack: number | null;
   /** Когда говорили про садящегося союзника. */
   landingSpokenAt: number | null;
+  /** Про какое применение глифа врагом уже сказали. */
+  spokenGlyph: number | null;
+  /** Сколько выкупов уже озвучено. */
+  spokenBuybacks: number;
   /** О каком накоплении золота уже сказано. */
   spokenGold: number | null;
   /** Горела ли тревога в прошлом пакете — по этому видно начало новой. */
@@ -101,6 +113,8 @@ export function createMemory(): AdviceMemory {
     dangerSpokenAt: null,
     spokenStack: null,
     landingSpokenAt: null,
+    spokenGlyph: null,
+    spokenBuybacks: 0,
     spokenGold: null,
     dangerWasOn: false,
     dangerSince: null,
@@ -155,6 +169,11 @@ export function advise(
     unseen: пакет ? unseenEnemies(state.lastSeenEnemies, пакет.at) : [],
     landing: пакет ? allyLanding(пакет) : null,
     stack: пакет ? stackWindow(пакет, state.camps) : null,
+    enemyGlyphAgo: (() => {
+      const чужие = enemyTeam(пакет?.team ?? null);
+      const когда = чужие ? state.timers.glyph[чужие] : null;
+      return когда && пакет ? Math.round((пакет.at - когда.at) / 1000) : null;
+    })(),
     clock: пакет?.clock ?? null,
   };
 
@@ -169,6 +188,8 @@ export function advise(
   let dangerSpokenAt = memory.dangerSpokenAt;
   let spokenStack = memory.spokenStack;
   let landingSpokenAt = memory.landingSpokenAt;
+  let spokenGlyph = memory.spokenGlyph;
+  let spokenBuybacks = memory.spokenBuybacks;
   let spokenGold = memory.spokenGold;
 
   const сейчас = пакет?.at ?? 0;
@@ -178,6 +199,10 @@ export function advise(
   // не обновился. Прогон по матчу выдавал здесь «ты на 0», и это худший вид
   // подсказки — та, что опоздала и делает вид, что успела.
   const ужеПоздно = свой !== null && свой.hp <= 0;
+
+  const чужаяКоманда = enemyTeam(пакет?.team ?? null);
+  const чужойГлиф = чужаяКоманда ? state.timers.glyph[чужаяКоманда] : null;
+  const уИхБашен = Boolean(свой && onEnemyHalf(пакет?.team ?? null, свой.x, свой.y));
 
   // Молчим целиком, если человек попросил только картинку или всё выключил.
   if (mode === 'full') {
@@ -190,6 +215,20 @@ export function advise(
       // случилось ровно раз, так что шума отсюда быть не может по природе.
       speech = `свой садится, ${Math.max(1, Math.round(view.landing.seconds))}`;
       landingSpokenAt = сейчас;
+    } else if (чужойГлиф && чужойГлиф.at !== spokenGlyph && уИхБашен) {
+      // «Их глиф ушёл» — окно, в котором башню этим глифом уже не спасут.
+      // Факт без единой догадки: перезарядку мы не знаем и не утверждаем.
+      //
+      // Только на их половине: применений за матч восемь, но польза от них
+      // есть лишь когда ты пришёл давить. Сидящему на своём лесу эта новость
+      // не нужна, а голос она занимает.
+      speech = 'их глиф ушёл';
+      spokenGlyph = чужойГлиф.at;
+    } else if (state.timers.buybacks.length > spokenBuybacks) {
+      const последний = state.timers.buybacks[state.timers.buybacks.length - 1];
+      const чей = slotTeam(последний.slot);
+      speech = чей !== null && чей === пакет?.team ? 'свой выкупился' : 'враг выкупился';
+      spokenBuybacks = state.timers.buybacks.length;
     } else if (
       view.stack
       && view.danger.level === 'calm'
@@ -210,7 +249,8 @@ export function advise(
     view,
     speech,
     memory: {
-      spokenDanger, dangerSpokenAt, spokenStack, landingSpokenAt, spokenGold,
+      spokenDanger, dangerSpokenAt, spokenStack, landingSpokenAt,
+      spokenGlyph, spokenBuybacks, spokenGold,
       dangerWasOn: горит, dangerSince,
     },
   };

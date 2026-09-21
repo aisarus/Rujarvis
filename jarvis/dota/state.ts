@@ -20,6 +20,7 @@
  */
 import { createCamps, updateCamps, type Camp } from './camps';
 import type { DotaPacket } from './packet';
+import { applyTimers, createTimers, type Timers } from './timers';
 
 export interface DotaState {
   latest: DotaPacket | null;
@@ -37,6 +38,8 @@ export interface DotaState {
    * даже, кто против нас, и записывать его в пропавшие нечестно.
    */
   lastSeenEnemies: ReadonlyMap<string, number>;
+  /** Глиф, сканы и выкупы обеих команд — то, что приходит событиями. */
+  timers: Timers;
 }
 
 /**
@@ -54,6 +57,7 @@ export function createState(): DotaState {
     deaths: 0,
     caughtOut: 0,
     lastSeenEnemies: new Map(),
+    timers: createTimers(),
   };
 }
 
@@ -88,5 +92,6 @@ export function applyPacket(
     deaths: packet.deaths ?? state.deaths,
     caughtOut: поймали,
     lastSeenEnemies: видел,
+    timers: applyTimers(state.timers, packet),
   };
 }
