@@ -29,7 +29,7 @@ import { describe, expect, it } from 'vitest';
 
 import { spokenCloseTarget, spokenTarget } from '../apps/launch';
 import { commandCatalogue } from '../control/catalogue';
-import { parseDirectCommand } from '../control/commands';
+import { DOTA_OVERLAY_PHRASES, parseDirectCommand } from '../control/commands';
 import { parseDictationEdit } from '../control/dictationEdits';
 import { EchoGuard } from './echo';
 import {
@@ -288,5 +288,43 @@ describe('сторож согласованности справочника', (
   it('не обещает одну фразу дважды', () => {
     const said = items.map((item) => item.say);
     expect(new Set(said).size).toBe(said.length);
+  });
+});
+
+/**
+ * Сторож: оверлей не отнимает у человека заглушение.
+ *
+ * Слова остановки разбираются первым шагом `handleUtterance`, раньше таблицы
+ * команд. Значит фраза оверлея, совпавшая с заглушением, до оверлея не доедет
+ * никогда — а фраза заглушения, попавшая в таблицу оверлея, отнимет у человека
+ * красную линию.
+ *
+ * Проверка идёт по экспортированному списку, а не по переписанному сюда: новая
+ * фраза оверлея попадает под сторож сама, без чьей-либо памяти. Это и есть
+ * приём, который у Aegis ловил ошибки дважды за сутки.
+ *
+ * Повод не выдуманный: «без голоса» я чуть не взял в оверлей, не заметив, что
+ * оно уже двенадцать дней означает «замолчи».
+ */
+describe('оверлей и красные линии', () => {
+  it('ни одна фраза оверлея не похожа на просьбу замолчать', () => {
+    const украденные = DOTA_OVERLAY_PHRASES
+      .map((фраза) => ({ фраза, control: matchVoiceControl(фраза) }))
+      .filter((п) => п.control !== null);
+
+    expect(украденные.map((п) => `${п.фраза} → ${п.control?.control}`)).toEqual([]);
+  });
+
+  it('каждая фраза оверлея доезжает до разбора команд', () => {
+    const немые = DOTA_OVERLAY_PHRASES
+      .filter((фраза) => parseDirectCommand(фраза)?.kind !== 'dotaOverlay');
+
+    expect(немые).toEqual([]);
+  });
+
+  it('просьба замолчать по-прежнему глушит, а не включает оверлей', () => {
+    for (const фраза of ['тишина', 'помолчи', 'без голоса', 'не говори', 'замолкни']) {
+      expect(matchVoiceControl(фраза)?.control).toBe('mute');
+    }
   });
 });

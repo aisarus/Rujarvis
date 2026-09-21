@@ -38,6 +38,7 @@ export type DirectCommand =
   | { kind: 'log'; on: boolean }
   | { kind: 'where' }
   | { kind: 'mode'; show: boolean }
+  | { kind: 'dotaOverlay'; mode: 'full' | 'silent' | 'off' }
   | { kind: 'longSpeech' }
   | { kind: 'repeat'; times: number; command: RepeatableCommand };
 
@@ -110,6 +111,44 @@ const MODE_SHOW = [
 const MODE_QUIET = [
   'работай в фоне', 'работай тихо', 'в фоне', 'фоновый режим', 'не показывай',
   'не открывай окна', 'работай молча', 'не показывай окна',
+];
+
+/**
+ * Оверлей в игре: три состояния, а не два.
+ *
+ * Среднее — то, что понадобится в важной игре: смотреть можно, а в ухо не
+ * лезь. Без него человек будет выключать помощника целиком там, где хотел
+ * приглушить только голос.
+ *
+ * ## Чего здесь нет и не будет
+ *
+ * Слов «молчи», «тишина», «тихо», «без голоса». Они принадлежат заглушению —
+ * `jarvis/voice/interrupts.ts`, — а оно разбирается **раньше** этой таблицы
+ * (см. `handleUtterance`, шаг первый). Фраза, совпавшая с заглушением, до
+ * оверлея просто не доедет, а хуже того — отнимет у человека красную линию
+ * «стоп и тишина», которая и без нас хрупкая: замер 20.09.2026 показал, что
+ * из 36 обёрнутых форм не доходили 24.
+ *
+ * «Без голоса» я чуть не взял сюда именно так. Сторож в
+ * `jarvis/voice/redLines.vitest.test.ts` гоняет каждую фразу отсюда через
+ * разбор заглушения и требует, чтобы та не совпала.
+ */
+const DOTA_FULL = [
+  'оверлей', 'включи оверлей', 'покажи оверлей', 'подсказки', 'включи подсказки',
+  'подсказки в игре', 'включи подсказки в игре',
+];
+const DOTA_SILENT = [
+  'только показывай', 'только картинку', 'только на экране', 'подсказки на экран',
+  'показывай но не подсказывай',
+];
+const DOTA_OFF = [
+  'выключи оверлей', 'убери оверлей', 'закрой оверлей', 'спрячь оверлей',
+  'выключи подсказки', 'убери подсказки', 'без подсказок',
+];
+
+/** Всё, что относится к оверлею, — одним списком для сторожа красных линий. */
+export const DOTA_OVERLAY_PHRASES: readonly string[] = [
+  ...DOTA_FULL, ...DOTA_SILENT, ...DOTA_OFF,
 ];
 
 /** Сетка с номерами: показать и убрать. */
@@ -493,6 +532,10 @@ function readDirect(phrase: string): DirectCommand | null {
 
   if (GRID_ON.includes(phrase)) return { kind: 'grid', on: true };
   if (GRID_OFF.includes(phrase)) return { kind: 'grid', on: false };
+
+  if (DOTA_FULL.includes(phrase)) return { kind: 'dotaOverlay', mode: 'full' };
+  if (DOTA_SILENT.includes(phrase)) return { kind: 'dotaOverlay', mode: 'silent' };
+  if (DOTA_OFF.includes(phrase)) return { kind: 'dotaOverlay', mode: 'off' };
 
   const refine = readRefine(phrase);
   if (refine) return refine;
