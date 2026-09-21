@@ -238,6 +238,16 @@ interface Вывод {
  * десяти разных позах: подсказка и зерно одни, меняется только скелет.
  */
 export async function drawPosed(запрос: PosedRequest): Promise<DrawResult> {
+  // Сначала про сервер, потом про его содержимое.
+  //
+  // Без этой проверки упавший сервер отвечал «на сервере нет ни одного
+  // ControlNet»: список приходил пустым по той же причине, что и всё
+  // остальное. Ошибка уводила искать пропавшую модель вместо упавшего
+  // процесса — и увела.
+  if (!(await isUp())) {
+    return { ok: false, error: `ComfyUI не отвечает на ${COMFY_URL}` };
+  }
+
   const сети = await controlnets();
   const сеть = сети.find((имя) => имя.includes('openpose')) ?? сети[0];
   if (!сеть) return { ok: false, error: 'на сервере нет ни одного ControlNet' };
