@@ -8,6 +8,8 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 
+import { forgetChild, trackChild } from '../tasks/reaper';
+
 /**
  * An async queue that turns callback-style progress into an `AsyncIterable`.
  *
@@ -177,6 +179,11 @@ export class CliProcess implements CliHandle {
         });
         return;
       }
+
+      // Отмечаем своего: аварийное «убейся» бьёт только по этому списку, и
+      // незарегистрированный агент пережил бы выключатель.
+      trackChild(child.pid);
+      child.on('exit', () => forgetChild(child.pid));
 
       this.child = child;
 

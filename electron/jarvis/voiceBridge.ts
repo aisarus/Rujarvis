@@ -43,6 +43,7 @@ import { matchVoiceControl } from '../../jarvis/voice/interrupts';
 import { fixMishearings } from '../../jarvis/voice/mishearing';
 import { isPleasantry, isSilenceRequest, looksLikeChatter, meaningfulSpeech } from '../../jarvis/voice/noise';
 import { endsDictation, parseDirectCommand, type DirectCommand } from '../../jarvis/control/commands';
+import { reapAll } from '../../jarvis/tasks/reaper';
 import { parseDictationEdit, type DictationEdit } from '../../jarvis/control/dictationEdits';
 import { chooseElement } from '../../jarvis/control/elements';
 import { cellCenter, subCellCenter } from '../../jarvis/control/grid';
@@ -408,6 +409,22 @@ async function runDirectCommand(command: DirectCommand, session: VoiceSession): 
           logWindow?.close();
         }
         break;
+      case 'selfDestruct': {
+        // Аварийный выключатель. «Стоп» — вежливая просьба, и зависший агент
+        // её не слышит; здесь не спрашивают. Бьём только по своим детям: их
+        // pid отмечены при запуске, и ничего чужого в списке быть не может.
+        const итог = await reapAll();
+        const сколько = итог.killed.length;
+        console.log(`[jarvis] убейся: убито ${сколько}, не далось ${итог.failed.length}`);
+        note('close', сколько > 0 ? `убил процессов: ${сколько}` : 'убивать было некого');
+        await session.speak(сколько > 0 ? `Убил ${сколько}.` : 'Некого убивать.');
+        break;
+      }
+      case 'dotaOverlay':
+        // Окна ещё нет, и делать вид, что есть, нельзя: «показал» без
+        // показанного — та самая болезнь, от которой лечится весь этот код.
+        await session.speak('Оверлей ещё не готов.');
+        break;
       case 'gridClick': {
         const layout = gridOverlay?.layout();
         const point = layout ? cellCenter(command.cell, layout) : null;
@@ -515,6 +532,10 @@ function describeDirect(command: DirectCommand): string {
       return 'сказал, на каком шаге';
     case 'mode':
       return command.show ? 'работаю на виду' : 'работаю в фоне';
+    case 'selfDestruct':
+      return 'убил процессы агента';
+    case 'dotaOverlay':
+      return `оверлей: ${command.mode}`;
     case 'longSpeech':
       return 'слушаю длинно';
     case 'repeat':

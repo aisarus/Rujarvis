@@ -29,7 +29,7 @@ import { describe, expect, it } from 'vitest';
 
 import { spokenCloseTarget, spokenTarget } from '../apps/launch';
 import { commandCatalogue } from '../control/catalogue';
-import { DOTA_OVERLAY_PHRASES, parseDirectCommand } from '../control/commands';
+import { DOTA_OVERLAY_PHRASES, KILL_PHRASES, parseDirectCommand } from '../control/commands';
 import { parseDictationEdit } from '../control/dictationEdits';
 import { EchoGuard } from './echo';
 import {
@@ -318,6 +318,23 @@ describe('оверлей и красные линии', () => {
   it('каждая фраза оверлея доезжает до разбора команд', () => {
     const немые = DOTA_OVERLAY_PHRASES
       .filter((фраза) => parseDirectCommand(фраза)?.kind !== 'dotaOverlay');
+
+    expect(немые).toEqual([]);
+  });
+
+  it('аварийный выключатель не путается с просьбой замолчать', () => {
+    // «Убейся» — тот же класс, что «стоп»: обязан срабатывать, когда не
+    // работает ничего. Тем важнее, чтобы его не съел слой заглушения.
+    const украденные = KILL_PHRASES
+      .map((фраза) => ({ фраза, control: matchVoiceControl(фраза) }))
+      .filter((п) => п.control !== null);
+
+    expect(украденные.map((п) => `${п.фраза} → ${п.control?.control}`)).toEqual([]);
+  });
+
+  it('каждое аварийное слово доезжает до разбора команд', () => {
+    const немые = KILL_PHRASES
+      .filter((фраза) => parseDirectCommand(фраза)?.kind !== 'selfDestruct');
 
     expect(немые).toEqual([]);
   });

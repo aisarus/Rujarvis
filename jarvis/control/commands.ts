@@ -39,6 +39,7 @@ export type DirectCommand =
   | { kind: 'where' }
   | { kind: 'mode'; show: boolean }
   | { kind: 'dotaOverlay'; mode: 'full' | 'silent' | 'off' }
+  | { kind: 'selfDestruct' }
   | { kind: 'longSpeech' }
   | { kind: 'repeat'; times: number; command: RepeatableCommand };
 
@@ -150,6 +151,28 @@ const DOTA_OFF = [
 export const DOTA_OVERLAY_PHRASES: readonly string[] = [
   ...DOTA_FULL, ...DOTA_SILENT, ...DOTA_OFF,
 ];
+
+/**
+ * Аварийный выключатель: убить всё, что Джарвис запустил.
+ *
+ * ## Чем это отличается от «стоп»
+ *
+ * «Стоп» — вежливая просьба, и задача её слышит. Но если агент завис, ушёл в
+ * бесконечный круг или перестал читать свой вход, вежливая просьба не доходит.
+ * Тогда нужен выключатель, который не спрашивает.
+ *
+ * Убивает только своих детей — тех, чьи pid Джарвис отметил при запуске. Голос
+ * при этом остаётся: человеку нужно прибить агента, а не остаться без
+ * управления. Соблазн написать `taskkill /F /IM node.exe` велик и снёс бы
+ * MCP-серверы, чужие сборки и редактор заодно.
+ */
+const KILL_ALL = [
+  'убейся', 'умри', 'сдохни', 'убей агента', 'убей все процессы',
+  'аварийная остановка', 'руби всё', 'руби все',
+];
+
+/** Для сторожа красных линий: аварийные слова тоже не должны красть заглушение. */
+export const KILL_PHRASES: readonly string[] = KILL_ALL;
 
 /** Сетка с номерами: показать и убрать. */
 const GRID_ON = ['сетка', 'покажи сетку', 'включи сетку', 'номера'];
@@ -532,6 +555,10 @@ function readDirect(phrase: string): DirectCommand | null {
 
   if (GRID_ON.includes(phrase)) return { kind: 'grid', on: true };
   if (GRID_OFF.includes(phrase)) return { kind: 'grid', on: false };
+
+  // Аварийный выключатель проверяется раньше остальных: если он когда-нибудь
+  // столкнётся с чужой фразой, выиграть должен он.
+  if (KILL_ALL.includes(phrase)) return { kind: 'selfDestruct' };
 
   if (DOTA_FULL.includes(phrase)) return { kind: 'dotaOverlay', mode: 'full' };
   if (DOTA_SILENT.includes(phrase)) return { kind: 'dotaOverlay', mode: 'silent' };
