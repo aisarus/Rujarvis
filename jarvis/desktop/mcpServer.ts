@@ -30,6 +30,7 @@ import { PlanStore } from '../agent/planStore';
 import { inkOfPage, probePage, ridePage } from './pageTravel';
 import * as live from './blenderLive';
 import * as krita from './kritaLive';
+import * as comfy from './comfy';
 import { makePlan, markStep, renderPlan, type StepState } from '../agent/plan';
 import { buildSkillFile, isSelfAuthored, skillPath } from '../skills/author';
 import { CuaDriver } from './cua';
@@ -1167,6 +1168,62 @@ ${хвост}` : ''}`,
           };
         }
         return say(хвост || 'Готово.');
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'draw_image',
+    {
+      title: 'Нарисовать картинку диффузией',
+      description:
+        'Рисует картинку локальной моделью через ComfyUI и кладёт файл в папку ассистента. ' +
+        'Это НАСТОЯЩЕЕ рисование: собирать картинку кодом из фигур бессмысленно, проверено. ' +
+        'Подсказку пиши ПО-АНГЛИЙСКИ — модели обучены на нём. ' +
+        'Для одинакового персонажа в разных кадрах держи один и тот же seed и одну подсказку: ' +
+        'меняя только позу и план, получишь того же героя, а не нового. ' +
+        'Размеры кратные 64; на этой машине 512x768 — потолок разумного.',
+      inputSchema: {
+        prompt: z.string().describe('Что нарисовать, по-английски'),
+        negative: z.string().optional().describe('Чего не должно быть; без него берётся общий список'),
+        width: z.number().optional().describe('Ширина, кратная 64 (по умолчанию 512)'),
+        height: z.number().optional().describe('Высота, кратная 64 (по умолчанию 768)'),
+        steps: z.number().optional().describe('Шагов сэмплера, 20–30 обычно хватает'),
+        seed: z.number().optional().describe('Зерно. Одно и то же зерно — тот же персонаж.'),
+        name: z.string().optional().describe('Имя файла без расширения'),
+      },
+    },
+    async ({ prompt, negative, width, height, steps, seed, name }) => {
+      try {
+        const папка = files.outputFolder();
+        const имя = (name?.trim() || 'рисунок').replace(/[\/:*?"<>|]/gu, '_');
+        const путь = path.join(папка, `${имя}.png`);
+
+        const итог = await comfy.draw({
+          prompt,
+          ...(negative ? { negative } : {}),
+          ...(typeof width === 'number' ? { width } : {}),
+          ...(typeof height === 'number' ? { height } : {}),
+          ...(typeof steps === 'number' ? { steps } : {}),
+          ...(typeof seed === 'number' ? { seed } : {}),
+          saveTo: путь,
+        });
+
+        if (!итог.ok) {
+          return {
+            content: [{ type: 'text' as const, text: `Не удалось: ${итог.error ?? 'неизвестно'}` }],
+            isError: true,
+          };
+        }
+        const данные = readFileSync(путь).toString('base64');
+        return {
+          content: [
+            { type: 'text' as const, text: `Готово: ${путь} (зерно ${итог.seed})` },
+            { type: 'image' as const, data: данные, mimeType: 'image/png' },
+          ],
+        };
       } catch (error) {
         return failed(error);
       }
