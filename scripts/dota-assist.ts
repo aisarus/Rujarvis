@@ -39,6 +39,7 @@ import { fileURLToPath } from 'node:url';
 const ЗДЕСЬ = dirname(fileURLToPath(import.meta.url));
 
 import { advise, createMemory, type OverlayView } from '../jarvis/dota/advice';
+import { loadBuildBook, type BuildBook } from '../jarvis/dota/builds';
 import { startReceiver, type Receiver } from '../jarvis/dota/receiver';
 import { applyPacket, createState, type DotaState } from '../jarvis/dota/state';
 
@@ -149,6 +150,31 @@ function показать(вид: OverlayView): void {
   } catch { /* диск занят — следующий кадр запишется */ }
 }
 
+// ── Сборка ──────────────────────────────────────────────────────────────────
+
+/**
+ * Что обычно покупают на этом герое — из OpenDota, один раз за матч.
+ *
+ * Скачивается, когда стало известно, кем человек играет: до этого спрашивать
+ * нечего. Ответ кладётся в общий кэш рядом с записями, так что со второй игры
+ * сеть уже не нужна, а без сети и без кэша помощник про сборку молчит.
+ */
+const КЭШ = join(КОРЕНЬ, 'кэш');
+let книга: BuildBook | null = null;
+let книгуПросили = false;
+
+function позаботитьсяОКниге(герой: string): void {
+  if (книгуПросили) return;
+  книгуПросили = true;
+  void loadBuildBook({ hero: герой, cacheDir: КЭШ })
+    .then((к) => {
+      книга = к;
+      console.log(`
+  сборка: ${к ? `${к.order.length} предметов` : 'нет ни сети, ни кэша — промолчу'}`);
+    })
+    .catch(() => { /* молчим про сборку, остальное работает */ });
+}
+
 // ── Приём и советы ──────────────────────────────────────────────────────────
 
 let состояние: DotaState = createState();
@@ -192,8 +218,10 @@ function поднять(): Promise<Receiver> {
     onPacket: (пакет) => {
       пакетов += 1;
 
+      if (пакет.self) позаботитьсяОКниге(пакет.self.hero);
+
       состояние = applyPacket(состояние, пакет);
-      const совет = advise(состояние, память, 'full');
+      const совет = advise(состояние, память, 'full', { book: книга });
       память = совет.memory;
       последнийВид = совет.view;
       показать(совет.view);

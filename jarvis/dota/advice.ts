@@ -23,6 +23,7 @@
  * Память помнит, о чём уже сказано, и молчит, пока повод не сменится.
  */
 import { isFailure, type Gate } from '../measure/gate';
+import { nextItem, type BuildBook, type BuildItem } from './builds';
 import type { CampState } from './camps';
 import type { DotaState } from './state';
 import {
@@ -75,6 +76,14 @@ export interface OverlayView {
    * и зашитое число врало бы. «Применён столько-то назад» — факт.
    */
   enemyGlyphAgo: number | null;
+  /**
+   * Что покупать дальше и хватает ли на это денег.
+   *
+   * Данные — частота покупок из OpenDota, а не чьё-то мнение о правильном.
+   * Поэтому и формулировка «обычно берут», а не «надо взять». `null` — сети не
+   * было и кэша нет; тогда про сборку молчим.
+   */
+  purchase: { item: BuildItem; affordable: boolean } | null;
   clock: number | null;
 }
 
@@ -89,6 +98,8 @@ export interface AdviceMemory {
   landingSpokenAt: number | null;
   /** Про какое применение глифа врагом уже сказали. */
   spokenGlyph: number | null;
+  /** Про какую покупку уже сказали. */
+  spokenPurchase: string | null;
   /** Сколько выкупов уже озвучено. */
   spokenBuybacks: number;
   /** О каком накоплении золота уже сказано. */
@@ -125,6 +136,7 @@ export function createMemory(): AdviceMemory {
     spokenStack: null,
     landingSpokenAt: null,
     spokenGlyph: null,
+    spokenPurchase: null,
     spokenBuybacks: 0,
     spokenGold: null,
     dangerWasOn: false,
@@ -140,6 +152,11 @@ const УРОВЕНЬ = (ворота: Gate): OverlayView['danger']['level'] => {
 export interface AdviceOptions {
   danger?: DangerRule;
   gold?: GoldRule;
+  /**
+   * Что обычно покупают на этом герое. `null` — сети не было и кэша нет;
+   * тогда про сборку молчим, а не советуем наугад.
+   */
+  book?: BuildBook | null;
 }
 
 export function advise(
@@ -181,6 +198,11 @@ export function advise(
     landing: пакет ? allyLanding(пакет) : null,
     stack: пакет ? stackWindow(пакет, state.camps) : null,
     route: пакет ? farmRoute(пакет, state.camps) : [],
+    purchase: (() => {
+      const дальше = nextItem(options.book ?? null, пакет?.items ?? [], пакет?.clock ?? null);
+      if (!дальше) return null;
+      return { item: дальше, affordable: (пакет?.gold ?? 0) >= дальше.cost };
+    })(),
     enemyGlyphAgo: (() => {
       const чужие = enemyTeam(пакет?.team ?? null);
       const когда = чужие ? state.timers.glyph[чужие] : null;
@@ -201,6 +223,7 @@ export function advise(
   let spokenStack = memory.spokenStack;
   let landingSpokenAt = memory.landingSpokenAt;
   let spokenGlyph = memory.spokenGlyph;
+  let spokenPurchase = memory.spokenPurchase;
   let spokenBuybacks = memory.spokenBuybacks;
   let spokenGold = memory.spokenGold;
 
@@ -250,6 +273,15 @@ export function advise(
       // подсказка не нужна и мешает, а про пустой лагерь она бессмысленна.
       speech = 'можно стак';
       spokenStack = Math.floor((пакет?.clock ?? 0) / 60);
+    } else if (
+      view.purchase?.affordable
+      && view.purchase.item.key !== spokenPurchase
+      && view.danger.level === 'calm'
+    ) {
+      // Про покупку — один раз на предмет и только в спокойствии: в замесе
+      // человеку не до лавки, а повтор про то же самое выключают первым.
+      speech = `хватает на ${view.purchase.item.name}`;
+      spokenPurchase = view.purchase.item.key;
     } else if (isFailure(золото) && state.goldSince !== spokenGold) {
       // Золото — последним: опасность важнее денег всегда.
       speech = `${пакет?.gold} золота лежит`;
@@ -262,7 +294,7 @@ export function advise(
     speech,
     memory: {
       spokenDanger, dangerSpokenAt, spokenStack, landingSpokenAt,
-      spokenGlyph, spokenBuybacks, spokenGold,
+      spokenGlyph, spokenPurchase, spokenBuybacks, spokenGold,
       dangerWasOn: горит, dangerSince,
     },
   };

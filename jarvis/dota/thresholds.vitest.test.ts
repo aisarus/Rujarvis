@@ -33,6 +33,7 @@ function пакет(враги: MapObject[], хп = 100, жив = true): DotaPac
     neutrals: [],
     vision: [],
     pings: [],
+    items: [],
     events: [],
   };
 }

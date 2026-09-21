@@ -212,6 +212,7 @@
   <div class="плитка" id="золото"><span class="подпись">золото</span><span class="число">—</span></div>
   <div class="плитка" id="выкуп"><span class="подпись">выкуп</span><span class="число">—</span></div>
   <div class="плитка" id="лагеря"><span class="подпись">лагеря</span><span class="число">—</span></div>
+  <div class="плитка" id="покупка"><span class="подпись">дальше</span><span class="число">—</span></div>
   <div id="пропали"><div class="подпись">не видно</div><ul></ul></div>
 </div>
 
@@ -272,6 +273,19 @@ function нарисовать(view, фон) {
   выкуп.querySelector('.число').textContent = view.buyback
     ? (view.buyback.ready ? view.buyback.cost : 'кд')
     : '—';
+
+  // Следующая покупка. Загорается, когда денег хватает, — но советом это
+  // становится только вместе с ценой: «обычно берут», а не «надо взять».
+  const покупка = document.getElementById('покупка');
+  if (view.purchase) {
+    покупка.className = 'плитка ' + (view.purchase.affordable ? 'горит' : 'тихо');
+    покупка.querySelector('.подпись').textContent = view.purchase.item.name;
+    покупка.querySelector('.число').textContent = view.purchase.item.cost;
+  } else {
+    покупка.className = 'плитка тихо';
+    покупка.querySelector('.подпись').textContent = 'дальше';
+    покупка.querySelector('.число').textContent = '—';
+  }
 
   const л = view.camps;
   document.getElementById('лагеря').querySelector('.число').textContent =

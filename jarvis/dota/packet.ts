@@ -102,6 +102,13 @@ export interface DotaPacket {
    */
   vision: VisionSource[];
   pings: MapPing[];
+  /**
+   * Что лежит у героя: сумка, рюкзак, тайник, телепорт, нейтралка.
+   *
+   * Имена как в игре, с приставкой: `item_blink`. Пустые слоты приходят именем
+   * `empty` и сюда не попадают — иначе «пусто» окажется предметом.
+   */
+  items: string[];
   events: DotaEvent[];
 }
 
@@ -208,6 +215,16 @@ export function readPacket(сырой: unknown, at: number = Date.now()): DotaPa
     }
   }
 
+  const вещи: string[] = [];
+  const предметы = (пакет.items ?? null) as Record<string, unknown> | null;
+  if (предметы) {
+    for (const слот of Object.values(предметы)) {
+      if (!слот || typeof слот !== 'object') continue;
+      const имя = (слот as Record<string, unknown>).name;
+      if (typeof имя === 'string' && имя !== 'empty') вещи.push(имя);
+    }
+  }
+
   const снимок: DotaPacket = {
     at,
     clock: карта ? число(карта.clock_time) : null,
@@ -223,6 +240,7 @@ export function readPacket(сырой: unknown, at: number = Date.now()): DotaPa
     neutrals: нейтралы,
     vision: глаза,
     pings: пинги,
+    items: вещи,
     events: события(пакет.events),
   };
 

@@ -28,6 +28,7 @@ function пакет(at: number, поверх: Partial<DotaPacket> = {}): DotaPac
     neutrals: [],
     vision: [],
     pings: [],
+    items: [],
     events: [],
     ...поверх,
   };
