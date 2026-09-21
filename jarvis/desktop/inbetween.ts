@@ -28,7 +28,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -55,6 +55,14 @@ export interface Сборка {
 
 /** Сколько промежутков ставить между соседними ключами по умолчанию. */
 const МЕЖДУ = 3;
+
+/**
+ * Обратная косая черта отдельной константой.
+ *
+ * Не педантизм: этот файл правился скриптами, и литерал с экранированием
+ * ломался дважды подряд — строка рвалась пополам прямо в исходнике.
+ */
+const ОБРАТНАЯ = String.fromCharCode(92);
 
 /**
  * Запуск ffmpeg.
@@ -230,15 +238,155 @@ export async function assemble(
   if (кадры.length === 0) return { ok: false, error: `в ${папка} нет кадров` };
 
   mkdirSync(path.dirname(куда), { recursive: true });
+
+  // Через список файлов, а не через шаблон.
+  //
+  // Сборка ffmpeg под Windows обычно НЕ умеет `-pattern_type glob` — она
+  // честно отвечает «globbing is not supported by this libavformat build».
+  // А числовой шаблон требует непрерывной нумерации, которой у произвольных
+  // имён нет. Список работает с любыми именами, включая кириллические.
+  const список = path.join(папка, 'spisok.txt');
+  const НОВАЯ = String.fromCharCode(10);
+  const косая = (файл: string): string => файл.split(ОБРАТНАЯ).join('/');
+
+  const строки: string[] = [];
+  for (const файл of кадры) {
+    строки.push(`file '${косая(файл)}'`);
+    строки.push(`duration ${(1 / fps).toFixed(4)}`);
+  }
+  // Последний кадр повторяется: демультиплексор concat отбрасывает хвост без
+  // длительности, и ролик обрывался бы на кадр раньше.
+  строки.push(`file '${косая(кадры[кадры.length - 1] as string)}'`);
+
+  writeFileSync(список, строки.join(НОВАЯ) + НОВАЯ, 'utf8');
+
   const итог = await ffmpeg([
     '-y',
-    '-framerate', String(fps),
-    '-pattern_type', 'glob',
-    '-i', path.join(папка, '*.png'),
+    '-f', 'concat', '-safe', '0',
+    '-i', список,
+    // `-vsync` в новых сборках убран, и ffmpeg отвечает «Unrecognized option».
+    // Он тут и не нужен: длительность каждого кадра задана в самом списке, а
+    // `-r` приводит вывод к ровной частоте.
     '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '18',
+    '-r', String(fps),
     куда,
   ]);
+  rmSync(список, { force: true });
+
   return итог.ok
     ? { ok: true, frames: кадры.length }
     : { ok: false, error: итог.вывод.slice(0, 400) };
+}
+
+/**
+ * Ниже какого смещения потоку верить нельзя.
+ *
+ * Замерено на настоящих кадрах: между близкими позами срединное смещение
+ * выходит около десяти пикселей, между далёкими — около нуля, и там поток не
+ * считает движение, а просто перетекает одно в другое. Двойные контуры на
+ * рисунке видны сразу и выглядят браком.
+ */
+const ВЕРИТЬ_ПОТОКУ = 3.0;
+
+export interface СвязкаЗаказ {
+  /** Папка с ключами: 01.png … 11.png. Порядок имён и есть порядок движения. */
+  keys: string;
+  /** Куда положить готовый ролик. */
+  out: string;
+  /** Сколько промежутков ставить между соседними ключами. */
+  between?: number;
+  /** Кадров в секунду. Низкая частота — это аниме, а не бедность. */
+  fps?: number;
+  /**
+   * После каких ключей ставить импакт-фрейм, считая с единицы.
+   *
+   * По умолчанию два: отрыв и приземление. Импакт живёт один кадр — держать
+   * его дольше значит превратить удар в ошибку показа.
+   */
+  impacts?: number[];
+}
+
+export interface СвязкаИтог extends Сборка {
+  /** Где поток не поверил в движение и вместо промежутка встал смаз. */
+  smears?: number;
+  /** Сколько импакт-фреймов встало. */
+  impacts?: number;
+}
+
+/**
+ * Собрать всю связку: ключи, промежутки, смазы, импакты, ролик.
+ *
+ * ## Что здесь решается само
+ *
+ * Между каждой парой соседних ключей считается промежуток, и по срединному
+ * смещению потока решается, годится ли он. Не годится — на его место встаёт
+ * смаз от первого кадра пары. Это и есть правило, найденное проверкой:
+ * далёкие позы промежутком не соединяются.
+ *
+ * Решение принимается по замеру, а не по списку «здесь далеко, здесь близко»:
+ * список пришлось бы править после каждой перерисовки ключей.
+ */
+export async function sequence(заказ: СвязкаЗаказ): Promise<СвязкаИтог> {
+  const ключи = keyFrames(заказ.keys);
+  if (ключи.length < 2) {
+    return { ok: false, error: `в ${заказ.keys} меньше двух ключей` };
+  }
+
+  const между = заказ.between ?? МЕЖДУ;
+  const импактыПосле = new Set(заказ.impacts ?? [8, ключи.length]);
+
+  const стройка = path.join(path.dirname(заказ.out), '.сборка');
+  rmSync(стройка, { recursive: true, force: true });
+  mkdirSync(стройка, { recursive: true });
+
+  let номер = 0;
+  let смазов = 0;
+  let импактов = 0;
+  const положить = (откуда: string): void => {
+    copyFileSync(откуда, path.join(стройка, `кадр_${String(номер).padStart(4, '0')}.png`));
+    номер += 1;
+  };
+
+  for (let i = 0; i < ключи.length; i += 1) {
+    положить(ключи[i] as string);
+
+    if (импактыПосле.has(i + 1)) {
+      const файл = path.join(стройка, `impact_${i}.png`);
+      const итог = await impact(ключи[i] as string, файл);
+      if (итог.ok) {
+        положить(файл);
+        rmSync(файл, { force: true });
+        импактов += 1;
+      }
+    }
+
+    const следующий = ключи[i + 1];
+    if (!следующий) continue;
+
+    const папка = path.join(стройка, `.tween_${i}`);
+    const итог = await tween(ключи[i] as string, следующий, папка, между);
+    if (!итог.ok) continue;
+
+    if ((итог.shift ?? 0) >= ВЕРИТЬ_ПОТОКУ) {
+      // Первый и последний кадры промежутка — это сами ключи, они уже стоят.
+      for (const имя of readdirSync(папка).sort().slice(1, -1)) {
+        положить(path.join(папка, имя));
+      }
+    } else {
+      // Поток не поверил в движение. Ставим смаз — так это и рисуют.
+      const файл = path.join(стройка, `smear_${i}.png`);
+      const мазок = await smear(ключи[i] as string, файл, 26, 0);
+      if (мазок.ok) {
+        положить(файл);
+        rmSync(файл, { force: true });
+        смазов += 1;
+      }
+    }
+    rmSync(папка, { recursive: true, force: true });
+  }
+
+  const ролик = await assemble(стройка, заказ.out, заказ.fps ?? 12);
+  if (!ролик.ok) return { ok: false, error: ролик.error ?? 'сборка не удалась' };
+
+  return { ok: true, frames: номер, smears: смазов, impacts: импактов };
 }
