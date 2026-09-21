@@ -120,6 +120,34 @@
      Не знаем — и выглядим так, чтобы это было видно: пустой блёклый кружок. */
   .лагерь.stale { background: transparent; border: 1px dashed rgba(192,124,255,.3); }
 
+  /* ── Угрозы: где врага видели в последний раз ────────────────────────── */
+
+  .угроза {
+    position: absolute; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px;
+    border-radius: 50%;
+    background: rgba(255, 60, 48, .28);
+    border: 1px solid rgba(255, 110, 96, .9);
+    box-shadow: 0 0 8px rgba(255, 60, 48, .5);
+  }
+  /* Подписи давности на карте не рисуем: когда двоих потеряли рядом, они
+     слипаются в нечитаемую кашу поверх самой карты. Карта отвечает на вопрос
+     «где», а «кто и сколько» уже написано в панели слева. */
+
+  /* ── Маршрут фарма ───────────────────────────────────────────────────── */
+
+  #маршрут { position: absolute; inset: 0; pointer-events: none; }
+  #маршрут path { fill: none; stroke: #6fd3ff; stroke-width: 2; stroke-linejoin: round;
+    stroke-dasharray: 5 4; opacity: .85; filter: drop-shadow(0 0 3px rgba(111,211,255,.8)); }
+  .стоянка {
+    position: absolute; width: 15px; height: 15px; margin: -7.5px 0 0 -7.5px;
+    border-radius: 50%; border: 2px solid #6fd3ff;
+    box-shadow: 0 0 8px rgba(111,211,255,.85);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; font-weight: 700; color: #eaf8ff;
+    text-shadow: 0 1px 2px rgba(0,0,0,.95);
+    background: rgba(10, 30, 45, .55);
+  }
+
   #герой {
     position: absolute; width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px;
     border: 2px solid #ffd76a; border-radius: 50%;
@@ -175,7 +203,10 @@
 <div id="часы"></div>
 <div id="подсказка" hidden></div>
 <div id="опасность"></div>
-<div id="карта"><div id="герой" hidden></div></div>
+<div id="карта">
+  <svg id="маршрут" viewBox="0 0 238 238" preserveAspectRatio="none"><path d=""></path></svg>
+  <div id="герой" hidden></div>
+</div>
 <div id="столбец">
   <div id="враг" class="пусто">врагов не видно</div>
   <div class="плитка" id="золото"><span class="подпись">золото</span><span class="число">—</span></div>
@@ -214,8 +245,12 @@ function нарисовать(view, фон) {
 
   const оп = document.getElementById('опасность');
   оп.className = view.danger.level;
+  // Короче, чем `why`: «один вплотную при здоровье 17%» переносилось на две
+  // строки и вылезало из полосы. В замесе читают два слова, не предложение.
   оп.textContent = view.danger.level === 'alarm'
-    ? (view.danger.why || 'опасно').toUpperCase()
+    ? (/^\d|^[а-я]+ в /.test(view.danger.why || '')
+        ? (view.danger.why || '').toUpperCase()
+        : 'ВПЛОТНУЮ · ' + (view.nearestEnemy ? view.nearestEnemy.distance : '?'))
     : view.danger.level === 'unknown' ? 'нечем мерить' : 'спокойно';
 
   const враг = document.getElementById('враг');
@@ -243,7 +278,7 @@ function нарисовать(view, фон) {
     л.alive + ' / ' + л.empty + ' / ' + л.stale;
 
   const карта = document.getElementById('карта');
-  for (const старый of карта.querySelectorAll('.лагерь')) старый.remove();
+  for (const старый of карта.querySelectorAll('.лагерь, .угроза, .стоянка')) старый.remove();
   for (const лагерь of view.campPoints ?? []) {
     const точка = document.createElement('div');
     точка.className = 'лагерь ' + лагерь.state;
@@ -268,7 +303,7 @@ function нарисовать(view, фон) {
   const кого = view.unseen ?? [];
   пропали.className = кого.length >= 3 ? 'много' : '';
   if (кого.length === 0) {
-    список.innerHTML = '<li style="color:#8a90a0">все на виду</li>';
+    список.innerHTML = '<li style="color:#8a90a0;text-transform:none">все на виду</li>';
   } else {
     for (const враг of кого.slice(0, 5)) {
       const строка = document.createElement('li');
@@ -289,6 +324,38 @@ function нарисовать(view, фон) {
     подсказка.className = 'стак';
     подсказка.textContent = 'можно стак — ' + view.stack.seconds + ' с';
   } else подсказка.hidden = true;
+
+  // Откуда могут прийти: последнее место, где врага видели. Не предсказание —
+  // факт с отметкой давности. Чем дольше не видно, тем бледнее метка: через
+  // минуту она уже ничего не говорит, и делать вид, что говорит, нельзя.
+  for (const угроза of view.unseen ?? []) {
+    const точка = document.createElement('div');
+    точка.className = 'угроза';
+    const п = наКарте(угроза.x, угроза.y);
+    точка.style.left = п.left + 'px';
+    точка.style.top = п.top + 'px';
+    точка.style.opacity = String(Math.max(0.22, 1 - угроза.ageMs / 60000));
+    точка.title = угроза.hero.replace('npc_dota_hero_', '') + ' — '
+      + Math.round(угроза.ageMs / 1000) + ' с назад';
+    карта.appendChild(точка);
+  }
+
+  // Маршрут фарма: линия от героя по живым безопасным лагерям.
+  const линия = document.querySelector('#маршрут path');
+  const стоянки = view.route ?? [];
+  if (стоянки.length > 0 && view.selfPos) {
+    const точки = [view.selfPos, ...стоянки].map((т) => наКарте(т.x, т.y));
+    линия.setAttribute('d', точки.map((п, i) => (i ? 'L' : 'M') + п.left + ' ' + п.top).join(' '));
+    стоянки.forEach((стоянка, i) => {
+      const кружок = document.createElement('div');
+      кружок.className = 'стоянка';
+      const п = наКарте(стоянка.x, стоянка.y);
+      кружок.style.left = п.left + 'px';
+      кружок.style.top = п.top + 'px';
+      кружок.textContent = String(i + 1);
+      карта.appendChild(кружок);
+    });
+  } else линия.setAttribute('d', '');
 
   const герой = document.getElementById('герой');
   if (view.selfPos) {

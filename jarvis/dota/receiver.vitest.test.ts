@@ -127,3 +127,14 @@ describe('запись сырого', () => {
     expect(пришли).toHaveLength(1);
   });
 });
+
+describe('занятый порт', () => {
+  it('отвечает отказом, а не убивает процесс', async () => {
+    // Без этого занятый порт вылетал необработанным событием сервера: стек
+    // вызовов в консоль и смерть процесса мимо всякой обработки.
+    приёмник = await startReceiver({ port: 0, onPacket: () => {} });
+
+    await expect(startReceiver({ port: приёмник.port, onPacket: () => {} }))
+      .rejects.toMatchObject({ code: 'EADDRINUSE' });
+  });
+});

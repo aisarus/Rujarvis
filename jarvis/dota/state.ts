@@ -22,6 +22,13 @@ import { createCamps, updateCamps, type Camp } from './camps';
 import type { DotaPacket } from './packet';
 import { applyTimers, createTimers, type Timers } from './timers';
 
+/** Где и когда врага видели в последний раз. */
+export interface LastSeen {
+  at: number;
+  x: number;
+  y: number;
+}
+
 export interface DotaState {
   latest: DotaPacket | null;
   camps: Camp[];
@@ -32,12 +39,16 @@ export interface DotaState {
   /** Сколько раз героя убили, считая реинкарнации. */
   caughtOut: number;
   /**
-   * Когда каждого врага видели в последний раз.
+   * Где и когда каждого врага видели в последний раз.
    *
    * Только тех, кого хоть раз видели: пока имя не встретилось, мы не знаем
    * даже, кто против нас, и записывать его в пропавшие нечестно.
+   *
+   * Место нужно не меньше времени: «Лину не видно двенадцать секунд» — это
+   * тревога ни о чём, а «Лину не видно двенадцать секунд, и была она вон там»
+   * говорит, с какой стороны смотреть.
    */
-  lastSeenEnemies: ReadonlyMap<string, number>;
+  lastSeenEnemies: ReadonlyMap<string, LastSeen>;
   /** Глиф, сканы и выкупы обеих команд — то, что приходит событиями. */
   timers: Timers;
 }
@@ -83,7 +94,9 @@ export function applyPacket(
   const поймали = state.caughtOut + (былЖив && packet.self?.alive === false ? 1 : 0);
 
   const видел = new Map(state.lastSeenEnemies);
-  for (const враг of packet.enemies) if (враг.hero) видел.set(враг.hero, packet.at);
+  for (const враг of packet.enemies) {
+    if (враг.hero) видел.set(враг.hero, { at: packet.at, x: враг.x, y: враг.y });
+  }
 
   return {
     latest: packet,

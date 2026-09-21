@@ -25,7 +25,10 @@
 import { isFailure, type Gate } from '../measure/gate';
 import type { CampState } from './camps';
 import type { DotaState } from './state';
-import { allyLanding, stackWindow, unseenEnemies, type AllyLanding, type StackWindow, type UnseenEnemy } from './signals';
+import {
+  allyLanding, farmRoute, stackWindow, unseenEnemies,
+  type AllyLanding, type FarmStop, type StackWindow, type UnseenEnemy,
+} from './signals';
 import { judgeDanger, judgeGold, type DangerRule, type GoldRule } from './thresholds';
 import { enemyTeam, onEnemyHalf, slotTeam } from './timers';
 
@@ -57,6 +60,14 @@ export interface OverlayView {
   landing: AllyLanding | null;
   /** Можно поставить стак прямо сейчас. */
   stack: StackWindow | null;
+  /**
+   * Куда идти фармить: живые лагеря без врагов рядом, по порядку обхода.
+   *
+   * Рисуется линией по миникарте. Пустой список — не «фармить негде», а «из
+   * известного нам ничего не годится»; человек это увидит по отсутствию линии,
+   * и это честнее выдуманного маршрута.
+   */
+  route: readonly FarmStop[];
   /**
    * Сколько секунд назад противник применил глиф, если применял.
    *
@@ -169,6 +180,7 @@ export function advise(
     unseen: пакет ? unseenEnemies(state.lastSeenEnemies, пакет.at) : [],
     landing: пакет ? allyLanding(пакет) : null,
     stack: пакет ? stackWindow(пакет, state.camps) : null,
+    route: пакет ? farmRoute(пакет, state.camps) : [],
     enemyGlyphAgo: (() => {
       const чужие = enemyTeam(пакет?.team ?? null);
       const когда = чужие ? state.timers.glyph[чужие] : null;

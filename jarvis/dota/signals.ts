@@ -21,12 +21,16 @@
  */
 import type { Camp } from './camps';
 import type { DotaPacket } from './packet';
+import type { LastSeen } from './state';
 
 /** Враг, которого давно не видели. */
 export interface UnseenEnemy {
   hero: string;
   /** Сколько миллисекунд назад видели в последний раз. */
   ageMs: number;
+  /** Где его видели. С какой стороны он может прийти. */
+  x: number;
+  y: number;
 }
 
 /**
@@ -36,14 +40,14 @@ export interface UnseenEnemy {
  * не знаем даже, кто против нас, и записывать его в пропавшие нечестно.
  */
 export function unseenEnemies(
-  lastSeen: ReadonlyMap<string, number>,
+  lastSeen: ReadonlyMap<string, LastSeen>,
   now: number,
   quietMs = 8_000,
 ): UnseenEnemy[] {
   const итог: UnseenEnemy[] = [];
-  for (const [hero, когда] of lastSeen) {
-    const возраст = now - когда;
-    if (возраст > quietMs) итог.push({ hero, ageMs: возраст });
+  for (const [hero, где] of lastSeen) {
+    const возраст = now - где.at;
+    if (возраст > quietMs) итог.push({ hero, ageMs: возраст, x: где.x, y: где.y });
   }
   return итог.sort((a, б) => б.ageMs - a.ageMs);
 }
@@ -127,4 +131,65 @@ export function stackWindow(
     }
   }
   return лучший;
+}
+
+/** Лагерь, который можно фармить: живой и без врагов рядом. */
+export interface FarmStop {
+  x: number;
+  y: number;
+  /** Расстояние от предыдущей точки маршрута. */
+  legDistance: number;
+}
+
+/**
+ * Маршрут фарма: куда идти дальше.
+ *
+ * ## Как строится
+ *
+ * Жадно, от героя к ближайшему годному лагерю, и так несколько раз. Это не
+ * лучший обход из возможных, и решать задачу коммивояжёра здесь незачем:
+ * через полминуты карта изменится, и маршрут всё равно будет пересчитан.
+ * Жадный ближайший — то, что человек и сам бы выбрал, глядя на карту.
+ *
+ * ## Что считается годным
+ *
+ * **Живой** — пустой фармить нечего, а про «давно не смотрели» мы не знаем и
+ * не выдумываем. **Без врагов рядом** — маршрут, ведущий в засаду, хуже
+ * отсутствующего: человек пойдёт по нему, не глядя, именно потому что доверяет.
+ *
+ * Дальше `reach` не берём: путь через полкарты не маршрут фарма, а переход.
+ */
+export function farmRoute(
+  packet: DotaPacket,
+  camps: readonly Camp[],
+  options: { stops?: number; danger?: number; reach?: number } = {},
+): FarmStop[] {
+  const свой = packet.self;
+  if (!свой?.alive) return [];
+
+  const сколько = options.stops ?? 4;
+  const опасно = options.danger ?? 1600;
+  const дальше = options.reach ?? 6500;
+
+  const годные = camps.filter((лагерь) => {
+    if (лагерь.state !== 'alive') return false;
+    if (Math.hypot(лагерь.x - свой.x, лагерь.y - свой.y) > дальше) return false;
+    return !packet.enemies.some((в) => Math.hypot(в.x - лагерь.x, в.y - лагерь.y) < опасно);
+  });
+
+  const маршрут: FarmStop[] = [];
+  let откуда = { x: свой.x, y: свой.y };
+  const осталось = [...годные];
+  while (маршрут.length < сколько && осталось.length > 0) {
+    let лучший = 0;
+    let ближе = Infinity;
+    осталось.forEach((лагерь, i) => {
+      const d = Math.hypot(лагерь.x - откуда.x, лагерь.y - откуда.y);
+      if (d < ближе) { ближе = d; лучший = i; }
+    });
+    const взятый = осталось.splice(лучший, 1)[0];
+    маршрут.push({ x: взятый.x, y: взятый.y, legDistance: Math.round(ближе) });
+    откуда = { x: взятый.x, y: взятый.y };
+  }
+  return маршрут;
 }

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Camp } from './camps';
 import type { DotaPacket, MapPing } from './packet';
-import { allyLanding, stackWindow, unseenEnemies } from './signals';
+import { allyLanding, farmRoute, stackWindow, unseenEnemies } from './signals';
 
 function пакет(поверх: Partial<DotaPacket> = {}): DotaPacket {
   return {
@@ -45,19 +45,21 @@ function лагерь(x: number, y: number, state: Camp['state']): Camp {
 describe('unseenEnemies', () => {
   it('молчащих дольше порога считает пропавшими', () => {
     const видел = new Map([
-      ['npc_dota_hero_lina', 90_000],
-      ['npc_dota_hero_lion', 99_000],
+      ['npc_dota_hero_lina', { at: 90_000, x: 1000, y: 2000 }],
+      ['npc_dota_hero_lion', { at: 99_000, x: 0, y: 0 }],
     ]);
     const пропали = unseenEnemies(видел, 100_000, 8_000);
     expect(пропали.map((п) => п.hero)).toEqual(['npc_dota_hero_lina']);
     expect(пропали[0].ageMs).toBe(10_000);
+    // Место не менее важно времени: по нему видно, с какой стороны смотреть.
+    expect({ x: пропали[0].x, y: пропали[0].y }).toEqual({ x: 1000, y: 2000 });
   });
 
   it('сортирует по давности: кого дольше нет, тот первым', () => {
     const видел = new Map([
-      ['npc_dota_hero_lina', 80_000],
-      ['npc_dota_hero_lich', 50_000],
-      ['npc_dota_hero_lion', 70_000],
+      ['npc_dota_hero_lina', { at: 80_000, x: 0, y: 0 }],
+      ['npc_dota_hero_lich', { at: 50_000, x: 0, y: 0 }],
+      ['npc_dota_hero_lion', { at: 70_000, x: 0, y: 0 }],
     ]);
     expect(unseenEnemies(видел, 100_000, 8_000).map((п) => п.hero))
       .toEqual(['npc_dota_hero_lich', 'npc_dota_hero_lion', 'npc_dota_hero_lina']);
@@ -122,5 +124,50 @@ describe('stackWindow', () => {
   it('мёртвому стаки не нужны', () => {
     const лежит = пакет({ clock: 652 });
     expect(stackWindow({ ...лежит, self: { ...лежит.self!, alive: false } }, рядом)).toBeNull();
+  });
+});
+
+describe('farmRoute', () => {
+  const лагеря = [
+    лагерь(1000, 0, 'alive'),
+    лагерь(2000, 0, 'alive'),
+    лагерь(500, 500, 'empty'),
+    лагерь(-1000, 0, 'stale'),
+  ];
+
+  it('ведёт от героя к ближайшему живому, потом дальше', () => {
+    const маршрут = farmRoute(пакет(), лагеря);
+    expect(маршрут.map((т) => т.x)).toEqual([1000, 2000]);
+    expect(маршрут[0].legDistance).toBe(1000);
+    expect(маршрут[1].legDistance).toBe(1000);
+  });
+
+  it('пустые и неизвестные лагеря в маршрут не попадают', () => {
+    // «Не смотрели» — это не «жив». Вести туда человека значит выдавать
+    // догадку за знание, а он пойдёт не глядя, потому что доверяет.
+    const маршрут = farmRoute(пакет(), [лагерь(100, 0, 'stale'), лагерь(200, 0, 'empty')]);
+    expect(маршрут).toEqual([]);
+  });
+
+  it('лагерь с врагом рядом не предлагается', () => {
+    // Маршрут, ведущий в засаду, хуже отсутствующего.
+    const сВрагом = пакет({
+      enemies: [{ x: 1100, y: 0, icon: 'minimap_enemyicon', team: 2, hero: 'npc_dota_hero_lina', yaw: 0, vision: 1800 }],
+    });
+    expect(farmRoute(сВрагом, [лагерь(1000, 0, 'alive')])).toEqual([]);
+  });
+
+  it('дальние лагеря не берём: это переход, а не фарм', () => {
+    expect(farmRoute(пакет(), [лагерь(8000, 0, 'alive')])).toEqual([]);
+  });
+
+  it('мёртвому маршрут не нужен', () => {
+    const лежит = пакет();
+    expect(farmRoute({ ...лежит, self: { ...лежит.self!, alive: false } }, лагеря)).toEqual([]);
+  });
+
+  it('длина маршрута ограничена', () => {
+    const много = Array.from({ length: 10 }, (_, i) => лагерь(500 * (i + 1), 0, 'alive'));
+    expect(farmRoute(пакет(), много)).toHaveLength(4);
   });
 });

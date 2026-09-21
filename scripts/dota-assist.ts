@@ -31,9 +31,12 @@
  * Остановка — Enter. Дота должна идти с ключом `-gamestateintegration`.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createWriteStream, mkdirSync } from 'node:fs';
+import { createWriteStream, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { argv, exit, stdin, stdout } from 'node:process';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ЗДЕСЬ = dirname(fileURLToPath(import.meta.url));
 
 import { advise, createMemory, type OverlayView } from '../jarvis/dota/advice';
 import { startReceiver, type Receiver } from '../jarvis/dota/receiver';
@@ -106,6 +109,46 @@ function чистыйКадр(имя: string): void {
   кадров += 1;
 }
 
+// ── Окно оверлея ────────────────────────────────────────────────────────────
+
+/**
+ * Окно — отдельный процесс Electron, которому состояние кладут в файл.
+ *
+ * Electron не умеет запускать TypeScript, а заводить сборку ради одного окна —
+ * лишний шаг между правкой и проверкой.
+ *
+ * Состояние идёт **файлом**, а не трубой, и это не вкусовщина: `readline` на
+ * `process.stdin` в главном процессе Electron ломает загрузку страницы —
+ * `loadURL` отвергается с `ERR_FAILED`, причём молча. Проверено сведением к
+ * одному отличию: с чтением входа отказ, без него загрузка.
+ *
+ * Файл — тот же приём, что у живых сессий Блендера и Криты, и у него есть
+ * побочная польза: состояние можно открыть глазами и увидеть, что помощник
+ * думает прямо сейчас.
+ */
+const ОВЕРЛЕЙ = join(ЗДЕСЬ, 'dota-overlay', 'window.cjs');
+const ВИД = join(ПАПКА, 'вид.json');
+let окно: ChildProcess | null = null;
+
+function поднятьОкно(): void {
+  const электрон = join(ЗДЕСЬ, '..', 'node_modules', 'electron', 'dist', 'electron.exe');
+  окно = spawn(электрон, [ОВЕРЛЕЙ, ВИД], { stdio: 'ignore' });
+  окно.on('error', () => {
+    console.log('  окно не поднялось — голос работает, картинки не будет');
+    окно = null;
+  });
+  окно.on('exit', () => { окно = null; });
+}
+
+function показать(вид: OverlayView): void {
+  // Запись через временный файл и переименование: окно читает этот файл
+  // постоянно, и без этого однажды прочтёт половину.
+  try {
+    writeFileSync(`${ВИД}.tmp`, JSON.stringify(вид), 'utf8');
+    renameSync(`${ВИД}.tmp`, ВИД);
+  } catch { /* диск занят — следующий кадр запишется */ }
+}
+
 // ── Приём и советы ──────────────────────────────────────────────────────────
 
 let состояние: DotaState = createState();
@@ -153,6 +196,7 @@ function поднять(): Promise<Receiver> {
       const совет = advise(состояние, память, 'full');
       память = совет.memory;
       последнийВид = совет.view;
+      показать(совет.view);
 
       if (совет.speech) {
         сказать(совет.speech);
@@ -196,6 +240,8 @@ const тик = setInterval(() => {
   );
 }, 1000);
 
+поднятьОкно();
+
 console.log('');
 console.log('  ПОМОЩНИК В ДОТЕ');
 console.log(`  слушаю GSI на 127.0.0.1:${приёмник.port}, говорю голосом Windows`);
@@ -213,6 +259,11 @@ async function закрыть(): Promise<void> {
   clearInterval(тик);
   console.log('\n\n  останавливаюсь...');
   try { голос.stdin?.end(); голос.kill(); } catch { /* уже мёртв */ }
+  // Окно закрываем первым делом: оверлей, переживший помощника, останется
+  // висеть поверх всего, и закрыть его будет нечем.
+  // Окно уходит само, когда файл перестаёт обновляться; но ждать восьми секунд
+  // незачем, если можно попросить прямо.
+  try { окно?.kill(); } catch { /* уже ушло */ }
   журнал.end();
   await приёмник.stop();
   console.log(`  пакетов ${пакетов}, сказано ${сказано}, чистых кадров ${кадров}`);

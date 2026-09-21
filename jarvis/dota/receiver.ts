@@ -71,8 +71,15 @@ export async function startReceiver(options: ReceiverOptions): Promise<Receiver>
     });
   });
 
-  await new Promise<void>((готово) => {
-    сервер.listen(options.port ?? DEFAULT_PORT, '127.0.0.1', готово);
+  // Ошибку `listen` надо превратить в отказ обещания. Без этого занятый порт
+  // вылетал необработанным событием сервера: стек вызовов в консоль и смерть
+  // процесса мимо всякой обработки — а занятый порт самая частая беда запуска.
+  await new Promise<void>((готово, беда) => {
+    const наОшибку = (ошибка: Error) => { сервер.off('listening', наУспех); беда(ошибка); };
+    const наУспех = () => { сервер.off('error', наОшибку); готово(); };
+    сервер.once('error', наОшибку);
+    сервер.once('listening', наУспех);
+    сервер.listen(options.port ?? DEFAULT_PORT, '127.0.0.1');
   });
 
   const адрес = сервер.address();
