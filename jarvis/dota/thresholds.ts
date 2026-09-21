@@ -85,7 +85,7 @@ export interface GoldRule {
 }
 
 /**
- * Замер 21.09.2026: 2000 дольше 45 секунд — две реплики за матч.
+ * Замер 21.09.2026: 2000 дольше 45 секунд — пять реплик за матч.
  *
  * Отметка берётся из `state.ts`, а не переписывается сюда числом: по ней
  * ведётся отсчёт в `applyPacket`, и две копии одного числа однажды разойдутся
@@ -95,6 +95,16 @@ export const DEFAULT_GOLD: GoldRule = { amount: GOLD_MARK, heldMs: 45_000 };
 
 export function judgeGold(state: DotaState, rule: GoldRule = DEFAULT_GOLD): Gate {
   if (!state.latest) return cannotMeasure('пакетов ещё не было');
+
+  // Мёртвому про покупки не говорят. Это не «нечем мерить» — золото прекрасно
+  // видно, — а «правило не про этот случай»: лежащему нужен выкуп, а не совет
+  // сходить в лавку.
+  //
+  // Замер по матчу `9009407694`: без этой оговорки порог давал пять реплик
+  // вместо двух, и три из пяти приходились на респавн. Отсчёт при этом идёт
+  // дальше, так что фраза прозвучит сразу после воскрешения — там она и к месту.
+  if (state.latest.self && !state.latest.self.alive) return passed();
+
   if (state.goldSince === null) return passed();
   const лежит = state.latest.at - state.goldSince;
   return лежит >= rule.heldMs
