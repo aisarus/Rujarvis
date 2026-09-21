@@ -275,6 +275,8 @@ const ALWAYS = [
   'mcp__jarvis-desktop__blender_live',
   'mcp__jarvis-desktop__krita_live_start',
   'mcp__jarvis-desktop__krita_live',
+  'mcp__jarvis-desktop__draw_image',
+  'mcp__jarvis-desktop__animate_sequence',
   'mcp__jarvis-desktop__blender_python',
 ];
 

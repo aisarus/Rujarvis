@@ -31,6 +31,7 @@ import { inkOfPage, probePage, ridePage } from './pageTravel';
 import * as live from './blenderLive';
 import * as krita from './kritaLive';
 import * as comfy from './comfy';
+import * as mid from './inbetween';
 import { makePlan, markStep, renderPlan, type StepState } from '../agent/plan';
 import { buildSkillFile, isSelfAuthored, skillPath } from '../skills/author';
 import { CuaDriver } from './cua';
@@ -1224,6 +1225,59 @@ ${хвост}` : ''}`,
             { type: 'image' as const, data: данные, mimeType: 'image/png' },
           ],
         };
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'animate_sequence',
+    {
+      title: 'Собрать анимацию из ключевых кадров',
+      description:
+        'Берёт папку с ключевыми рисунками и делает из них ролик: промежутки, ' +
+        'смазы, импакт-фреймы, сборка. Порядок кадров — порядок имён файлов, ' +
+        'поэтому называй их 01, 02, 03. ' +
+        'Промежутки считаются по оптическому потоку ИЗ самих кадров, а не ' +
+        'дорисовываются: иначе между соседними кадрами поедут складки и цвет. ' +
+        'Где позы слишком далеки друг от друга, вместо промежутка сам встаёт ' +
+        'смаз — это решается замером, а не на глаз. ' +
+        'Частота низкая нарочно: в аниме кадр держат по две-три экранных.',
+      inputSchema: {
+        keys: z.string().describe('Папка с ключевыми кадрами'),
+        name: z.string().optional().describe('Имя ролика без расширения'),
+        between: z.number().optional().describe('Промежутков между соседними кадрами (по умолчанию 3)'),
+        fps: z.number().optional().describe('Кадров в секунду (по умолчанию 12)'),
+        impacts: z.array(z.number()).optional()
+          .describe('После каких ключей ставить импакт-фрейм, считая с единицы'),
+      },
+    },
+    async ({ keys, name, between, fps, impacts }) => {
+      try {
+        const папка = files.outputFolder();
+        const имя = (name?.trim() || 'анимация').replace(/[\/:*?"<>|]/gu, '_');
+        const путь = path.join(папка, `${имя}.mp4`);
+
+        const итог = await mid.sequence({
+          keys,
+          out: путь,
+          ...(typeof between === 'number' ? { between } : {}),
+          ...(typeof fps === 'number' ? { fps } : {}),
+          ...(Array.isArray(impacts) ? { impacts } : {}),
+        });
+
+        if (!итог.ok) {
+          return {
+            content: [{ type: 'text' as const, text: `Не удалось: ${итог.error ?? 'неизвестно'}` }],
+            isError: true,
+          };
+        }
+        return say(
+          `Готово: ${путь}. Кадров ${итог.frames}, смазов ${итог.smears ?? 0}, ` +
+            `импактов ${итог.impacts ?? 0}. Смаз вместо промежутка значит, что позы ` +
+            `там слишком далеки — если таких мест много, нужны промежуточные ключи.`,
+        );
       } catch (error) {
         return failed(error);
       }
