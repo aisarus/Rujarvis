@@ -32,6 +32,15 @@ export interface ReceiverOptions {
   onPacket(packet: DotaPacket): void;
   /** Нечитаемое тело. Молчать о нём нельзя: это признак беды на той стороне. */
   onJunk?(raw: string): void;
+  /**
+   * Сырое тело до разбора — для записи.
+   *
+   * Разобранный снимок теряет всё, чего мы сегодня не читаем: предметы,
+   * способности, здания, чат-события целиком. Запись нужна именно сырой:
+   * завтрашний порог будет смотреть на то, о чём сегодня никто не думал, и
+   * переигрывать матч заново не выйдет.
+   */
+  onRaw?(raw: string): void;
 }
 
 export interface Receiver {
@@ -46,6 +55,8 @@ export async function startReceiver(options: ReceiverOptions): Promise<Receiver>
     запрос.on('end', () => {
       ответ.writeHead(200, { 'Content-Type': 'text/plain' });
       ответ.end('ok');
+
+      try { options.onRaw?.(тело); } catch { /* запись не должна ронять приём */ }
 
       let сырой: unknown;
       try { сырой = JSON.parse(тело); } catch { options.onJunk?.(тело); return; }

@@ -1,0 +1,225 @@
+/**
+ * Живой помощник в Доте. Говорит, пишет в консоль, ведёт запись.
+ *
+ * ## Почему отдельно от Джарвиса
+ *
+ * Не из спешки, а потому что в игре помощнику **не нужны уши**. Распознавание
+ * речи — единственная тяжёлая часть Джарвиса; оно держит модель в памяти и
+ * жуёт процессор постоянно. Здесь его нет: человеку нужно, чтобы помощник
+ * говорил, а не слушал. Приём пакетов и арифметика по ним стоят долей процента
+ * одного ядра.
+ *
+ * Оверлей появится в Джарвисе, а это — то, с чем можно зайти в игру сегодня.
+ *
+ * ## Как говорит
+ *
+ * Через системный голос Windows: в системе стоит русская «Irina», и ей не нужно
+ * ни модели, ни сети, ни ключа. PowerShell поднимается **один раз** и читает
+ * строки со своего входа. Запускать его на каждую фразу значило бы платить
+ * треть секунды задержки там, где вся фора девять секунд.
+ *
+ * ## Что пишется
+ *
+ * Тот же `gsi.jsonl`, что у разведки, плюс несжатые кадры, когда враг близко.
+ * Каждая игра делает пороги точнее, а полоски здоровья можно откалибровать
+ * только на чистом кадре: сжатие видео съедает насечки.
+ *
+ * ## Запуск
+ *
+ *     pnpm exec tsx scripts/dota-assist.ts
+ *
+ * Остановка — Enter. Дота должна идти с ключом `-gamestateintegration`.
+ */
+import { spawn, type ChildProcess } from 'node:child_process';
+import { createWriteStream, mkdirSync } from 'node:fs';
+import { argv, exit, stdin, stdout } from 'node:process';
+import { join } from 'node:path';
+
+import { advise, createMemory, type OverlayView } from '../jarvis/dota/advice';
+import { startReceiver, type Receiver } from '../jarvis/dota/receiver';
+import { applyPacket, createState, type DotaState } from '../jarvis/dota/state';
+
+const КОРЕНЬ = argv[2] ?? 'C:/Users/ariel/Desktop/Джарвис/разведка-доты';
+
+function метка(): string {
+  const д = new Date();
+  const дв = (n: number) => String(n).padStart(2, '0');
+  return `${д.getFullYear()}-${дв(д.getMonth() + 1)}-${дв(д.getDate())}-${дв(д.getHours())}${дв(д.getMinutes())}`;
+}
+
+const ПАПКА = join(КОРЕНЬ, `игра-${метка()}`);
+const ЧИСТЫЕ = join(ПАПКА, 'чистые');
+mkdirSync(ЧИСТЫЕ, { recursive: true });
+const журнал = createWriteStream(join(ПАПКА, 'gsi.jsonl'), { flags: 'a' });
+
+// ── Голос ───────────────────────────────────────────────────────────────────
+
+/**
+ * Один живой PowerShell вместо запуска на каждую фразу.
+ *
+ * Запуск PowerShell стоит около трети секунды. При форе в девять секунд это
+ * терпимо, но при худшей форе в 1,8 — уже нет, а именно там подсказка и нужна
+ * больше всего.
+ */
+function поднятьГолос(): ChildProcess {
+  const скрипт = [
+    'Add-Type -AssemblyName System.Speech',
+    '$г = New-Object System.Speech.Synthesis.SpeechSynthesizer',
+    // Русский голос, если он есть; иначе системный по умолчанию — лучше
+    // услышать латиницей, чем не услышать вовсе.
+    'try { $г.SelectVoice("Microsoft Irina Desktop") } catch { }',
+    '$г.Rate = 2',
+    'while ($с = [Console]::In.ReadLine()) { $г.SpeakAsyncCancelAll(); $г.Speak($с) }',
+  ].join('; ');
+  return spawn('powershell', ['-NoProfile', '-NonInteractive', '-Command', скрипт],
+    { stdio: ['pipe', 'ignore', 'ignore'] });
+}
+
+const голос = поднятьГолос();
+let сказано = 0;
+
+function сказать(фраза: string): void {
+  сказано += 1;
+  try { голос.stdin?.write(`${фраза}\n`); } catch { /* голос умер — не беда */ }
+}
+
+// ── Чистые кадры ────────────────────────────────────────────────────────────
+
+const ВРАГ_БЛИЗКО = 1200;
+const МЕЖДУ_КАДРАМИ = 8_000;
+const ПРЕДЕЛ_КАДРОВ = 80;
+let последнийКадр = 0;
+let кадров = 0;
+
+function чистыйКадр(имя: string): void {
+  const снимок = spawn('ffmpeg', [
+    '-hide_banner', '-loglevel', 'error',
+    '-f', 'lavfi', '-i', 'ddagrab=output_idx=0:framerate=1',
+    // Выгрузка в оперативную память обязательна: ddagrab отдаёт кадр в памяти
+    // видеокарты, а PNG — программный кодировщик, и без неё ffmpeg отвечает
+    // «Invalid argument» и молча не пишет ничего. Для видео этого не нужно:
+    // NVENC берёт кадры с видеокарты как есть.
+    '-vf', 'hwdownload,format=bgra',
+    '-frames:v', '1', '-y', join(ЧИСТЫЕ, `${имя}.png`),
+  ], { stdio: 'ignore' });
+  снимок.on('error', () => { /* нет ffmpeg — помощник работает дальше */ });
+  кадров += 1;
+}
+
+// ── Приём и советы ──────────────────────────────────────────────────────────
+
+let состояние: DotaState = createState();
+let память = createMemory();
+let последнийВид: OverlayView | null = null;
+let пакетов = 0;
+
+const время = (ч: number | null) => (ч === null
+  ? '--:--'
+  : `${String(Math.floor(Math.abs(ч) / 60)).padStart(2, '0')}:${String(Math.abs(ч) % 60).padStart(2, '0')}`);
+
+let приёмник: Receiver;
+try {
+  приёмник = await поднять();
+} catch (беда) {
+  // Занятый порт — самая частая беда при запуске, и стек вызовов человеку
+  // ничего не объясняет. Причина всегда одна из двух, и обе чинятся за секунду.
+  const код = (беда as { code?: string }).code;
+  if (код === 'EADDRINUSE') {
+    console.log('');
+    console.log('  Порт 39847 занят. Уже запущен другой помощник или разведка.');
+    console.log('  Закрой то окно и запусти заново.');
+    console.log('');
+  } else {
+    console.log(`  не смог подняться: ${беда instanceof Error ? беда.message : String(беда)}`);
+  }
+  exit(1);
+}
+
+function поднять(): Promise<Receiver> {
+  return startReceiver({
+    // Пишем сырое тело, а не разобранный снимок. Разбор теряет всё, чего мы
+    // сегодня не читаем: предметы, способности, здания, чат-события целиком.
+    // Завтрашний порог посмотрит на то, о чём сегодня никто не думал, а
+    // переиграть матч заново не выйдет.
+    //
+    // Тело вставляется строкой, а не через разбор и обратную сборку: так формат
+    // совпадает с записью разведки до символа, и битое тело тоже попадёт в
+    // журнал, а не потеряется на исключении.
+    onRaw: (тело) => { журнал.write(`{"t":${Date.now()},"d":${тело}}\n`); },
+    onPacket: (пакет) => {
+      пакетов += 1;
+
+      состояние = applyPacket(состояние, пакет);
+      const совет = advise(состояние, память, 'full');
+      память = совет.memory;
+      последнийВид = совет.view;
+
+      if (совет.speech) {
+        сказать(совет.speech);
+        stdout.write(`\n  ${время(пакет.clock)}  ${совет.speech}\n`);
+      }
+
+      const свой = пакет.self;
+      if (свой?.alive && пакет.enemies.length > 0 && кадров < ПРЕДЕЛ_КАДРОВ
+          && пакет.at - последнийКадр > МЕЖДУ_КАДРАМИ) {
+        const близко = пакет.enemies.some(
+          (в) => Math.hypot(в.x - свой.x, в.y - свой.y) < ВРАГ_БЛИЗКО,
+        );
+        if (близко) {
+          последнийКадр = пакет.at;
+          чистыйКадр(`${пакет.at}-хп${свой.hp}`);
+        }
+      }
+    },
+    onJunk: () => { /* мусор на порту не наша забота */ },
+  });
+}
+
+// ── Живая строка ────────────────────────────────────────────────────────────
+
+const ЗНАЧОК = { calm: '·', alarm: '!', unknown: '?' } as const;
+
+const тик = setInterval(() => {
+  const в = последнийВид;
+  if (!в) {
+    stdout.write('\r  жду Доту...                                              ');
+    return;
+  }
+  const враг = в.nearestEnemy
+    ? `${в.nearestEnemy.hero.replace('npc_dota_hero_', '')} ${в.nearestEnemy.distance}`
+    : 'никого';
+  stdout.write(
+    `\r  ${ЗНАЧОК[в.danger.level]} ${время(в.clock)} | ${враг.padEnd(24)}`
+    + `| золото ${String(в.gold.amount ?? '—').padEnd(5)}`
+    + `| лагеря ${в.camps.alive}/${в.camps.empty}/${в.camps.stale} `
+    + `| не видно ${в.unseen.length} | сказано ${сказано}   `,
+  );
+}, 1000);
+
+console.log('');
+console.log('  ПОМОЩНИК В ДОТЕ');
+console.log(`  слушаю GSI на 127.0.0.1:${приёмник.port}, говорю голосом Windows`);
+console.log(`  пишу в ${ПАПКА}`);
+console.log('');
+console.log('  Запускай Доту. Закончил — нажми Enter.');
+console.log('');
+
+// ── Остановка ───────────────────────────────────────────────────────────────
+
+let закрываемся = false;
+async function закрыть(): Promise<void> {
+  if (закрываемся) return;
+  закрываемся = true;
+  clearInterval(тик);
+  console.log('\n\n  останавливаюсь...');
+  try { голос.stdin?.end(); голос.kill(); } catch { /* уже мёртв */ }
+  журнал.end();
+  await приёмник.stop();
+  console.log(`  пакетов ${пакетов}, сказано ${сказано}, чистых кадров ${кадров}`);
+  console.log(`  запись: ${ПАПКА}`);
+  exit(0);
+}
+
+stdin.resume();
+stdin.on('data', () => { void закрыть(); });
+process.on('SIGINT', () => { void закрыть(); });

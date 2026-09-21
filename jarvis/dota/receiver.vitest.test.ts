@@ -97,3 +97,33 @@ describe('startReceiver', () => {
     await второй.stop();
   });
 });
+
+describe('запись сырого', () => {
+  it('отдаёт тело до разбора', async () => {
+    const сырые: string[] = [];
+    приёмник = await startReceiver({
+      port: 0,
+      onPacket: () => {},
+      onRaw: (т) => { сырые.push(т); },
+    });
+
+    const тело = JSON.stringify(бой.d);
+    await послать(приёмник.port, тело);
+
+    expect(сырые).toEqual([тело]);
+  });
+
+  it('ошибка записи не мешает разбору', async () => {
+    // Журнал не та вещь, ради которой стоит потерять пакет.
+    const пришли: DotaPacket[] = [];
+    приёмник = await startReceiver({
+      port: 0,
+      onPacket: (п) => { пришли.push(п); },
+      onRaw: () => { throw new Error('диск полон'); },
+    });
+
+    await послать(приёмник.port, JSON.stringify(бой.d));
+
+    expect(пришли).toHaveLength(1);
+  });
+});
