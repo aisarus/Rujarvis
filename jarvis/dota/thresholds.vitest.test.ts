@@ -27,9 +27,11 @@ function пакет(враги: MapObject[], хп = 100, жив = true): DotaPac
     gold: 0,
     lastHits: 0,
     deaths: 0,
+    team: 3,
     enemies: враги,
     allies: [],
     neutrals: [],
+    vision: [],
     events: [],
   };
 }

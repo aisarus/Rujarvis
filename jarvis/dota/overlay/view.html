@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Оверлей Доты</title>
+<style>
+  /*
+   * Оверлей поверх игры.
+   *
+   * Правила, из которых всё остальное следует:
+   *
+   * 1. Ничего не перекрывать. Дота показывает важное в центре и внизу; мы
+   *    живём по краю у миникарты, где у игры пусто.
+   * 2. Читаться боковым зрением. В замесе на оверлей не смотрят — его
+   *    замечают. Поэтому цвет и размер, а не текст.
+   * 3. Не изображать знание. «Давно не смотрели» рисуется иначе, чем «пусто»,
+   *    и никогда не выглядит уверенно.
+   */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 1920px; height: 1080px;
+    overflow: hidden;
+    background: transparent;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  #фон { position: absolute; inset: 0; width: 1920px; height: 1080px; }
+
+  /* ── Полоса опасности: над миникартой, во всю её ширину ─────────────── */
+
+  #опасность {
+    position: absolute;
+    left: 1677px; top: 796px; width: 238px; height: 30px;
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px; font-weight: 600; letter-spacing: .02em;
+    text-shadow: 0 1px 2px rgba(0,0,0,.9);
+    border: 1px solid transparent;
+  }
+  #опасность.calm {
+    background: rgba(24, 48, 32, .55); color: #7fd99a; border-color: rgba(127,217,154,.25);
+  }
+  #опасность.alarm {
+    background: rgba(140, 22, 22, .82); color: #fff;
+    border-color: #ff6a5e;
+    box-shadow: 0 0 18px rgba(255,64,48,.55);
+  }
+  /* «Нечем мерить» не притворяется спокойствием: серое и в штриховку. */
+  #опасность.unknown {
+    background: repeating-linear-gradient(135deg,
+      rgba(70,70,78,.55) 0 8px, rgba(46,46,52,.55) 8px 16px);
+    color: #b9b9c2; border-color: rgba(185,185,194,.22);
+  }
+
+  /* ── Столбец слева от миникарты ─────────────────────────────────────── */
+
+  #столбец {
+    position: absolute;
+    /* Левый край, посередине по высоте.
+     *
+     * Два захода до этого были заняты игрой: внизу справа инвентарь, над
+     * миникартой — лента убийств («Zer0 подбирает Aegis» читалось сквозь нашу
+     * плитку). Здесь у Доты нет ничего: голый мир, и глазу до него далеко
+     * ровно настолько, чтобы не отвлекать.
+     *
+     * Срочное живёт не здесь: полоса опасности стоит у миникарты, куда глаз
+     * и так ходит. */
+    left: 10px; top: 470px;
+    width: 208px;
+    display: flex; flex-direction: column; gap: 6px;
+    align-items: stretch;
+  }
+  .плитка {
+    background: rgba(12, 14, 20, .72);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 4px;
+    padding: 6px 9px;
+    color: #d8dbe4;
+    font-size: 13px;
+    display: flex; justify-content: space-between; align-items: baseline;
+    text-shadow: 0 1px 2px rgba(0,0,0,.8);
+  }
+  .плитка .подпись { color: #8a90a0; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  .плитка .число { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  .плитка.горит { border-color: rgba(255,186,64,.55); background: rgba(46,32,8,.8); }
+  .плитка.горит .число { color: #ffc861; }
+  .плитка.тихо .число { color: #d8dbe4; }
+
+  /* Ближайший враг — крупно, это единственное, что читают в замесе. */
+  #враг {
+    background: rgba(12, 14, 20, .78);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 4px; padding: 7px 9px;
+    color: #eceef5; text-shadow: 0 1px 2px rgba(0,0,0,.85);
+  }
+  #враг.близко { border-color: #ff6a5e; background: rgba(70,14,14,.85); }
+  #враг .имя { font-size: 16px; font-weight: 600; text-transform: capitalize; }
+  #враг .метры { font-size: 13px; color: #9aa0b0; font-variant-numeric: tabular-nums; }
+  #враг.близко .метры { color: #ffb4ab; }
+  #враг.пусто { color: #8a90a0; font-size: 13px; }
+
+  /* ── Лагеря на миникарте ────────────────────────────────────────────── */
+
+  #карта { position: absolute; left: 1677px; top: 836px; width: 238px; height: 238px; }
+  .лагерь { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; }
+  .лагерь.alive {
+    background: #c07cff;
+    box-shadow: 0 0 7px rgba(192,124,255,.95);
+    border: 1px solid rgba(255,255,255,.55);
+  }
+  .лагерь.empty { background: rgba(8,6,14,.88); border: 1px solid rgba(192,124,255,.8); }
+  /* Фиолетовый выбран потому, что Дота им на миникарте не пользуется: зелёные
+     точки первого захода сливались с её собственными метками союзников и
+     читались как часть игры. Оверлей должен быть отличим от неё с одного
+     взгляда, иначе человек поверит игре, а увидит нас.
+
+     Не знаем — и выглядим так, чтобы это было видно: пустой блёклый кружок. */
+  .лагерь.stale { background: transparent; border: 1px dashed rgba(192,124,255,.3); }
+
+  #герой {
+    position: absolute; width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px;
+    border: 2px solid #ffd76a; border-radius: 50%;
+    box-shadow: 0 0 8px rgba(255,215,106,.8);
+  }
+
+  /* ── Часы ───────────────────────────────────────────────────────────── */
+
+  #часы {
+    position: absolute; left: 1677px; top: 772px; width: 238px;
+    text-align: center; color: #aeb4c4; font-size: 12px; letter-spacing: .1em;
+    text-shadow: 0 1px 3px rgba(0,0,0,.95);
+    font-variant-numeric: tabular-nums;
+  }
+</style>
+</head>
+<body>
+<img id="фон" alt="">
+<div id="часы"></div>
+<div id="опасность"></div>
+<div id="карта"><div id="герой" hidden></div></div>
+<div id="столбец">
+  <div id="враг" class="пусто">врагов не видно</div>
+  <div class="плитка" id="золото"><span class="подпись">золото</span><span class="число">—</span></div>
+  <div class="плитка" id="выкуп"><span class="подпись">выкуп</span><span class="число">—</span></div>
+  <div class="плитка" id="лагеря"><span class="подпись">лагеря</span><span class="число">—</span></div>
+</div>
+
+<script>
+/*
+ * Границы миникарты сняты с настоящего кадра записи (1920×1080): левый верхний
+ * угол 1677,836, сторона 238. Если человек играет в другом разрешении или с
+ * другим положением интерфейса, меняются только эти числа.
+ *
+ * Мир Доты — квадрат примерно от -8288 до 8288 по обеим осям. Ось Y на
+ * миникарте направлена вниз, в мире — вверх, отсюда вычитание.
+ */
+const КАРТА = { сторона: 238, мир: 8288 };
+
+function наКарте(x, y) {
+  const доля = (v) => (v + КАРТА.мир) / (КАРТА.мир * 2);
+  return { left: доля(x) * КАРТА.сторона, top: (1 - доля(y)) * КАРТА.сторона };
+}
+
+function время(ч) {
+  if (ч === null || ч === undefined) return '--:--';
+  const з = ч < 0 ? '-' : '';
+  const a = Math.abs(ч);
+  return з + String(Math.floor(a / 60)).padStart(2, '0') + ':' + String(a % 60).padStart(2, '0');
+}
+
+function нарисовать(view, фон) {
+  if (фон) document.getElementById('фон').src = фон;
+
+  document.getElementById('часы').textContent = время(view.clock);
+
+  const оп = document.getElementById('опасность');
+  оп.className = view.danger.level;
+  оп.textContent = view.danger.level === 'alarm'
+    ? (view.danger.why || 'опасно').toUpperCase()
+    : view.danger.level === 'unknown' ? 'нечем мерить' : 'спокойно';
+
+  const враг = document.getElementById('враг');
+  if (view.nearestEnemy) {
+    const имя = view.nearestEnemy.hero.replace('npc_dota_hero_', '').replace(/_/g, ' ');
+    враг.className = view.nearestEnemy.distance < 1200 ? 'близко' : '';
+    враг.innerHTML = '<div class="имя">' + имя + '</div>'
+      + '<div class="метры">' + view.nearestEnemy.distance + ' единиц</div>';
+  } else {
+    враг.className = 'пусто';
+    враг.textContent = 'врагов не видно';
+  }
+
+  const золото = document.getElementById('золото');
+  золото.className = 'плитка ' + (view.gold.sitting ? 'горит' : 'тихо');
+  золото.querySelector('.число').textContent = view.gold.amount ?? '—';
+
+  const выкуп = document.getElementById('выкуп');
+  выкуп.querySelector('.число').textContent = view.buyback
+    ? (view.buyback.ready ? view.buyback.cost : 'кд')
+    : '—';
+
+  const л = view.camps;
+  document.getElementById('лагеря').querySelector('.число').textContent =
+    л.alive + ' / ' + л.empty + ' / ' + л.stale;
+
+  const карта = document.getElementById('карта');
+  for (const старый of карта.querySelectorAll('.лагерь')) старый.remove();
+  for (const лагерь of view.campPoints ?? []) {
+    const точка = document.createElement('div');
+    точка.className = 'лагерь ' + лагерь.state;
+    const п = наКарте(лагерь.x, лагерь.y);
+    точка.style.left = п.left + 'px';
+    точка.style.top = п.top + 'px';
+    // Чем старее сведения, тем бледнее точка: уверенность падает плавно, а не
+    // обрывом. «Видел минуту назад» и «видел только что» — разные новости.
+    if (лагерь.ageMs !== null && лагерь.state !== 'stale') {
+      const свежесть = Math.max(0.28, 1 - лагерь.ageMs / 180000);
+      точка.style.opacity = String(свежесть);
+    }
+    карта.appendChild(точка);
+  }
+
+  const герой = document.getElementById('герой');
+  if (view.selfPos) {
+    const п = наКарте(view.selfPos.x, view.selfPos.y);
+    герой.style.left = п.left + 'px';
+    герой.style.top = п.top + 'px';
+    герой.hidden = false;
+  } else герой.hidden = true;
+}
+
+window.нарисовать = нарисовать;
+</script>
+</body>
+</html>

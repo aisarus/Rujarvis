@@ -22,9 +22,11 @@ function пакет(at: number, поверх: Partial<DotaPacket> = {}): DotaPac
     gold: 0,
     lastHits: 0,
     deaths: 0,
+    team: 3,
     enemies: [],
     allies: [],
     neutrals: [],
+    vision: [],
     events: [],
     ...поверх,
   };

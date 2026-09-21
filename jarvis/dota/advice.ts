@@ -23,6 +23,7 @@
  * Память помнит, о чём уже сказано, и молчит, пока повод не сменится.
  */
 import { isFailure, type Gate } from '../measure/gate';
+import type { CampState } from './camps';
 import type { DotaState } from './state';
 import { judgeDanger, judgeGold, type DangerRule, type GoldRule } from './thresholds';
 
@@ -37,6 +38,13 @@ export interface OverlayView {
   gold: { amount: number | null; sitting: boolean };
   buyback: { cost: number; ready: boolean } | null;
   camps: { alive: number; empty: number; stale: number };
+  /**
+   * Те же лагеря, но с координатами и возрастом знания: их надо рисовать на
+   * миникарте, и блёклостью показывать, насколько сведения свежи.
+   */
+  campPoints: readonly { x: number; y: number; state: CampState; ageMs: number | null }[];
+  /** Где стоит герой. Нужно и для рисования, и для проверки пересчёта координат. */
+  selfPos: { x: number; y: number } | null;
   clock: number | null;
 }
 
@@ -120,6 +128,13 @@ export function advise(
     gold: { amount: пакет?.gold ?? null, sitting: isFailure(золото) },
     buyback: свой ? { cost: свой.buybackCost, ready: свой.buybackCooldown === 0 } : null,
     camps: лагеря,
+    campPoints: state.camps.map((л) => ({
+      x: л.x,
+      y: л.y,
+      state: л.state,
+      ageMs: л.seenAt === null || !пакет ? null : пакет.at - л.seenAt,
+    })),
+    selfPos: свой ? { x: свой.x, y: свой.y } : null,
     clock: пакет?.clock ?? null,
   };
 

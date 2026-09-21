@@ -55,6 +55,13 @@ export interface DotaEvent {
   data?: Record<string, unknown>;
 }
 
+/** Источник обзора: кто-то свой и насколько далеко он видит. */
+export interface VisionSource {
+  x: number;
+  y: number;
+  radius: number;
+}
+
 export interface DotaPacket {
   /** Настенное время приёма, миллисекунды. */
   at: number;
@@ -65,9 +72,20 @@ export interface DotaPacket {
   gold: number | null;
   lastHits: number | null;
   deaths: number | null;
+  /** 2 — radiant, 3 — dire. Нужна, чтобы отличить свои глаза от чужих. */
+  team: number | null;
   enemies: MapObject[];
   allies: MapObject[];
   neutrals: MapObject[];
+  /**
+   * Все свои источники обзора: герои, крипы, вышки, варды, курьеры.
+   *
+   * Замер по матчу `9009407694`: если считать видимость только по своему герою,
+   * хоть один лагерь виден в 16,7% живого времени и за игру набирается двенадцать
+   * разных. Со всеми своими глазами — **95,7% и все шестнадцать**. Разница не в
+   * точности, а в том, есть ли прибор вообще.
+   */
+  vision: VisionSource[];
   events: DotaEvent[];
 }
 
@@ -140,15 +158,23 @@ export function readPacket(сырой: unknown, at: number = Date.now()): DotaPa
     };
   }
 
+  const команда = игрок && typeof игрок.team_name === 'string'
+    ? (игрок.team_name === 'dire' ? 3 : игрок.team_name === 'radiant' ? 2 : null)
+    : null;
+
   const враги: MapObject[] = [];
   const союзники: MapObject[] = [];
   const нейтралы: MapObject[] = [];
+  const глаза: VisionSource[] = [];
   const миникарта = (пакет.minimap ?? null) as Record<string, unknown> | null;
   if (миникарта) {
     for (const сырая of Object.values(миникарта)) {
       if (!сырая || typeof сырая !== 'object') continue;
       const о = объект(сырая as Record<string, unknown>);
       if (!о) continue;
+      if (команда !== null && о.team === команда && о.vision > 0) {
+        глаза.push({ x: о.x, y: о.y, radius: о.vision });
+      }
       if (о.icon === 'minimap_enemyicon') враги.push(о);
       else if (о.icon === 'minimap_herocircle' && о.hero && о.hero !== свой?.hero) союзники.push(о);
       else if (о.team === 4) нейтралы.push(о);
@@ -164,9 +190,11 @@ export function readPacket(сырой: unknown, at: number = Date.now()): DotaPa
     gold: игрок ? число(игрок.gold) : null,
     lastHits: игрок ? число(игрок.last_hits) : null,
     deaths: игрок ? число(игрок.deaths) : null,
+    team: команда,
     enemies: враги,
     allies: союзники,
     neutrals: нейтралы,
+    vision: глаза,
     events: события(пакет.events),
   };
 
