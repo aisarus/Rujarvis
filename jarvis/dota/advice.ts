@@ -25,6 +25,7 @@
 import { isFailure, type Gate } from '../measure/gate';
 import type { CampState } from './camps';
 import type { DotaState } from './state';
+import { allyLanding, stackWindow, unseenEnemies, type AllyLanding, type StackWindow, type UnseenEnemy } from './signals';
 import { judgeDanger, judgeGold, type DangerRule, type GoldRule } from './thresholds';
 
 /** Что человек попросил голосом. */
@@ -45,6 +46,16 @@ export interface OverlayView {
   campPoints: readonly { x: number; y: number; state: CampState; ageMs: number | null }[];
   /** Где стоит герой. Нужно и для рисования, и для проверки пересчёта координат. */
   selfPos: { x: number; y: number } | null;
+  /**
+   * Кого давно не видно. Только картинка, никогда не голос: замер по матчу
+   * `9009407694` показал, что как предсказание смерти это негодный сигнал —
+   * пятнадцать срабатываний, четыре смерти. Человек умирает от тех, кого видит.
+   */
+  unseen: readonly UnseenEnemy[];
+  /** Союзник садится рядом — с обратным отсчётом. */
+  landing: AllyLanding | null;
+  /** Можно поставить стак прямо сейчас. */
+  stack: StackWindow | null;
   clock: number | null;
 }
 
@@ -53,6 +64,10 @@ export interface AdviceMemory {
   spokenDanger: number | null;
   /** Когда в последний раз говорили про опасность. */
   dangerSpokenAt: number | null;
+  /** Про какую минуту уже сказали «ставь стак». */
+  spokenStack: number | null;
+  /** Когда говорили про садящегося союзника. */
+  landingSpokenAt: number | null;
   /** О каком накоплении золота уже сказано. */
   spokenGold: number | null;
   /** Горела ли тревога в прошлом пакете — по этому видно начало новой. */
@@ -84,6 +99,8 @@ export function createMemory(): AdviceMemory {
   return {
     spokenDanger: null,
     dangerSpokenAt: null,
+    spokenStack: null,
+    landingSpokenAt: null,
     spokenGold: null,
     dangerWasOn: false,
     dangerSince: null,
@@ -135,6 +152,9 @@ export function advise(
       ageMs: л.seenAt === null || !пакет ? null : пакет.at - л.seenAt,
     })),
     selfPos: свой ? { x: свой.x, y: свой.y } : null,
+    unseen: пакет ? unseenEnemies(state.lastSeenEnemies, пакет.at) : [],
+    landing: пакет ? allyLanding(пакет) : null,
+    stack: пакет ? stackWindow(пакет, state.camps) : null,
     clock: пакет?.clock ?? null,
   };
 
@@ -147,6 +167,8 @@ export function advise(
   let speech: string | null = null;
   let spokenDanger = memory.spokenDanger;
   let dangerSpokenAt = memory.dangerSpokenAt;
+  let spokenStack = memory.spokenStack;
+  let landingSpokenAt = memory.landingSpokenAt;
   let spokenGold = memory.spokenGold;
 
   const сейчас = пакет?.at ?? 0;
@@ -163,8 +185,22 @@ export function advise(
       speech = сказатьПроОпасность(ближайший, view.gold.amount, свой?.hp ?? null);
       spokenDanger = dangerSince;
       dangerSpokenAt = сейчас;
+    } else if (view.landing && (landingSpokenAt === null || сейчас - landingSpokenAt > 10_000)) {
+      // Союзник садится рядом — вторым после опасности. Замер: за матч это
+      // случилось ровно раз, так что шума отсюда быть не может по природе.
+      speech = `свой садится, ${Math.max(1, Math.round(view.landing.seconds))}`;
+      landingSpokenAt = сейчас;
+    } else if (
+      view.stack
+      && view.danger.level === 'calm'
+      && Math.floor((пакет?.clock ?? 0) / 60) !== spokenStack
+    ) {
+      // Стак — только в спокойствии и только про живой лагерь. В замесе эта
+      // подсказка не нужна и мешает, а про пустой лагерь она бессмысленна.
+      speech = 'можно стак';
+      spokenStack = Math.floor((пакет?.clock ?? 0) / 60);
     } else if (isFailure(золото) && state.goldSince !== spokenGold) {
-      // Золото — вторым: опасность важнее денег всегда.
+      // Золото — последним: опасность важнее денег всегда.
       speech = `${пакет?.gold} золота лежит`;
       spokenGold = state.goldSince;
     }
@@ -173,7 +209,10 @@ export function advise(
   return {
     view,
     speech,
-    memory: { spokenDanger, dangerSpokenAt, spokenGold, dangerWasOn: горит, dangerSince },
+    memory: {
+      spokenDanger, dangerSpokenAt, spokenStack, landingSpokenAt, spokenGold,
+      dangerWasOn: горит, dangerSince,
+    },
   };
 }
 

@@ -62,6 +62,21 @@ export interface VisionSource {
   radius: number;
 }
 
+/**
+ * Пинг на миникарте: телепортация союзника, атака базы, поход в лавку.
+ *
+ * У пинга телепортации есть живой обратный отсчёт `remainingtime` — по нему
+ * видно, сколько секунд до приземления. Такого больше нет нигде в канале.
+ */
+export interface MapPing {
+  kind: string;
+  x: number;
+  y: number;
+  /** Секунд осталось. У телепорта считает от трёх к нулю. */
+  remaining: number;
+  duration: number;
+}
+
 export interface DotaPacket {
   /** Настенное время приёма, миллисекунды. */
   at: number;
@@ -86,6 +101,7 @@ export interface DotaPacket {
    * точности, а в том, есть ли прибор вообще.
    */
   vision: VisionSource[];
+  pings: MapPing[];
   events: DotaEvent[];
 }
 
@@ -166,6 +182,7 @@ export function readPacket(сырой: unknown, at: number = Date.now()): DotaPa
   const союзники: MapObject[] = [];
   const нейтралы: MapObject[] = [];
   const глаза: VisionSource[] = [];
+  const пинги: MapPing[] = [];
   const миникарта = (пакет.minimap ?? null) as Record<string, unknown> | null;
   if (миникарта) {
     for (const сырая of Object.values(миникарта)) {
@@ -174,6 +191,16 @@ export function readPacket(сырой: unknown, at: number = Date.now()): DotaPa
       if (!о) continue;
       if (команда !== null && о.team === команда && о.vision > 0) {
         глаза.push({ x: о.x, y: о.y, radius: о.vision });
+      }
+      if (о.icon.startsWith('minimap_ping_')) {
+        const сырьё = сырая as Record<string, unknown>;
+        пинги.push({
+          kind: о.icon.slice('minimap_ping_'.length),
+          x: о.x,
+          y: о.y,
+          remaining: число(сырьё.remainingtime) ?? 0,
+          duration: число(сырьё.eventduration) ?? 0,
+        });
       }
       if (о.icon === 'minimap_enemyicon') враги.push(о);
       else if (о.icon === 'minimap_herocircle' && о.hero && о.hero !== свой?.hero) союзники.push(о);
@@ -195,6 +222,7 @@ export function readPacket(сырой: unknown, at: number = Date.now()): DotaPa
     allies: союзники,
     neutrals: нейтралы,
     vision: глаза,
+    pings: пинги,
     events: события(пакет.events),
   };
 

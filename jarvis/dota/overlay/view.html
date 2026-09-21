@@ -126,10 +126,44 @@
     box-shadow: 0 0 8px rgba(255,215,106,.8);
   }
 
+  /* ── Пропавшие: только картинка, никогда не голос ────────────────────── */
+
+  #пропали {
+    background: rgba(12, 14, 20, .72);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 4px; padding: 6px 9px;
+    color: #d8dbe4; text-shadow: 0 1px 2px rgba(0,0,0,.8);
+  }
+  #пропали .подпись { color: #8a90a0; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  #пропали ul { list-style: none; margin-top: 4px; }
+  #пропали li {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 13px; line-height: 1.5; text-transform: capitalize;
+  }
+  #пропали li span { color: #8a90a0; font-size: 12px; font-variant-numeric: tabular-nums; text-transform: none; }
+  /* Трое и больше — уже разговор про осторожность, а не про счёт. */
+  #пропали.много { border-color: rgba(255,186,64,.5); }
+
+  /* ── Срочные подсказки у миникарты ───────────────────────────────────── */
+
+  #подсказка {
+    position: absolute;
+    left: 1677px; top: 764px; width: 238px;
+    border-radius: 4px; padding: 5px 9px;
+    font-size: 13px; font-weight: 600;
+    text-align: center;
+    background: rgba(18, 36, 60, .85);
+    border: 1px solid rgba(120,180,255,.5);
+    color: #bcd8ff;
+    text-shadow: 0 1px 2px rgba(0,0,0,.9);
+  }
+  #подсказка.стак { background: rgba(38, 30, 8, .85); border-color: rgba(255,200,97,.55); color: #ffd98a; }
+  #подсказка[hidden] { display: none; }
+
   /* ── Часы ───────────────────────────────────────────────────────────── */
 
   #часы {
-    position: absolute; left: 1677px; top: 772px; width: 238px;
+    position: absolute; left: 1677px; top: 740px; width: 238px;
     text-align: center; color: #aeb4c4; font-size: 12px; letter-spacing: .1em;
     text-shadow: 0 1px 3px rgba(0,0,0,.95);
     font-variant-numeric: tabular-nums;
@@ -139,6 +173,7 @@
 <body>
 <img id="фон" alt="">
 <div id="часы"></div>
+<div id="подсказка" hidden></div>
 <div id="опасность"></div>
 <div id="карта"><div id="герой" hidden></div></div>
 <div id="столбец">
@@ -146,6 +181,7 @@
   <div class="плитка" id="золото"><span class="подпись">золото</span><span class="число">—</span></div>
   <div class="плитка" id="выкуп"><span class="подпись">выкуп</span><span class="число">—</span></div>
   <div class="плитка" id="лагеря"><span class="подпись">лагеря</span><span class="число">—</span></div>
+  <div id="пропали"><div class="подпись">не видно</div><ul></ul></div>
 </div>
 
 <script>
@@ -222,6 +258,37 @@ function нарисовать(view, фон) {
     }
     карта.appendChild(точка);
   }
+
+  // Пропавшие: список с давностью. Голосом об этом не говорят — замер показал
+  // пятнадцать срабатываний на четыре смерти, — но глазами человек посмотрит
+  // сам, когда собирается заходить.
+  const пропали = document.getElementById('пропали');
+  const список = пропали.querySelector('ul');
+  список.innerHTML = '';
+  const кого = view.unseen ?? [];
+  пропали.className = кого.length >= 3 ? 'много' : '';
+  if (кого.length === 0) {
+    список.innerHTML = '<li style="color:#8a90a0">все на виду</li>';
+  } else {
+    for (const враг of кого.slice(0, 5)) {
+      const строка = document.createElement('li');
+      const имя = враг.hero.replace('npc_dota_hero_', '').replace(/_/g, ' ');
+      строка.innerHTML = имя + '<span>' + Math.round(враг.ageMs / 1000) + ' с</span>';
+      список.appendChild(строка);
+    }
+  }
+
+  // Срочное у миникарты: садящийся союзник важнее стака, стак важнее тишины.
+  const подсказка = document.getElementById('подсказка');
+  if (view.landing) {
+    подсказка.hidden = false;
+    подсказка.className = '';
+    подсказка.textContent = 'свой садится — ' + Math.max(1, Math.round(view.landing.seconds)) + ' с';
+  } else if (view.stack) {
+    подсказка.hidden = false;
+    подсказка.className = 'стак';
+    подсказка.textContent = 'можно стак — ' + view.stack.seconds + ' с';
+  } else подсказка.hidden = true;
 
   const герой = document.getElementById('герой');
   if (view.selfPos) {

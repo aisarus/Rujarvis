@@ -30,6 +30,13 @@ export interface DotaState {
   deaths: number;
   /** Сколько раз героя убили, считая реинкарнации. */
   caughtOut: number;
+  /**
+   * Когда каждого врага видели в последний раз.
+   *
+   * Только тех, кого хоть раз видели: пока имя не встретилось, мы не знаем
+   * даже, кто против нас, и записывать его в пропавшие нечестно.
+   */
+  lastSeenEnemies: ReadonlyMap<string, number>;
 }
 
 /**
@@ -40,7 +47,14 @@ export interface DotaState {
 export const GOLD_MARK = 2000;
 
 export function createState(): DotaState {
-  return { latest: null, camps: createCamps(), goldSince: null, deaths: 0, caughtOut: 0 };
+  return {
+    latest: null,
+    camps: createCamps(),
+    goldSince: null,
+    deaths: 0,
+    caughtOut: 0,
+    lastSeenEnemies: new Map(),
+  };
 }
 
 export function applyPacket(
@@ -64,11 +78,15 @@ export function applyPacket(
 
   const поймали = state.caughtOut + (былЖив && packet.self?.alive === false ? 1 : 0);
 
+  const видел = new Map(state.lastSeenEnemies);
+  for (const враг of packet.enemies) if (враг.hero) видел.set(враг.hero, packet.at);
+
   return {
     latest: packet,
     camps: packet.self ? updateCamps(state.camps, packet) : state.camps,
     goldSince: золотоС,
     deaths: packet.deaths ?? state.deaths,
     caughtOut: поймали,
+    lastSeenEnemies: видел,
   };
 }

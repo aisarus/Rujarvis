@@ -39,6 +39,7 @@ function пакет(
     enemies: [],
     allies: [],
     vision: глаза,
+    pings: [],
     neutrals: нейтралы.map((н) => ({
       x: ЛАГЕРЬ.x,
       y: ЛАГЕРЬ.y,

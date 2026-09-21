@@ -32,6 +32,7 @@ function пакет(at: number, враги: MapObject[], поверх: Partial<D
     allies: [],
     neutrals: [],
     vision: [],
+    pings: [],
     events: [],
     ...поверх,
   };
