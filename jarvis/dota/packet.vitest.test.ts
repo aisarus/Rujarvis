@@ -50,3 +50,26 @@ describe('readPacket', () => {
     expect(п.neutrals.length).toBeGreaterThanOrEqual(0);
   });
 });
+
+describe('герой без координат', () => {
+  it('пакет не выбрасывается целиком', () => {
+    // 21.09.2026 посреди живой игры вид перестал обновляться: журнал рос, а
+    // окно ушло, решив, что помощник умер. Причина была здесь — весь снимок
+    // отбрасывался, если у героя нет xpos. А в пакете кроме героя есть часы,
+    // золото, предметы, события и вся миникарта.
+    const сырое = бой.d as Record<string, unknown>;
+    const герой = сырое.hero as Record<string, unknown>;
+    const калека = { ...сырое, hero: { ...герой, xpos: null, ypos: null } };
+
+    const п = readPacket(калека, 1000);
+
+    expect(п).not.toBeNull();
+    expect(п!.self).toBeNull();
+    expect(п!.clock).toBe((сырое.map as Record<string, number>).clock_time);
+    expect(п!.enemies.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('и без героя, и без часов — это не игра', () => {
+    expect(readPacket({ hero: { name: 'npc_dota_hero_pudge' } })).toBeNull();
+  });
+});
