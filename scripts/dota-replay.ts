@@ -25,6 +25,7 @@ import { createReadStream } from 'node:fs';
 import { argv, exit } from 'node:process';
 import { createInterface } from 'node:readline';
 
+import { advise, createMemory } from '../jarvis/dota/advice';
 import { readPacket, type DotaPacket } from '../jarvis/dota/packet';
 import { applyPacket, createState } from '../jarvis/dota/state';
 import { judgeDanger, judgeGold } from '../jarvis/dota/thresholds';
@@ -66,6 +67,12 @@ let золотых = 0;
 // реплики. «Сказать один раз» — это один раз про одни деньги.
 let сказаноПро: number | null = null;
 
+// Настоящий голос: то, что человек услышал бы за матч. Порог может ловить всё
+// и при этом говорить двадцать пять раз об одной опасности — счёт реплик это
+// единственное, что такую беду показывает.
+let память = createMemory();
+const реплики: { clock: number | null; текст: string }[] = [];
+
 for (let i = 0; i < пакеты.length; i += 1) {
   const п = пакеты[i];
   const былЖив = пакеты[i - 1]?.self?.alive ?? true;
@@ -78,6 +85,10 @@ for (let i = 0; i < пакеты.length; i += 1) {
     золотых += 1;
     сказаноПро = состояние.goldSince;
   }
+
+  const совет = advise(состояние, память, 'full');
+  память = совет.memory;
+  if (совет.speech) реплики.push({ clock: п.clock, текст: совет.speech });
 
   const ворота = judgeDanger(п);
   if (ворота.passed === false) {
@@ -104,7 +115,7 @@ for (const с of смерти) {
 const впустую = эпизоды.length - сработавшие.size;
 const форы = [...пойманные.values()];
 const средняя = форы.length ? форы.reduce((a, б) => a + б, 0) / форы.length : 0;
-const время = (ч: number | null) => (ч === null
+const времяПеч = (ч: number | null) => (ч === null
   ? '--:--'
   : `${String(Math.floor(Math.abs(ч) / 60)).padStart(2, '0')}:${String(Math.abs(ч) % 60).padStart(2, '0')}`);
 
@@ -114,6 +125,8 @@ console.log(`тревог: ${эпизоды.length}, из них без смер
 console.log(`поймано: ${пойманные.size} из ${смерти.length}`);
 console.log(`фора в среднем: ${средняя.toFixed(1)} с, худшая: ${Math.min(...форы).toFixed(1)} с`);
 console.log(`реплик про золото: ${золотых}`);
+console.log(`вслух за матч: ${реплики.length}`);
+for (const р of реплики) console.log(`   ${времяПеч(р.clock)}  ${р.текст}`);
 
 const упущенные = смерти.filter((с) => !пойманные.has(с));
 if (упущенные.length) {
@@ -123,7 +136,7 @@ if (упущенные.length) {
     const ближайший = с.enemies
       .map((в) => Math.hypot(в.x - с.self!.x, в.y - с.self!.y))
       .sort((a, б) => a - б)[0];
-    console.log(`  ${время(с.clock)}  ближайший враг ${ближайший ? Math.round(ближайший) : 'не виден'}`);
+    console.log(`  ${времяПеч(с.clock)}  ближайший враг ${ближайший ? Math.round(ближайший) : 'не виден'}`);
   }
 }
 
