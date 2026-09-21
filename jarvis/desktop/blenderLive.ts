@@ -58,6 +58,9 @@ const ANSWER_TIMEOUT_MS = 120_000;
 /** Старше этого отметка «жив» означает, что блендера больше нет. */
 const ALIVE_WITHIN_MS = 5_000;
 
+/** Сколько дать занятому сеансу на то, чтобы отозваться. */
+const BUSY_GRACE_MS = 15_000;
+
 export interface LiveResult {
   ok: boolean;
   /** Что скрипт напечатал. */
@@ -268,6 +271,17 @@ export async function waitLive(timeoutMs = 60_000): Promise<boolean> {
 }
 
 /**
+ * Был ли сеанс вообще.
+ *
+ * Отличать «никогда не поднимался» от «поднят, но занят» обязательно: во
+ * втором случае ждать правильно, в первом — значит впустую держать человека
+ * пятнадцать секунд перед честным «его нет». Проверка поймала это сразу.
+ */
+function everLived(): boolean {
+  return existsSync(files().alive);
+}
+
+/**
  * Исполнить скрипт в открытом блендере.
  *
  * Команда пишется через временный файл и переименование: слушатель заглядывает
@@ -276,7 +290,12 @@ export async function waitLive(timeoutMs = 60_000): Promise<boolean> {
 export async function sendLive(code: string): Promise<LiveResult> {
   const { command, answer } = files();
 
-  if (!isLive()) {
+  // Не хоронить с первого взгляда: занятый сеанс выглядит как мёртвый.
+  //
+  // Слушатель живёт на таймере, а скрипт считается на том же потоке. Тяжёлый
+  // модификатор — и следующая команда получала «живого блендера нет» при
+  // работающем окне. Поймано на сборке персонажа: Skin плюс подразделение.
+  if (!isLive() && !(everLived() && (await waitLive(BUSY_GRACE_MS)))) {
     return {
       ok: false,
       printed: '',
@@ -309,7 +328,9 @@ export async function sendLive(code: string): Promise<LiveResult> {
         // Ответ поймали на половине записи — подождём следующий круг.
       }
     }
-    if (!isLive()) {
+    // Принятая команда снимает вопрос: файл снят, значит слушатель её взял и
+    // сейчас считает. Отметка жизни в это время молчит законно.
+    if (existsSync(command) && !isLive()) {
       return { ok: false, printed: '', error: 'блендер закрылся, не ответив' };
     }
     await new Promise((resolve) => setTimeout(resolve, 200));

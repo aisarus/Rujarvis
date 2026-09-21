@@ -47,6 +47,24 @@ export interface DrawRequest {
   saveTo: string;
 }
 
+/** Рисование по заданной позе: скелет OpenPose управляет тем, что рисуется. */
+export interface PosedRequest extends DrawRequest {
+  /**
+   * Имя файла скелета, как он лежит в папке input у ComfyUI.
+   *
+   * Именно имя, а не путь: узел LoadImage читает только оттуда, и это не
+   * ограничение моста, а устройство сервера.
+   */
+  pose: string;
+  /**
+   * Насколько жёстко держаться позы, 0..2.
+   *
+   * Единица — как учили. Ниже — модель вольничает с анатомией, выше — рисунок
+   * деревенеет и начинает походить на раскрашенный скелет.
+   */
+  strength?: number;
+}
+
 export interface DrawResult {
   ok: boolean;
   file?: string;
@@ -128,6 +146,80 @@ function граф(запрос: DrawRequest, model: string, seed: number): Recor
   };
 }
 
+/**
+ * Граф с ControlNet: то же самое плюс скелет.
+ *
+ * Скелет входит не в холст, а в обусловливание: он правит и положительную, и
+ * отрицательную подсказку разом, поэтому узел один, а выходов два.
+ */
+function графПоПозе(
+  запрос: PosedRequest,
+  model: string,
+  controlnet: string,
+  seed: number,
+): Record<string, unknown> {
+  const width = запрос.width ?? 512;
+  const height = запрос.height ?? 512;
+  return {
+    '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: model } },
+    '2': { class_type: 'CLIPTextEncode', inputs: { text: запрос.prompt, clip: ['1', 1] } },
+    '3': {
+      class_type: 'CLIPTextEncode',
+      inputs: { text: запрос.negative ?? ПО_УМОЛЧАНИЮ_НЕ, clip: ['1', 1] },
+    },
+    '4': { class_type: 'EmptyLatentImage', inputs: { width, height, batch_size: 1 } },
+    '8': { class_type: 'LoadImage', inputs: { image: запрос.pose, upload: 'image' } },
+    '9': { class_type: 'ControlNetLoader', inputs: { control_net_name: controlnet } },
+    '10': {
+      class_type: 'ControlNetApplyAdvanced',
+      inputs: {
+        strength: запрос.strength ?? 1.0,
+        start_percent: 0.0,
+        end_percent: 1.0,
+        positive: ['2', 0],
+        negative: ['3', 0],
+        control_net: ['9', 0],
+        image: ['8', 0],
+      },
+    },
+    '5': {
+      class_type: 'KSampler',
+      inputs: {
+        seed,
+        steps: запрос.steps ?? 26,
+        cfg: запрос.cfg ?? 7,
+        sampler_name: 'dpmpp_2m',
+        scheduler: 'karras',
+        denoise: 1,
+        model: ['1', 0],
+        positive: ['10', 0],
+        negative: ['10', 1],
+        latent_image: ['4', 0],
+      },
+    },
+    '6': { class_type: 'VAEDecode', inputs: { samples: ['5', 0], vae: ['1', 2] } },
+    '7': { class_type: 'SaveImage', inputs: { images: ['6', 0], filename_prefix: 'poza' } },
+  };
+}
+
+/** Какие ControlNet сервер видит у себя. */
+export async function controlnets(): Promise<string[]> {
+  try {
+    const ответ = await fetch(`${COMFY_URL}/object_info/ControlNetLoader`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!ответ.ok) return [];
+    const данные = (await ответ.json()) as Record<string, unknown>;
+    const узел = данные['ControlNetLoader'] as
+      | { input?: { required?: { control_net_name?: unknown[] } } }
+      | undefined;
+    const список = узел?.input?.required?.control_net_name?.[0];
+    return Array.isArray(список) ? (список as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 interface Вывод {
   images?: Array<{ filename: string; subfolder: string; type: string }>;
 }
@@ -138,7 +230,34 @@ interface Вывод {
  * Ожидание — опросом истории, а не вебсокетом: опрос переживает разрыв, а
  * узнать надо ровно одно — готово или нет.
  */
+/**
+ * Нарисовать персонажа в заданной позе.
+ *
+ * Отличается от `draw` ровно одним: скелет OpenPose управляет анатомией, а
+ * подсказка — всем остальным. Это и есть способ получить ОДНОГО персонажа в
+ * десяти разных позах: подсказка и зерно одни, меняется только скелет.
+ */
+export async function drawPosed(запрос: PosedRequest): Promise<DrawResult> {
+  const сети = await controlnets();
+  const сеть = сети.find((имя) => имя.includes('openpose')) ?? сети[0];
+  if (!сеть) return { ok: false, error: 'на сервере нет ни одного ControlNet' };
+  return выполнить(запрос, (model, seed) => графПоПозе(запрос, model, сеть, seed));
+}
+
 export async function draw(запрос: DrawRequest): Promise<DrawResult> {
+  return выполнить(запрос, (model, seed) => граф(запрос, model, seed));
+}
+
+/**
+ * Общая работа: собрать граф, поставить в очередь, дождаться, забрать файл.
+ *
+ * Вынесено, потому что у рисования с позой и без неё разный только граф.
+ * Держать две копии ожидания значило бы чинить разрывы дважды.
+ */
+async function выполнить(
+  запрос: DrawRequest,
+  собрать: (model: string, seed: number) => Record<string, unknown>,
+): Promise<DrawResult> {
   if (!(await isUp())) {
     return { ok: false, error: `ComfyUI не отвечает на ${COMFY_URL}` };
   }
@@ -154,7 +273,7 @@ export async function draw(запрос: DrawRequest): Promise<DrawResult> {
     const ответ = await fetch(`${COMFY_URL}/prompt`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ prompt: граф(запрос, model, seed), client_id: 'jarvis' }),
+      body: JSON.stringify({ prompt: собрать(model, seed), client_id: 'jarvis' }),
       signal: AbortSignal.timeout(30_000),
     });
     if (!ответ.ok) {
