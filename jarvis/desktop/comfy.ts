@@ -57,6 +57,15 @@ export interface PosedRequest extends DrawRequest {
    */
   pose: string;
   /**
+   * Какой ControlNet взять: по части имени файла.
+   *
+   * `openpose` задаёт только суставы и недоконтролирует форму — модель
+   * додумывает объём и врёт. `depth` задаёт всё тело, и врать негде. Проверено
+   * 21.09.2026: на openpose модель рисовала лишние конечности и принимала
+   * цветные линии скелета за предметы.
+   */
+  control?: string;
+  /**
    * Насколько жёстко держаться позы, 0..2.
    *
    * Единица — как учили. Ниже — модель вольничает с анатомией, выше — рисунок
@@ -249,7 +258,8 @@ export async function drawPosed(запрос: PosedRequest): Promise<DrawResult>
   }
 
   const сети = await controlnets();
-  const сеть = сети.find((имя) => имя.includes('openpose')) ?? сети[0];
+  const какую = запрос.control ?? 'openpose';
+  const сеть = сети.find((имя) => имя.includes(какую)) ?? сети[0];
   if (!сеть) return { ok: false, error: 'на сервере нет ни одного ControlNet' };
   return выполнить(запрос, (model, seed) => графПоПозе(запрос, model, сеть, seed));
 }
