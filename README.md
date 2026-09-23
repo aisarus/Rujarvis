@@ -26,8 +26,10 @@ synthesis run locally on your own GPU and CPU.
 ## What works today
 
 - **Voice, end to end.** Wake word «Джарвис», push-to-talk on `Ctrl+Space`,
-  mute on `Ctrl+M`. Recognition on the GPU (`whisper large-v3-turbo`, ~425 ms
-  per phrase here) with a CPU fallback; speech through a local Piper voice.
+  mute on `Ctrl+M`. Recognition runs on the GPU (`whisper large-v3-turbo`) with
+  a CPU fallback; speech goes through a local Piper voice. Measured over 1313
+  real phrases from one machine's log: median **630 ms**, mean 851 ms, 87 %
+  under a second, worst case 16 s when the room was noisy.
 - **Direct commands answered instantly**, without a model: scroll, keys, click
   by name, open and close applications, switch windows, dictation.
 - **Long work by one sentence.** The agent writes a plan, marks steps as it
@@ -65,6 +67,15 @@ Windows 11, one line in PowerShell:
 The installer checks Node 22 and pnpm 9 (switching them through fnm and
 corepack when needed), builds the app, downloads a speech model sized to your
 machine, and puts **Rujarvis** in the Start menu.
+
+**Honest status:** this one-liner has not yet been observed to run to the end on
+a clean machine. The last recorded attempt (18 September) got as far as
+`pnpm install` and stopped on an `electron-rebuild` MSBuild failure; the checks
+that caused earlier failures — Node version, pnpm version, MSVC build tools —
+have been fixed since, but nothing past that point has been watched on a fresh
+Windows box. The machine this is developed on was finished by hand. If it
+breaks for you, [docs/jarvis/install.md](docs/jarvis/install.md) has the manual
+path, and an issue with the failing step is genuinely useful.
 
 Then sign in to Claude Code once, in a terminal:
 
@@ -117,6 +128,21 @@ not code that looks right.
 **Comments explain why, not what.** Nearly every odd-looking line here is the
 scar of a specific failure, and the comment says which one. They are in
 Russian, like the rest of the project's prose.
+
+### Checking the claims above
+
+Numbers in this README are measurements, and you should be able to reproduce
+them rather than take them on trust:
+
+| Claim | How to check it |
+| --- | --- |
+| The test count | `pnpm test:vitest` — the summary line is the number |
+| That it builds and passes on something other than this machine | the CI workflow on `main` under the repository's Actions tab |
+| Recognition latency | `[jarvis] услышал за N мс` in `%LOCALAPPDATA%\Rujarvis\data\jarvis.log`; the figures above are the median, mean and 90th percentile of 1313 such lines |
+| The conversation's seven levers | `npm run jarvis:talk-check` — drives a real CLI session and reports which levers reached the task manager |
+
+Anything this README asserts without a way to check it is a bug in the README.
+
 
 ## Documentation
 
