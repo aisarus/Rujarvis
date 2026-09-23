@@ -141,6 +141,7 @@ for (const снимок of снимки) {
   console.log(`  ${имя}  часы ${мм}  опасность ${снимок.view.danger.level}`
     + `  золото ${снимок.view.gold.amount}`
     + `  лагеря ${снимок.view.camps.alive}/${снимок.view.camps.empty}/${снимок.view.camps.stale}`
+    + `  маршрут ${снимок.view.route.length}  угроз ${снимок.view.unseen.length}`
     + (снимок.speech ? `  голос: «${снимок.speech}»` : ''));
 }
 
