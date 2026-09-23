@@ -40,13 +40,17 @@ function buildOverlayHtml(): string {
 <html lang="ru">
 <head><meta charset="utf-8"><title>Jarvis</title>
 <style>
+  /* Без height: 100% — ни у страницы, ни у плашки.
+     Растянутая на окно плашка меряется в собственную высоту окна, и подгонка
+     высоты превращается в круг: окно выросло — плашка «стала выше» — окно
+     выросло ещё. См. подогнатьВысоту ниже. */
   html, body {
-    margin: 0; padding: 0; height: 100%; background: #121216; overflow: hidden;
+    margin: 0; padding: 0; background: #121216; overflow: hidden;
     font-family: "Segoe UI", system-ui, sans-serif; user-select: none;
   }
   #pill {
-    display: flex; align-items: center; gap: 12px; height: 100%;
-    box-sizing: border-box; padding: 0 18px;
+    display: flex; align-items: center; gap: 12px; min-height: 52px;
+    box-sizing: border-box; padding: 14px 18px;
     /* The whole pill is the drag handle — there is nothing to click inside
        it, so every pixel may as well move it. */
     -webkit-app-region: drag; cursor: move;
@@ -112,10 +116,15 @@ let noteUntil = 0;
 // Плашка плавает поверх всего, и фиксированная высота означала обрезанный
 // текст. Меряем после отрисовки и просим главный процесс подогнать окно;
 // потолок ставит он же, чтобы длинная фраза не заняла пол-экрана.
+//
+// Мерить можно только то, что НЕ растянуто на окно. С height: 100% плашка
+// отдавала высоту самого окна, к ней прибавлялись шестнадцать пикселей, окно
+// вырастало — и следующий замер давал ещё больше. Круг упирался в потолок в
+// 280 пикселей, и плашка стояла высокой при любом тексте (замер 23.09.2026).
 let последняяВысота = 0;
 function подогнатьВысоту() {
   requestAnimationFrame(() => {
-    const нужно = Math.ceil(document.getElementById('pill').getBoundingClientRect().height) + 16;
+    const нужно = Math.ceil(document.getElementById('pill').getBoundingClientRect().height) + 2;
     if (нужно === последняяВысота) return;
     последняяВысота = нужно;
     ipcRenderer.send(${JSON.stringify(STATUS_OVERLAY_CHANNEL + ':height')}, нужно);
@@ -296,9 +305,25 @@ function openWindow(pagePath: string): BrowserWindow {
     const нужно = Math.max(HEIGHT, Math.min(MAX_HEIGHT, Math.round(height)));
     const было = window.getBounds();
     if (было.height === нужно) return;
+
+    // Ширина задаётся ЧИСЛОМ, а не берётся из прошлых границ.
+    //
+    // `setBounds({ ...window.getBounds(), height })` выглядит безобидно и
+    // течёт: при масштабе экрана 125% круговорот «прочитал границы — вернул
+    // их обратно» теряет около пяти процентов ширины на каждом вызове.
+    //
+    // Замер 23.09.2026, то же окно, шесть обновлений подряд:
+    //   из getBounds  269 → 255 → 242 → 229 → 215 → 202 → 189
+    //   явной шириной 269 → 307 → 307 → 307 → 307 → 307 → 307
+    //
+    // А обновление приходит на КАЖДУЮ услышанную фразу. За вечер плашка
+    // ужималась с 320 до тридцати с небольшим пикселей: оставалась узкая
+    // полоска с точкой состояния, текст в неё не помещался вовсе, и со
+    // стороны это выглядело как «Джарвис не запустился».
+    //
     // Растём вниз от той же верхней кромки: плашка стоит внизу экрана, и рост
     // вверх выталкивал бы её за край.
-    window.setBounds({ ...было, height: нужно });
+    window.setBounds({ x: было.x, y: было.y, width: WIDTH, height: нужно });
   };
   ipcMain.on(`${STATUS_OVERLAY_CHANNEL}:height`, onHeight);
   window.once('closed', () => {

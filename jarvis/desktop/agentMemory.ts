@@ -47,7 +47,19 @@ function write(notes: Note[]): void {
 /** Stores a fact, replacing any earlier one under the same key. */
 export function remember(key: string, value: string): Note[] {
   const notes = read().filter((note) => note.key.toLowerCase() !== key.toLowerCase());
-  notes.push({ key, value, updatedAt: Date.now() });
+
+  // В НАЧАЛО, а не в конец, и это не вкусовщина.
+  //
+  // Две записи в одну миллисекунду дают в сравнении ноль, а `sort` в
+  // JavaScript устойчив — он сохраняет порядок, в котором элементы лежали.
+  // Запись, положенная в конец, при совпадении времени оказывалась СТАРШЕ
+  // предыдущей: «свежее первым» превращалось в «старое первым».
+  //
+  // Поймано на CI 23.09.2026: локально две записи обычно попадают в разные
+  // миллисекунды и тест проходит, на чужой машине — нет. И это не только про
+  // порядок показа: на заполненном хранилище `slice(0, 200)` при таком же
+  // совпадении выбрасывал бы именно новую запись.
+  notes.unshift({ key, value, updatedAt: Date.now() });
 
   // Bounded on purpose: an unbounded store would eventually be too large to
   // put in front of a model, and the oldest notes are the least useful.

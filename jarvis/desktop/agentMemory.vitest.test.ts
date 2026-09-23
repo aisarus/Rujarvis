@@ -1,7 +1,7 @@
 import { mkdtempSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { forget, recall, remember } from './agentMemory';
 
@@ -44,6 +44,25 @@ describe('память агента между запусками', () => {
     remember('первое', 'раз');
     remember('второе', 'два');
     expect(recall().map((n) => n.key)).toEqual(['второе', 'первое']);
+  });
+
+  it('и остаётся новым первым, когда часы не успели тикнуть', () => {
+    // Здесь тест был случайным: две записи обычно попадают в разные
+    // миллисекунды, и порядок выходил верным сам собой. На CI 23.09.2026 они
+    // попали в одну — и «свежее первым» стало «старое первым», потому что
+    // sort устойчив, а новая запись лежала в конце.
+    //
+    // Часы останавливаются нарочно: совпадение времени должно случаться
+    // всегда, а не раз в сто прогонов.
+    const часы = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+    try {
+      remember('первое', 'раз');
+      remember('второе', 'два');
+      remember('третье', 'три');
+      expect(recall().map((n) => n.key)).toEqual(['третье', 'второе', 'первое']);
+    } finally {
+      часы.mockRestore();
+    }
   });
 
   it('забывает по просьбе и сообщает, было ли что забывать', () => {
