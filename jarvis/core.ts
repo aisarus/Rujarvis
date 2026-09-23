@@ -306,8 +306,21 @@ export class JarvisCore {
    * Returns as soon as the task has been started — it does not wait for the
    * task to finish, because a five-minute coding task must not block the next
    * thing the user says.
+   *
+   * @param asWork Фраза уже признана работой, и спорить об этом не надо.
+   *
+   * Так её присылает разговор: он выслушал человека, понял, что тот просит
+   * дело, и нажал свой рычаг. Пересматривать это решение здесь значит
+   * ответить «Не понял, что именно сделать. Уточни?» на то, о чём уже
+   * договорились, — то есть переспросить вместо работы.
+   *
+   * Разрешения, подтверждение опасного и режим плана остаются: они про то,
+   * МОЖНО ли делать, а не про то, работа ли это.
    */
-  async handleUtterance(utterance: string): Promise<JarvisTurn> {
+  async handleUtterance(
+    utterance: string,
+    { asWork = false }: { asWork?: boolean } = {},
+  ): Promise<JarvisTurn> {
     const settings = this.options.settings();
 
     // 1. Control words never wait on a model. «Стоп» must stop things now.
@@ -414,7 +427,7 @@ export class JarvisCore {
     // маршрут пересчитывался по обеим фразам сразу, «Создай в блендере
     // красную сферу. Спасибо» получало высокую уверенность — и Джарвис делал
     // вторую сферу в ответ на благодарность.
-    if (isPleasantry(utterance)) {
+    if (!asWork && isPleasantry(utterance)) {
       const spoken = 'Пожалуйста.';
       this.say(spoken, settings);
       return { kind: 'chat', spoken };
@@ -482,6 +495,9 @@ export class JarvisCore {
     // получало «Не понял, что именно сделать». Уточнять тут нечего: человек
     // прямо сказал, чего хочет, и хочет он замысла, а не работы.
     if (this.planMode || asksForPlan(utterance)) clarification = null;
+
+    // Разговор уже разобрался, что это работа: переспрашивать некого.
+    if (asWork) clarification = null;
 
     if (clarification) {
       this.say(clarification, settings);
@@ -557,7 +573,7 @@ export class JarvisCore {
     // плана, ни окна — только ответ вслух. Задача при этом не заводится, и
     // индикатор жёлтый, чтобы человек с одного взгляда видел, что его поняли
     // как разговор.
-    if (isTalk(decision)) {
+    if (!asWork && isTalk(decision)) {
       const spoken = await this.answerAloud(utterance, settings, decision.needs.includes('memory'));
       return { kind: 'chat', spoken };
     }

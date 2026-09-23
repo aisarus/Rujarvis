@@ -452,6 +452,48 @@ describe('clarification', () => {
   });
 });
 
+describe('работа по просьбе разговора', () => {
+  it('не переспрашивает: разговор уже договорился с человеком', async () => {
+    // «Ну это» само по себе — повод уточнить. Но если так сказал разговор,
+    // значит он уже выслушал человека и решил. Переспрос здесь — это ответ
+    // «не понял» на то, о чём только что договорились.
+    const h = harness();
+    const turn = await h.core.handleUtterance('ну это', { asWork: true });
+
+    expect(turn.kind).toBe('task');
+  });
+
+  it('не отвечает словами на то, что велено сделать', async () => {
+    // Вопросительная по форме просьба («можешь посмотреть, что там с
+    // отчётом») разбирается как разговор и получала бы ответ вслух вместо
+    // работы.
+    const h = harness();
+    const turn = await h.core.handleUtterance('кто написал войну и мир', { asWork: true });
+
+    expect(turn.kind).toBe('task');
+    expect(h.recorded.length).toBeGreaterThan(0);
+  });
+
+  it('вежливость, присланная как работа, работой и становится', async () => {
+    const h = harness();
+    expect((await h.core.handleUtterance('спасибо', { asWork: true })).kind).toBe('task');
+    // А сама по себе — по-прежнему вежливость.
+    expect((await h.core.handleUtterance('спасибо')).kind).toBe('chat');
+  });
+
+  it('опасное всё так же спрашивает: asWork про «что», а не про «можно ли»', async () => {
+    const h = harness();
+    h.approve.value = false;
+
+    const turn = await h.core.handleUtterance('найди файл и отправь его Максу в телеграм', {
+      asWork: true,
+    });
+
+    expect(h.approvals.length).toBeGreaterThan(0);
+    expect(turn.kind).toBe('refused');
+  });
+});
+
 describe('memory and context selection', () => {
   it('sends only the memory the utterance touches', async () => {
     const h = harness();

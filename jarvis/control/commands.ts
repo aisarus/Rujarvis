@@ -40,6 +40,7 @@ export type DirectCommand =
   | { kind: 'mode'; show: boolean }
   | { kind: 'dotaOverlay'; mode: 'full' | 'silent' | 'off' }
   | { kind: 'selfDestruct' }
+  | { kind: 'forgetTalk' }
   | { kind: 'longSpeech' }
   | { kind: 'repeat'; times: number; command: RepeatableCommand };
 
@@ -173,6 +174,25 @@ const KILL_ALL = [
 
 /** Для сторожа красных линий: аварийные слова тоже не должны красть заглушение. */
 export const KILL_PHRASES: readonly string[] = KILL_ALL;
+
+/**
+ * Начать разговор заново.
+ *
+ * Нить разговора держит живая сессия, и обычно это благо: «а почему?» есть о
+ * чём спросить. Но когда человек переходит к другому делу, старая нить тянет
+ * за собой чужой замысел и чужие предположения.
+ *
+ * Проверяется здесь, среди прямых команд, а не внутри самого разговора:
+ * просьба закрыть сессию не должна зависеть от той сессии, которую закрывают.
+ */
+const FORGET_TALK = [
+  'забудь разговор', 'забудь наш разговор', 'забудь о чём говорили',
+  'забудь о чем говорили', 'начнём разговор заново', 'начнем разговор заново',
+  'новый разговор',
+];
+
+/** Для сторожа красных линий. */
+export const FORGET_TALK_PHRASES: readonly string[] = FORGET_TALK;
 
 /** Сетка с номерами: показать и убрать. */
 const GRID_ON = ['сетка', 'покажи сетку', 'включи сетку', 'номера'];
@@ -559,6 +579,8 @@ function readDirect(phrase: string): DirectCommand | null {
   // Аварийный выключатель проверяется раньше остальных: если он когда-нибудь
   // столкнётся с чужой фразой, выиграть должен он.
   if (KILL_ALL.includes(phrase)) return { kind: 'selfDestruct' };
+
+  if (FORGET_TALK.includes(phrase)) return { kind: 'forgetTalk' };
 
   if (DOTA_FULL.includes(phrase)) return { kind: 'dotaOverlay', mode: 'full' };
   if (DOTA_SILENT.includes(phrase)) return { kind: 'dotaOverlay', mode: 'silent' };

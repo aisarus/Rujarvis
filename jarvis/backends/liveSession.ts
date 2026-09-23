@@ -32,6 +32,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
 import { EventChannel } from './process';
+import { forgetChild, trackChild } from '../tasks/reaper';
 import type { BackendEvent, BackendResult, BackendRun } from './types';
 
 const BACKEND_ID = 'claude-code' as const;
@@ -185,7 +186,15 @@ export class LiveSession {
     return (this.options.now ?? Date.now)();
   }
 
-  private start(): void {
+  /**
+   * Поднять процесс, не тратя хода.
+   *
+   * Обычно это делает первый же вопрос, и человек платит за подъём своим
+   * ожиданием: процесс CLI, его MCP-серверы и рукопожатие с ними — это секунды.
+   * Разговору важно успеть до первой фразы, поэтому подъём можно позвать
+   * заранее. Повторный вызов ничего не стоит.
+   */
+  warm(): void {
     if (this.child) return;
     const spawnIt = this.options.spawnProcess ?? spawn;
     const child = spawnIt(this.options.command, buildLiveArgs(this.options.key, this.options.extraArgs), {
@@ -195,6 +204,15 @@ export class LiveSession {
       windowsHide: true,
     });
     this.child = child;
+
+    // Отмечаем своего: аварийное «убейся» бьёт только по этому списку.
+    //
+    // Живые сессии сюда не попадали, и это дырка в выключателе: сессия — это
+    // процесс CLI со своим MCP-сервером и PowerShell, ровно тот набор, который
+    // за сутки небрежности накопился здесь на 956 МБ. Разовые прогоны
+    // отмечаются давно (`process.ts`), живые — теперь тоже.
+    trackChild(child.pid);
+    child.on('exit', () => forgetChild(child.pid));
 
     child.stdout?.setEncoding('utf-8');
     child.stdout?.on('data', (chunk: string) => this.take(chunk));
@@ -332,7 +350,7 @@ export class LiveSession {
         return;
       }
 
-      this.start();
+      this.warm();
       const timer = setTimeout(
         () => this.die('Сессия молчит слишком долго'),
         this.options.turnTimeoutMs ?? TURN_TIMEOUT_MS,

@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { LiveSession, buildLiveArgs, sameSession, userMessage, type SessionKey } from './liveSession';
+import { forgetChild, trackedChildren } from '../tasks/reaper';
 import type { BackendEvent } from './types';
 
 const NL = String.fromCharCode(10);
@@ -59,13 +60,14 @@ describe('реплика человека', () => {
 });
 
 /** Подставной процесс: отвечает тем, что ему велят, и помнит, что получил. */
-function поддельныйПроцесс() {
+function поддельныйПроцесс(pid = 0) {
   const child = new EventEmitter() as EventEmitter & {
     stdout: EventEmitter & { setEncoding: () => void };
     stderr: EventEmitter;
     stdin: { write: (s: string) => void };
     kill: () => void;
     exitCode: number | null;
+    pid: number;
   };
   const stdout = Object.assign(new EventEmitter(), { setEncoding: () => {} });
   const написано: string[] = [];
@@ -74,6 +76,7 @@ function поддельныйПроцесс() {
   child.stdin = { write: (s: string) => { написано.push(s); } };
   child.kill = () => { child.exitCode = 0; child.emit('exit', 0); };
   child.exitCode = null;
+  child.pid = pid;
 
   const сказать = (obj: unknown): void => { stdout.emit('data', JSON.stringify(obj) + NL); };
   return { child, написано, сказать };
@@ -362,5 +365,33 @@ describe('потолок на ход', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('аварийный выключатель достаёт и живые сессии', () => {
+  // Сессия — это процесс CLI со своим MCP-сервером и PowerShell, тот самый
+  // набор, который за сутки небрежности накопился здесь на 956 МБ. Разовые
+  // прогоны отмечались давно, живые не отмечались вовсе — и «убейся» проходило
+  // мимо них.
+  const PID = 987_654;
+
+  afterEach(() => {
+    forgetChild(PID);
+  });
+
+  it('pid попадает в реестр при подъёме', () => {
+    const п = поддельныйПроцесс(PID);
+    сессия(п).warm();
+
+    expect(trackedChildren()).toContain(PID);
+  });
+
+  it('и уходит из реестра, когда процесс кончился', () => {
+    const п = поддельныйПроцесс(PID);
+    const s = сессия(п);
+    s.warm();
+    п.child.kill();
+
+    expect(trackedChildren()).not.toContain(PID);
   });
 });

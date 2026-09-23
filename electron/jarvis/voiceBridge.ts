@@ -71,7 +71,10 @@ import { startLogFile } from './logFile';
 import { createGridOverlay, type GridOverlay } from './gridOverlay';
 import { createHelpOverlay, type HelpOverlay } from './helpOverlay';
 import { createLogWindow, type LogWindow } from './logWindow';
-import { askAbout, obviousAside, readAnswer } from '../../jarvis/dialogue/aside';
+import { obviousAside } from '../../jarvis/dialogue/aside';
+import { TalkBridge } from '../../jarvis/dialogue/talkBridge';
+import { TalkSession } from '../../jarvis/dialogue/talkSession';
+import { ЭХО_РАЗГОВОРА } from '../../jarvis/dialogue/workDelta';
 import { RunLogStore } from '../../jarvis/observe/runLogStore';
 import { Storyline } from '../../jarvis/observe/storyline';
 import { StartupTiming } from '../../jarvis/observe/timing';
@@ -81,8 +84,7 @@ import { NoteStore } from '../../jarvis/dialogue/noteStore';
 import { describeLessons, lessonsFrom } from '../../jarvis/memory/lessons';
 import { PlanStore } from '../../jarvis/agent/planStore';
 import { planSummary, renderPlan } from '../../jarvis/agent/plan';
-import { isTalk } from '../../jarvis/core';
-import { route } from '../../jarvis/router/router';
+import { SpeechQueue } from '../../jarvis/voice/speechQueue';
 import { createStatusOverlay, type StatusOverlay } from './statusOverlay';
 
 /** Ctrl+Space is what `jarvis:setup` tells the user to press. */
@@ -227,59 +229,9 @@ let lastCell: number | null = null;
  */
 let thoughtRef: UtteranceBuffer | null = null;
 let overlayRef: StatusOverlay | null = null;
-
-/** Дольше этого ответ уже не нужен: человек давно говорит о другом. */
-const QUICK_ANSWER_MS = 15_000;
-
-/**
- * Короткий вопрос к модели без инструментов и без MCP.
- *
- * Через тот же Claude Code, что ведёт работу, — то есть по подписке и без
- * единого ключа. Инструменты и серверы отключены нарочно: вопрос требует
- * одного слова, а прогрев MCP-сервера стоил бы вдвое дороже самого ответа.
- *
- * Возвращает null на любую заминку. Это весь договор: вызывающий обязан уметь
- * жить без ответа, иначе молчащая модель остановит работу.
- */
-function askQuickly(question: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    let done = false;
-    const finish = (answer: string | null): void => {
-      if (done) return;
-      done = true;
-      resolve(answer);
-    };
-
-    try {
-      const child = spawn('claude', ['-p', '--model', 'haiku', '--strict-mcp-config'], {
-        shell: true,
-        stdio: ['pipe', 'pipe', 'ignore'],
-      });
-      const timer = setTimeout(() => {
-        child.kill();
-        finish(null);
-      }, QUICK_ANSWER_MS);
-      timer.unref?.();
-
-      let out = '';
-      child.stdout?.on('data', (chunk: Buffer) => {
-        out += chunk.toString('utf8');
-      });
-      child.on('error', () => {
-        clearTimeout(timer);
-        finish(null);
-      });
-      child.on('exit', (code) => {
-        clearTimeout(timer);
-        finish(code === 0 && out.trim() ? out.trim() : null);
-      });
-      child.stdin?.write(question);
-      child.stdin?.end();
-    } catch {
-      finish(null);
-    }
-  });
-}
+let talkRef: TalkSession | null = null;
+/** Как остановить мост разговора при выходе. */
+let stopTalkBridge: (() => void) | null = null;
 
 /**
  * Убрать обращение в начале — и только в начале.
@@ -420,6 +372,13 @@ async function runDirectCommand(command: DirectCommand, session: VoiceSession): 
         await session.speak(сколько > 0 ? `Убил ${сколько}.` : 'Некого убивать.');
         break;
       }
+      case 'forgetTalk':
+        // Нить рвётся здесь, а не в самой сессии: просьба закрыть разговор не
+        // должна зависеть от разговора, который закрывают.
+        talkRef?.forget('Человек попросил начать заново');
+        note('command', 'забыл нить разговора', ЭХО_РАЗГОВОРА);
+        await session.speak('Забыл. Начинаем заново.');
+        break;
       case 'dotaOverlay':
         // Окна ещё нет, и делать вид, что есть, нельзя: «показал» без
         // показанного — та самая болезнь, от которой лечится весь этот код.
@@ -534,6 +493,8 @@ function describeDirect(command: DirectCommand): string {
       return command.show ? 'работаю на виду' : 'работаю в фоне';
     case 'selfDestruct':
       return 'убил процессы агента';
+    case 'forgetTalk':
+      return 'начал разговор заново';
     case 'dotaOverlay':
       return `оверлей: ${command.mode}`;
     case 'longSpeech':
@@ -544,9 +505,9 @@ function describeDirect(command: DirectCommand): string {
 }
 
 /** Записать событие. Журнал не та вещь, ради которой стоит уронить ответ. */
-function note(kind: EventKind, text: string): void {
+function note(kind: EventKind, text: string, subject?: string): void {
   try {
-    journal?.record({ kind, text });
+    journal?.record({ kind, text, ...(subject ? { subject } : {}) });
   } catch (error) {
     console.error('[jarvis] не записал в журнал:', error);
   }
@@ -656,114 +617,34 @@ export async function startJarvisVoiceBridge(options: {
 
       console.log(`[jarvis] мысль целиком: ${whole}`);
 
-      // Работа уже идёт — значит это поправка к ней, а не новая задача.
+      // Дальше решает разговор, а не таблица слов-примет.
       //
-      // Раньше сказанное во время работы плодило вторую задачу: в журнале
-      // видно три «Работаю» подряд, пока первая ещё считалась. Человек просил
-      // обратного — «продолжать диалог не прерывая работу и вносить изменения
-      // по ходу дела».
+      // Здесь стояла угадайка: «а пока» значило вторую задачу, «туда же» —
+      // поправку, вопрос отличался от не-вопроса знаком, а всё непонятое
+      // падало в ящик правок с ответом «Учту». Человек спросил «ты понял что
+      // надо делать?», получил «Учту» и тишину — и был прав, что возмутился.
       //
-      // Слова остановки, тишина и прямые команды сюда не доходят: они
-      // разобраны выше и обязаны срабатывать всегда.
-      /**
-       * Завести вторую задачу, не трогая первую.
-       *
-       * Обычный путь и есть нужный: менеджер задач переводит идущую работу в
-       * фон и продолжает её, а новая становится передней. Своего запуска тут
-       * заводить не надо — потеряется маршрутизация и имя задачи.
-       */
-      const startAlongside = (text: string): void => {
-        console.log(`[jarvis] вторая задача: ${text}`);
-        note('command', `параллельно: ${text}`);
-        void session.acceptAmbientTranscript(text).catch((error: unknown) => {
-          console.error('[jarvis] не удалось завести вторую задачу:', error);
-        });
-      };
+      // Слова остановки, «тишина» и прямые команды сюда не доходят: они
+      // разобраны выше и обязаны срабатывать мгновенно. Всё остальное —
+      // разговор, и он же решает, отвечать, поправлять, заводить работу или
+      // гасить её.
+      //
+      // Цена названа заранее: ответ стоит три-пять секунд против мгновенного
+      // «Учту». Человек выбрал это сам.
 
-      /**
-       * Спросить в фоне, не поправка ли это была.
-       *
-       * Ждать ответа нельзя: замер 20.09.2026 дал 7–10 секунд даже у самой
-       * быстрой модели, а человек просил, чтобы работа не спотыкалась. Поэтому
-       * реплика уже засчитана поправкой, а здесь она может быть повышена до
-       * отдельной задачи задним числом.
-       *
-       * Если агент успел забрать заметку раньше ответа — оставляем как есть:
-       * работа по ней уже идёт, и вторая задача была бы дублем.
-       */
-      const maybeSeparate = async (text: string, title: string): Promise<void> => {
-        const answer = await askQuickly(askAbout(text, title));
-        if (!answer) return;
-        if (readAnswer(answer).kind !== 'task') return;
-        if (!notes?.drop(text)) {
-          console.log(`[jarvis] «${short(text)}» уже забрали в работу — оставляю поправкой`);
-          return;
-        }
-        startAlongside(text);
-      };
-
-      const working = jarvis.tasks.foreground();
-      if (working) {
-        const obvious = obviousAside(whole);
-
-        // Вежливость, обрывки и выдумки распознавателя не значат ничего.
-        // Иначе в ящик падает всё подряд, а потом становится работой, о
-        // которой человек не просил.
-        if (obvious?.kind === 'ignore') {
-          console.log(`[jarvis] мимо (${obvious.why}): ${whole}`);
-          return;
-        }
-
-        // Сказал прямо — делаем прямо, без чужого мнения.
-        if (obvious?.kind === 'task') {
-          startAlongside(whole);
-          return;
-        }
-
-        // Вопрос во время работы — это вопрос, а не поправка.
-        //
-        // Человек спросил «ты понял что надо делать?» и получил «Учту» и
-        // тишину. И был прав, что возмутился: он задал вопрос, а его реплику
-        // положили в ящик поправок, где ответа не предусмотрено вовсе.
-        //
-        // Отвечает Джарвис сам, не трогая агента: план и ход работы лежат в
-        // файле, читаются мгновенно и ничего не стоят. Спрашивать занятого
-        // агента значило бы ждать до конца его хода — то есть до конца работы.
-        //
-        // В ящик такая реплика НЕ кладётся: поправки в ней нет, а положенное
-        // туда агент обязан исполнить.
-        // Разрешения здесь не важны: вопрос отличается намерением и умениями,
-        // а не тем, что ему позволено.
-        const спрошено = route(whole);
-        if (спрошено.asks && isTalk(спрошено)) {
-          console.log(`[jarvis] вопрос во время работы: ${whole}`);
-          overlay.note(session.status, `Отвечаю: ${short(whole)}`);
-          void jarvis.core.answerQuestion(whole).catch((error: unknown) => {
-            console.error('[jarvis] не удалось ответить на вопрос:', error);
-          });
-          return;
-        }
-
-        // Остальное кладём в ящик СЕЙЧАС и спрашиваем в фоне.
-        //
-        // Спросить и подождать ответа нельзя: замер 20.09.2026 дал 7–10 секунд
-        // на решение, а человек просил, чтобы работа не спотыкалась. Поэтому
-        // поправка засчитывается сразу, а если решение окажется «отдельно» —
-        // заметка превратится в задачу задним числом.
-        notes?.add(whole);
-        note('command', `сказал во время работы: ${whole}`);
-        story?.heard(whole, Date.now());
-        console.log(`[jarvis] правка на ходу: ${whole}`);
-        overlay.note(session.status, `Учту: ${short(whole)}`);
-        void session.speak('Учту.');
-
-        if (!obvious) void maybeSeparate(whole, working.title);
+      // Вежливость и обрывки распознавателя в разговор не идут: три секунды
+      // модели за «ага» — плохая сделка, и отвечать там нечего.
+      const пустое = obviousAside(whole);
+      if (пустое?.kind === 'ignore') {
+        console.log(`[jarvis] мимо (${пустое.why}): ${whole}`);
         return;
       }
 
-      note('command', `просил: ${whole}`);
-      void session.acceptAmbientTranscript(whole).catch((error: unknown) => {
-        console.error('[jarvis] не удалось передать задачу:', error);
+      note('command', `сказал: ${whole}`, ЭХО_РАЗГОВОРА);
+      story?.heard(whole, Date.now());
+      overlay.note(session.status, `Слушаю: ${short(whole)}`);
+      void talk.hear(whole).catch((error: unknown) => {
+        console.error('[jarvis] разговор не справился:', error);
       });
     }, Math.max(50, thought.msUntilComplete()));
 
@@ -912,6 +793,110 @@ export async function startJarvisVoiceBridge(options: {
       actionInFlight = null;
     }
   };
+
+  /**
+   * Разговор, идущий вторым потоком рядом с работой.
+   *
+   * Всё, что не разобрано выше как прямая команда, попадает сюда — и решает
+   * человек в разговоре, а не таблица слов-примет. До 22.09.2026 решала
+   * таблица: «а пока» значило вторую задачу, «туда же» — поправку, а вопрос
+   * отличался от не-вопроса знаком. Человек сказал про это прямо, когда на
+   * «ты понял что надо делать?» получил «Учту» и тишину.
+   *
+   * Руки у разговора чужие: пять глаголов, и каждый из них идёт через
+   * рабочий поток со всеми разрешениями человека.
+   */
+  const talkBridgeDir = path.join(path.dirname(journalFile()), 'talk-bridge');
+  const talk = new TalkSession({
+    cliPath: async () => {
+      const все = await jarvis.backends.availability();
+      const клод = все.find((b) => b.id === 'claude-code');
+      return клод?.ready && клод.path ? клод.path : null;
+    },
+    // Дом Джарвиса, а не рабочая папка: разговору нечего делать в коде.
+    cwd: jarvisHome(),
+    mcpConfig: writeTalkMcpConfig(talkBridgeDir),
+    delta: { journalFile: journalFile(), planFile: planFile() },
+    state: () => {
+      const план = plans?.read() ?? null;
+      return {
+        work: план ? renderPlan(план).split('\n') : [],
+        recent: journal?.context() ?? [],
+        instructions: instructions.read(),
+      };
+    },
+    // Через сессию, а не мимо неё: у ответа должен быть свой значок, а окно
+    // слушания обязано открыться заново от конца фразы.
+    speak: (text) => session.speak(text),
+    log: (line) => console.log(`[jarvis] ${line}`),
+  });
+  talkRef = talk;
+
+  // Подъём сессии — в момент запуска, когда никто не ждёт.
+  //
+  // Замер живой проверки: первая фраза за вечер 12,7 с, третья 5,8 с. Большая
+  // часть разницы — не размышление, а подъём процесса CLI и его MCP-сервера.
+  // Ход при этом не тратится: молчащий процесс стоит памяти, но не подписки.
+  void talk.warm().catch((error: unknown) => {
+    console.error('[jarvis] не удалось прогреть разговор:', error);
+  });
+
+  // Два глагола из пяти живут здесь: менеджер задач — в этом процессе, а
+  // рычаги разговора — в чужом.
+  const talkBridge = new TalkBridge(talkBridgeDir);
+  // Просьба, пережившая перезапуск, — не память, а неожиданность.
+  talkBridge.clear();
+  stopTalkBridge = talkBridge.serve((request) => {
+    if (request.kind === 'stop') {
+      const работа = jarvis.tasks.foreground();
+      if (!работа) return { ok: false, text: 'Сейчас ничего не идёт.' };
+      jarvis.tasks.cancel(работа.id);
+      note('command', `разговор остановил: ${работа.title}`);
+      console.log(`[jarvis] разговор остановил работу: ${работа.title}`);
+      return { ok: true, text: `Остановил: ${работа.title}` };
+    }
+
+    if (request.kind === 'pause') {
+      // Отложить — не то же, что погасить: сессия агента остаётся, и он
+      // продолжит с того места, а не начнёт заново.
+      const работа = jarvis.tasks.foreground();
+      if (!работа) return { ok: false, text: 'Сейчас ничего не идёт.' };
+      if (!jarvis.tasks.pause(работа.id)) {
+        return { ok: false, text: `«${работа.title}» отложить не вышло.` };
+      }
+      note('command', `разговор отложил: ${работа.title}`);
+      console.log(`[jarvis] разговор отложил работу: ${работа.title}`);
+      return { ok: true, text: `Отложил: ${работа.title}` };
+    }
+
+    if (request.kind === 'resume') {
+      const отложенная = jarvis.tasks.resumableTask();
+      if (!отложенная) return { ok: false, text: 'Продолжать нечего.' };
+      if (!jarvis.tasks.resume(отложенная.id)) {
+        // Законченную работу продолжить нечем: она не отложена, а прожита.
+        return { ok: false, text: `«${отложенная.title}» уже не продолжить.` };
+      }
+      note('command', `разговор продолжил: ${отложенная.title}`);
+      console.log(`[jarvis] разговор продолжил работу: ${отложенная.title}`);
+      return { ok: true, text: `Продолжаю: ${отложенная.title}` };
+    }
+
+    const задача = request.text?.trim();
+    if (!задача) return { ok: false, text: 'Не сказано, что делать.' };
+
+    // Обычным путём, а не своим запуском: иначе потеряется маршрутизация,
+    // имя задачи, перевод идущей работы в фон и — главное — разрешения.
+    //
+    // Но не через `acceptAmbientTranscript`: там фраза снова проходит проверку
+    // «а работа ли это», и низкая уверенность разбора вернула бы «Не понял,
+    // что именно сделать» на то, о чём разговор с человеком уже договорился.
+    note('command', `разговор поручил: ${задача}`);
+    console.log(`[jarvis] разговор поручил: ${задача}`);
+    void session.work(задача).catch((error: unknown) => {
+      console.error('[jarvis] не удалось завести работу по просьбе разговора:', error);
+    });
+    return { ok: true, text: `Запускаю: ${short(задача)}` };
+  });
 
   // Recognition is slower than speech arrives, so utterances must not queue.
   // Observed before this guard: a phrase waited 45 seconds behind a backlog of
@@ -1525,6 +1510,12 @@ export async function startJarvisVoiceBridge(options: {
       notes = null;
       plans = null;
       story = null;
+      // Сессия разговора — это процесс CLI со своим MCP-сервером. Не закрыть
+      // его значит оставить его жить до перезагрузки.
+      talkRef?.dispose();
+      talkRef = null;
+      stopTalkBridge?.();
+      stopTalkBridge = null;
       recogniser.dispose();
       if (!audioWindow.isDestroyed()) audioWindow.destroy();
       active = null;
@@ -1858,6 +1849,57 @@ function writeDesktopMcpConfig(outputDir?: string): string | undefined {
 }
 
 /**
+ * Конфиг MCP для разговора: тот же сервер, другая роль.
+ *
+ * Отдельного пускового файла нет нарочно. `desktop-mcp.cmd` уже найден,
+ * собран и обновляется вместе со сборкой; второй такой же пришлось бы держать
+ * в системе и не забывать обновлять. Роль читается из окружения, и сервер в
+ * ней регистрирует только пять глаголов разговора — рабочих инструментов в
+ * этом процессе нет вовсе, а не «есть, но запрещены».
+ */
+function writeTalkMcpConfig(bridgeDir: string): string | undefined {
+  const dataRoot = process.env.JARVIS_DATA_ROOT?.trim();
+  const server =
+    process.env.JARVIS_DESKTOP_MCP?.trim() ||
+    (dataRoot ? path.join(path.dirname(path.resolve(dataRoot)), 'desktop-mcp.cmd') : undefined);
+
+  if (!server || !existsSync(server)) {
+    console.log('[jarvis] разговор без рычагов: не найден MCP-сервер');
+    return undefined;
+  }
+
+  try {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'jarvis-talk-'));
+    const file = path.join(dir, 'talk.json');
+    writeFileSync(
+      file,
+      JSON.stringify({
+        mcpServers: {
+          'jarvis-talk': {
+            type: 'stdio',
+            command: server,
+            args: [],
+            env: {
+              JARVIS_MCP_ROLE: 'talk',
+              JARVIS_TALK_BRIDGE: bridgeDir,
+              JARVIS_JOURNAL: journalFile(),
+              JARVIS_NOTES: notesFile(),
+              JARVIS_PLAN: planFile(),
+            },
+          },
+        },
+      }),
+      'utf8',
+    );
+    console.log(`[jarvis] рычаги разговора: ${file}`);
+    return file;
+  } catch (error) {
+    console.error('[jarvis] не удалось подготовить рычаги разговора:', error);
+    return undefined;
+  }
+}
+
+/**
  * Папка ассистента на рабочем столе.
  *
  * Одна известная папка вместо временных каталогов: человек находит результат
@@ -1967,43 +2009,104 @@ async function createAudioWindow(): Promise<BrowserWindow> {
   return window;
 }
 
+/**
+ * Один рот на двоих.
+ *
+ * Речь выстроена в очередь, и это не украшение. Окно звука на новую фразу
+ * **обрывает** текущую: `player.pause()` в обработчике. Пока говорил один
+ * поток, обрывать было нечего. Теперь говорят двое — работа и разговор, — и
+ * без очереди человек слышал бы половину фразы и начало следующей.
+ *
+ * Очередь ждёт конца ЗВУЧАНИЯ, а не конца синтеза: окно присылает
+ * «отзвучало» с меткой фразы. Заодно чинится давняя мелочь — окно слушания
+ * отсчитывалось от конца синтеза, то есть открывалось, пока Джарвис ещё
+ * говорил.
+ *
+ * «Тишина» и «стоп» очередь не тормозят, а **выбрасывают**: попросили
+ * замолчать — значит и то, что ещё не прозвучало, уже не нужно.
+ */
 function createPlayback(audioWindow: BrowserWindow): SpeechPlayback {
-  let speaking = false;
-  return {
-    async speak(text: string) {
-      if (!text.trim()) return;
-      // Запоминается до синтеза: эхо возвращается, пока фраза ещё звучит.
-      echoGuard.spoke(text);
-      speaking = true;
-      try {
-        const result = await synthesizeSpeech({
-          text,
-          modelId: DEFAULT_TTS_MODEL_ID,
-          provider: 'cpu',
-          voiceId: 0,
-          speed: 1,
-          pitch: 0,
-          autotuneEnabled: false,
+  let token = 0;
+  /** Чем закончить фразу, которая звучит прямо сейчас. */
+  let finish: ((forToken: number) => void) | null = null;
+
+  ipcMain.on(AUDIO_BRIDGE_CHANNELS.spoken, (_event, forToken: number) => {
+    finish?.(forToken);
+  });
+
+  const playOnce = async (text: string): Promise<void> => {
+    // Запоминается до синтеза: эхо возвращается, пока фраза ещё звучит.
+    echoGuard.spoke(text);
+    try {
+      const result = await synthesizeSpeech({
+        text,
+        modelId: DEFAULT_TTS_MODEL_ID,
+        provider: 'cpu',
+        voiceId: 0,
+        speed: 1,
+        pitch: 0,
+        autotuneEnabled: false,
+      });
+      if (audioWindow.isDestroyed()) return;
+
+      token += 1;
+      const mine = token;
+      await new Promise<void>((resolve) => {
+        // Срок — на случай, если окно не отзовётся вовсе: молчащая очередь
+        // хуже наложившихся фраз, потому что она молчит навсегда.
+        const timer = setTimeout(() => finish?.(mine), wavDurationMs(result.wavBuffer) + 3_000);
+        timer.unref?.();
+        finish = (forToken: number) => {
+          if (forToken !== mine) return;
+          clearTimeout(timer);
+          finish = null;
+          resolve();
+        };
+        audioWindow.webContents.send(AUDIO_BRIDGE_CHANNELS.speak, {
+          token: mine,
+          data: toPlaybackBase64(result.wavBuffer),
         });
-        if (audioWindow.isDestroyed()) return;
-        audioWindow.webContents.send(
-          AUDIO_BRIDGE_CHANNELS.speak,
-          toPlaybackBase64(result.wavBuffer),
-        );
-      } catch (error) {
-        console.error('[jarvis] синтез речи не удался:', error);
-      } finally {
-        speaking = false;
-      }
-    },
-    stop() {
-      speaking = false;
+      });
+    } catch (error) {
+      console.error('[jarvis] синтез речи не удался:', error);
+    }
+  };
+
+  const queue = new SpeechQueue({
+    say: playOnce,
+    cut: () => {
+      // Фраза, которую сейчас оборвут, обязана закончиться и здесь — иначе
+      // очередь останется ждать «отзвучало», которого уже не будет.
+      finish?.(token);
       if (!audioWindow.isDestroyed()) {
         audioWindow.webContents.send(AUDIO_BRIDGE_CHANNELS.stopSpeaking);
       }
     },
-    isSpeaking: () => speaking,
+  });
+
+  return {
+    speak: (text: string) => queue.speak(text),
+    stop: () => queue.stop(),
+    isSpeaking: () => queue.isSpeaking(),
   };
+}
+
+/**
+ * Сколько звучит WAV, по его же заголовку.
+ *
+ * Нужно только как срок ожидания: если окно звука не отзовётся, очередь не
+ * должна встать навсегда. Точность здесь не важна, поэтому и разбора никакого
+ * нет — байты на скорость потока.
+ */
+function wavDurationMs(wav: Buffer): number {
+  try {
+    const byteRate = wav.readUInt32LE(28);
+    if (!byteRate) return 10_000;
+    const ms = ((wav.length - 44) / byteRate) * 1000;
+    return Math.min(Math.max(ms, 500), 120_000);
+  } catch {
+    return 10_000;
+  }
 }
 
 function createPushToTalkCapture(audioWindow: BrowserWindow): AudioCapture {

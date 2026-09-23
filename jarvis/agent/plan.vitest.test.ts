@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  addStep,
   currentStep,
   makePlan,
   markStep,
@@ -40,6 +41,31 @@ describe('makePlan', () => {
     // Тридцати шагов человек не читает, а агент не удерживает.
     const many = Array.from({ length: 100 }, (_, index) => `шаг ${index}`);
     expect(makePlan(GOAL, many, AT).steps).toHaveLength(30);
+  });
+});
+
+describe('addStep', () => {
+  it('дописывает шаг в конец, и он ждёт', () => {
+    const plan = addStep(makePlan(GOAL, ['первый'], AT), 'второй', AT + 10);
+
+    expect(plan?.steps.map((step) => step.text)).toEqual(['первый', 'второй']);
+    expect(plan?.steps[1]?.state).toBe('ждёт');
+    expect(plan?.updatedAt).toBe(AT + 10);
+  });
+
+  it('пустой текст не добавляет и честно об этом говорит', () => {
+    // Молча вернуть тот же план значило бы сказать человеку «записал» про
+    // незаписанное.
+    expect(addStep(makePlan(GOAL, ['первый'], AT), '   ', AT)).toBeNull();
+  });
+
+  it('повтор не заводит второй такой же шаг', () => {
+    expect(addStep(makePlan(GOAL, ['первый'], AT), 'первый', AT)).toBeNull();
+  });
+
+  it('в полный план не дописывает', () => {
+    const many = Array.from({ length: 30 }, (_, i) => `шаг ${i}`);
+    expect(addStep(makePlan(GOAL, many, AT), 'лишний', AT)).toBeNull();
   });
 });
 

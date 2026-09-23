@@ -24,6 +24,15 @@ export const AUDIO_BRIDGE_CHANNELS = {
   stopPush: 'jarvis-audio:stop-push',
   speak: 'jarvis-audio:speak',
   stopSpeaking: 'jarvis-audio:stop-speaking',
+  /**
+   * Фраза отзвучала.
+   *
+   * Без этого «сказал» означало бы «синтезировал»: окно проигрывает звук само
+   * и о конце не сообщает. Пока говорил один поток, это сходило с рук. Теперь
+   * говорят двое — разговор и работа, — и вторая фраза обрывала бы первую на
+   * полуслове.
+   */
+  spoken: 'jarvis-audio:spoken',
 } as const;
 
 /** 16 kHz is what the recogniser wants, so ask the browser for it directly. */
@@ -83,6 +92,10 @@ let silenceSamples = 0;
 let sawSpeech = false;
 
 let player = null;
+/** Метка фразы, которая звучит сейчас: по ней главный процесс узнаёт свою. */
+let playerToken = null;
+/** Чем закончить текущую фразу. Оборванная тоже обязана сказать «отзвучало». */
+let playerDone = null;
 let lastAudioAt = 0;
 let restarting = false;
 
@@ -309,18 +322,47 @@ ipcRenderer.on(CH.stopPush, () => {
   emit(CH.pushResult);
 });
 
-ipcRenderer.on(CH.speak, (_event, base64) => {
+ipcRenderer.on(CH.speak, (_event, payload) => {
+  var token = payload && payload.token;
   try {
+    // Прежняя фраза обязана закончиться, даже если её обрывают: иначе тот, кто
+    // её ждёт, будет ждать до срока, а очередь — стоять.
     if (player) { player.pause(); player = null; }
-    player = new Audio('data:audio/wav;base64,' + base64);
-    void player.play();
+    if (playerDone) playerDone();
+    var audio = new Audio('data:audio/wav;base64,' + (payload && payload.data));
+    player = audio;
+    playerToken = token;
+    // О конце фразы обязан узнать тот, кто выстраивает речь в очередь. Иначе
+    // следующая начнётся поверх этой и оборвёт её на полуслове.
+    //
+    // Метка обязательна: «отзвучало» без неё, пришедшее с опозданием, закрыло
+    // бы СЛЕДУЮЩУЮ фразу, и она оборвалась бы в начале.
+    var fired = false;
+    var done = function () {
+      if (fired) return;
+      fired = true;
+      if (player === audio) { player = null; playerToken = null; playerDone = null; }
+      ipcRenderer.send(CH.spoken, token);
+    };
+    playerDone = done;
+    audio.onended = done;
+    audio.onerror = done;
+    var started = audio.play();
+    if (started && started.catch) started.catch(done);
   } catch (error) {
     ipcRenderer.send(CH.error, String((error && error.message) || error));
+    // Промолчав об этом, мы подвесили бы очередь навсегда.
+    ipcRenderer.send(CH.spoken, token);
   }
 });
 
 ipcRenderer.on(CH.stopSpeaking, () => {
-  if (player) { player.pause(); player = null; }
+  if (player) {
+    player.pause();
+    player = null;
+    playerToken = null;
+    if (playerDone) playerDone();
+  }
 });
 
 ipcRenderer.send(CH.ready);

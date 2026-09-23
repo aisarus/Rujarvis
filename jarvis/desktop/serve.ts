@@ -1,12 +1,28 @@
 /**
- * Запуск MCP-сервера рабочего стола.
+ * Запуск MCP-сервера для Claude Code.
  *
  * Отдельный файл, потому что `claude mcp add` запускает именно команду, а не
  * функцию: этот модуль — то, что она вызывает.
+ *
+ * ## Две роли в одном файле
+ *
+ * Рабочий стол и разговор — разные наборы инструментов, но один и тот же
+ * пусковой скрипт `desktop-mcp.cmd` и одна и та же сборка. Заводить второй
+ * скрипт значило бы держать в системе ещё один файл, который можно забыть
+ * обновить.
+ *
+ * Роль читается из окружения, а ветка берётся **отложенным** `import`: рабочий
+ * сервер при загрузке поднимает драйвер рабочего стола и заводит временные
+ * папки, и разговору это всё не нужно ни секунды.
  */
-import { runDesktopMcpServer } from './mcpServer';
+const роль = process.env.JARVIS_MCP_ROLE?.trim();
 
-runDesktopMcpServer().catch((error: unknown) => {
-  console.error('[jarvis:desktop] сервер не запустился:', error);
+const запуск =
+  роль === 'talk'
+    ? import('../dialogue/talkMcpServer').then((m) => m.runTalkMcpServer())
+    : import('./mcpServer').then((m) => m.runDesktopMcpServer());
+
+запуск.catch((error: unknown) => {
+  console.error(`[jarvis:${роль === 'talk' ? 'talk' : 'desktop'}] сервер не запустился:`, error);
   process.exit(1);
 });

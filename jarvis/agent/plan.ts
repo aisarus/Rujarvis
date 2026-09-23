@@ -91,6 +91,30 @@ export function markStep(
   return { ...plan, steps, updatedAt: at };
 }
 
+/**
+ * Дописать шаг в конец плана.
+ *
+ * Нужно разговору: человек на ходу говорит «и ещё подпись внизу добавь», и
+ * это не поправка к текущему шагу, а новое дело в той же работе.
+ *
+ * `null` значит «не добавил»: пустой текст, полный план или такой шаг уже
+ * есть. Молча вернуть тот же план нельзя — разговор скажет человеку
+ * «записал» про незаписанное.
+ */
+export function addStep(plan: Plan, text: string, at: number): Plan | null {
+  const clean = trim(text);
+  if (!clean) return null;
+  if (plan.steps.length >= MAX_STEPS) return null;
+  // Человек повторяет себя, когда не слышит ответа. Это один шаг.
+  if (plan.steps.some((step) => step.text === clean)) return null;
+
+  return {
+    ...plan,
+    steps: [...plan.steps, { text: clean, state: 'ждёт' }],
+    updatedAt: at,
+  };
+}
+
 /** Шаг, который идёт прямо сейчас, или следующий незанятый. */
 export function currentStep(plan: Plan): { index: number; step: PlanStep } | null {
   const doing = plan.steps.findIndex((step) => step.state === 'делаю');

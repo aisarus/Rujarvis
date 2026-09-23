@@ -244,11 +244,24 @@ export class VoiceSession {
     return this.dispatch(text);
   }
 
-  private async dispatch(utterance: string): Promise<JarvisTurn | null> {
+  /**
+   * Завести работу по просьбе разговора.
+   *
+   * Мимо пробуждения и слов остановки нарочно: разговор уже выслушал человека
+   * и уже решил. Второй раз спрашивать «а обращались ли ко мне» не у кого.
+   */
+  async work(utterance: string): Promise<JarvisTurn | null> {
+    return this.dispatch(utterance, { asWork: true });
+  }
+
+  private async dispatch(
+    utterance: string,
+    options: { asWork?: boolean } = {},
+  ): Promise<JarvisTurn | null> {
     this.setIndicator('thinking');
     let turn: JarvisTurn;
     try {
-      turn = await this.options.core.handleUtterance(utterance);
+      turn = await this.options.core.handleUtterance(utterance, options);
     } catch (error) {
       this.fail(error);
       return null;
