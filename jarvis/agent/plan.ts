@@ -32,6 +32,25 @@ import { tr } from '../locale/language';
 
 export type StepState = 'ждёт' | 'делаю' | 'сделано' | 'не вышло';
 
+/**
+ * Состояние шага словами человека.
+ *
+ * Сами значения — служебные: их пишет агент, их хранит plan.json, по ним
+ * строятся уроки. Переводится только то, что человек видит в окне.
+ */
+export function stepStateLabel(state: StepState): string {
+  switch (state) {
+    case 'ждёт':
+      return tr('ждёт', 'waiting');
+    case 'делаю':
+      return tr('делаю', 'in progress');
+    case 'сделано':
+      return tr('сделано', 'done');
+    case 'не вышло':
+      return tr('не вышло', 'failed');
+  }
+}
+
 export interface PlanStep {
   text: string;
   state: StepState;

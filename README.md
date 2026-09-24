@@ -119,11 +119,10 @@ recognition by setting `ELEVENLABS_API_KEY`. There is no telemetry.
   with Whisper `base` (`pnpm jarvis:roundtrip`): Russian 10/12, English 9/12,
   and every stop, silence, pause and continue word recognised in both. A real
   microphone and a larger model do better; synthetic speech is a floor.
-- Window control through UI Automation (`window_*` tools) needs `cua-driver.exe`,
-  which the installer does not download yet; set `JARVIS_CUA_DRIVER` to its
-  path if you have it. Screen, mouse, keyboard and browser work without it.
-- Dictation editing («удали последнее слово») and live Blender edits are
-  Russian-only for now.
+- Window control through UI Automation (`window_*` tools) uses
+  [cua-driver](https://github.com/trycua/cua) (MIT). The installer downloads a
+  pinned release and checks its SHA-256; if that fails, screen, mouse, keyboard
+  and browser still work without it.
 - GPU recognition is optional: run a whisper.cpp server and set
   `JARVIS_GPU_STT`; otherwise recognition runs on the CPU.
 

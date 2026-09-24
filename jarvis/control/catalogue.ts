@@ -29,7 +29,7 @@ export interface CatalogueItem {
    * Разметка не для человека, а для проверки: тест умеет спросить нужный слой
    * и убедиться, что обещанная фраза действительно разбирается.
    */
-  layer: 'direct' | 'launch' | 'close' | 'wake' | 'silence' | 'dictation' | 'control';
+  layer: 'direct' | 'launch' | 'close' | 'wake' | 'silence' | 'dictation' | 'control' | 'blender';
 }
 
 export interface CatalogueGroup {
@@ -137,6 +137,17 @@ function russianCatalogue(): CatalogueGroup[] {
       ],
     },
     {
+      title: 'Блендер (когда открыт)',
+      items: [
+        { say: 'сделай её синей', does: 'покрасить выделенный объект', layer: 'blender' },
+        { say: 'подними на три', does: 'сдвинуть вверх', layer: 'blender' },
+        { say: 'поверни на сорок пять', does: 'повернуть в градусах', layer: 'blender' },
+        { say: 'увеличь в два раза', does: 'изменить размер', layer: 'blender' },
+        { say: 'спрячь это', does: 'скрыть объект', layer: 'blender' },
+        { say: 'играй анимацию', does: 'запустить анимацию', layer: 'blender' },
+      ],
+    },
+    {
       title: 'Разговор',
       items: [
         { say: 'джарвис', does: 'разбудить — дальше можно без имени', layer: 'wake' },
@@ -163,11 +174,7 @@ function russianCatalogue(): CatalogueGroup[] {
   ];
 }
 
-/**
- * English commands. Only what the English tables really handle: dictation
- * editing and live Blender edits are Russian-only for now, so they are not
- * promised here.
- */
+/** English commands. Only what the English tables really handle. */
 function englishCatalogue(): CatalogueGroup[] {
   return [
     {
@@ -211,6 +218,10 @@ function englishCatalogue(): CatalogueGroup[] {
       items: [
         { say: 'start dictation', does: 'type everything you say', layer: 'direct' },
         { say: 'end dictation', does: 'leave dictation', layer: 'direct' },
+        { say: 'delete last word', does: 'erase a word while dictating', layer: 'dictation' },
+        { say: 'delete line', does: 'erase the whole line', layer: 'dictation' },
+        { say: 'new line', does: 'start a new line', layer: 'dictation' },
+        { say: 'correct to meeting', does: 'replace the last word', layer: 'dictation' },
         { say: 'type hello', does: 'type one phrase', layer: 'direct' },
         { say: 'copy', does: 'copy the selection', layer: 'direct' },
         { say: 'paste', does: 'paste from the clipboard', layer: 'direct' },
@@ -248,6 +259,17 @@ function englishCatalogue(): CatalogueGroup[] {
         { say: 'mute sound', does: 'mute the system sound', layer: 'direct' },
         { say: 'play music', does: 'play and pause', layer: 'direct' },
         { say: 'next track', does: 'next song', layer: 'direct' },
+      ],
+    },
+    {
+      title: 'Blender (when open)',
+      items: [
+        { say: 'make it blue', does: 'colour the selected object', layer: 'blender' },
+        { say: 'raise it by three', does: 'move it up', layer: 'blender' },
+        { say: 'rotate it forty five', does: 'rotate in degrees', layer: 'blender' },
+        { say: 'make it bigger', does: 'change the size', layer: 'blender' },
+        { say: 'hide it', does: 'hide the object', layer: 'blender' },
+        { say: 'play animation', does: 'play the animation', layer: 'blender' },
       ],
     },
     {

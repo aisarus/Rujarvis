@@ -10,7 +10,8 @@
     Что делает, по шагам:
       1. ставит недостающее через winget: Git и Node.js 22 (pnpm — через corepack);
       2. скачивает исходники в %LOCALAPPDATA%\Rujarvis\src и собирает приложение;
-      3. скачивает модель распознавания речи и голос для выбранного языка;
+      3. скачивает модель распознавания речи и голос для выбранного языка,
+         а также драйвер окон cua-driver (trycua/cua, MIT; сумма проверяется);
       4. кладёт ярлык «Rujarvis» в меню «Пуск» и запускает приложение.
 
     Компилятор C++, Rust и прочие инструменты сборки не нужны: распознавание и
@@ -271,6 +272,73 @@ function Move-LegacyData {
     return ,$moved
 }
 
+<#
+    Драйвер окон cua-driver (trycua/cua, MIT) — «глаза и руки» для инструментов
+    window_*: дерево доступности Windows и клики по номеру элемента.
+
+    Версия и контрольные суммы закреплены: исполняемый файл из интернета, и
+    подменённый архив не должен стать драйвером мыши и клавиатуры. Обновление
+    драйвера — это правка здесь, а не «последний релиз».
+#>
+function Get-CuaDriverAsset {
+    param([Parameter(Mandatory)] [string] $Architecture)
+
+    # Версия и суммы — внутри функции: они меняются только вместе.
+    $version = '0.28.2'
+    $hashes = @{
+        'windows-x86_64' = '3C1FCF10FF9513B94E4AF78AD6A216AB62AA95B2C9A3B70DFBDBA9F04E021533'
+        'windows-arm64'  = '69720568A44ED8EAB3620C892B9DF524A8231013AC42E0AFCDAA4317CD90D0F1'
+    }
+    $label = switch ($Architecture.ToUpperInvariant()) {
+        'AMD64' { 'windows-x86_64' }
+        'X64'   { 'windows-x86_64' }
+        'ARM64' { 'windows-arm64' }
+        default { $null }
+    }
+    if (-not $label) { return $null }
+    $name = "cua-driver-rs-$version-$label"
+    return [pscustomobject]@{
+        Version = $version
+        Name    = $name
+        Url     = "https://github.com/trycua/cua/releases/download/cua-driver-rs-v$version/$name.zip"
+        Sha256  = $hashes[$label]
+    }
+}
+
+function Install-CuaDriver {
+    param([Parameter(Mandatory)] [string] $InstallRoot)
+
+    $asset = Get-CuaDriverAsset -Architecture $env:PROCESSOR_ARCHITECTURE
+    if (-not $asset) {
+        Write-Note "cua-driver не собран для $env:PROCESSOR_ARCHITECTURE — инструменты окон будут выключены."
+        return
+    }
+    $unpacked = Join-Path $InstallRoot 'cua-driver\unpacked'
+    $exe = Join-Path $unpacked "$($asset.Name)\cua-driver.exe"
+    if (Test-Path $exe) { Write-Ok "cua-driver $($asset.Version) уже на месте."; return }
+
+    # Без драйвера Джарвис работает — окна просто ведутся через снимки экрана.
+    # Поэтому сбой здесь — заметка, а не остановка установки.
+    $zip = Join-Path ([System.IO.Path]::GetTempPath()) "$($asset.Name).zip"
+    try {
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -Uri $asset.Url -OutFile $zip -UseBasicParsing
+        $hash = (Get-FileHash -Path $zip -Algorithm SHA256).Hash
+        if ($hash -ne $asset.Sha256) {
+            throw "контрольная сумма не совпала ($hash)"
+        }
+        if (Test-Path $unpacked) { Remove-Item -Path $unpacked -Recurse -Force }
+        New-Item -ItemType Directory -Path $unpacked -Force | Out-Null
+        Expand-Archive -Path $zip -DestinationPath $unpacked -Force
+        if (-not (Test-Path $exe)) { throw "в архиве нет $($asset.Name)\cua-driver.exe" }
+        Write-Ok "cua-driver $($asset.Version): $exe"
+    } catch {
+        Write-Note "cua-driver не установлен: $($_.Exception.Message). Инструменты окон будут выключены."
+    } finally {
+        Remove-Item -Path $zip -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function New-Shortcut {
     param(
         [Parameter(Mandatory)] [string] $Path,
@@ -349,6 +417,9 @@ try {
 finally {
     Pop-Location
 }
+
+Write-Step 'Ставлю драйвер окон'
+Install-CuaDriver -InstallRoot $InstallRoot
 
 Write-Step 'Создаю ярлык'
 $electron = Join-Path $SourceDir 'node_modules\electron\dist\electron.exe'

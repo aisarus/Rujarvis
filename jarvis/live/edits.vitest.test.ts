@@ -89,4 +89,70 @@ describe('parseLiveEdit', () => {
     expect(parseLiveEdit('')).toBeNull();
     expect(parseLiveEdit('   ')).toBeNull();
   });
+
+  it('складывает десятки с единицами', () => {
+    // Раньше бралось первое число: «сорок пять» поворачивало на 40.
+    expect(parseLiveEdit('поверни на сорок пять')?.code).toContain('radians(45)');
+    expect(parseLiveEdit('rotate it forty five')?.code).toContain('radians(45)');
+  });
+
+  it('названный и не найденный объект — отказ, а не выделенный', () => {
+    // «Удали файл» при живом блендере стирало бы то, что выделено.
+    const code = parseLiveEdit('сделай ракету синей')?.code ?? '';
+    expect(code).toContain(', None)');
+    expect(code).not.toContain('), bpy.context.active_object)');
+  });
+
+  it('не принимает за правку сцены просьбы про файлы, окна и страницы', () => {
+    for (const phrase of ['удали файл', 'покажи лог', 'delete the file', 'show the log', 'hide the window']) {
+      expect(parseLiveEdit(phrase), phrase).toBeNull();
+    }
+  });
+
+  it('не путает «план» с «планетой»', () => {
+    expect(parseLiveEdit('сделай планету синей')?.code).toContain('планет');
+  });
+});
+
+describe('parseLiveEdit in English', () => {
+  it.each([
+    ['make it blue', '0.1, 0.2, 0.9'],
+    ['paint the cube red', '0.9, 0.1, 0.1'],
+    ['turn it green', '0.1, 0.8, 0.2'],
+  ])('«%s» is colour %s', (phrase, rgb) => {
+    expect(parseLiveEdit(phrase)?.code).toContain(rgb);
+  });
+
+  it('moves, rotates and scales', () => {
+    expect(parseLiveEdit('raise it by three')?.code).toContain('location.z += 3');
+    expect(parseLiveEdit('move it left')?.code).toContain('location.x -= 1');
+    expect(parseLiveEdit('rotate it thirty')?.code).toContain('radians(30)');
+    expect(parseLiveEdit('make it bigger')?.code).toContain('scale');
+    expect(parseLiveEdit('make it smaller')?.code).toContain('1/2');
+  });
+
+  it('deletes, hides and shows', () => {
+    expect(parseLiveEdit('delete it')?.code).toContain('bpy.data.objects.remove');
+    expect(parseLiveEdit('hide it')?.code).toContain('hide_viewport = True');
+    expect(parseLiveEdit('show it')?.code).toContain('hide_viewport = False');
+  });
+
+  it('plays and cancels the animation', () => {
+    expect(parseLiveEdit('play animation')?.code).toContain('animation_play');
+    expect(parseLiveEdit('cancel the animation')?.code).toContain('animation_cancel');
+  });
+
+  it('finds an object by name', () => {
+    expect(parseLiveEdit('make the rocket blue')?.code).toContain('"rocket"');
+  });
+
+  it('takes the colour word for a colour, not a name', () => {
+    expect(parseLiveEdit('make it blue')?.code).toContain('bpy.context.active_object');
+  });
+
+  it('leaves alone what is not in the table', () => {
+    for (const phrase of ['scroll down', 'page down', 'arrow down', 'reduce noise', 'open blender', 'what are you doing']) {
+      expect(parseLiveEdit(phrase), phrase).toBeNull();
+    }
+  });
 });

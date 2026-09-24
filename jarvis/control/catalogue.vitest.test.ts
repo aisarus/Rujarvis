@@ -7,6 +7,7 @@ import { isSilenceRequest } from '../voice/noise';
 import { commandCatalogue } from './catalogue';
 import { parseDictationEdit } from './dictationEdits';
 import { parseDirectCommand } from './commands';
+import { parseLiveEdit } from '../live/edits';
 
 describe.each(['ru', 'en'] as const)('commandCatalogue (%s)', (language) => {
 const catalogue = commandCatalogue(language);
@@ -36,7 +37,9 @@ const everyPhrase = catalogue.flatMap((group) => group.items.map((item) => item.
                 : item.layer === 'wake'
                   ? findWakeWord(item.say) !== null
                   : item.layer === 'dictation'
-                    ? parseDictationEdit(item.say) !== null
+                    ? parseDictationEdit(item.say, language) !== null
+                    : item.layer === 'blender'
+                      ? parseLiveEdit(item.say) !== null
                     : item.layer === 'control'
                       ? matchVoiceControl(item.say) !== null
                       : isSilenceRequest(item.say);

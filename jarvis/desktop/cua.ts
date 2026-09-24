@@ -23,8 +23,9 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+
+import { jarvisPaths } from '../setup/paths';
 
 import {
   countedElements,
@@ -53,7 +54,9 @@ export function driverPath(): string | null {
   const explicit = process.env.JARVIS_CUA_DRIVER?.trim();
   if (explicit) return existsSync(explicit) ? explicit : null;
 
-  const root = path.join(os.homedir(), 'AppData', 'Local', 'Rujarvis', 'cua-driver', 'unpacked');
+  // Сюда его кладёт установщик (Install-CuaDriver); папка — общая для всего
+  // Джарвиса, поэтому `JARVIS_HOME` переносит и драйвер.
+  const root = jarvisPaths().cuaDriver;
   if (!existsSync(root)) return null;
   for (const entry of readdirSync(root)) {
     const candidate = path.join(root, entry, 'cua-driver.exe');

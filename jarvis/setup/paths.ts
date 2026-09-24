@@ -9,6 +9,7 @@
  *       data\      настройки, журнал, память, план, «характер»
  *       logs\      jarvis.log
  *       models\    whisper\ — распознавание, voices\ — голоса
+ *       cua-driver\ драйвер окон (ставит install.ps1)
  *       profile\   служебный профиль Electron
  *
  * Результаты работы для человека — отдельно, на рабочем столе, чтобы их не
@@ -43,6 +44,7 @@ export interface JarvisPaths {
   settings: string;
   whisperModels: string;
   voiceModels: string;
+  cuaDriver: string;
   profile: string;
 }
 
@@ -57,6 +59,7 @@ export function jarvisPaths(env: Env = process.env, platform: NodeJS.Platform = 
     settings: path.join(home, 'data', 'settings.json'),
     whisperModels: path.join(home, 'models', 'whisper'),
     voiceModels: path.join(home, 'models', 'voices'),
+    cuaDriver: path.join(home, 'cua-driver', 'unpacked'),
     profile: path.join(home, 'profile'),
   };
 }

@@ -33,7 +33,10 @@ irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 | iex
 4. `pnpm install` и `pnpm build` — секунды: сборка — это три бандла esbuild,
    нативных модулей нет.
 5. `pnpm jarvis:setup` — скачивает модель распознавания и голос для языка.
-6. Ярлык **Rujarvis** в меню «Пуск» ведёт прямо на приложение; оно
+6. Скачивает драйвер окон [cua-driver](https://github.com/trycua/cua) (MIT)
+   закреплённой версии и сверяет SHA-256. Не скачался — установка идёт
+   дальше, выключаются только инструменты окон (`window_*`).
+7. Ярлык **Rujarvis** в меню «Пуск» ведёт прямо на приложение; оно
    запускается.
 
 Компилятор C++, Rust и Bun не нужны. Раньше нужны были — на сборке C++
@@ -91,7 +94,7 @@ profile\   служебный профиль Electron
 | `JARVIS_OUTPUT_DIR` | Папка результатов (важнее настройки) |
 | `JARVIS_DESKTOP_MCP` | Свой запуск MCP-сервера рабочего стола вместо собранного `dist\jarvis\desktop\mcp.cjs` |
 | `JARVIS_CLAUDE_PATH`, `JARVIS_CODEX_PATH` | Где лежат CLI, если не в обычных местах |
-| `JARVIS_CUA_DRIVER` | Путь к `cua-driver.exe` для инструментов окон (`window_*`) |
+| `JARVIS_CUA_DRIVER` | Свой `cua-driver.exe` вместо скачанного установщиком |
 | `JARVIS_GPU_STT` | Адрес сервера whisper.cpp — распознавание на видеокарте |
 | `ELEVENLABS_API_KEY` | Облачное распознавание (звук уходит в ElevenLabs) |
 

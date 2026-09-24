@@ -138,6 +138,16 @@ finally {
     Remove-Item -Path $legacy -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# --- Драйвер окон ------------------------------------------------------------
+# Сумма нужна для каждой архитектуры, иначе проверка молча пропустит архив.
+
+$x64 = Get-CuaDriverAsset -Architecture 'AMD64'
+Assert-That 'cua-driver: x64 — архив windows-x86_64' ($x64.Url -eq 'https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.28.2/cua-driver-rs-0.28.2-windows-x86_64.zip')
+Assert-That 'cua-driver: у x64 есть контрольная сумма' ($x64.Sha256 -match '^[0-9A-F]{64}$')
+$arm = Get-CuaDriverAsset -Architecture 'ARM64'
+Assert-That 'cua-driver: у ARM64 своя сумма' ($arm.Sha256 -match '^[0-9A-F]{64}$' -and $arm.Sha256 -ne $x64.Sha256)
+Assert-That 'cua-driver: 32-битной сборки нет — и не выдумываем' ($null -eq (Get-CuaDriverAsset -Architecture 'x86'))
+
 if ($failures -gt 0) {
     Write-Host "Провалено проверок: $failures" -ForegroundColor Red
     exit 1

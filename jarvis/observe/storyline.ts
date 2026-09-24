@@ -30,6 +30,7 @@
  * запущенном приложении.
  */
 
+import { stepStateLabel, type StepState } from '../agent/plan';
 import type { BackendEvent } from '../backends/types';
 import { tr } from '../locale/language';
 
@@ -275,11 +276,12 @@ export class Storyline {
    * вернувшийся через двадцать минут, должен видеть не «сделано 4 из 7», а
    * когда именно каждый шаг был взят и чем кончился.
    */
-  planStep(index: number, total: number, text: string, state: string, at: number): void {
+  planStep(index: number, total: number, text: string, state: StepState, at: number): void {
+    const label = stepStateLabel(state);
     this.add({
       at,
       kind: 'plan',
-      text: tr(`Шаг ${index + 1} из ${total}: ${state}`, `Step ${index + 1} of ${total}: ${state}`),
+      text: tr(`Шаг ${index + 1} из ${total}: ${label}`, `Step ${index + 1} of ${total}: ${label}`),
       detail: short(text),
     });
   }

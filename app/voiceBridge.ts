@@ -1178,32 +1178,25 @@ export async function startJarvisVoiceBridge(options: {
           console.log('[jarvis] названное не найдено — отдаю агенту');
         }
 
+        if (direct) {
+          await runAction(describeDirect(direct), () => runDirectCommand(direct, session));
+          session.keepAwake();
+          return;
+        }
+
         // Мелкая правка в открытом блендере — мимо агента.
         //
-        // Идёт до прямых команд: «подними повыше» в живом окне значит движение
-        // объекта, а не прокрутку страницы.
-        const edit = parseLiveEdit(command ?? '');
+        // После прямых команд и только при живом окне. Раньше разбор шёл первым
+        // и без проверки, и «прокрути вниз» становилось «сдвинь объект вниз»:
+        // без блендера Джарвис отвечал «Блендер не открыт», а страница стояла.
+        // Без живого окна фраза уходит дальше — агенту, который разберётся.
+        const edit = isLive() ? parseLiveEdit(command ?? '') : null;
         if (edit) {
-          if (!isLive()) {
-            // Молчаливый уход к агенту здесь — худший исход: он откроет новое
-            // окно и сделает не то. Секунда честного отказа лучше двух минут
-            // не туда.
-            await session.speak(tr('Блендер не открыт.', 'Blender is not open.'));
-            session.keepAwake();
-            return;
-          }
-
           await runAction(edit.said, async () => {
             const answer = await sendLive(edit.code);
             if (!answer.ok) throw new Error(answer.error ?? 'не вышло');
             note('command', `правка: ${edit.said}`);
           });
-          session.keepAwake();
-          return;
-        }
-
-        if (direct) {
-          await runAction(describeDirect(direct), () => runDirectCommand(direct, session));
           session.keepAwake();
           return;
         }
@@ -1348,7 +1341,8 @@ export async function startJarvisVoiceBridge(options: {
 
     const states = plan.steps.map((step) => step.state);
     for (let index = 0; index < states.length; index += 1) {
-      const state = states[index] as string;
+      const state = states[index];
+      if (!state) continue;
       // «Ждёт» — не событие, а исходное положение вещей.
       if (state === 'ждёт' || shownSteps[index] === state) continue;
       const step = plan.steps[index];
