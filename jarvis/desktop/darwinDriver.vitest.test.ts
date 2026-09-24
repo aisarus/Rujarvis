@@ -147,6 +147,31 @@ describe('AppleScript', () => {
     expect(typeScript('Привет')).toContain('"Привет"');
   });
 
+  /**
+   * Печать идёт через буфер обмена, а не через клавиши.
+   *
+   * `keystroke "Привет"` на маке с латинской раскладкой напечатал «aaaaaa» —
+   * замерено на macos-latest 24.09.2026, отказа при этом не было. Раскладка
+   * у человека с русским Джарвисом вполне может быть и русской, и тогда так
+   * же молча поехала бы латиница. Буфер обмена от раскладки не зависит.
+   */
+  it('текст едет через буфер обмена и Cmd+V', () => {
+    const скрипт = typeScript('Привет');
+    expect(скрипт).toContain('set the clipboard to "Привет"');
+    expect(скрипт).toContain('key code 9 using {command down}');
+    expect(скрипт).not.toContain('keystroke');
+  });
+
+  it('буфер обмена возвращается на место', () => {
+    const скрипт = typeScript('Привет');
+    expect(скрипт).toContain('set saved to the clipboard as record');
+    expect(скрипт).toContain('set the clipboard to saved');
+    // Вернуть буфер раньше, чем чужая программа его прочитает, значит
+    // вставить не то: задержка стоит между вставкой и возвратом.
+    expect(скрипт.indexOf('delay')).toBeGreaterThan(скрипт.indexOf('key code 9'));
+    expect(скрипт.indexOf('delay')).toBeLessThan(скрипт.indexOf('set the clipboard to saved'));
+  });
+
   it('кавычка и косая в тексте не ломают скрипт', () => {
     expect(escapeAppleScript('он сказал "да" \\ и ушёл')).toBe('он сказал \\"да\\" \\\\ и ушёл');
   });
@@ -154,7 +179,7 @@ describe('AppleScript', () => {
   it('перенос строки становится escape-последовательностью', () => {
     // Буквальный перенос внутри литерала AppleScript — синтаксическая ошибка.
     expect(escapeAppleScript('первая\r\nвторая')).toBe('первая\\nвторая');
-    expect(typeScript('а\nб')).not.toContain('\n');
+    expect(typeScript('а\nб')).toContain('"а\\nб"');
   });
 
   it('поднятие адресует окно числами, а не подставленным текстом', () => {

@@ -208,32 +208,23 @@ console.log('\n=== 5. Чем печатать кириллицу');
 */
 const ЮНИКОД_JXA = `
   ObjC.import('CoreGraphics');
-  ObjC.import('Foundation');
-  const text = $('Привет');
-  const length = text.length;
-  const buffer = $.NSMutableData.dataWithLength(length * 2);
-  text.getCharactersRange(buffer.mutableBytes, $.NSMakeRange(0, length));
+  const text = 'Привет';
+  const codes = Array.prototype.map.call(text, (c) => c.charCodeAt(0));
   const down = $.CGEventCreateKeyboardEvent($(), 0, true);
-  $.CGEventKeyboardSetUnicodeString(down, length, buffer.mutableBytes);
+  $.CGEventKeyboardSetUnicodeString(down, codes.length, codes);
   $.CGEventPost($.kCGHIDEventTap, down);
   const up = $.CGEventCreateKeyboardEvent($(), 0, false);
-  $.CGEventKeyboardSetUnicodeString(up, length, buffer.mutableBytes);
+  $.CGEventKeyboardSetUnicodeString(up, codes.length, codes);
   $.CGEventPost($.kCGHIDEventTap, up);
   'ok';
 `;
-const БУФЕР_ОБМЕНА = `
-set saved to ""
-try
-  set saved to the clipboard as text
-end try
-set the clipboard to "Привет"
-tell application "System Events" to key code 9 using {command down}
-delay 0.4
-try
-  set the clipboard to saved
-end try
-return "ok"
-`;
+
+/** Стереть всё в окне — между способами надо начинать с чистого листа. */
+async function очистить(): Promise<void> {
+  await driver.key('ctrl+a');
+  await driver.key('backspace');
+  await подождать(400);
+}
 
 const способы: [string, () => Promise<unknown>][] = [
   [
@@ -246,27 +237,35 @@ const способы: [string, () => Promise<unknown>][] = [
       запустить('osascript', ['-e', 'tell application "System Events" to keystroke "Привет"'], { timeout: 20_000 }),
   ],
   ['CGEvent + Unicode', () => запустить('osascript', ['-l', 'JavaScript', '-e', ЮНИКОД_JXA], { timeout: 20_000 })],
-  ['буфер обмена + Cmd+V', () => запустить('osascript', ['-e', БУФЕР_ОБМЕНА], { timeout: 20_000 })],
 ];
 
 for (const [имя, способ] of способы) {
-  await driver.key('ctrl+a');
-  await driver.key('backspace');
-  await подождать(400);
+  await очистить();
   await шаг(имя, способ, false);
   await подождать(800);
   const вышло = await текстОкна().catch(() => '(не прочитать)');
   console.log(`         «${имя}» → в окне «${вышло}»`);
 }
 
-await driver.key('ctrl+a');
-await driver.key('backspace');
-await подождать(400);
+// Буфер обмена возвращается на место: человек не должен терять скопированное
+// оттого, что Джарвис что-то напечатал.
+const сторож = `сторож-буфера-${Date.now()}`;
+await запустить('osascript', ['-e', `set the clipboard to "${сторож}"`], { timeout: 20_000 });
+
+await очистить();
 await шаг('напечатать кириллицу драйвером', () => driver.type('Привет, мир'));
 await подождать(1_000);
 const напечатано = (await шаг('прочитать текст окна', () => текстОкна())) ?? '';
 console.log(`         в окне: «${напечатано}»`);
 проверить(напечатано.includes('Привет, мир'), 'кириллица дошла до окна буква в букву');
+
+const буферПосле = (
+  await запустить('osascript', ['-e', 'return the clipboard as text'], { timeout: 20_000 }).catch(() => ({
+    stdout: '(не прочитать)',
+  }))
+).stdout.trim();
+console.log(`         в буфере обмена: «${буферПосле}»`);
+проверить(буферПосле === сторож, 'буфер обмена вернулся к тому, что в нём было');
 
 // Выделить всё (ctrl+a из таблицы команд) и напечатать поверх: если Cmd+A не
 // сработал, прежний текст останется на месте — это и будет видно.

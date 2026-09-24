@@ -395,9 +395,41 @@ function round(value: number): number {
   return Math.round(Number.isFinite(value) ? value : 0);
 }
 
-/** Печать текста. Через System Events: он печатает независимо от раскладки. */
+/**
+ * Печать текста — через буфер обмена, а не через клавиши.
+ *
+ * `keystroke` гонит символ через текущую раскладку. Замер на macos-latest
+ * 24.09.2026, на живом окне TextEdit: `keystroke "Hello"` напечатал «Hello»,
+ * а `keystroke "Привет"` — «aaaaaa». Отказа при этом нет: System Events
+ * отвечает «сделано». Диктовка по-русски превращалась бы в кашу молча.
+ *
+ * Раскладка — не наше дело и не наша забота: у человека с русским Джарвисом
+ * она вполне может быть русской, и тогда так же молча поехала бы латиница.
+ * Поэтому путь один на всё, независимый от раскладки: положить в буфер и
+ * нажать Cmd+V. Замер там же: «Привет» пришёл буква в букву, 691 мс.
+ *
+ * CGEvent с юникодной строкой был бы ближе всего к тому, как это сделано на
+ * Windows (SendInput с флагом UNICODE), но мост JXA не отдаёт буфер:
+ * «Ref has incompatible type (-2700)». Замерено там же.
+ *
+ * Буфер сохраняется и возвращается обратно. Задержка перед возвратом не
+ * украшение: вставку выполняет чужая программа, и вернуть буфер раньше, чем
+ * она его прочитает, значит вставить не то.
+ */
 export function typeScript(text: string): string {
-  return `tell application "System Events" to keystroke "${escapeAppleScript(text)}"`;
+  return `
+set saved to missing value
+try
+  set saved to the clipboard as record
+end try
+set the clipboard to "${escapeAppleScript(text)}"
+tell application "System Events" to key code 9 using {command down}
+delay 0.4
+try
+  if saved is not missing value then set the clipboard to saved
+end try
+return "ok"
+`;
 }
 
 /**
@@ -504,6 +536,13 @@ export function keyScript(keys: string): string {
  * пикселей. Имя и описание идут вместе с AXIdentifier: имя переводится вслед
  * за языком интерфейса, а идентификатор остаётся английским — на Windows это
  * уже спасало на иврите.
+ *
+ * Обход списка написан как `item i of kids`, и переписывать его в изящное
+ * `repeat with e in kids` нельзя. Переменная цикла получает тогда ссылку,
+ * которую System Events потом не разрешает: ошибка приходит на КАЖДОМ
+ * свойстве — роль, значение, фокус, — а обёрнутая в `try` она превращается в
+ * пустоту. Замерено 24.09.2026: полтора прогона ушло на поиск несуществующей
+ * беды с печатью, потому что так написанная читалка молча возвращала «».
  */
 export const ELEMENTS_SCRIPT = `
 set fieldSep to character id 31
