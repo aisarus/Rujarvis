@@ -100,11 +100,26 @@ function send(channel: string, payload: unknown): void {
   if (window && !window.isDestroyed()) window.webContents.send(`${SETTINGS_CHANNEL}:${channel}`, payload);
 }
 
-async function state() {
+/**
+ * Всё, что зависит от настроек, а значит меняется прямо во время работы окна.
+ *
+ * Отдельно от `state()`, потому что страница получает это не только при
+ * открытии, но и в ответ на каждое сохранение. Раньше в ответ приходили одни
+ * настройки, и переведённые главным процессом куски оставались от прежнего
+ * языка. Замер 25.09.2026: переключаем интерфейс на English на вкладке
+ * «Общие» и идём на «Речь» — все пять описаний моделей распознавания
+ * по-русски; на «Папках» путь к папке результатов показан как
+ * `…\\Desktop\\Джарвис`, а кнопка «Открыть» открывает `…\\Desktop\\Jarvis`,
+ * потому что главный процесс берёт язык заново. Надпись врала до тех пор,
+ * пока окно не закроют и не откроют снова.
+ *
+ * Пробы CLI сюда не входят: они запускают процессы и стоят секунды, а от
+ * сохранения настроек не зависят.
+ */
+async function зависитОтНастроек() {
   const options = current as SettingsWindowOptions;
   const { paths } = options;
   const settings = options.settings.get();
-  const [claude, codex] = await Promise.all([createClaudeProbe().status(), createCodexProbe().status()]);
   const whisper = await Promise.all(
     WHISPER_MODELS.map(async (model) => ({
       id: model.id,
@@ -123,8 +138,6 @@ async function state() {
   }));
   return {
     settings,
-    strings: UI_STRINGS,
-    platform: process.platform,
     paths: {
       home: paths.home,
       log: paths.log,
@@ -132,9 +145,22 @@ async function state() {
         settings.outputDir ||
         jarvisOutputDir(process.env, app.getPath('desktop'), settings.language === 'en' ? 'Jarvis' : 'Джарвис'),
     },
-    agents: { claude, codex },
     whisper,
     voices,
+  };
+}
+
+async function state() {
+  const [живое, claude, codex] = await Promise.all([
+    зависитОтНастроек(),
+    createClaudeProbe().status(),
+    createCodexProbe().status(),
+  ]);
+  return {
+    ...живое,
+    strings: UI_STRINGS,
+    platform: process.platform,
+    agents: { claude, codex },
   };
 }
 
@@ -184,7 +210,12 @@ function registerHandlers(): void {
 
   ipcMain.handle(`${SETTINGS_CHANNEL}:state`, () => state());
 
-  ipcMain.handle(`${SETTINGS_CHANNEL}:update`, (_event, patch: Partial<AppSettings>) => applyPatch(patch));
+  // Ответ — не только настройки: язык меняет и описания моделей, и путь к
+  // папке результатов, а их считает главный процесс.
+  ipcMain.handle(`${SETTINGS_CHANNEL}:update`, async (_event, patch: Partial<AppSettings>) => {
+    applyPatch(patch);
+    return зависитОтНастроек();
+  });
 
   ipcMain.handle(`${SETTINGS_CHANNEL}:finish`, () => {
     const options = current as SettingsWindowOptions;

@@ -38,8 +38,23 @@ export function createHelpOverlay(): HelpOverlay {
 
   const open = (): BrowserWindow => {
     const work = screen.getPrimaryDisplay().workArea;
-    const width = Math.min(1100, Math.round(work.width * 0.8));
-    const height = Math.min(820, Math.round(work.height * 0.85));
+    /**
+     * Окно под список, а не список под окно.
+     *
+     * Потолки 1100×820 были взяты на глаз, и список в них не помещался.
+     * Замер 25.09.2026, список из 71 команды, высота содержимого в лучшем
+     * (трёхколоночном) раскладе против высоты окна:
+     *
+     *   80%/85%, потолок 1100×820  →  1100×734   надо 853, есть 736
+     *   90%/90%                    →  1382×778   надо 805, есть 780
+     *   92%/92%                    →  1413×795   надо 798, есть 798  ← влезло
+     *   96%/94%                    →  1475×812   надо 814, есть 814
+     *
+     * Потолки остались, но такие, чтобы на обычном экране они не срабатывали
+     * и окно не разъезжалось во всю ширину сверхширокого монитора.
+     */
+    const width = Math.min(1600, Math.round(work.width * 0.92));
+    const height = Math.min(1000, Math.round(work.height * 0.92));
 
     const created = new BrowserWindow({
       width,
@@ -81,7 +96,7 @@ export function createHelpOverlay(): HelpOverlay {
   };
 }
 
-function buildHelpHtml(groups: readonly CatalogueGroup[]): string {
+export function buildHelpHtml(groups: readonly CatalogueGroup[]): string {
   const sections = groups
     .map((group) => {
       const rows = group.items
@@ -131,8 +146,58 @@ function buildHelpHtml(groups: readonly CatalogueGroup[]): string {
 </head>
 <body>
   <h1>${tr('Что умеет Джарвис', 'What Jarvis can do')}</h1>
-  <p class="hint">${tr('Скажите «убери список», чтобы закрыть. Всё остальное можно говорить прямо сейчас.', 'Say "hide the list" to close it. Everything else works right now.')}</p>
+  <p class="hint">${tr('Скажите «убери список», чтобы закрыть. Всё остальное можно говорить прямо сейчас.', 'Say "hide the list" to close it. Everything else works right now.')}<span id="ниже" hidden> ${tr('Список длиннее окна: остальное — прокруткой колеса.', 'The list is longer than the window: scroll the rest with the wheel.')}</span></p>
   <div class="columns">${sections}</div>
+<script>
+/*
+ * Число колонок подбирается замером, а не задаётся на глаз.
+ *
+ * «Больше колонок — ниже список» неверно: фраза команды не переносится
+ * (nowrap), поэтому в узкой колонке таблица вылезает за её край, а описание
+ * начинает переноситься на две-три строки — и список становится ВЫШЕ. Замер
+ * 25.09.2026, окно 1100×734, высота содержимого:
+ *
+ *   1 колонка  2072      4 колонки 1095 (одна таблица шире колонки)
+ *   2 колонки  1117      5 колонок 1012 (семь таблиц шире)
+ *   3 колонки   853      6 колонок 1012 (восемь, и ширина вылезла)
+ *
+ * Поэтому берём ту раскладку, в которой список ниже всего и ни одна таблица
+ * не шире своей колонки. Раскладка зависит от ширины окна: на 1413×795 и три,
+ * и четыре колонки дают 798 — выбирается меньшее число.
+ */
+(function () {
+  var columns = document.querySelector('.columns');
+  var tables = Array.prototype.slice.call(document.querySelectorAll('table'));
+  function вылезает() {
+    for (var i = 0; i < tables.length; i += 1) {
+      var своя = tables[i].parentElement.getBoundingClientRect().width;
+      if (tables[i].getBoundingClientRect().width > своя + 1) return true;
+    }
+    return false;
+  }
+  var выбрано = 3;
+  var лучшая = Infinity;
+  for (var n = 2; n <= 5; n += 1) {
+    columns.style.columnCount = String(n);
+    void columns.offsetHeight;
+    if (вылезает()) continue;
+    var высота = document.body.scrollHeight;
+    if (высота < лучшая) {
+      лучшая = высота;
+      выбрано = n;
+    }
+  }
+  columns.style.columnCount = String(выбрано);
+  /*
+   * На маленьком экране список не влезает и в лучшей раскладке: замер
+   * 25.09.2026 на 1366×728 — 823 точки против 672. Молча спрятанный хвост —
+   * это «команды нет»: человек не знает ни что он есть, ни чем его достать.
+   */
+  if (document.body.scrollHeight > document.body.clientHeight + 1) {
+    document.getElementById('ниже').hidden = false;
+  }
+})();
+</script>
 </body>
 </html>
 `;

@@ -36,7 +36,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { StoryLine } from '../jarvis/observe/storyline';
-import { tr } from '../jarvis/locale/language';
+import { currentLanguage, tr } from '../jarvis/locale/language';
 
 export const LOG_WINDOW_CHANNELS = {
   line: 'jarvis-log:line',
@@ -49,9 +49,36 @@ const MARGIN = 24;
 /** Сколько строк помнить, пока окно закрыто. */
 const BACKLOG_LIMIT = 500;
 
+export interface СловаШагов {
+  one: string;
+  few: string;
+  many: string;
+}
+
+/** Счётчик шагов на двух языках. Русский склоняется, английский — нет. */
+export const СЛОВА_ШАГОВ: Record<'ru' | 'en', СловаШагов> = {
+  ru: { one: ' шаг', few: ' шага', many: ' шагов' },
+  en: { one: ' step', few: ' steps', many: ' steps' },
+};
+
+/**
+ * Подпись счётчика.
+ *
+ * Эта функция уезжает в страницу окна исходником (`toString`), поэтому она
+ * ничего не знает снаружи себя: ни импортов, ни констант модуля.
+ */
+export function подписьШагов(n: number, слова: СловаШагов): string {
+  const сотня = n % 100;
+  const единица = n % 10;
+  if (сотня >= 11 && сотня <= 14) return n + слова.many;
+  if (единица === 1) return n + слова.one;
+  if (единица >= 2 && единица <= 4) return n + слова.few;
+  return n + слова.many;
+}
+
 export function buildLogWindowHtml(): string {
   return `<!doctype html>
-<html lang="ru">
+<html lang="${currentLanguage()}">
 <head><meta charset="utf-8"><title>${tr('Джарвис — что делаю', 'Jarvis — what I am doing')}</title>
 <style>
   html, body {
@@ -123,6 +150,14 @@ function clock(at) {
   return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
 }
 
+// Счётчик читают, а «1 шагов» читается как ошибка в самой программе.
+//
+// Правило ниже — та же функция, что проверена тестом: она переносится в
+// страницу исходником, а не переписывается заново. Переписанное правило
+// разойдётся с проверенным на первой же правке.
+const СЛОВА = ${JSON.stringify(СЛОВА_ШАГОВ[currentLanguage()])};
+const подписьШагов = ${подписьШагов.toString()};
+
 function add(line) {
   if (empty && empty.parentNode) empty.remove();
 
@@ -153,7 +188,7 @@ function add(line) {
   feed.appendChild(row);
 
   shown += 1;
-  count.textContent = shown + ${JSON.stringify(tr(' шагов', ' steps'))};
+  count.textContent = подписьШагов(shown, СЛОВА);
 
   // Старое убираем, иначе часовая работа съест память окна.
   while (feed.childElementCount > 1200) feed.removeChild(feed.firstElementChild);

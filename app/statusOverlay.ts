@@ -279,7 +279,16 @@ function openWindow(pagePath: string): BrowserWindow {
     // prettier one that is not.
     transparent: false,
     backgroundColor: '#121216',
-    resizable: false,
+    // Изменяемое — вынужденно.
+    //
+    // При `resizable: false` Windows отдаёт странице меньше, чем просили:
+    // замер 25.09.2026 при масштабе 125%, просили высоту 134 точки — страница
+    // получила 128, и нижние четыре точки плашки оказались срезаны ровно
+    // тогда, когда текст перестал помещаться в строку, то есть когда высота и
+    // нужна. Со `resizable: true` окно получает ровно запрошенное. Тянуть
+    // плашку человеку не за что: вся она — ручка перетаскивания, а её размер
+    // главный процесс задаёт заново на каждое обновление.
+    resizable: true,
     movable: true,
     minimizable: false,
     maximizable: false,
