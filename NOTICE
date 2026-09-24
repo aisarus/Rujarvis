@@ -1,8 +1,9 @@
 Rujarvis
 Copyright 2026 Rujarvis contributors
 
-Rujarvis is an independent fork of Interpreter Workstation and is not an
-official Open Interpreter release.
+Rujarvis started as a fork of Interpreter Workstation (Apache License 2.0)
+and is not an official Open Interpreter release. Parts of its code were
+derived from Interpreter Workstation; the notice for that project follows.
 
 Interpreter Workstation
 Copyright 2026 Open Interpreter contributors

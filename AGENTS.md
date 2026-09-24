@@ -1,99 +1,85 @@
 # Contributor and agent guidance
 
-Rujarvis is a fork of Interpreter Workstation with a Russian voice-assistant
-layer on top. These rules say which code follows upstream's architecture and
-which follows the Jarvis layer's, and what must stay true in both.
+Rujarvis is a standalone Electron voice assistant for Windows, in Russian and
+English, that drives the official Claude Code and Codex CLIs on the user's own
+subscription. These rules say what must stay true.
 
 ## Before changing code
 
 - Run `git rev-parse --show-toplevel` and check that it is this repository's
   root. Work done or tested in another copy is not verification of this one.
-- Use `pnpm` for repository commands.
-- Read `README.md`, then `docs/jarvis/architecture.md` for the Jarvis layer or
-  the relevant document under `docs/` for upstream code.
-- Read `docs/agent-testing.md` before writing or running upstream tests.
+- Use `pnpm`. Read `README.md` and `docs/jarvis/architecture.md` first.
 - Preserve user work and unrelated changes. Never publish, push, or create a
   public artifact without explicit authorization.
 
-## Two layers, two sets of rules
+## Where things are
 
-**The Jarvis layer** is `jarvis/`, `electron/jarvis/`, `server/jarvis/`,
-`src/components/settings/AiAccountsSection.tsx` and the `scripts/jarvis-*`,
-`scripts/probe-*` and `scripts/проверка-*` scripts. By design it:
+- `app/` — the Electron app: `main.ts` (tray, single instance, startup),
+  `settingsWindow.ts` + `ui/` (onboarding and settings), `voiceBridge.ts`
+  (microphone, recognition, direct commands, speech), overlays.
+- `jarvis/` — everything else: core, router, risk, backends, voice, dialogue,
+  desktop MCP server, locale, setup (paths and settings).
+- `scripts/` — installer helpers and live checks (`jarvis-*`, `probe-*`,
+  `voice-roundtrip.ts`).
+- Files outside `app/`, `jarvis/`, `scripts/`, `resources/`, `docs/jarvis/`
+  and the root config are leftovers from Interpreter Workstation: nothing
+  builds, imports or tests them. Do not build on them.
 
-- drives the official `claude` and `codex` CLIs on the user's own
-  subscriptions, rather than going through the OIX app-server;
-- gives Claude Code its own desktop MCP server (`jarvis/desktop/`);
-- is Windows-first: the desktop driver, app launching and closing use
-  PowerShell, `tasklist`/`taskkill` and the Start menu.
-
-**Upstream code** is everything else. There, upstream's own rules apply:
-Open Interpreter (OIX) is the runtime core, Workstation is a client of the
-app-server contract, per-agent file scopes are enforced on every tool path,
-and the model-facing Workstation tools use the `interpreter-app` CLI surface.
-Keep edits to upstream files minimal and list every new one in
-`docs/jarvis/upstream-sync.md`, so that merging upstream stays cheap. When
-upstream's contract changes, adapt `jarvis/`, not upstream.
-
-## Invariants of the Jarvis layer
+## Invariants
 
 - **Red lines are enforced in code, twice.** The spoken phrase is classified
   before an agent starts (`jarvis/router`, `jarvis/risk/policy.ts`), and every
-  agent tool call goes through the PreToolUse gate (`jarvis/risk/gateHook.ts`,
+  agent tool call goes through the PreToolUse hook (`jarvis/risk/gateHook.ts`,
   `jarvis/risk/toolGate.ts`). Silence, an unreadable call and any failure mean
-  *deny*. Without the gate the agent gets no shell, no skill writing and no
+  *deny*. Without the hook the agent gets no shell, no skill writing and no
   write access to Jarvis's own folder. Do not pre-approve a new tool that can
   spend money, contact people, run commands or write outside the task without
-  teaching the gate about it.
+  teaching the hook about it.
 - Model text can raise a risk class, never lower it. Normalisation only narrows
   permissions. The user's original phrase always reaches the backend.
-- «Стоп» and «тишина» are matched before anything else and must never wait
-  behind a model, a queue or another command.
-- Never log dictated text or speech not addressed to Jarvis.
-- Checks report three answers — passed, failed, or *nothing to measure with*.
-  A tool that reports success for something it never did is a bug.
+- Stop, silence, pause and continue — and yes/no answers — are matched before
+  anything else, in **both** languages whatever the selected language is, and
+  must never wait behind a model, a queue or another command. No command may
+  use one of those words (`jarvis/voice/redLines.vitest.test.ts` guards this).
+- Dictated text and speech not addressed to Jarvis are not logged unless the
+  user chose *everything* in settings (`speechLogging`).
+- Everything on disk lives under one folder (`jarvis/setup/paths.ts`). Do not
+  add files anywhere else.
+- No API keys, no telemetry, no hosted accounts. Agents run through CLIs the
+  user signed into.
+- Checks answer three ways — passed, failed, or *nothing to measure with*. A
+  tool that reports success for something it never did is a bug.
 
-## Product boundaries
+## Two languages
 
-- Everything works without hosted accounts, telemetry, or proprietary
-  services. No API keys: agents run through CLIs the user signed into.
-- Rujarvis has its own name, package identifier and support links
-  (`product.json`, `electron-builder.yml`). It does not ship upstream's official
-  distribution profile, telemetry or update feed. The in-app name and data
-  folder are still upstream's (`Interpreter`); changing them moves user data.
-
-## Dependencies and provenance
-
-- `apps/interpreter-extension` and `submodules/interpreter-cua` are upstream
-  submodules and keep their history and attribution.
-- Never commit credentials, token backups, signing material, paid SDKs,
-  proprietary binaries, personal paths or personal data.
+User-facing text goes through `tr('русский', 'english')`
+(`jarvis/locale/language.ts`); tables that recognise speech hold both
+languages. Adding a Russian phrase to a command table means adding the English
+one too, and the catalogue test (`jarvis/control/catalogue.vitest.test.ts`)
+checks that every promised phrase in both languages really parses.
 
 ## Code rules
 
 - Prefer the simplest complete structural fix. Do not add compatibility
-  fallbacks for obsolete local formats.
-- Comments explain why, not what. In the Jarvis layer they are in Russian.
-- In upstream code, follow `docs/agent-paths.md`, `docs/agent-ipc.md`,
-  `docs/agent-tools.md` and `docs/agent-frontend.md` before touching paths,
-  IPC, tools or UI.
+  fallbacks for obsolete local formats — migrate once (see `install.ps1`,
+  `Move-LegacyData`).
+- Comments explain why, not what. In `jarvis/` and `app/` they are mostly in
+  Russian.
+- Windows-only behaviour (PowerShell desktop driver, `tasklist`/`taskkill`,
+  the Start menu) must fail gracefully elsewhere, never crash the app.
 
 ## Verification
 
-The normal pre-commit floor:
-
 ```bash
 pnpm typecheck
-pnpm run test:vitest
-pnpm run test:unit
+pnpm test
+pnpm build
 ```
 
-For the Jarvis layer, `pnpm exec vitest run jarvis electron/jarvis server/jarvis scripts`
-is the fast loop. Anything that crosses a process boundary — spawning a CLI,
-the MCP server, the gate hook — needs a run against the real thing, not only a
-fake. Most voice and desktop behaviour runs only on Windows: say so when you
-could not test it there.
+Anything that crosses a process boundary — spawning a CLI, the MCP server,
+the hook, the speech models — needs a run against the real thing, not only a
+fake: `pnpm jarvis:roundtrip` for the voice path, `pnpm jarvis:talk-check` for
+the conversation stream, the app under a display for the UI. Most desktop
+behaviour runs only on Windows: say so when you could not test it there.
 
-Never claim an end-to-end path works from typechecking alone. Prove the actual
-boundary and report any platform- or credential-dependent step that was not
-run.
+Never claim an end-to-end path works from typechecking alone.

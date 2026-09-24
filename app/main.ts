@@ -48,16 +48,20 @@ function iconPath(name: string): string {
 async function startVoice(): Promise<void> {
   if (bridge || starting) return starting ?? undefined;
   starting = (async () => {
-    try {
-      bridge = await startJarvisVoiceBridge({ settings });
-      voiceError = '';
-    } catch (error) {
-      voiceError = error instanceof Error ? error.message : String(error);
-      console.error('[main] голос не запустился:', error);
-    } finally {
-      starting = null;
-      refreshTray();
+    // Две попытки: однажды под xvfb окно звука не загрузилось с ERR_FAILED, а
+    // со второго раза поднялось. Человеку не нужно ради этого лезть в трей.
+    for (let attempt = 1; attempt <= 2 && !bridge; attempt += 1) {
+      try {
+        bridge = await startJarvisVoiceBridge({ settings });
+        voiceError = '';
+      } catch (error) {
+        voiceError = error instanceof Error ? error.message : String(error);
+        console.error(`[main] голос не запустился (попытка ${attempt}):`, error);
+        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 3_000));
+      }
     }
+    starting = null;
+    refreshTray();
   })();
   return starting;
 }

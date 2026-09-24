@@ -1,195 +1,163 @@
 # Rujarvis
 
-**A Russian-speaking voice assistant for Windows, built on
+**A voice assistant for Windows that speaks Russian and English and gets work
+done with the Claude Code subscription you already have.**
+
+You talk to it in plain language — *"close this window"*, *"find why the build
+fails and fix it"*, *«а пока открой Telegram»* — and it decides what the
+request needs: an instant keyboard or window action, an answer, or real work
+done by Claude Code on your screen, in your browser and in your files. Before
+anything that spends money, messages people or can't be undone, it asks you
+out loud.
+
+Rujarvis started as a fork of
 [Interpreter Workstation](https://github.com/openinterpreter/interpreter-workstation)
-and driven entirely by subscriptions you already pay for.**
+and is now a standalone app. It is not affiliated with or endorsed by Open
+Interpreter.
 
-You talk to it in ordinary Russian — *«закрой это окно»*, *«посмотри почему билд
-упал и почини через Клод Код»*, *«а пока открой Telegram»* — and it decides what
-the request needs, which agent should do it, and whether to ask you first.
+## Install
 
-Rujarvis does not rewrite Workstation. It adds a «Jarvis» layer on top: Russian
-voice UX, task routing between models, and subscription coding agents (Claude
-Code, Codex) driven through their official CLIs.
+Windows 10/11, one line in PowerShell:
 
-Rujarvis is an independent project. It is not affiliated with or endorsed by
-Open Interpreter.
+```powershell
+irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 | iex
+```
 
-## Why subscriptions and not API keys
+English by default instead of Russian:
 
-This is the design constraint the whole project is bent around: **no paid APIs,
-no API keys, no per-token billing.** Everything runs through CLIs you are
-already signed into — `claude` and `codex` — plus local models for speech.
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1))) -Language en
+```
 
-That constraint shapes the architecture. Long-running work happens inside live
-CLI sessions that are kept warm and reused, because a warm session answers in
-three seconds where a cold one takes twenty-eight. Speech recognition and
-synthesis run locally on your own GPU and CPU.
+The installer puts Git and Node.js in place if they are missing, builds the
+app, downloads a speech model sized to your machine and a voice, adds
+**Rujarvis** to the Start menu and starts it. No administrator rights, no C++
+compiler, no Rust. Running it again updates the install.
 
-## What works today
+On first start a short setup walks you through the language, signing in to
+Claude Code, the speech models and a microphone check. Everything can be
+changed later from the tray icon → **Settings**.
 
-- **Voice, end to end.** Wake word «Джарвис», push-to-talk on `Ctrl+Space`,
-  mute on `Ctrl+M`. Recognition runs on the GPU (`whisper large-v3-turbo`) with
-  a CPU fallback; speech goes through a local Piper voice. Measured over 1313
-  real phrases from one machine's log: median **630 ms**, mean 851 ms, 87 %
-  under a second, worst case 16 s when the room was noisy.
-- **Direct commands answered instantly**, without a model: scroll, keys, click
-  by name, open and close applications, switch windows, dictation.
-- **Long work by one sentence.** The agent writes a plan, marks steps as it
-  goes, and the plan is a file you can watch while it runs.
-- **A conversation that runs beside the work.** Anything that is not a direct
-  command goes to a live Claude Code session that remembers the thread all
-  evening and can steer the running task — stop it, pause it, resume it, file a
-  correction, add a plan step, or start something new. It has no hands of its
-  own: seven verbs, and every one of them goes through the working stream and
-  its permissions.
-- **Computer use on a subscription.** The desktop — screen, mouse, keyboard,
-  windows, browser, Blender, Krita — is offered to Claude Code as MCP tools, so
-  the model can look, act, and look again without an API key.
+You need [Claude Code](https://claude.ai/code) signed in with your own
+subscription for anything beyond direct commands. Codex works as a fallback if
+you have it.
+
+## Talking to it
+
+| Say | What happens |
+| --- | --- |
+| **Jarvis** / **Джарвис** | Wakes it; for a minute after that you can talk without the name |
+| `Ctrl+Space` | Push to talk: press, speak, press again |
+| `Ctrl+M` | Microphone off / on |
+| **stop** / **стоп** | Stops the current work immediately |
+| **silence** / **тишина** | Stops talking and listening |
+| *what can you do* / *что ты умеешь* | Shows every direct command |
+
+Direct commands — scroll, keys, tabs, windows, clicking a button by its name, a
+numbered grid over the screen, dictation, opening and closing apps — are
+answered instantly, without a model. Anything else goes to a live Claude Code
+session that remembers the conversation and can start, correct, pause or stop
+the running work.
+
+The stop and silence words, and yes/no answers, work in both languages
+whichever language is selected.
 
 ## What it asks you before doing
 
-Four red lines: spending money, contacting other people, overwriting system
-files, and destructive or outward-reaching commands (`git push`, `rm -rf`,
-`curl | sh` and the like). Everything else runs without interrupting you.
+Four red lines: spending money, contacting other people, changing system files,
+and destructive or outward-reaching commands (`git push`, `rm -rf`, `curl | sh`
+and the like). Everything else runs without interrupting you.
 
-They are checked twice, in code rather than in a prompt. First the phrase you
-said is classified before any agent starts. Then **every tool call the agent
-makes** goes through a Claude Code `PreToolUse` hook that classifies the
-concrete action — the shell command, the file being written, the button being
-clicked — with the same policy, and asks you by voice before anything on a red
-line. No answer means no. This matters because the agent reads web pages and
-files, and those can try to talk it into things you never asked for.
+They are checked twice, in code rather than in a prompt. The phrase you said
+is classified before any agent starts. Then **every tool call the agent makes**
+goes through a Claude Code `PreToolUse` hook that classifies the concrete
+action — the shell command, the file being written, the button being clicked —
+and asks you by voice before anything on a red line. No answer means no. This
+matters because the agent reads web pages and files, and those can try to talk
+it into things you never asked for.
 
 What the hook cannot see: a click by screen coordinates or by element number
 does not say what is being pressed. Codex runs in its own sandbox
 (`workspace-write`, no network) and gets no desktop tools. Details:
 [docs/jarvis/architecture.md](docs/jarvis/architecture.md).
 
-Two words always work, immediately, even when nothing else does: **«стоп»**
-stops the current work, **«тишина»** makes it shut up and stop listening. They
-are matched before any model sees the phrase, and a test suite guards the fact
-that no new command can ever swallow them.
+## Where things are
 
-## Install
+Everything lives in one folder, `%LOCALAPPDATA%\Rujarvis`:
 
-Windows 11, one line in PowerShell. The voice layer starts by default only on
-Windows; elsewhere the app runs as plain Workstation unless `JARVIS_VOICE=on`.
-
-
-```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1)))
-```
-
-The installer checks Node 22 and pnpm 9 (switching them through fnm and
-corepack when needed), builds the app, downloads a speech model sized to your
-machine, and puts **Rujarvis** in the Start menu.
-
-**Honest status:** this one-liner has not yet been observed to run to the end on
-a clean machine. The last recorded attempt (18 September) got as far as
-`pnpm install` and stopped on an `electron-rebuild` MSBuild failure; the checks
-that caused earlier failures — Node version, pnpm version, MSVC build tools —
-have been fixed since, but nothing past that point has been watched on a fresh
-Windows box. The machine this is developed on was finished by hand. If it
-breaks for you, [docs/jarvis/install.md](docs/jarvis/install.md) has the manual
-path, and an issue with the failing step is genuinely useful.
-
-Then sign in to Claude Code once, in a terminal:
-
-```bash
-claude auth login
-```
-
-Details, parameters and a manual build: [docs/jarvis/install.md](docs/jarvis/install.md).
-
-## What is inside
-
-| Layer | Directory | What it does |
-| --- | --- | --- |
-| Backends | `jarvis/backends` | `AgentBackend` plus Claude Code / Codex / Interpreter adapters, warm live sessions, fallback chain |
-| Router | `jarvis/router` | Works out required capabilities, picks a backend, normalises the phrase |
-| Risk | `jarvis/risk` | SAFE / NORMAL / SENSITIVE / DANGEROUS, policy in code |
-| Voice | `jarvis/voice` | Wake word, interrupt words, speech queue, spoken-vs-full answers |
-| Dialogue | `jarvis/dialogue` | The conversation stream: live session, its seven levers, the file bridge to the task manager |
-| Control | `jarvis/control` | The direct-command table and the spoken command catalogue |
-| Agent | `jarvis/agent` | The plan: steps, states, progress |
-| Tasks | `jarvis/tasks` | Foreground and background tasks, pause, cancel, the emergency kill switch |
-| Desktop | `jarvis/desktop` | The MCP server that hands the screen, browser, Blender and Krita to the agent |
-| Measure | `jarvis/measure` | Three-valued gates: passed / failed / **nothing to measure with** |
-| Memory | `jarvis/memory` | Journal of what was done, project aliases, lessons learned from failures |
-| Observe | `jarvis/observe` | The storyline shown in the log window, run logs |
-| Context | `jarvis/context` | World state: active window, current project, last task |
-
-Workstation's own infrastructure — agent runtime, computer use, browser, files,
-shell, skills, permissions, desktop UI — is used as it is.
-
-There is also `jarvis/dota`, an experiment in reading Dota 2's official Game
-State Integration feed and drawing an overlay. It is parked, not maintained.
-
-## Development
-
-```bash
-pnpm install
-pnpm run dev            # renderer + Electron with hot reload
-pnpm test:vitest        # vitest suite; the Jarvis layer alone is ~1,650 tests
-pnpm run typecheck
-```
-
-Two habits this codebase is strict about, both learned the hard way:
-
-**Measure before claiming.** A tool that reports success for something it never
-did is worse than one that fails loudly, so checks return three answers —
-passed, failed, or *nothing to measure with* — and «works» means a green run,
-not code that looks right.
-
-**Comments explain why, not what.** Nearly every odd-looking line here is the
-scar of a specific failure, and the comment says which one. They are in
-Russian, like the rest of the project's prose.
-
-### Checking the claims above
-
-Numbers in this README are measurements, and you should be able to reproduce
-them rather than take them on trust:
-
-| Claim | How to check it |
+| Folder | What is in it |
 | --- | --- |
-| The test count | `pnpm exec vitest run jarvis electron/jarvis server/jarvis scripts` — the summary line is the number |
-| That it builds and passes on something other than this machine | the CI workflow on `main` under the repository's Actions tab |
-| Recognition latency | `[jarvis] услышал за N мс` in `%LOCALAPPDATA%\Rujarvis\data\jarvis.log`; the figures above are the median, mean and 90th percentile of 1313 such lines |
-| The conversation's seven levers | `npm run jarvis:talk-check` — drives a real CLI session and reports which levers reached the task manager |
+| `src\` | The app itself |
+| `data\` | Settings, memory, the action journal, the current plan, your standing instructions (`характер.md`) |
+| `logs\jarvis.log` | The log; the tray has **Open log** |
+| `models\` | Speech recognition (`whisper\`) and voices (`voices\`) |
 
-Anything this README asserts without a way to check it is a bug in the README.
+Files the agent makes for you go to **Jarvis** (or **Джарвис**) on your desktop.
 
-
-## Documentation
-
-Project docs are in Russian.
-
-**Current:**
-
-- [Design specs](docs/jarvis/design/) — the living record, one document per
-  feature, each carrying the measurements that justified the decision
-- [Install, settings and what stays on disk](docs/jarvis/install.md)
-- [Architecture and the red-line gate](docs/jarvis/architecture.md)
-- [Syncing with upstream](docs/jarvis/upstream-sync.md)
-
-**A snapshot from 18 September**, written before the voice layer, plan mode and
-the conversation stream landed. Useful for shape and intent, not for detail:
-[voice UX](docs/jarvis/voice-ru.md),
-[backends](docs/jarvis/backends.md),
-[MVP status](docs/jarvis/mvp-status.md).
-
-Upstream documentation lives in [README.upstream.md](README.upstream.md) and
-the `docs/` directory.
+The log records commands addressed to Jarvis, never your dictation or
+conversations around you — unless you choose *everything* in **Settings →
+Folders and log**, which helps when it mishears.
 
 ## Privacy
 
 Speech is recognised and synthesised locally. The only things that leave your
 machine are what you send to the Claude Code or Codex CLI you signed in to —
 the same as using them directly — and your audio, only if you opt into cloud
-recognition by setting `ELEVENLABS_API_KEY`. There is no telemetry. What stays on disk is
-listed in [docs/jarvis/install.md](docs/jarvis/install.md#что-остаётся-на-диске).
+recognition by setting `ELEVENLABS_API_KEY`. There is no telemetry.
+
+## Honest status
+
+- The app, setup, voice pipeline, red-line hook and both languages are tested
+  on Linux in CI and by hand under a virtual display; the Windows-only parts
+  (desktop driver, app launching, installer) are covered by unit tests but
+  still need a pass on a real Windows machine after this rewrite.
+- Measured by synthesising phrases with the Piper voice and recognising them
+  with Whisper `base` (`pnpm jarvis:roundtrip`): Russian 10/12, English 9/12,
+  and every stop, silence, pause and continue word recognised in both. A real
+  microphone and a larger model do better; synthetic speech is a floor.
+- Window control through UI Automation (`window_*` tools) needs `cua-driver.exe`,
+  which the installer does not download yet; set `JARVIS_CUA_DRIVER` to its
+  path if you have it. Screen, mouse, keyboard and browser work without it.
+- Dictation editing («удали последнее слово») and live Blender edits are
+  Russian-only for now.
+- GPU recognition is optional: run a whisper.cpp server and set
+  `JARVIS_GPU_STT`; otherwise recognition runs on the CPU.
+
+## Development
+
+```bash
+pnpm install
+pnpm build            # esbuild, a few seconds
+pnpm start            # the app
+pnpm typecheck
+pnpm test             # ~1,700 tests
+pnpm jarvis:roundtrip -- --en   # voice round-trip with real models
+```
+
+| Directory | What it does |
+| --- | --- |
+| `app/` | The Electron app: tray, settings and onboarding, voice bridge, overlays |
+| `jarvis/backends` | Claude Code / Codex adapters, warm live sessions, fallback chain |
+| `jarvis/router` | Works out what a request needs and which backend takes it |
+| `jarvis/risk` | Risk classes, the red-line policy and the tool-call hook |
+| `jarvis/voice` | Wake word, stop words, recognition and synthesis, noise filtering |
+| `jarvis/control` | Direct commands and the command catalogue |
+| `jarvis/desktop` | The MCP server that gives the agent the screen, browser, Blender and Krita |
+| `jarvis/dialogue` | The conversation stream and its levers |
+| `jarvis/locale` | Russian / English |
+| `jarvis/setup` | Paths, settings, onboarding helpers |
+
+Two habits this codebase is strict about: **measure before claiming** — checks
+answer passed, failed, or *nothing to measure with* — and **comments explain
+why, not what**. Comments and design notes are mostly in Russian.
+
+## Documentation
+
+- [Install, settings and what stays on disk](docs/jarvis/install.md)
+- [Architecture and the red-line hook](docs/jarvis/architecture.md)
+- [Design notes](docs/jarvis/design/) (Russian)
+- [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Support](SUPPORT.md)
 
 ## Licence
 
-Apache License 2.0, same as upstream. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

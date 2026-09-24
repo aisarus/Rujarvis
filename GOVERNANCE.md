@@ -12,8 +12,8 @@ licence agreement or copyright assignment.
 
 ## Relationship to Interpreter Workstation
 
-Rujarvis is an independent fork. It is not an official Open Interpreter
-release and is not endorsed by the Open Interpreter project. Upstream's own
-governance, marks and release rules are described in
-[TRADEMARKS.md](TRADEMARKS.md); Rujarvis follows them by using its own name,
-package identifier and support links.
+Rujarvis started as a fork of Interpreter Workstation and is now a standalone
+application that no longer uses its code. It is not an official Open
+Interpreter release and is not endorsed by the Open Interpreter project. It
+uses its own name, icons, package identifier and support links, and keeps the
+upstream attribution in [NOTICE](NOTICE).

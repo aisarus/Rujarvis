@@ -2,19 +2,23 @@
 
 Thank you for helping improve Rujarvis.
 
-Before opening a change, read [AGENTS.md](AGENTS.md) — it describes what
-belongs in the Jarvis layer and what stays in upstream Interpreter Workstation —
-and the document under `docs/jarvis/` for the part you are changing. Project
+Before opening a change, read [AGENTS.md](AGENTS.md) — the invariants that must
+stay true — and [docs/jarvis/architecture.md](docs/jarvis/architecture.md). Project
 prose and code comments are in Russian; issues and pull requests in English
 or Russian are both welcome.
 
 ```bash
-git submodule update --init --recursive
 pnpm install
 pnpm typecheck
-pnpm run test:unit
-pnpm run test:vitest
+pnpm test
+pnpm build
+pnpm start
 ```
+
+`pnpm jarvis:roundtrip` (and `-- --en`) checks the voice path with real models:
+it synthesises commands, recognises them and runs them through the same
+parser as live speech. Run it when you touch recognition, wake words, stop
+words or the command tables.
 
 Keep changes focused and include tests that prove the behaviour being changed.
 Anything touching the red lines (`jarvis/risk/`, the tool gate, confirmation
@@ -25,7 +29,7 @@ on Windows, say so in the pull request rather than claiming it works.
 
 ## Developer Certificate of Origin
 
-Rujarvis inherits Interpreter Workstation's
+Rujarvis uses the
 [Developer Certificate of Origin 1.1](https://developercertificate.org/) and
 does not require a contributor license agreement. Sign off every commit:
 
