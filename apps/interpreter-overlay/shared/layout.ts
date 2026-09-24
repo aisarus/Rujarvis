@@ -1,1 +1,0 @@
-export const INTERPRETER_OVERLAY_STRIP_RATIO = 0.42;

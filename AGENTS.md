@@ -21,9 +21,8 @@ subscription. These rules say what must stay true.
   desktop MCP server, locale, setup (paths and settings).
 - `scripts/` — installer helpers and live checks (`jarvis-*`, `probe-*`,
   `voice-roundtrip.ts`).
-- Files outside `app/`, `jarvis/`, `scripts/`, `resources/`, `docs/jarvis/`
-  and the root config are leftovers from Interpreter Workstation: nothing
-  builds, imports or tests them. Do not build on them.
+- `resources/` — icons; `docs/jarvis/` — install, architecture and design
+  notes. Interpreter Workstation code is gone; its history stays in git.
 
 ## Invariants
 

@@ -71,7 +71,6 @@ tests/test-workspace*/
 .claude
 
 # Rust build artifacts
-apps/interpreter-cua/target/
 server/services/sandbox/target/
 server/services/sandbox/vendor/
 
@@ -82,9 +81,7 @@ resources/qwen-asr/
 resources/pdfcpu/
 resources/nodejs/
 resources/js-repl-runtime/
-# Generated from apps/interpreter-extension. Never edit directly.
 resources/browser-extension-relay/
-apps/interpreter-extension/.deploy-runtime/
 ajv-generated/
 *.mov
 .build-lock
