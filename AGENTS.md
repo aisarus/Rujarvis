@@ -1,91 +1,99 @@
 # Contributor and agent guidance
 
-These rules are architecture constraints for this repository.
-
-## Canonical checkout guard
-
-This repository is the canonical OSS Workstation application. Before editing
-or testing application code, run `git rev-parse --show-toplevel` and verify that
-the result is this repository's root. Read every applicable ancestor
-`AGENTS.md`; if one marks the checkout as legacy or migration-only, stop. Work
-performed or tested in a copied legacy tree is not current Workstation work and
-must never be reported as verification of this repository.
-
-The product website is a separate repository. Do not add website source,
-website build output, or website release configuration here. This repository
-owns the official client configuration, packaging profiles, and client release
-workflows as well as all application behavior and tests. A private operations
-repository may trigger these workflows or hold deployment credentials,
-organization-specific policy, and internal binary artifacts, but it must never
-become a second application or owner of canonical client release logic.
+Rujarvis is a fork of Interpreter Workstation with a Russian voice-assistant
+layer on top. These rules say which code follows upstream's architecture and
+which follows the Jarvis layer's, and what must stay true in both.
 
 ## Before changing code
 
+- Run `git rev-parse --show-toplevel` and check that it is this repository's
+  root. Work done or tested in another copy is not verification of this one.
 - Use `pnpm` for repository commands.
-- Read `README.md` and the relevant document under `docs/` before editing that
-  subsystem.
-- Verify the canonical checkout guard above before making the first edit or
-  running acceptance tests.
-- Read `docs/agent-testing.md` before writing or running tests.
+- Read `README.md`, then `docs/jarvis/architecture.md` for the Jarvis layer or
+  the relevant document under `docs/` for upstream code.
+- Read `docs/agent-testing.md` before writing or running upstream tests.
 - Preserve user work and unrelated changes. Never publish, push, or create a
   public artifact without explicit authorization.
 
+## Two layers, two sets of rules
+
+**The Jarvis layer** is `jarvis/`, `electron/jarvis/`, `server/jarvis/`,
+`src/components/settings/AiAccountsSection.tsx` and the `scripts/jarvis-*`,
+`scripts/probe-*` and `scripts/проверка-*` scripts. By design it:
+
+- drives the official `claude` and `codex` CLIs on the user's own
+  subscriptions, rather than going through the OIX app-server;
+- gives Claude Code its own desktop MCP server (`jarvis/desktop/`);
+- is Windows-first: the desktop driver, app launching and closing use
+  PowerShell, `tasklist`/`taskkill` and the Start menu.
+
+**Upstream code** is everything else. There, upstream's own rules apply:
+Open Interpreter (OIX) is the runtime core, Workstation is a client of the
+app-server contract, per-agent file scopes are enforced on every tool path,
+and the model-facing Workstation tools use the `interpreter-app` CLI surface.
+Keep edits to upstream files minimal and list every new one in
+`docs/jarvis/upstream-sync.md`, so that merging upstream stays cheap. When
+upstream's contract changes, adapt `jarvis/`, not upstream.
+
+## Invariants of the Jarvis layer
+
+- **Red lines are enforced in code, twice.** The spoken phrase is classified
+  before an agent starts (`jarvis/router`, `jarvis/risk/policy.ts`), and every
+  agent tool call goes through the PreToolUse gate (`jarvis/risk/gateHook.ts`,
+  `jarvis/risk/toolGate.ts`). Silence, an unreadable call and any failure mean
+  *deny*. Without the gate the agent gets no shell, no skill writing and no
+  write access to Jarvis's own folder. Do not pre-approve a new tool that can
+  spend money, contact people, run commands or write outside the task without
+  teaching the gate about it.
+- Model text can raise a risk class, never lower it. Normalisation only narrows
+  permissions. The user's original phrase always reaches the backend.
+- «Стоп» and «тишина» are matched before anything else and must never wait
+  behind a model, a queue or another command.
+- Never log dictated text or speech not addressed to Jarvis.
+- Checks report three answers — passed, failed, or *nothing to measure with*.
+  A tool that reports success for something it never did is a bug.
+
 ## Product boundaries
 
-- Open Interpreter is the runtime core. Provider/model discovery, harness
-  selection, agent execution, and app-server behavior belong there.
-- Workstation is a client of the OIX app-server contract. Do not recreate OIX
-  provider catalogs or harness logic in the Electron app.
-- Model-facing Workstation tools use the `interpreter-app` CLI surface. Do not
-  introduce a parallel direct-MCP tool surface for the model.
-- File permissions are per agent. Every tool path must enforce the effective
-  agent scope, not merely a global workspace setting.
-- The community distribution is fully usable without hosted accounts,
-  telemetry, or proprietary services.
-- Official, internal, community, and enterprise profiles use the same open
-  client capabilities. A subscription may authorize operated services; it must
-  not unlock a private client feature.
-- Distribution-specific endpoints and branding are injected through
-  `product.json` overlays. Do not fork application behavior for a distribution.
-- Rich document engines are optional external integrations. The default
-  document workflow is code execution plus skills.
+- Everything works without hosted accounts, telemetry, or proprietary
+  services. No API keys: agents run through CLIs the user signed into.
+- Rujarvis has its own name, package identifier and support links
+  (`product.json`, `electron-builder.yml`). It does not ship upstream's official
+  distribution profile, telemetry or update feed. The in-app name and data
+  folder are still upstream's (`Interpreter`); changing them moves user data.
 
 ## Dependencies and provenance
 
-- `apps/interpreter-extension` is the Open Interpreter browser-extension
-  submodule and retains its independent release history and Playwriter ancestry.
-- `submodules/interpreter-cua` is the Open Interpreter computer-use fork and
-  retains its upstream attribution. Workstation consumes its pinned driver
-  contract; a local checkout name does not imply cloud-provider compatibility.
-- Never commit credentials, token backups, signing material, paid SDKs, or
-  proprietary binary licenses.
+- `apps/interpreter-extension` and `submodules/interpreter-cua` are upstream
+  submodules and keep their history and attribution.
+- Never commit credentials, token backups, signing material, paid SDKs,
+  proprietary binaries, personal paths or personal data.
 
 ## Code rules
 
 - Prefer the simplest complete structural fix. Do not add compatibility
   fallbacks for obsolete local formats.
-- Use Interpreter branding in user-facing copy.
-- Route frontend path handling through the helpers in `src/ipc.ts`; read
-  `docs/agent-paths.md` before changing path behavior.
-- Read `docs/agent-ipc.md` before changing preload, IPC, or subscriptions.
-- Read `docs/agent-tools.md` before changing tools, permissions, MCP bridging,
-  or native modules.
-- Read `docs/agent-frontend.md` before changing UI or interaction behavior.
+- Comments explain why, not what. In the Jarvis layer they are in Russian.
+- In upstream code, follow `docs/agent-paths.md`, `docs/agent-ipc.md`,
+  `docs/agent-tools.md` and `docs/agent-frontend.md` before touching paths,
+  IPC, tools or UI.
 
 ## Verification
 
-Run checks proportional to the change. The normal pre-commit floor is:
+The normal pre-commit floor:
 
 ```bash
 pnpm typecheck
-pnpm run test:unit
 pnpm run test:vitest
+pnpm run test:unit
 ```
 
-For app-server or bundled-runtime work, also download/build the pinned OIX
-runtime and run `pnpm run test:interpreter:smoke`. For Electron behavior, run the
-relevant Playwright project. For browser-extension or computer-use changes, test
-the real pinned submodule path in addition to unit coverage.
+For the Jarvis layer, `pnpm exec vitest run jarvis electron/jarvis server/jarvis scripts`
+is the fast loop. Anything that crosses a process boundary — spawning a CLI,
+the MCP server, the gate hook — needs a run against the real thing, not only a
+fake. Most voice and desktop behaviour runs only on Windows: say so when you
+could not test it there.
 
 Never claim an end-to-end path works from typechecking alone. Prove the actual
-boundary and report any platform or credential-dependent step that was not run.
+boundary and report any platform- or credential-dependent step that was not
+run.

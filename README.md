@@ -12,6 +12,9 @@ Rujarvis does not rewrite Workstation. It adds a «Jarvis» layer on top: Russia
 voice UX, task routing between models, and subscription coding agents (Claude
 Code, Codex) driven through their official CLIs.
 
+Rujarvis is an independent project. It is not affiliated with or endorsed by
+Open Interpreter.
+
 ## Why subscriptions and not API keys
 
 This is the design constraint the whole project is bent around: **no paid APIs,
@@ -46,10 +49,22 @@ synthesis run locally on your own GPU and CPU.
 
 ## What it asks you before doing
 
-Four red lines, and they are enforced in code rather than promised in a prompt:
-spending money, contacting other people, overwriting system files or large
-projects, and anything the router classes as dangerous. Everything else runs
-without interrupting you.
+Four red lines: spending money, contacting other people, overwriting system
+files, and destructive or outward-reaching commands (`git push`, `rm -rf`,
+`curl | sh` and the like). Everything else runs without interrupting you.
+
+They are checked twice, in code rather than in a prompt. First the phrase you
+said is classified before any agent starts. Then **every tool call the agent
+makes** goes through a Claude Code `PreToolUse` hook that classifies the
+concrete action — the shell command, the file being written, the button being
+clicked — with the same policy, and asks you by voice before anything on a red
+line. No answer means no. This matters because the agent reads web pages and
+files, and those can try to talk it into things you never asked for.
+
+What the hook cannot see: a click by screen coordinates or by element number
+does not say what is being pressed. Codex runs in its own sandbox
+(`workspace-write`, no network) and gets no desktop tools. Details:
+[docs/jarvis/architecture.md](docs/jarvis/architecture.md).
 
 Two words always work, immediately, even when nothing else does: **«стоп»**
 stops the current work, **«тишина»** makes it shut up and stop listening. They
@@ -58,7 +73,9 @@ that no new command can ever swallow them.
 
 ## Install
 
-Windows 11, one line in PowerShell:
+Windows 11, one line in PowerShell. The voice layer starts by default only on
+Windows; elsewhere the app runs as plain Workstation unless `JARVIS_VOICE=on`.
+
 
 ```powershell
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1)))
@@ -114,7 +131,7 @@ State Integration feed and drawing an overlay. It is parked, not maintained.
 ```bash
 pnpm install
 pnpm run dev            # renderer + Electron with hot reload
-pnpm test:vitest        # 2030 assertions across 176 files
+pnpm test:vitest        # vitest suite; the Jarvis layer alone is ~1,650 tests
 pnpm run typecheck
 ```
 
@@ -136,7 +153,7 @@ them rather than take them on trust:
 
 | Claim | How to check it |
 | --- | --- |
-| The test count | `pnpm test:vitest` — the summary line is the number |
+| The test count | `pnpm exec vitest run jarvis electron/jarvis server/jarvis scripts` — the summary line is the number |
 | That it builds and passes on something other than this machine | the CI workflow on `main` under the repository's Actions tab |
 | Recognition latency | `[jarvis] услышал за N мс` in `%LOCALAPPDATA%\Rujarvis\data\jarvis.log`; the figures above are the median, mean and 90th percentile of 1313 such lines |
 | The conversation's seven levers | `npm run jarvis:talk-check` — drives a real CLI session and reports which levers reached the task manager |
@@ -152,18 +169,26 @@ Project docs are in Russian.
 
 - [Design specs](docs/jarvis/design/) — the living record, one document per
   feature, each carrying the measurements that justified the decision
-- [Install and manual build](docs/jarvis/install.md)
+- [Install, settings and what stays on disk](docs/jarvis/install.md)
+- [Architecture and the red-line gate](docs/jarvis/architecture.md)
+- [Syncing with upstream](docs/jarvis/upstream-sync.md)
 
 **A snapshot from 18 September**, written before the voice layer, plan mode and
 the conversation stream landed. Useful for shape and intent, not for detail:
-[architecture](docs/jarvis/architecture.md),
 [voice UX](docs/jarvis/voice-ru.md),
 [backends](docs/jarvis/backends.md),
-[upstream sync](docs/jarvis/upstream-sync.md),
 [MVP status](docs/jarvis/mvp-status.md).
 
 Upstream documentation lives in [README.upstream.md](README.upstream.md) and
 the `docs/` directory.
+
+## Privacy
+
+Speech is recognised and synthesised locally. The only things that leave your
+machine are what you send to the Claude Code or Codex CLI you signed in to —
+the same as using them directly — and your audio, only if you opt into cloud
+recognition by setting `ELEVENLABS_API_KEY`. There is no telemetry. What stays on disk is
+listed in [docs/jarvis/install.md](docs/jarvis/install.md#что-остаётся-на-диске).
 
 ## Licence
 
