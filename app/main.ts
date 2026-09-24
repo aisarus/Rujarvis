@@ -102,6 +102,14 @@ function refreshTray(): void {
       { type: 'separator' },
       { label: t.trayEvents, enabled: Boolean(bridge), click: () => bridge?.showEvents() },
       { label: t.traySettings, click: () => showSettings() },
+      // Настройку можно пройти заново.
+      //
+      // Мастер показывается, пока не выставлен `onboarded`, и другого входа в
+      // него не было: чтобы посмотреть его снова, приходилось править
+      // settings.json руками. Человек так и упёрся - жал ярлык и видел
+      // вкладки. Флаг здесь не сбрасывается нарочно: если мастер закрыть на
+      // середине, рабочее состояние остаётся прежним.
+      { label: t.trayRunSetup, click: () => showSettings('onboarding') },
       { type: 'separator' },
       { label: t.trayOpenLog, click: () => void shell.openPath(PATHS.log) },
       { label: t.trayOpenData, click: () => void shell.openPath(PATHS.home) },
