@@ -1,0 +1,20 @@
+{
+  "output": "out/rujarvis-demo.mp4",
+  "vertical": "out/rujarvis-vertical.mp4",
+  "clips": [
+    { "file": "raw/scene01.mp4", "from": "0:00", "to": "0:04", "plate": "Руки не трогают клавиатуру" },
+    { "file": "raw/scene02.mp4", "from": "0:00", "to": "0:06", "said": "Джарвис, открой хром", "plate": "Мгновенно, без интернета", "vertical": true },
+    { "file": "raw/scene03.mp4", "from": "0:00", "to": "0:06", "said": "Прокрути вниз… Закрой вкладку" },
+    { "file": "raw/scene04.mp4", "from": "0:00", "to": "0:08", "said": "Покажи сетку… Нажми сорок пять", "plate": "Клик по номеру" },
+    { "file": "raw/scene05.mp4", "from": "0:00", "to": "0:08", "said": "Режим диктовки… Удали последнее слово… Конец диктовки", "plate": "Диктовка с правкой" },
+    { "file": "raw/scene06.mp4", "from": "0:00", "to": "1:12", "speed": 4, "said": "Найди, почему падают тесты, и почини", "plate": "Дальше — Claude Code по вашей подписке", "vertical": true },
+    { "file": "raw/scene07.mp4", "from": "0:00", "to": "0:12", "said": "Нет", "plate": "Красная линия: без вашего «да» — ничего", "vertical": true },
+    { "file": "raw/scene08.mp4", "from": "0:00", "to": "0:08", "said": "Стоп", "plate": "«Стоп» срабатывает всегда", "vertical": true },
+    { "file": "raw/scene09.mp4", "from": "0:00", "to": "0:10", "plate": "Одна строка. Бесплатно. Открытый код" }
+  ],
+  "end": {
+    "title": "Rujarvis",
+    "lines": ["Голосовой ассистент для Windows на русском", "github.com/aisarus/Rujarvis", "[Telegram-канал]"],
+    "seconds": 5
+  }
+}
