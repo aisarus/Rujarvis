@@ -1,33 +1,46 @@
 /**
  * Дублирование консоли в файл.
  *
- * Джарвис запускается ярлыком, и всё, что он печатает, живёт в окне командной
- * строки: окно закрылось — разбираться не с чем. На просьбу «посмотри логи»
- * смотреть было буквально некуда, а это единственный способ понять, почему
- * задача не сделалась.
+ * Джарвис живёт в трее, и всё, что он печатает, иначе пропадает: на просьбу
+ * «посмотри логи» смотреть было бы некуда, а это единственный способ понять,
+ * почему задача не сделалась.
  *
- * Консольный вывод сохраняется: окно по-прежнему показывает всё, что
- * показывало. Файл появляется рядом с остальными данными и обрезается, когда
- * вырастает, — журнал, съевший диск, хуже отсутствующего.
+ * Формат строки: дата, время, уровень, текст —
+ *
+ *     2026-09-24 08:15:02 INFO  [jarvis] услышал: открой хром
+ *     2026-09-24 08:15:03 ERROR [jarvis] синтез речи не удался: …
+ *
+ * Файл обрезается ротацией: вырос больше 5 МБ — текущий становится
+ * `jarvis.1.log` (прошлый такой затирается), и запись начинается заново.
+ * Сразу после сбоя человек найдёт в логе то, что было до него, а не пустоту.
  */
 
-import { appendFileSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 
-/** Больше этого — начинаем заново: старое всё равно никто не читает. */
+/** Больше этого — ротация. */
 const MAX_BYTES = 5 * 1024 * 1024;
 
 type ConsoleMethod = 'log' | 'info' | 'warn' | 'error';
 
-let installed = false;
+const LEVEL: Record<ConsoleMethod, string> = {
+  log: 'INFO ',
+  info: 'INFO ',
+  warn: 'WARN ',
+  error: 'ERROR',
+};
 
-export function startLogFile(file: string): string | null {
+let installed = false;
+let written = 0;
+
+export function startLogFile(file: string, header: readonly string[] = []): string | null {
   if (installed) return file;
 
   try {
     mkdirSync(path.dirname(file), { recursive: true });
     rotate(file);
-    appendFileSync(file, `\n=== запуск ${new Date().toISOString()} ===\n`, 'utf8');
+    written = existsSync(file) ? statSync(file).size : 0;
+    append(file, `\n=== запуск ${stamp()} ===\n${header.map((line) => `    ${line}\n`).join('')}`);
   } catch (error) {
     console.error('[jarvis] не удалось открыть файл логов:', error);
     return null;
@@ -40,7 +53,8 @@ export function startLogFile(file: string): string | null {
     console[method] = (...args: unknown[]): void => {
       original(...args);
       try {
-        appendFileSync(file, `${stamp()} ${format(args)}\n`, 'utf8');
+        if (written > MAX_BYTES) rotate(file, true);
+        append(file, `${stamp()} ${LEVEL[method]} ${format(args)}\n`);
       } catch {
         // Запись в файл не должна мешать работе: потеря строки лога дешевле
         // упавшего ответа.
@@ -51,18 +65,32 @@ export function startLogFile(file: string): string | null {
   return file;
 }
 
-function rotate(file: string): void {
+function append(file: string, text: string): void {
+  appendFileSync(file, text, 'utf8');
+  written += Buffer.byteLength(text, 'utf8');
+}
+
+/** Текущий файл — в `jarvis.1.log`, если он велик (или `force`). */
+function rotate(file: string, force = false): void {
   try {
-    if (statSync(file).size > MAX_BYTES) writeFileSync(file, '', 'utf8');
+    if (!existsSync(file)) return;
+    if (!force && statSync(file).size <= MAX_BYTES) return;
+    const previous = file.replace(/\.log$/u, '.1.log');
+    rmSync(previous, { force: true });
+    renameSync(file, previous);
+    written = 0;
   } catch {
-    // Файла ещё нет — обрезать нечего.
+    // Не вышло переименовать (файл держит другой процесс) — пишем дальше.
   }
 }
 
 function stamp(): string {
   const now = new Date();
   const pad = (value: number) => String(value).padStart(2, '0');
-  return `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  return (
+    `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ` +
+    `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+  );
 }
 
 function format(args: readonly unknown[]): string {

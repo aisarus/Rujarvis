@@ -57,6 +57,7 @@ import { UtteranceBuffer } from '../jarvis/voice/turn';
 import { findWakeWord } from '../jarvis/voice/wakeWord';
 import { spokenFailure, toSpokenResponse } from '../jarvis/voice/spokenResponse';
 import { createJarvis, type Jarvis } from '../jarvis/createJarvis';
+import { setLanguage, tr } from '../jarvis/locale/language';
 import { jarvisOutputDir, jarvisPaths } from '../jarvis/setup/paths';
 import { DEFAULT_SETTINGS, type AppSettings, type SettingsStore } from '../jarvis/setup/settings';
 import { isVoiceInstalled, Speaker } from '../jarvis/voice/tts';
@@ -236,7 +237,21 @@ let stopTalkBridge: (() => void) | null = null;
  * на диске. Команды Джарвису остаются: без них лог не объясняет ничего.
  */
 function unlogged(text: string): string {
+  // «Всё» — осознанный выбор человека в настройках: так видно, что именно
+  // распознано, когда Джарвис не слышит.
+  if (settings().speechLogging === 'all') return text;
   return `(${text.length} знаков, текст не записан)`;
+}
+
+/**
+ * Команда, обращённая к Джарвису, — в лог, если человек не выключил это.
+ *
+ * Без команд лог не объясняет ничего, поэтому по умолчанию они пишутся; но
+ * «ничего из сказанного» — тоже законная настройка.
+ */
+function logged(text: string): string {
+  if (settings().speechLogging === 'off') return `(${text.length} знаков, текст не записан)`;
+  return text;
 }
 
 /** Как остановить мост вопросов хука красных линий. */
@@ -313,7 +328,7 @@ async function runDirectCommand(command: DirectCommand, session: VoiceSession): 
         // Смена режима — единственное, о чём тут стоит сказать вслух: человек
         // должен знать, что дальше его слова пойдут в текст, а не в команды.
         setDictation(command.on);
-        await session.speak(command.on ? 'Диктуйте.' : 'Записал.');
+        await session.speak(command.on ? tr('Диктуйте.', 'Go ahead, I am typing.') : tr('Записал.', 'Done typing.'));
         break;
       case 'grid':
         if (command.on) gridOverlay?.show();
@@ -332,7 +347,7 @@ async function runDirectCommand(command: DirectCommand, session: VoiceSession): 
         // него не существует. Список строится из самих таблиц команд.
         if (command.on) {
           helpOverlay?.show();
-          await session.speak('Показал, что умею.');
+          await session.speak(tr('Показал, что умею.', 'Here is what I can do.'));
         } else {
           helpOverlay?.hide();
         }
@@ -344,7 +359,7 @@ async function runDirectCommand(command: DirectCommand, session: VoiceSession): 
         if (thoughtRef) thoughtRef.listenLong = true;
         console.log('[jarvis] слушаю длинную мысль: пауза до пяти секунд');
         overlayRef?.note(session.status, 'Слушаю длинно — пауза до 5 секунд');
-        await session.speak('Слушаю. Говорите.');
+        await session.speak(tr('Слушаю. Говорите.', 'Listening. Go ahead.'));
         break;
       case 'mode':
         // Режим работы держится до следующего переключения: человек сказал
@@ -352,7 +367,7 @@ async function runDirectCommand(command: DirectCommand, session: VoiceSession): 
         showWork = command.show;
         console.log(`[jarvis] режим: ${showWork ? 'на виду' : 'в фоне'}`);
         overlayRef?.note(session.status, showWork ? 'Работаю на виду' : 'Работаю в фоне');
-        await session.speak(showWork ? 'Буду показывать.' : 'Ухожу в фон.');
+        await session.speak(showWork ? tr('Буду показывать.', 'I will work in view.') : tr('Ухожу в фон.', 'Working in the background.'));
         break;
       case 'where': {
         // План уже записан на диск. Спрашивать о нём агента значило бы ждать
@@ -365,7 +380,7 @@ async function runDirectCommand(command: DirectCommand, session: VoiceSession): 
         // — это десятки строк, и они уже написаны в окне.
         if (command.on) {
           logWindow?.open();
-          await session.speak('Показал.');
+          await session.speak(tr('Показал.', 'Shown.'));
         } else {
           logWindow?.close();
         }
@@ -378,7 +393,7 @@ async function runDirectCommand(command: DirectCommand, session: VoiceSession): 
         const сколько = итог.killed.length;
         console.log(`[jarvis] убейся: убито ${сколько}, не далось ${итог.failed.length}`);
         note('close', сколько > 0 ? `убил процессов: ${сколько}` : 'убивать было некого');
-        await session.speak(сколько > 0 ? `Убил ${сколько}.` : 'Некого убивать.');
+        await session.speak(сколько > 0 ? tr(`Убил ${сколько}.`, `Killed ${сколько}.`) : tr('Некого убивать.', 'Nothing to kill.'));
         break;
       }
       case 'forgetTalk':
@@ -386,12 +401,12 @@ async function runDirectCommand(command: DirectCommand, session: VoiceSession): 
         // должна зависеть от разговора, который закрывают.
         talkRef?.forget('Человек попросил начать заново');
         note('command', 'забыл нить разговора', ЭХО_РАЗГОВОРА);
-        await session.speak('Забыл. Начинаем заново.');
+        await session.speak(tr('Забыл. Начинаем заново.', 'Forgotten. Starting over.'));
         break;
       case 'dotaOverlay':
         // Окна ещё нет, и делать вид, что есть, нельзя: «показал» без
         // показанного — та самая болезнь, от которой лечится весь этот код.
-        await session.speak('Оверлей ещё не готов.');
+        await session.speak(tr('Оверлей ещё не готов.', 'The overlay is not ready yet.'));
         break;
       case 'gridClick': {
         const layout = gridOverlay?.layout();
@@ -418,7 +433,7 @@ async function runDirectCommand(command: DirectCommand, session: VoiceSession): 
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[jarvis] прямая команда не прошла: ${message}`);
     note('error', `не смог: ${describeDirect(command)}`);
-    await session.speak('Не получилось.');
+    await session.speak(tr('Не получилось.', 'That did not work.'));
   }
 }
 
@@ -532,10 +547,18 @@ export async function startJarvisVoiceBridge(options: {
 }): Promise<JarvisVoiceBridge> {
   if (active) return active;
   settingsRef = options.settings;
+  // Язык — до всего остального: с него начинается каждая сказанная фраза и
+  // каждая таблица, которая выбирает ответ.
+  setLanguage(settings().language);
 
   // Раньше всего остального: если что-то не поднимется, причина должна
   // остаться на диске, а не в закрытом окне консоли.
-  const logPath = startLogFile(PATHS.log);
+  const logPath = startLogFile(PATHS.log, [
+    `язык: ${settings().language}, голос: ${settings().voiceId}, распознавание: whisper-${settings().whisperModel}`,
+    `речь в логе: ${settings().speechLogging}`,
+    `папка Джарвиса: ${PATHS.home}`,
+    `платформа: ${process.platform} ${os.release()}, Electron ${process.versions.electron ?? '-'}`,
+  ]);
   if (logPath) console.log(`[jarvis] логи пишутся в ${logPath}`);
 
   const audioWindow = await createAudioWindow();
@@ -552,13 +575,13 @@ export async function startJarvisVoiceBridge(options: {
   // never simply deaf — it is slow there, around ten seconds, but it answers.
   const cloudKey = process.env.ELEVENLABS_API_KEY?.trim();
   const cloud: Transcriber | null = cloudKey
-    ? createElevenLabsTranscriber({ apiKey: cloudKey, language: 'ru', fallback: recogniser })
+    ? createElevenLabsTranscriber({ apiKey: cloudKey, language: settings().language, fallback: recogniser })
     : null;
 
   const gpuEndpoint = await waitForWhisperServer();
   const gpuReady = gpuEndpoint !== null;
   const engine: Transcriber = gpuEndpoint
-    ? createGpuTranscriber({ endpoint: gpuEndpoint, language: 'ru', fallback: cloud ?? recogniser })
+    ? createGpuTranscriber({ endpoint: gpuEndpoint, language: settings().language, fallback: cloud ?? recogniser })
     : cloud ?? recogniser;
 
   console.log(
@@ -584,7 +607,7 @@ export async function startJarvisVoiceBridge(options: {
       // «Уромче», «хватит» как «Ватя». Ниже по течению это выглядело как
       // «Джарвис не понял команду».
       const corrected = fixMishearings(text);
-      if (corrected !== text) console.log(`[jarvis] расслышал точнее: ${text} → ${corrected}`);
+      if (corrected !== text) console.log(`[jarvis] расслышал точнее: ${unlogged(text)} → ${unlogged(corrected)}`);
 
       const speech = meaningfulSpeech(corrected);
       if (!speech && text.trim()) console.log(`[jarvis] шум, пропускаю: ${unlogged(text)}`);
@@ -625,7 +648,7 @@ export async function startJarvisVoiceBridge(options: {
       const whole = thought.take();
       if (!whole) return;
 
-      console.log(`[jarvis] мысль целиком: ${whole}`);
+      console.log(`[jarvis] мысль целиком: ${logged(whole)}`);
 
       // Дальше решает разговор, а не таблица слов-примет.
       //
@@ -652,7 +675,7 @@ export async function startJarvisVoiceBridge(options: {
 
       note('command', `сказал: ${whole}`, ЭХО_РАЗГОВОРА);
       story?.heard(whole, Date.now());
-      overlay.note(session.status, `Слушаю: ${short(whole)}`);
+      overlay.note(session.status, tr(`Слушаю: ${short(whole)}`, `Listening: ${short(whole)}`));
       void talk.hear(whole).catch((error: unknown) => {
         console.error('[jarvis] разговор не справился:', error);
       });
@@ -784,7 +807,7 @@ export async function startJarvisVoiceBridge(options: {
       overlay.update(status);
       options.onStatus?.(status);
     },
-    onTranscript: (text) => console.log(`[jarvis] услышал: ${text}`),
+    onTranscript: (text) => console.log(`[jarvis] услышал: ${logged(text)}`),
     onError: (message) => console.error(`[jarvis] ошибка: ${message}`),
   });
 
@@ -983,13 +1006,13 @@ export async function startJarvisVoiceBridge(options: {
         console.log(
           `[jarvis] услышал за ${Date.now() - started} мс (${seconds} с речи${cut}${share}): ${text}`,
         );
-        overlay.note(session.status, `Услышал: ${short(text)}`);
+        overlay.note(session.status, tr(`Услышал: ${short(text)}`, `Heard: ${short(text)}`));
 
         // Свой же голос из колонок. Слова перебивания сюда не попадают — они
         // должны доходить всегда.
         if (echoGuard.isOwnVoice(text)) {
           console.log(`[jarvis] это моя собственная фраза, пропускаю: ${text}`);
-          overlay.note(session.status, 'Это был мой голос');
+          overlay.note(session.status, tr('Это был мой голос', 'That was my own voice'));
           return;
         }
 
@@ -1002,7 +1025,7 @@ export async function startJarvisVoiceBridge(options: {
             dictating = false;
             console.log('[jarvis] диктовка окончена');
             note('command', 'закончил диктовку');
-            await session.speak('Записал.');
+            await session.speak(tr('Записал.', 'Done.'));
             return;
           }
           // Правка на ходу: диктовка без неё нерабочая. Список точных фраз
@@ -1014,7 +1037,7 @@ export async function startJarvisVoiceBridge(options: {
               await applyDictationEdit(edit);
             } catch (error) {
               console.error('[jarvis] правка не прошла:', error);
-              await session.speak('Не получилось.');
+              await session.speak(tr('Не получилось.', 'That did not work.'));
             }
             session.keepAwake();
             return;
@@ -1025,7 +1048,7 @@ export async function startJarvisVoiceBridge(options: {
             await desktop.type(text);
           } catch (error) {
             console.error('[jarvis] не удалось напечатать:', error);
-            await session.speak('Не получилось напечатать.');
+            await session.speak(tr('Не получилось напечатать.', 'Could not type that.'));
           }
           session.keepAwake();
           return;
@@ -1035,8 +1058,8 @@ export async function startJarvisVoiceBridge(options: {
         if (awaitingAnswer) {
           const answer = readConfirmation(text);
           if (answer === 'unclear') {
-            console.log(`[jarvis] ответ не понят: ${text}`);
-            await session.speak('Не понял. Скажите «да» или «нет».');
+            console.log(`[jarvis] ответ не понят: ${logged(text)}`);
+            await session.speak(tr('Не понял. Скажите «да» или «нет».', 'Sorry? Say yes or no.'));
             return;
           }
           console.log(`[jarvis] ответ: ${answer === 'yes' ? 'да' : 'нет'}`);
@@ -1084,7 +1107,7 @@ export async function startJarvisVoiceBridge(options: {
           console.log(`[jarvis] разговор не со мной, пропускаю: ${unlogged(text)}`);
           // Человек должен видеть, что услышано и почему ничего не произошло —
           // иначе молчание выглядит поломкой.
-          overlay.note(session.status, `«${short(text)}» — не команда`);
+          overlay.note(session.status, tr(`«${short(text)}» — не команда`, `"${short(text)}" is not a command`));
           return;
         }
         console.log(
@@ -1154,7 +1177,7 @@ export async function startJarvisVoiceBridge(options: {
             // Молчаливый уход к агенту здесь — худший исход: он откроет новое
             // окно и сделает не то. Секунда честного отказа лучше двух минут
             // не туда.
-            await session.speak('Блендер не открыт.');
+            await session.speak(tr('Блендер не открыт.', 'Blender is not open.'));
             session.keepAwake();
             return;
           }
@@ -1217,7 +1240,7 @@ export async function startJarvisVoiceBridge(options: {
             // costs minutes and, on this runtime, tends to report success for
             // something it never did.
             console.log(`[jarvis] «${wanted}» не нашёл среди установленных`);
-            await session.speak(`Не нашёл ${wanted}.`);
+            await session.speak(tr(`Не нашёл ${wanted}.`, `Could not find ${wanted}.`));
             session.keepAwake();
             return;
           }
@@ -1481,7 +1504,7 @@ export async function startJarvisVoiceBridge(options: {
     const last = leftover[leftover.length - 1];
     if (last) {
       const whole = last.text;
-      console.log(`[jarvis] беру отложенное: ${whole}`);
+      console.log(`[jarvis] беру отложенное: ${logged(whole)}`);
       note('command', `отложенное: ${whole}`);
       void session.acceptAmbientTranscript(whole).catch((error: unknown) => {
         console.error('[jarvis] не удалось передать отложенное:', error);
@@ -1517,7 +1540,7 @@ export async function startJarvisVoiceBridge(options: {
     // помощнике нет ничего — человек говорит в пустоту и думает, что его
     // игнорируют.
     if (muted) {
-      overlay.note(session.status, 'Микрофон выключен — Ctrl+M');
+      overlay.note(session.status, tr('Микрофон выключен — Ctrl+M', 'Microphone off — Ctrl+M'));
       return;
     }
     overlay.update(session.status);
@@ -1688,7 +1711,7 @@ async function closeApplication(
 
   if (!found) {
     console.log(`[jarvis] «${spoken}» среди запущенных не найдено`);
-    await session.speak(`Не вижу запущенного ${spoken}.`);
+    await session.speak(tr(`Не вижу запущенного ${spoken}.`, `${spoken} is not running.`));
     return;
   }
 
@@ -1709,18 +1732,18 @@ async function closeApplication(
   };
 
   const forceAllowed = () =>
-    confirm(`Закрою ${target} принудительно, несохранённое в нём пропадёт.`);
+    confirm(tr(`Закрою ${target} принудительно, несохранённое в нём пропадёт.`, `I will force-close ${target}; unsaved work in it will be lost.`));
 
   if (force) {
     if (!(await forceAllowed())) {
       note('close', `не стал закрывать ${spoken}`);
-      await session.speak('Не закрываю.');
+      await session.speak(tr('Не закрываю.', 'Leaving it open.'));
       return;
     }
     const killed = await kill(true);
     console.log(`[jarvis] ${killed ? 'убил' : 'не смог убить'} ${target}`);
     note(killed ? 'close' : 'error', `${killed ? 'закрыл' : 'не смог закрыть'} ${spoken}`);
-    await session.speak(killed ? `Закрыл ${spoken}.` : `Не смог закрыть ${spoken}.`);
+    await session.speak(killed ? tr(`Закрыл ${spoken}.`, `Closed ${spoken}.`) : tr(`Не смог закрыть ${spoken}.`, `Could not close ${spoken}.`));
     return;
   }
 
@@ -1728,7 +1751,7 @@ async function closeApplication(
   if (!(await isRunning(image))) {
     console.log(`[jarvis] закрыл ${target}`);
     note('close', `закрыл ${spoken}`);
-    await session.speak(`Закрыл ${spoken}.`);
+    await session.speak(tr(`Закрыл ${spoken}.`, `Closed ${spoken}.`));
     return;
   }
 
@@ -1739,19 +1762,19 @@ async function closeApplication(
   if (HOLDS_UNSAVED_WORK.has(target.toLowerCase())) {
     console.log(`[jarvis] ${target} не закрылся; там может быть несохранённое`);
     note('error', `не закрыл ${spoken}: там несохранённое`);
-    await session.speak(`${spoken} не закрывается — там несохранённое. Скажите «убей ${spoken}».`);
+    await session.speak(tr(`${spoken} не закрывается — там несохранённое. Скажите «убей ${spoken}».`, `${spoken} will not close — it has unsaved work. Say "kill ${spoken}".`));
     return;
   }
 
   if (!(await forceAllowed())) {
     note('close', `${spoken} не закрылся, принудительно не стал`);
-    await session.speak(`${spoken} не закрылся. Оставляю как есть.`);
+    await session.speak(tr(`${spoken} не закрылся. Оставляю как есть.`, `${spoken} did not close. Leaving it as is.`));
     return;
   }
   const killed = await kill(true);
   console.log(`[jarvis] ${killed ? 'закрыл принудительно' : 'не смог закрыть'} ${target}`);
   note(killed ? 'close' : 'error', `${killed ? 'закрыл' : 'не смог закрыть'} ${spoken}`);
-  await session.speak(killed ? `Закрыл ${spoken}.` : `Не смог закрыть ${spoken}.`);
+  await session.speak(killed ? tr(`Закрыл ${spoken}.`, `Closed ${spoken}.`) : tr(`Не смог закрыть ${spoken}.`, `Could not close ${spoken}.`));
 }
 
 /** Programs where a forced close can lose work the user has not saved. */
@@ -1838,12 +1861,12 @@ async function launchApplication(
     });
     console.log(`[jarvis] запустил ${target} за ${Date.now() - started} мс`);
     note('launch', `открыл ${spokenName}`);
-    await session.speak(`Открываю ${spokenName}.`);
+    await session.speak(tr(`Открываю ${spokenName}.`, `Opening ${spokenName}.`));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[jarvis] не удалось запустить ${target}: ${message}`);
     note('error', `не смог открыть ${spokenName}`);
-    await session.speak(`Не смог открыть ${spokenName}.`);
+    await session.speak(tr(`Не смог открыть ${spokenName}.`, `Could not open ${spokenName}.`));
   }
 }
 
@@ -2224,7 +2247,7 @@ function registerSelfMute(
       // что и чинилось. Человек смотрит не на индикатор, а в свою работу, и за
       // вечер трижды решал, что Джарвис сломался, а тот просто не слышал.
       void (async () => {
-        await session.speak('Микрофон выключен.');
+        await session.speak(tr('Микрофон выключен.', 'Microphone off.'));
         session.sleep();
         try {
           audioWindow.webContents.send(AUDIO_BRIDGE_CHANNELS.stopAmbient);
@@ -2232,7 +2255,7 @@ function registerSelfMute(
           // Окно захвата могло упасть — режим всё равно включается.
         }
         console.log('[jarvis] немой режим включён');
-        overlay.note(session.status, 'Микрофон выключен — Ctrl+M');
+        overlay.note(session.status, tr('Микрофон выключен — Ctrl+M', 'Microphone off — Ctrl+M'));
       })();
       return;
     }
@@ -2243,8 +2266,8 @@ function registerSelfMute(
       // См. выше.
     }
     console.log('[jarvis] немой режим выключен');
-    overlay.note(session.status, 'Слушаю снова');
-    void session.speak('Слушаю.');
+    overlay.note(session.status, tr('Слушаю снова', 'Listening again'));
+    void session.speak(tr('Слушаю.', 'Listening.'));
   });
 
   if (!registered) {
@@ -2295,7 +2318,7 @@ async function askForApproval(
   session: VoiceSession,
   hold: (waiter: ((answer: 'yes' | 'no') => void) | null) => void,
 ): Promise<boolean> {
-  const question = `${summary} Разрешаете?`;
+  const question = `${summary} ${tr('Разрешаете?', 'Allow it?')}`;
   console.log(`[jarvis] спрашиваю разрешение: ${summary}`);
 
   return new Promise<boolean>((resolve) => {
@@ -2314,7 +2337,7 @@ async function askForApproval(
       settled = true;
       hold(null);
       console.log('[jarvis] ответа не дождался — считаю отказом');
-      void session.speak('Не дождался ответа, отменяю.');
+      void session.speak(tr('Не дождался ответа, отменяю.', 'No answer, cancelling.'));
       resolve(false);
     }, 45_000);
     timer.unref?.();

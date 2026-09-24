@@ -423,3 +423,22 @@ describe('тишина обязана срабатывать', () => {
     expect(matchVoiceControl('расскажи потише про тишину в горах')).toBeNull();
   });
 });
+
+describe('resampleTo16k filters what it cannot represent', () => {
+  const tone = (hz: number, rate: number, seconds = 0.5) =>
+    Float32Array.from({ length: Math.round(rate * seconds) }, (_, i) => Math.sin((2 * Math.PI * hz * i) / rate));
+  const rms = (samples: Float32Array) => {
+    // Края отрезаем: там у фильтра неполное окно.
+    const middle = samples.subarray(200, samples.length - 200);
+    return Math.sqrt(middle.reduce((sum, value) => sum + value * value, 0) / middle.length);
+  };
+
+  it('keeps speech-band tones', () => {
+    expect(rms(resampleTo16k(tone(1_000, 44_100), 44_100))).toBeGreaterThan(0.6);
+  });
+
+  it('removes tones above 8 kHz instead of folding them into the speech band', () => {
+    // Линейная интерполяция оставляла тут почти всю громкость — на 6 кГц.
+    expect(rms(resampleTo16k(tone(10_000, 44_100), 44_100))).toBeLessThan(0.1);
+  });
+});

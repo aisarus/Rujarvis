@@ -16,6 +16,8 @@
  * который лжёт, не пройдёт сборку.
  */
 
+import { currentLanguage, type Language } from '../locale/language';
+
 export interface CatalogueItem {
   /** Что сказать. */
   say: string;
@@ -35,7 +37,12 @@ export interface CatalogueGroup {
   items: CatalogueItem[];
 }
 
-export function commandCatalogue(): CatalogueGroup[] {
+/** Справочник на языке режима. У каждого языка свои фразы, проверяемые тестом. */
+export function commandCatalogue(language: Language = currentLanguage()): CatalogueGroup[] {
+  return language === 'en' ? englishCatalogue() : russianCatalogue();
+}
+
+function russianCatalogue(): CatalogueGroup[] {
   return [
     {
       title: 'Программы',
@@ -151,6 +158,114 @@ export function commandCatalogue(): CatalogueGroup[] {
         { say: 'работай в фоне', does: 'не открывать окна и не лезть на экран', layer: 'direct' },
         { say: 'показывай всё', does: 'снова работать на виду', layer: 'direct' },
         { say: 'закрой лог', does: 'убрать окно с рассказом', layer: 'direct' },
+      ],
+    },
+  ];
+}
+
+/**
+ * English commands. Only what the English tables really handle: dictation
+ * editing and live Blender edits are Russian-only for now, so they are not
+ * promised here.
+ */
+function englishCatalogue(): CatalogueGroup[] {
+  return [
+    {
+      title: 'Apps',
+      items: [
+        { say: 'open chrome', does: 'start an app by name', layer: 'launch' },
+        { say: 'close steam', does: 'close an app', layer: 'close' },
+        { say: 'switch to blender', does: 'bring an open window forward', layer: 'direct' },
+        { say: 'maximize', does: 'maximize the window', layer: 'direct' },
+        { say: 'minimize', does: 'minimize the window', layer: 'direct' },
+        { say: 'close the window', does: 'close the current window', layer: 'direct' },
+        { say: 'show desktop', does: 'minimize everything', layer: 'direct' },
+      ],
+    },
+    {
+      title: 'Mouse and screen',
+      items: [
+        { say: 'click sign in', does: 'press a button by its name', layer: 'direct' },
+        { say: 'click', does: 'click where the cursor is', layer: 'direct' },
+        { say: 'right click', does: 'right-click', layer: 'direct' },
+        { say: 'double click', does: 'double-click', layer: 'direct' },
+        { say: 'show grid', does: 'numbered grid over the screen', layer: 'direct' },
+        { say: 'click forty five', does: 'click the middle of cell 45', layer: 'direct' },
+        { say: 'refine five', does: 'narrow down inside the cell', layer: 'direct' },
+        { say: 'hide grid', does: 'hide the grid', layer: 'direct' },
+      ],
+    },
+    {
+      title: 'Scrolling',
+      items: [
+        { say: 'scroll down', does: 'scroll down', layer: 'direct' },
+        { say: 'scroll up', does: 'scroll up', layer: 'direct' },
+        { say: 'go to the bottom', does: 'end of the page', layer: 'direct' },
+        { say: 'go to the top', does: 'start of the page', layer: 'direct' },
+        { say: 'page down', does: 'one screen down', layer: 'direct' },
+        { say: 'scroll down three times', does: 'repeat a command', layer: 'direct' },
+      ],
+    },
+    {
+      title: 'Text',
+      items: [
+        { say: 'start dictation', does: 'type everything you say', layer: 'direct' },
+        { say: 'end dictation', does: 'leave dictation', layer: 'direct' },
+        { say: 'type hello', does: 'type one phrase', layer: 'direct' },
+        { say: 'copy', does: 'copy the selection', layer: 'direct' },
+        { say: 'paste', does: 'paste from the clipboard', layer: 'direct' },
+        { say: 'cut', does: 'cut the selection', layer: 'direct' },
+        { say: 'select all', does: 'select everything', layer: 'direct' },
+        { say: 'undo', does: 'undo the last action', layer: 'direct' },
+      ],
+    },
+    {
+      title: 'Keys',
+      items: [
+        { say: 'press enter', does: 'enter', layer: 'direct' },
+        { say: 'escape', does: 'escape', layer: 'direct' },
+        { say: 'space', does: 'space bar', layer: 'direct' },
+        { say: 'arrow down', does: 'down arrow', layer: 'direct' },
+        { say: 'save', does: 'save', layer: 'direct' },
+        { say: 'find', does: 'search the page', layer: 'direct' },
+        { say: 'refresh', does: 'reload', layer: 'direct' },
+      ],
+    },
+    {
+      title: 'Tabs',
+      items: [
+        { say: 'new tab', does: 'open a tab', layer: 'direct' },
+        { say: 'close tab', does: 'close the tab', layer: 'direct' },
+        { say: 'reopen tab', does: 'bring back a closed tab', layer: 'direct' },
+        { say: 'next tab', does: 'go to the next tab', layer: 'direct' },
+      ],
+    },
+    {
+      title: 'Sound',
+      items: [
+        { say: 'volume up', does: 'louder', layer: 'direct' },
+        { say: 'volume down', does: 'quieter', layer: 'direct' },
+        { say: 'mute sound', does: 'mute the system sound', layer: 'direct' },
+        { say: 'play music', does: 'play and pause', layer: 'direct' },
+        { say: 'next track', does: 'next song', layer: 'direct' },
+      ],
+    },
+    {
+      title: 'Conversation',
+      items: [
+        { say: 'jarvis', does: 'wake up — then speak without the name', layer: 'wake' },
+        { say: 'stop', does: 'stop whatever is being done, now', layer: 'control' },
+        { say: 'silence', does: 'stop talking and end the conversation', layer: 'silence' },
+        { say: 'pause', does: 'put the work aside without losing it', layer: 'control' },
+        { say: 'continue', does: 'go back to the paused work', layer: 'control' },
+        { say: 'new conversation', does: 'start the conversation from scratch', layer: 'direct' },
+        { say: 'what can you do', does: 'show this list', layer: 'direct' },
+        { say: 'what are you doing', does: 'open the events window', layer: 'direct' },
+        { say: 'where are you', does: 'say which plan step is running', layer: 'direct' },
+        { say: 'long message', does: 'listen to a long thought with pauses', layer: 'direct' },
+        { say: 'work in the background', does: 'do not open windows or take the screen', layer: 'direct' },
+        { say: 'show everything', does: 'work in view again', layer: 'direct' },
+        { say: 'close the log', does: 'hide the events window', layer: 'direct' },
       ],
     },
   ];

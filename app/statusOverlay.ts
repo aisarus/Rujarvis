@@ -18,6 +18,7 @@ import path from 'node:path';
 import { app } from 'electron';
 
 import type { VoiceStatus } from '../jarvis/voice/session';
+import { currentLanguage, tr } from '../jarvis/locale/language';
 
 export const STATUS_OVERLAY_CHANNEL = 'jarvis-overlay:status';
 
@@ -37,7 +38,7 @@ const MARGIN = 24;
 
 function buildOverlayHtml(): string {
   return `<!doctype html>
-<html lang="ru">
+<html lang="${currentLanguage()}">
 <head><meta charset="utf-8"><title>Jarvis</title>
 <style>
   /* Без height: 100% — ни у страницы, ни у плашки.
@@ -93,8 +94,8 @@ function buildOverlayHtml(): string {
 <div id="pill" class="asleep">
   <div id="dot"></div>
   <div id="text">
-    <div id="label">Сплю</div>
-    <div id="hint">Скажите «Джарвис»</div>
+    <div id="label">${tr('Сплю', 'Asleep')}</div>
+    <div id="hint">${tr('Скажите «Джарвис»', 'Say "Jarvis"')}</div>
   </div>
 </div>
 <script>
@@ -145,11 +146,11 @@ ipcRenderer.on(${JSON.stringify(STATUS_OVERLAY_CHANNEL)}, (_event, status) => {
   if (Date.now() < noteUntil) return;
 
   if (status.indicator === 'speaking' || status.indicator === 'working') {
-    hint.textContent = 'Говорите, чтобы перебить';
+    hint.textContent = ${JSON.stringify(tr('Говорите, чтобы перебить', 'Speak to interrupt'))};
   } else if (status.awake) {
-    hint.textContent = 'Слушаю без имени';
+    hint.textContent = ${JSON.stringify(tr('Слушаю без имени', 'Listening, no name needed'))};
   } else {
-    hint.textContent = 'Скажите «Джарвис»';
+    hint.textContent = ${JSON.stringify(tr('Скажите «Джарвис»', 'Say "Jarvis"'))};
   }
   подогнатьВысоту();
 });

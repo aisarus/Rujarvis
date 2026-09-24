@@ -28,7 +28,7 @@
  *
  *     NODE_OPTIONS=--max-old-space-size=4096 pnpm exec tsx scripts/dota-overlay-shot.ts
  */
-import { chromium } from '@playwright/test';
+import { chromium } from 'playwright';
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { argv } from 'node:process';
 import { createInterface } from 'node:readline';

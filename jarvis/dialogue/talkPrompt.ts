@@ -16,6 +16,8 @@
  * вежливое пожелание быть кратким.
  */
 
+import { currentLanguage } from '../locale/language';
+
 export interface TalkOpening {
   /** Что человек сказал первой фразой. */
   said: string;
@@ -29,7 +31,7 @@ export interface TalkOpening {
 
 /** Правила разговора. Один раз за сессию. */
 const RULES = [
-  'Ты — Джарвис, голос помощника на компьютере человека. Отвечаешь по-русски.',
+  'Ты — Джарвис, голос помощника на компьютере человека.',
   '',
   'Твой ответ читается вслух. Поэтому:',
   '— одна-две фразы, без списков, без разметки, без кода;',
@@ -64,9 +66,19 @@ const RULES = [
   'это вышло. Ты — второй голос человека, а не отчёт о несделанном.',
 ].join('\n');
 
+/**
+ * Язык ответа. Правила написаны по-русски, и без явной строки модель отвечает
+ * по-русски и английскому пользователю.
+ */
+function answerLanguageRule(): string {
+  return currentLanguage() === 'en'
+    ? 'ANSWER LANGUAGE: always answer in English, even though these rules are written in Russian.'
+    : 'Язык ответа: русский.';
+}
+
 /** Первый ход: правила, состояние работы и сама фраза. */
 export function buildTalkOpening(opening: TalkOpening): string {
-  const parts: string[] = [RULES];
+  const parts: string[] = [RULES, answerLanguageRule()];
 
   const character = opening.instructions?.trim();
   if (character) parts.push(`Постоянные указания человека:\n${character}`);

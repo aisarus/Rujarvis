@@ -8,6 +8,7 @@
  */
 
 import { existsSync, statSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 
@@ -136,6 +137,15 @@ parentPort.on('message', ({ id, text, speed }) => {
 });
 `;
 
+/**
+ * Где лежит sherpa-onnx. В сборке (CJS) есть `require`; под tsx (ESM) его нет,
+ * и путь находится через `createRequire`.
+ */
+function sherpaOnnxPath(): string {
+  const find = typeof require === 'function' ? require : createRequire(import.meta.url);
+  return find.resolve('sherpa-onnx');
+}
+
 interface Pending {
   resolve(result: Synthesized): void;
   reject(error: Error): void;
@@ -179,7 +189,7 @@ export class Speaker {
     const files = voiceFiles(this.installRoot, getVoice(this.voiceId));
     const worker = new Worker(WORKER_SOURCE, {
       eval: true,
-      workerData: { sherpaPath: require.resolve('sherpa-onnx'), ...files },
+      workerData: { sherpaPath: sherpaOnnxPath(), ...files },
     });
     worker.on('message', (message: { id: number; ok: boolean; wav?: Uint8Array; sampleRate?: number; samples?: number; error?: string }) => {
       const waiter = this.pending.get(message.id);

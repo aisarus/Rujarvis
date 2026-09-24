@@ -19,6 +19,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { commandCatalogue, type CatalogueGroup } from '../jarvis/control/catalogue';
+import { currentLanguage, tr } from '../jarvis/locale/language';
 
 export interface HelpOverlay {
   show(): void;
@@ -94,10 +95,10 @@ function buildHelpHtml(groups: readonly CatalogueGroup[]): string {
     .join('');
 
   return `<!doctype html>
-<html lang="ru">
+<html lang="${currentLanguage()}">
 <head>
 <meta charset="utf-8" />
-<title>Что умеет Джарвис</title>
+<title>${tr('Что умеет Джарвис', 'What Jarvis can do')}</title>
 <style>
   :root { color-scheme: dark; }
   html, body {
@@ -129,8 +130,8 @@ function buildHelpHtml(groups: readonly CatalogueGroup[]): string {
 </style>
 </head>
 <body>
-  <h1>Что умеет Джарвис</h1>
-  <p class="hint">Скажите «убери список», чтобы закрыть. Всё остальное можно говорить прямо сейчас.</p>
+  <h1>${tr('Что умеет Джарвис', 'What Jarvis can do')}</h1>
+  <p class="hint">${tr('Скажите «убери список», чтобы закрыть. Всё остальное можно говорить прямо сейчас.', 'Say "hide the list" to close it. Everything else works right now.')}</p>
   <div class="columns">${sections}</div>
 </body>
 </html>

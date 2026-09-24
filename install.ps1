@@ -1,40 +1,54 @@
 <#
 .SYNOPSIS
-    Установка Rujarvis — русскоязычного голосового ассистента на базе
-    Interpreter Workstation.
+    Установка Rujarvis — голосового ассистента для Windows (русский и английский).
 
 .DESCRIPTION
     Одна команда в PowerShell:
 
         irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 | iex
 
-    Скрипт проверяет и доустанавливает зависимости через winget, собирает
-    приложение из исходников, скачивает русские модели речи и создаёт ярлык.
+    Что делает, по шагам:
+      1. ставит недостающее через winget: Git и Node.js 22 (pnpm — через corepack);
+      2. скачивает исходники в %LOCALAPPDATA%\Rujarvis\src и собирает приложение;
+      3. скачивает модель распознавания речи и голос для выбранного языка;
+      4. кладёт ярлык «Rujarvis» в меню «Пуск» и запускает приложение.
 
-    Всё ставится в пользовательский профиль — права администратора не нужны.
-    Скрипт можно запускать повторно: он обновляет уже установленное.
+    Компилятор C++, Rust и прочие инструменты сборки не нужны: распознавание и
+    синтез речи работают на WebAssembly, Electron ставится готовым.
+
+    Всё ставится в профиль пользователя — права администратора не нужны.
+    Повторный запуск обновляет установленное.
+
+.PARAMETER Language
+    Язык по умолчанию: ru или en. Сменить можно в настройках.
 
 .PARAMETER InstallRoot
-    Куда положить исходники. По умолчанию %LOCALAPPDATA%\Rujarvis.
+    Папка Джарвиса. По умолчанию %LOCALAPPDATA%\Rujarvis.
 
 .PARAMETER Branch
     Ветка репозитория. По умолчанию main.
 
 .PARAMETER WhisperModel
-    Модель распознавания речи: tiny, base, small, turbo, medium.
-    По умолчанию выбирается по объёму оперативной памяти.
+    Модель распознавания: tiny, base, small, turbo, medium.
+    По умолчанию выбирается по объёму памяти и видеокарте.
 
-.PARAMETER SkipBuild
-    Только зависимости и модели, без сборки приложения.
+.PARAMETER Autostart
+    Запускать Rujarvis при входе в Windows.
+
+.PARAMETER NoLaunch
+    Не запускать приложение в конце.
 #>
 
 [CmdletBinding()]
 param(
+    [ValidateSet('ru', 'en')]
+    [string] $Language = 'ru',
     [string] $InstallRoot = (Join-Path $env:LOCALAPPDATA 'Rujarvis'),
     [string] $Branch = 'main',
     [ValidateSet('tiny', 'base', 'small', 'turbo', 'medium')]
     [string] $WhisperModel,
-    [switch] $SkipBuild
+    [switch] $Autostart,
+    [switch] $NoLaunch
 )
 
 $ErrorActionPreference = 'Stop'
@@ -98,80 +112,14 @@ function Install-WithWinget {
     Write-Ok "$DisplayName готов."
 }
 
-function Get-RecommendedWhisperModel {
-    $ramBytes = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
-    $ramGb = [math]::Round($ramBytes / 1GB)
-    if ($ramGb -ge 16) { return 'small' }
-    if ($ramGb -ge 8) { return 'base' }
-    return 'tiny'
-}
-
-function Get-VsWherePath {
-    # Join-Path throws on a null root, and these variables are simply absent
-    # off Windows — a detector must answer "no", not take the installer down.
-    $roots = @(${env:ProgramFiles(x86)}, $env:ProgramFiles) |
-        Where-Object { $_ -and $_.Trim() }
-
-    foreach ($root in $roots) {
-        $candidate = Join-Path $root 'Microsoft Visual Studio\Installer\vswhere.exe'
-        if (Test-Path $candidate) { return $candidate }
-    }
-    return $null
-}
-
-<#
-    The project compiles native Node addons on Windows (interpreter-window-pin,
-    node-pty, uiohook-napi), so node-gyp needs a real MSVC toolchain. It is not
-    on PATH, so Get-Command cannot find it — vswhere is the supported way to
-    ask whether the C++ workload is present.
-#>
-function Test-VisualStudioBuildTools {
-    $vswhere = Get-VsWherePath
-    if (-not $vswhere) { return $false }
-
-    try {
-        $found = & $vswhere -products * `
-            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
-            -property installationPath 2>$null
-    } catch {
-        return $false
-    }
-    return [bool] ($found -and ($found | Out-String).Trim())
-}
-
-function Install-VisualStudioBuildTools {
-    if (Test-VisualStudioBuildTools) {
-        Write-Ok 'Компилятор C++ (MSVC) уже установлен.'
-        return
-    }
-
-    if (-not (Test-Command 'winget')) {
-        throw 'Нужны Visual Studio Build Tools с рабочей нагрузкой "Разработка классических приложений на C++", но winget недоступен. Установите их вручную: https://visualstudio.microsoft.com/visual-cpp-build-tools/'
-    }
-
-    Write-Note 'Ставлю Visual Studio Build Tools (C++). Это несколько гигабайт и самый долгий шаг.'
-    winget install --id Microsoft.VisualStudio.2022.BuildTools --source winget `
-        --accept-source-agreements --accept-package-agreements `
-        --override '--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended'
-
-    if (-not (Test-VisualStudioBuildTools)) {
-        throw @'
-Visual Studio Build Tools установлены, но рабочая нагрузка C++ не найдена.
-Откройте Visual Studio Installer, нажмите «Изменить» и отметьте
-«Разработка классических приложений на C++», затем запустите установщик снова.
-'@
-    }
-    Write-Ok 'Компилятор C++ готов.'
-}
-
 <#
     Node version.
 
-    The repository pins an exact version in .nvmrc and package.json declares
-    ">=22 <23". Checking only the lower bound let a machine with Node 24 through,
-    and the failure surfaced much later as a native build error — so the check
-    is a range, and it reads the requirement from the checkout instead of
-    hardcoding it.
+    Node нужен только для сборки и скриптов: само приложение работает на
+    Node, встроенном в Electron, и нативных модулей не собирает. Поэтому
+    достаточно версии не ниже закреплённой в .nvmrc — более новая годится.
+    Раньше требовался ровно 22.x ради нативных модулей upstream, и это
+    отправляло людей переключать Node через fnm без всякой нужды.
 #>
 function Assert-NodeVersion {
     param([Parameter(Mandatory)] [string] $SourceDir)
@@ -184,7 +132,7 @@ function Assert-NodeVersion {
     $current = (node --version).Trim()
     $currentMajor = [int] (($current -replace '^v', '') -split '\.')[0]
 
-    if ($currentMajor -eq $wantedMajor) {
+    if ($currentMajor -ge $wantedMajor) {
         Write-Ok "Node.js $current"
         return
     }
@@ -193,14 +141,14 @@ function Assert-NodeVersion {
     # its environment loaded into the current session first — `fnm use` alone
     # changes nothing in a shell that never ran `fnm env`.
     if (Test-Command 'fnm') {
-        Write-Note "Установлен Node $current, нужен $wantedMajor.x — переключаю через fnm."
+        Write-Note "Установлен Node $current, нужен $wantedMajor или новее — переключаю через fnm."
         try {
             fnm install $wanted 2>&1 | Out-Null
             fnm env --shell power-shell | Out-String | Invoke-Expression
             fnm use $wanted 2>&1 | Out-Null
 
             $switched = (node --version).Trim()
-            if ([int] (($switched -replace '^v', '') -split '\.')[0] -eq $wantedMajor) {
+            if ([int] (($switched -replace '^v', '') -split '\.')[0] -ge $wantedMajor) {
                 Write-Ok "Node.js $switched (через fnm)"
                 return
             }
@@ -210,10 +158,13 @@ function Assert-NodeVersion {
     }
 
     throw @"
-Нужен Node.js $wantedMajor.x (проект закрепляет $wanted), а установлен $current.
-Нативные модули не соберутся под другой мажорной версией.
+Нужен Node.js $wantedMajor или новее, а установлен $current.
 
-Выполните по одной команде:
+Проще всего обновить Node:
+
+    winget upgrade OpenJS.NodeJS.LTS
+
+или переключиться через fnm, по одной команде:
 
     winget install Schniz.fnm
     fnm install $wanted
@@ -226,125 +177,13 @@ function Assert-NodeVersion {
 "@
 }
 
-function Get-PinnedBunVersion {
-    # Версия Bun закреплена в CI, а не здесь: так требование живёт в одном
-    # месте и не расходится с тем, что проект действительно проверяет.
-    param([Parameter(Mandatory)] [string] $SourceDir)
-
-    $workflow = Join-Path $SourceDir '.github/workflows/ci.yml'
-    if (-not (Test-Path $workflow)) { return $null }
-
-    $match = [regex]::Match((Get-Content $workflow -Raw), 'bun-version:\s*([0-9]+\.[0-9]+\.[0-9]+)')
-    if (-not $match.Success) { return $null }
-    return $match.Groups[1].Value
-}
-
-function Get-BunVersionProblem {
-    # Чистая функция: решает, годится ли версия, и ничего не делает с машиной.
-    # Возвращает $null, когда всё в порядке, иначе — готовое сообщение.
-    param(
-        [Parameter(Mandatory)] [string] $SourceDir,
-        [Parameter(Mandatory)] [string] $CurrentVersion
-    )
-
-    $wanted = Get-PinnedBunVersion -SourceDir $SourceDir
-    if (-not $wanted) { return $null }
-
-    $wantedLine = ($wanted -split '\.')[0..1] -join '.'
-    $currentLine = ($CurrentVersion.Trim() -split '\.')[0..1] -join '.'
-    if ($currentLine -eq $wantedLine) { return $null }
-
-    return @"
-Нужен Bun линии $wantedLine (CI закрепляет $wanted), а установлен $CurrentVersion.
-Начиная с 1.3 Bun отказывается запускать pnpm.cmd без shell: true, и сборка
-подмодуля interpreter-extension падает с ошибкой EINVAL.
-
-Выполните:
-
-    winget install --id Oven-sh.Bun --version $wanted --force
-
-Если этой версии нет в winget, подойдёт любая из линии ${wantedLine}:
-
-    winget show Oven-sh.Bun --versions
-"@
-}
-
-function Assert-BunVersion {
-    param([Parameter(Mandatory)] [string] $SourceDir)
-
-    $wanted = Get-PinnedBunVersion -SourceDir $SourceDir
-    if (-not $wanted) { return }
-
-    $current = (bun --version).Trim()
-    if (-not (Get-BunVersionProblem -SourceDir $SourceDir -CurrentVersion $current)) {
-        Write-Ok "Bun $current"
-        return
-    }
-
-    # winget чаще всего может это починить сам, не отправляя человека читать
-    # инструкцию. Точной версии из CI в каталоге может не быть, поэтому берём
-    # самую свежую из нужной линии.
-    if (Test-Command 'winget') {
-        $wantedLine = ($wanted -split '\.')[0..1] -join '.'
-        Write-Note "Установлен Bun $current, нужна линия $wantedLine — ставлю через winget."
-
-        $candidates = @($wanted)
-        $available = winget show Oven-sh.Bun --versions 2>$null |
-            Where-Object { $_ -match "^$([regex]::Escape($wantedLine))\." } |
-            ForEach-Object { $_.Trim() }
-        if ($available) { $candidates += $available }
-
-        foreach ($candidate in ($candidates | Select-Object -Unique)) {
-            winget install --id Oven-sh.Bun --version $candidate --source winget `
-                --accept-source-agreements --accept-package-agreements --silent --scope user --force 2>&1 | Out-Null
-
-            $switched = (bun --version).Trim()
-            if (-not (Get-BunVersionProblem -SourceDir $SourceDir -CurrentVersion $switched)) {
-                Write-Ok "Bun $switched"
-                return
-            }
-        }
-    }
-
-    throw (Get-BunVersionProblem -SourceDir $SourceDir -CurrentVersion $current)
-}
-
-function Get-GitUnixToolsDir {
-    # Скрипты сборки подмодуля interpreter-extension написаны под Unix и зовут
-    # `rm`. pnpm на Windows запускает их через cmd.exe, где `rm` нет, — сборка
-    # падает с кодом 127. Git для Windows приносит эти утилиты с собой.
-    $git = Get-Command git -ErrorAction SilentlyContinue
-    if (-not $git) { return $null }
-
-    $root = Split-Path -Parent (Split-Path -Parent $git.Source)
-    if (-not $root) { return $null }
-
-    $candidate = Join-Path $root 'usr\bin'
-    if (Test-Path (Join-Path $candidate 'rm.exe')) { return $candidate }
-    return $null
-}
-
-function Add-GitUnixToolsToPath {
-    $tools = Get-GitUnixToolsDir
-    if (-not $tools) {
-        Write-Note 'Unix-утилиты Git не найдены — сборка подмодуля может упасть на `rm`.'
-        return
-    }
-    if (($env:Path -split ';') -contains $tools) { return }
-
-    # Только в КОНЕЦ PATH. В начале этот каталог перекрыл бы системный tar.exe
-    # версией из MSYS, которая принимает пути вида C:\... за имя удалённого
-    # хоста и роняет распаковку рантайма.
-    $env:Path = $env:Path.TrimEnd(';') + ';' + $tools
-}
-
 <#
     pnpm version.
 
     Same trap as Node: checking that pnpm merely exists let a machine with
     pnpm 11 through while package.json pins 9.15.9 and declares ">=9 <10".
     pnpm 11 silently ignores the `pnpm` block in package.json — including
-    onlyBuiltDependencies — so native modules are treated differently and the
+    onlyBuiltDependencies, which lets Electron download its binary — and the
     install diverges from what the lockfile was resolved against.
 #>
 function Assert-PnpmVersion {
@@ -386,27 +225,76 @@ function Assert-PnpmVersion {
     }
     Write-Ok "pnpm $switched (через corepack)"}
 
+
+<#
+    Перенос данных старой установки.
+
+    До отделения от Interpreter Workstation модели лежали в
+    %APPDATA%\Interpreter, а память — в ~\.openinterpreter\jarvis. Скачивать
+    гигабайт заново ради смены папки незачем: переносим, если на новом месте
+    ещё пусто. Возвращает список перенесённого, чтобы сказать о нём.
+#>
+function Move-LegacyData {
+    param(
+        [Parameter(Mandatory)] [string] $InstallRoot,
+        [string] $RoamingRoot = (Join-Path $env:APPDATA 'Interpreter'),
+        [string] $LegacyHome = (Join-Path $HOME '.openinterpreter\jarvis')
+    )
+
+    $moved = @()
+    $pairs = @(
+        @{ From = (Join-Path $RoamingRoot 'whisper-models'); To = (Join-Path $InstallRoot 'models\whisper') },
+        @{ From = (Join-Path $LegacyHome 'memory.json'); To = (Join-Path $InstallRoot 'data\memory.json') },
+        @{ From = (Join-Path $LegacyHome 'agent-notes.json'); To = (Join-Path $InstallRoot 'data\agent-notes.json') },
+        @{ From = (Join-Path $InstallRoot 'data\jarvis.log'); To = (Join-Path $InstallRoot 'logs\jarvis.log') }
+    )
+    foreach ($pair in $pairs) {
+        if (-not (Test-Path $pair.From) -or (Test-Path $pair.To)) { continue }
+        New-Item -ItemType Directory -Path (Split-Path -Parent $pair.To) -Force | Out-Null
+        Move-Item -Path $pair.From -Destination $pair.To
+        $moved += $pair.To
+    }
+
+    # Голоса лежали на уровень глубже: tts-models\<id>\<id>\…
+    $legacyVoices = Join-Path $RoamingRoot 'tts-models'
+    if (Test-Path $legacyVoices) {
+        foreach ($voice in Get-ChildItem -Path $legacyVoices -Directory -Filter 'vits-piper-*') {
+            $inner = Join-Path $voice.FullName $voice.Name
+            $target = Join-Path $InstallRoot "models\voices\$($voice.Name)"
+            if ((Test-Path $inner) -and -not (Test-Path $target)) {
+                New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+                Move-Item -Path $inner -Destination $target
+                $moved += $target
+            }
+        }
+    }
+    return ,$moved
+}
+
 function New-Shortcut {
     param(
         [Parameter(Mandatory)] [string] $Path,
         [Parameter(Mandatory)] [string] $Target,
         [string] $Arguments = '',
-        [string] $WorkingDirectory = ''
+        [string] $WorkingDirectory = '',
+        [string] $Icon = ''
     )
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($Path)
     $shortcut.TargetPath = $Target
     $shortcut.Arguments = $Arguments
     if ($WorkingDirectory) { $shortcut.WorkingDirectory = $WorkingDirectory }
-    $shortcut.Description = 'Rujarvis — голосовой ассистент'
+    if ($Icon) { $shortcut.IconLocation = $Icon }
+    $shortcut.Description = 'Rujarvis — голосовой ассистент / voice assistant'
     $shortcut.Save()
 }
+
 
 # ---------------------------------------------------------------------------
 
 Write-Host ''
 Write-Host '  Rujarvis' -ForegroundColor White
-Write-Host '  Русскоязычный голосовой ассистент для Windows' -ForegroundColor DarkGray
+Write-Host '  Голосовой ассистент для Windows · Voice assistant for Windows' -ForegroundColor DarkGray
 Write-Host ''
 
 if ($env:OS -ne 'Windows_NT') {
@@ -414,22 +302,13 @@ if ($env:OS -ne 'Windows_NT') {
 }
 
 Write-Step 'Проверяю зависимости'
-Install-WithWinget -Id 'Git.Git'        -Command 'git'   -DisplayName 'Git'
+Install-WithWinget -Id 'Git.Git' -Command 'git' -DisplayName 'Git'
 Install-WithWinget -Id 'OpenJS.NodeJS.LTS' -Command 'node' -DisplayName 'Node.js'
-Install-WithWinget -Id 'Rustlang.Rustup' -Command 'cargo' -DisplayName 'Rust'
-Install-WithWinget -Id 'Oven-sh.Bun'    -Command 'bun'   -DisplayName 'Bun'
-Install-VisualStudioBuildTools
-
-# The exact Node version is checked after the clone, against the .nvmrc the
-# repository pins, rather than guessed here.
-
 if (-not (Test-Command 'pnpm')) {
     Write-Note 'Включаю pnpm через corepack…'
     corepack enable | Out-Null
     corepack prepare pnpm@9.15.9 --activate | Out-Null
 }
-# The exact version is checked after the clone, against the packageManager
-# field the repository pins.
 
 Write-Step 'Получаю исходники'
 if (Test-Path (Join-Path $SourceDir '.git')) {
@@ -437,76 +316,66 @@ if (Test-Path (Join-Path $SourceDir '.git')) {
     Invoke-Checked -FilePath 'git' -Arguments @('-C', $SourceDir, 'fetch', 'origin', $Branch) -What 'git fetch'
     Invoke-Checked -FilePath 'git' -Arguments @('-C', $SourceDir, 'checkout', $Branch) -What 'git checkout'
     Invoke-Checked -FilePath 'git' -Arguments @('-C', $SourceDir, 'pull', '--ff-only', 'origin', $Branch) -What 'git pull'
-    Invoke-Checked -FilePath 'git' -Arguments @('-C', $SourceDir, 'submodule', 'update', '--init', '--recursive') -What 'git submodule update'
 } else {
     New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
-    Invoke-Checked -FilePath 'git' -Arguments @('clone', '--recurse-submodules', '--branch', $Branch, $RepoUrl, $SourceDir) -What 'git clone'
+    Invoke-Checked -FilePath 'git' -Arguments @('clone', '--depth', '1', '--branch', $Branch, $RepoUrl, $SourceDir) -What 'git clone'
 }
-# The Jarvis layer lives in jarvis/. If it is missing, the branch that was
-# cloned does not carry this work — installing on regardless would produce a
-# plain Workstation that looks like a broken Jarvis.
-if (-not (Test-Path (Join-Path $SourceDir 'jarvis/core.ts'))) {
-    throw "В ветке '$Branch' нет слоя Jarvis (каталог jarvis/). Укажите ветку с этим кодом через -Branch."
+if (-not (Test-Path (Join-Path $SourceDir 'app/main.ts'))) {
+    throw "В ветке '$Branch' нет приложения Rujarvis (app/main.ts). Укажите нужную ветку через -Branch."
 }
 Write-Ok "Исходники: $SourceDir"
 
 Assert-NodeVersion -SourceDir $SourceDir
-Assert-BunVersion -SourceDir $SourceDir
 Assert-PnpmVersion -SourceDir $SourceDir
+
+$moved = Move-LegacyData -InstallRoot $InstallRoot
+if ($moved.Count -gt 0) {
+    Write-Step 'Перенёс данные прежней установки'
+    $moved | ForEach-Object { Write-Ok $_ }
+}
 
 Push-Location $SourceDir
 try {
-    Write-Step 'Ставлю зависимости проекта'
-    Invoke-Checked -FilePath 'pnpm' -Arguments @('install') -What 'pnpm install'
+    Write-Step 'Ставлю зависимости и собираю'
+    Invoke-Checked -FilePath 'pnpm' -Arguments @('install', '--frozen-lockfile') -What 'pnpm install'
+    Invoke-Checked -FilePath 'pnpm' -Arguments @('build') -What 'pnpm build'
+    Write-Ok 'Приложение собрано.'
 
-    Write-Step 'Скачиваю рантайм Interpreter'
-    Invoke-Checked -FilePath 'pnpm' -Arguments @('run', 'download:oix', '--', '--current-platform') -What 'download:oix'
-    Invoke-Checked -FilePath 'pnpm' -Arguments @('run', 'download:pdfcpu', '--', '--current-platform') -What 'download:pdfcpu'
-
-    if (-not $SkipBuild) {
-        Write-Step 'Собираю приложение (это самая долгая часть)'
-        Add-GitUnixToolsToPath
-        Invoke-Checked -FilePath 'pnpm' -Arguments @('run', 'build') -What 'pnpm run build'
-        Write-Ok 'Сборка готова.'
-    }
-
-    Write-Step 'Настраиваю голос'
-    if (-not $WhisperModel) {
-        $WhisperModel = Get-RecommendedWhisperModel
-        Write-Note "Модель распознавания выбрана по объёму памяти: $WhisperModel"
-    }
-    Invoke-Checked -FilePath 'pnpm' -Arguments @('run', 'jarvis:setup', '--', '--model', $WhisperModel) -What 'jarvis:setup'
+    Write-Step 'Скачиваю модели речи'
+    $setupArgs = @('jarvis:setup', '--', '--language', $Language)
+    if ($WhisperModel) { $setupArgs += @('--model', $WhisperModel) }
+    Invoke-Checked -FilePath 'pnpm' -Arguments $setupArgs -What 'jarvis:setup'
 }
 finally {
     Pop-Location
 }
 
 Write-Step 'Создаю ярлык'
-$launcher = Join-Path $InstallRoot 'Rujarvis.cmd'
-@"
-@echo off
-cd /d "$SourceDir"
-rem Без этой переменной распакованный Electron идёт за интерфейсом на
-rem localhost:5173, то есть на dev-сервер Vite, которого у пользователя нет,
-rem и приложение закрывается с ERR_CONNECTION_REFUSED.
-set INTERPRETER_USE_BUILT_RENDERER=true
-call pnpm start
-"@ | Set-Content -Path $launcher -Encoding ASCII
+$electron = Join-Path $SourceDir 'node_modules\electron\dist\electron.exe'
+$entry = Join-Path $SourceDir 'dist\app\main.cjs'
+$icon = Join-Path $SourceDir 'resources\icon.ico'
+if (-not (Test-Path $electron)) { throw "Electron не найден: $electron. Запустите установщик снова." }
 
 $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Rujarvis.lnk'
-New-Shortcut -Path $startMenu -Target $launcher -WorkingDirectory $SourceDir
-Write-Ok "Ярлык в меню «Пуск»: Rujarvis"
+New-Shortcut -Path $startMenu -Target $electron -Arguments "`"$entry`"" -WorkingDirectory $SourceDir -Icon $icon
+Write-Ok 'Ярлык в меню «Пуск»: Rujarvis'
+
+$startup = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\Rujarvis.lnk'
+if ($Autostart) {
+    New-Shortcut -Path $startup -Target $electron -Arguments "`"$entry`"" -WorkingDirectory $SourceDir -Icon $icon
+    Write-Ok 'Запуск при входе в Windows включён.'
+}
 
 Write-Host ''
 Write-Host '  Готово.' -ForegroundColor Green
 Write-Host ''
-Write-Host '  Запуск:  меню «Пуск» → Rujarvis' -ForegroundColor White
-Write-Host "  Или:     cd `"$SourceDir`" ; `$env:INTERPRETER_USE_BUILT_RENDERER='true' ; pnpm start" -ForegroundColor DarkGray
+Write-Host '  Rujarvis живёт в трее. При первом запуске он проведёт по настройке:' -ForegroundColor White
+Write-Host '  вход в Claude Code, проверка микрофона — и можно говорить.' -ForegroundColor White
 Write-Host ''
-Write-Host '  Зажмите Ctrl + Space и говорите. Или скажите «Джарвис».' -ForegroundColor White
+Write-Host "  Папка Джарвиса: $InstallRoot" -ForegroundColor DarkGray
+Write-Host "  Лог:            $(Join-Path $InstallRoot 'logs\jarvis.log')" -ForegroundColor DarkGray
 Write-Host ''
-Write-Host '  Для задач по коду подключите подписку:' -ForegroundColor White
-Write-Host '    claude        — вход в Claude Code' -ForegroundColor DarkGray
-Write-Host '    codex login   — вход в Codex через ChatGPT' -ForegroundColor DarkGray
-Write-Host '  Jarvis не хранит ключи и не читает токены — вход выполняется штатно.' -ForegroundColor DarkGray
-Write-Host ''
+
+if (-not $NoLaunch) {
+    Start-Process -FilePath $electron -ArgumentList "`"$entry`"" -WorkingDirectory $SourceDir
+}

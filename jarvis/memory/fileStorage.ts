@@ -1,23 +1,19 @@
 /**
  * File-backed memory storage.
  *
- * Lives beside the Workstation's own state in the shared Open Interpreter home
- * (`INTERPRETER_HOME`, otherwise `~/.openinterpreter`), so Jarvis memory
- * travels with the rest of the user's configuration.
+ * Lives in Jarvis's data folder (`jarvis/setup/paths.ts`), next to the
+ * journal and the settings: everything the assistant knows about the user is
+ * in one place the user can open.
  */
 
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
+
+import { jarvisPaths } from '../setup/paths';
 import { EMPTY_SNAPSHOT, type MemorySnapshot, type MemoryStorage } from './store';
 
-export function resolveJarvisHome(env: NodeJS.ProcessEnv = process.env): string {
-  const home = env.INTERPRETER_HOME?.trim();
-  return path.join(home && home.length > 0 ? home : path.join(os.homedir(), '.openinterpreter'), 'jarvis');
-}
-
 export function createFileMemoryStorage(
-  filePath = path.join(resolveJarvisHome(), 'memory.json'),
+  filePath = path.join(jarvisPaths().data, 'memory.json'),
 ): MemoryStorage {
   return {
     async load() {

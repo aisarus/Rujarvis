@@ -8,10 +8,10 @@ import { commandCatalogue } from './catalogue';
 import { parseDictationEdit } from './dictationEdits';
 import { parseDirectCommand } from './commands';
 
-const catalogue = commandCatalogue();
+describe.each(['ru', 'en'] as const)('commandCatalogue (%s)', (language) => {
+const catalogue = commandCatalogue(language);
 const everyPhrase = catalogue.flatMap((group) => group.items.map((item) => item.say));
 
-describe('commandCatalogue', () => {
   it('разложен по понятным разделам', () => {
     expect(catalogue.length).toBeGreaterThan(4);
     for (const group of catalogue) {

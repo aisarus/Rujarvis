@@ -2,7 +2,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createFileMemoryStorage, resolveJarvisHome } from './fileStorage';
+import { createFileMemoryStorage } from './fileStorage';
+import { jarvisPaths } from '../setup/paths';
 import { JarvisMemory, type MemoryStorage, type MemorySnapshot } from './store';
 import {
   WorldStateStore,
@@ -152,11 +153,13 @@ describe('file-backed memory', () => {
     expect(JSON.parse(raw)).toEqual(snapshot);
   });
 
-  it('places its home inside the shared Open Interpreter home', () => {
-    expect(resolveJarvisHome({ INTERPRETER_HOME: '/custom/home' })).toBe(
-      path.join('/custom/home', 'jarvis'),
+  it('keeps everything under one Jarvis folder that JARVIS_HOME can move', () => {
+    const paths = jarvisPaths({ JARVIS_HOME: '/custom/home' });
+    expect(paths.data).toBe(path.join(path.resolve('/custom/home'), 'data'));
+    expect(paths.log).toBe(path.join(path.resolve('/custom/home'), 'logs', 'jarvis.log'));
+    expect(jarvisPaths({ LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' }, 'win32').home).toBe(
+      path.join('C:\\Users\\u\\AppData\\Local', 'Rujarvis'),
     );
-    expect(resolveJarvisHome({})).toBe(path.join(os.homedir(), '.openinterpreter', 'jarvis'));
   });
 });
 

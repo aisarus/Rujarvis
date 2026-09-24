@@ -28,6 +28,8 @@
  * непонятно, работа идёт или встала.
  */
 
+import { tr } from '../locale/language';
+
 export type StepState = 'ждёт' | 'делаю' | 'сделано' | 'не вышло';
 
 export interface PlanStep {
@@ -166,10 +168,13 @@ export function renderPlan(plan: Plan | null): string {
  * Человек, спросивший «где ты», не хочет слушать тридцать пунктов.
  */
 export function planSummary(plan: Plan | null): string {
-  if (!plan || plan.steps.length === 0) return 'Плана пока нет.';
+  if (!plan || plan.steps.length === 0) return tr('Плана пока нет.', 'No plan yet.');
 
   const { done, total } = planProgress(plan);
   const current = currentStep(plan);
-  if (!current) return `План выполнен: ${done} из ${total}.`;
-  return `Шаг ${current.index + 1} из ${total}: ${current.step.text}`;
+  if (!current) return tr(`План выполнен: ${done} из ${total}.`, `Plan finished: ${done} of ${total}.`);
+  return tr(
+    `Шаг ${current.index + 1} из ${total}: ${current.step.text}`,
+    `Step ${current.index + 1} of ${total}: ${current.step.text}`,
+  );
 }

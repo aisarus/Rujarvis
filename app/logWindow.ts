@@ -36,6 +36,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { StoryLine } from '../jarvis/observe/storyline';
+import { tr } from '../jarvis/locale/language';
 
 export const LOG_WINDOW_CHANNELS = {
   line: 'jarvis-log:line',
@@ -51,7 +52,7 @@ const BACKLOG_LIMIT = 500;
 export function buildLogWindowHtml(): string {
   return `<!doctype html>
 <html lang="ru">
-<head><meta charset="utf-8"><title>Джарвис — что делаю</title>
+<head><meta charset="utf-8"><title>${tr('Джарвис — что делаю', 'Jarvis — what I am doing')}</title>
 <style>
   html, body {
     margin: 0; padding: 0; height: 100%; background: #0f0f12; overflow: hidden;
@@ -98,8 +99,8 @@ export function buildLogWindowHtml(): string {
 </style>
 </head>
 <body>
-<div id="head"><div id="title">Что делаю</div><div id="count"></div></div>
-<div id="feed"><div id="empty">Пока ничего не делаю.</div></div>
+<div id="head"><div id="title">${tr('Что делаю', 'What I am doing')}</div><div id="count"></div></div>
+<div id="feed"><div id="empty">${tr('Пока ничего не делаю.', 'Nothing going on yet.')}</div></div>
 <script>
 const { ipcRenderer } = require('electron');
 const CH = ${JSON.stringify(LOG_WINDOW_CHANNELS)};
@@ -152,7 +153,7 @@ function add(line) {
   feed.appendChild(row);
 
   shown += 1;
-  count.textContent = shown + ' шагов';
+  count.textContent = shown + ${JSON.stringify(tr(' шагов', ' steps'))};
 
   // Старое убираем, иначе часовая работа съест память окна.
   while (feed.childElementCount > 1200) feed.removeChild(feed.firstElementChild);
@@ -210,7 +211,7 @@ export function createLogWindow(): LogWindow {
       height: HEIGHT,
       x: work.x + work.width - WIDTH - MARGIN,
       y: work.y + MARGIN,
-      title: 'Джарвис — что делаю',
+      title: tr('Джарвис — что делаю', 'Jarvis — what I am doing'),
       backgroundColor: '#0f0f12',
       show: false,
       // Не «всегда сверху»: это окно читают подолгу, и отнимать им место у

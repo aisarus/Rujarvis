@@ -93,7 +93,7 @@ async function state() {
     WHISPER_MODELS.map(async (model) => ({
       id: model.id,
       label: model.label,
-      description: model.description,
+      description: settings.language === 'en' ? model.descriptionEn : model.description,
       bytes: model.downloadBytes,
       installed: await isWhisperModelInstalled(paths.whisperModels, model.id),
     })),

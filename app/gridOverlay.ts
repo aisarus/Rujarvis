@@ -22,6 +22,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { gridLayout, physicalArea, type GridLayout } from '../jarvis/control/grid';
+import { tr } from '../jarvis/locale/language';
 
 /** Сквозь окно должно быть видно, но номера должны читаться. */
 const OPACITY = 0.45;
@@ -116,7 +117,7 @@ function buildGridHtml(grid: GridLayout): string {
 <html lang="ru">
 <head>
 <meta charset="utf-8" />
-<title>Сетка</title>
+<title>${tr('Сетка', 'Grid')}</title>
 <style>
   html, body {
     margin: 0;
