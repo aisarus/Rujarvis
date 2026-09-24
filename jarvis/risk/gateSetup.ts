@@ -17,6 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { desktopMcpBundle } from '../desktop/launch';
+import type { Language } from '../locale/language';
 import { gateSettings, type GateConfig } from './gateHook';
 
 export interface GateSetupOptions {
@@ -25,6 +26,7 @@ export interface GateSetupOptions {
   dataDir: string;
   outputDir?: string;
   homeDir?: string;
+  language?: Language;
   exists?: (file: string) => boolean;
   nodeAvailable?: () => boolean;
   tempRoot?: string;
@@ -43,7 +45,12 @@ export function prepareGate(options: GateSetupOptions): GateSetup {
 
   const dir = mkdtempSync(path.join(options.tempRoot ?? os.tmpdir(), 'jarvis-gate-'));
   const configFile = path.join(dir, 'gate.json');
-  const config: GateConfig = { bridgeDir, outputDir: options.outputDir, homeDir: options.homeDir };
+  const config: GateConfig = {
+    bridgeDir,
+    outputDir: options.outputDir,
+    homeDir: options.homeDir,
+    language: options.language,
+  };
   writeFileSync(configFile, JSON.stringify(config), 'utf8');
 
   const settings = path.join(dir, 'settings.json');

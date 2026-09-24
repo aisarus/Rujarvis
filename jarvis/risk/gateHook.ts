@@ -12,12 +12,19 @@
 import { readFileSync } from 'node:fs';
 import os from 'node:os';
 
+import { setLanguage, type Language } from '../locale/language';
 import { riskRank } from '../types';
 import { GateBridge } from './gateBridge';
 import { classifyToolUse, type GateContext } from './toolGate';
 
 export interface GateConfig {
   bridgeDir: string;
+  /**
+   * Язык вопросов. Хук — отдельный процесс, запущенный Claude Code, и
+   * выбранного в настройках языка не знает: без этого поля англоязычного
+   * человека спрашивали бы по-русски.
+   */
+  language?: Language;
   outputDir?: string;
   homeDir?: string;
 }
@@ -71,6 +78,7 @@ export async function runGateHook(configPath: string | undefined): Promise<void>
   let output: HookOutput | null;
   try {
     const config = JSON.parse(readFileSync(configPath ?? '', 'utf8')) as GateConfig;
+    setLanguage(config.language === 'en' ? 'en' : 'ru');
     const input = JSON.parse(readFileSync(0, 'utf8')) as HookInput;
     const bridge = new GateBridge(config.bridgeDir);
     output = await decideToolUse(input, config, (summary, level) => bridge.ask(summary, level));

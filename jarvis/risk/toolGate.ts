@@ -21,6 +21,7 @@
 
 import path from 'node:path';
 
+import { tr } from '../locale/language';
 import { type RiskLevel } from '../types';
 import { classifyAction, type JarvisAction } from './policy';
 
@@ -65,7 +66,7 @@ export function classifyToolUse(tool: string, input: Input, context: GateContext
     const command = text('command');
     return {
       level: classifyAction({ kind: 'shell', command, insideProject: true }),
-      summary: `Агент хочет выполнить команду: ${clip(command)}.`,
+      summary: tr(`Агент хочет выполнить команду: ${clip(command)}.`, `The agent wants to run: ${clip(command)}.`),
     };
   }
 
@@ -73,18 +74,18 @@ export function classifyToolUse(tool: string, input: Input, context: GateContext
     const file = text('file_path') || text('notebook_path');
     return {
       level: classifyAction(writeAction(file, context)),
-      summary: `Агент хочет изменить файл ${file}.`,
+      summary: tr(`Агент хочет изменить файл ${file}.`, `The agent wants to change ${file}.`),
     };
   }
 
   switch (mcpName(tool)) {
     case 'browser_click': {
       const label = text('text');
-      return labelRisk(label, `Агент хочет нажать «${clip(label)}» в браузере.`);
+      return labelRisk(label, tr(`Агент хочет нажать «${clip(label)}» в браузере.`, `The agent wants to press "${clip(label)}" in the browser.`));
     }
     case 'browser_fill': {
       const label = text('label');
-      const summary = `Агент хочет ввести данные в поле «${clip(label)}».`;
+      const summary = tr(`Агент хочет ввести данные в поле «${clip(label)}».`, `The agent wants to fill in "${clip(label)}".`);
       if (SECRET_FIELD.test(label)) return { level: 'sensitive', summary };
       return labelRisk(label, summary);
     }
@@ -93,12 +94,15 @@ export function classifyToolUse(tool: string, input: Input, context: GateContext
       // сессиях человека, не только в работе Джарвиса.
       return {
         level: 'sensitive',
-        summary: `Агент хочет записать навык «${clip(text('name'))}» в общие навыки Claude Code.`,
+        summary: tr(
+          `Агент хочет записать навык «${clip(text('name'))}» в общие навыки Claude Code.`,
+          `The agent wants to save the skill "${clip(text('name'))}" to your Claude Code skills.`,
+        ),
       };
     case 'show_file': {
       const file = text('file');
       if (input.open === true && EXECUTABLE.test(file)) {
-        return { level: 'sensitive', summary: `Агент хочет запустить ${file}.` };
+        return { level: 'sensitive', summary: tr(`Агент хочет запустить ${file}.`, `The agent wants to run ${file}.`) };
       }
       return { level: 'safe', summary: '' };
     }
@@ -106,7 +110,7 @@ export function classifyToolUse(tool: string, input: Input, context: GateContext
       const file = text('file');
       return {
         level: within(file, workRoots(context)) ? 'normal' : 'sensitive',
-        summary: `Агент хочет перенести ${file} в папку результатов.`,
+        summary: tr(`Агент хочет перенести ${file} в папку результатов.`, `The agent wants to move ${file} to the results folder.`),
       };
     }
     default:

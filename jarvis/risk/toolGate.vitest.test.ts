@@ -1,10 +1,11 @@
 import { mkdtempSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { GateBridge } from './gateBridge';
 import { decideToolUse } from './gateHook';
+import { setLanguage } from '../locale/language';
 import { classifyToolUse, isSystemPath, within, type GateContext } from './toolGate';
 
 const context: GateContext = {
@@ -139,5 +140,20 @@ describe('GateBridge', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'gate-'));
     const hook = new GateBridge(dir, { stepMs: 5, waitMs: 50 });
     expect(await hook.ask('Удалить?', 'dangerous')).toBe(false);
+  });
+});
+
+describe('язык вопросов хука', () => {
+  afterEach(() => setLanguage('ru'));
+
+  it('спрашивает на выбранном языке, а класс риска от языка не зависит', () => {
+    const ctx = { cwd: '/tmp/project' };
+    const ru = classifyToolUse('Bash', { command: 'git push origin main' }, ctx);
+    setLanguage('en');
+    const en = classifyToolUse('Bash', { command: 'git push origin main' }, ctx);
+
+    expect(ru.summary).toContain('Агент хочет выполнить команду');
+    expect(en.summary).toBe('The agent wants to run: git push origin main.');
+    expect(en.level).toBe(ru.level);
   });
 });
