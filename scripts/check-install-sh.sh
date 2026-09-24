@@ -112,6 +112,29 @@ for readme in "$ROOT/README.md" "$ROOT/README.en.md"; do
   check "в $(basename "$readme") есть команда установки на macOS"     "$(grep -q 'install.sh' "$readme" && printf 'да')"
 done
 
+# --- кириллица в именах оболочки ---------------------------------------------
+#
+# В bash имя переменной — только латиница. `СКОЛЬКО=...` не присваивание, а
+# команда, и оболочка отвечает 127. Поймано трижды за один день: дважды в
+# прогоне на macOS и один раз в этих же проверках. Русские СТРОКИ в кавычках
+# при этом живут прекрасно — ломаются именно имена.
+#
+# Ищем присваивания и подстановки с кириллицей в скриптах и в прогонах CI.
+shell_files=$(find "$ROOT/scripts" -name '*.sh' 2>/dev/null; find "$ROOT/.github/workflows" -name '*.yml' 2>/dev/null; echo "$ROOT/install.sh")
+cyrillic_names=''
+for file in $shell_files; do
+  [ -f "$file" ] || continue
+  # Строки-комментарии пропускаем: в них кириллица и должна быть.
+  hits=$(grep -nE '(^|[^#[:alnum:]_])[А-Яа-яЁё][А-Яа-яЁё_0-9]*=' "$file" 2>/dev/null | grep -vE '^[0-9]+:[[:space:]]*#' || true)
+  if [ -n "$hits" ]; then
+    cyrillic_names="$cyrillic_names$(basename "$file"): $(echo "$hits" | head -2 | tr '
+' ' ')
+"
+  fi
+done
+check 'в оболочке нет имён кириллицей: bash отвечает на них 127'   "$([ -z "$cyrillic_names" ] && printf 'да')"
+[ -z "$cyrillic_names" ] || printf '%s' "$cyrillic_names"
+
 if [ "$failures" -gt 0 ]; then
   printf 'Провалено проверок: %s\n' "$failures" >&2
   exit 1
