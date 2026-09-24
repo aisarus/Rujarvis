@@ -1,16 +1,21 @@
 /**
- * Что на macOS доступно без разрешений, а что требует их.
+ * Что на macOS доступно, а что требует разрешений — и работает ли управление
+ * окном по-настоящему.
  *
- * Драйвер окон для Mac писать вслепую нельзя: у Apple три разных замка, и
- * какой из них закрыт, на словах не узнать.
+ * Драйвер окон для Mac писать вслепую нельзя: у Apple несколько разных
+ * замков, и какой из них закрыт, на словах не узнать.
  *
- *   - список окон с именем программы и рамкой — CGWindowList, вроде бы без
- *     разрешений;
- *   - ЗАГОЛОВОК окна — с macOS 10.15 требует «Запись экрана»;
- *   - поднять, свернуть, нажать — требует «Универсальный доступ».
+ * Первый заход (24.09.2026, macos-latest) показал:
+ *   - Универсальный доступ в CI открыт: AXIsProcessTrusted → true;
+ *   - список окон и признак AXMinimized через System Events работают
+ *     (776 и 166 мс), но на машине CI окон нет — списки пустые;
+ *   - screencapture работает;
+ *   - cliclick отсутствует: мышь придётся делать через CoreGraphics;
+ *   - мой вызов CGWindowList упал на ошибке в мосте ObjC.
  *
- * Пробник гоняет каждый путь по отдельности и печатает, что вышло. Запускается
- * на настоящем маке в CI: машины под рукой нет, а гадать дороже.
+ * Второй заход чинит мост, добавляет мышь и клавиши и — главное — поднимает
+ * на маке настоящее окно (TextEdit), чтобы проверить весь путь: найти,
+ * свернуть, увидеть свёрнутым, развернуть.
  *
  *   node scripts/probe-darwin-windows.mjs
  */
@@ -21,88 +26,107 @@ import { promisify } from 'node:util';
 const run = promisify(execFile);
 
 /** Выполнить и вернуть исход, не роняя пробник: отказ — тоже измерение. */
-async function попытка(имя, файл, аргументы, timeoutMs = 20_000) {
+async function попытка(имя, файл, аргументы, timeoutMs = 25_000) {
   const начало = Date.now();
   try {
     const { stdout, stderr } = await run(файл, аргументы, { timeout: timeoutMs, maxBuffer: 8 << 20 });
-    return { имя, ок: true, мс: Date.now() - начало, вывод: (stdout || stderr).trim().slice(0, 1200) };
+    return { имя, ок: true, мс: Date.now() - начало, вывод: (stdout || stderr).trim().slice(0, 1500) };
   } catch (error) {
     const текст = [error?.stderr, error?.stdout, error?.message].filter(Boolean).join(' | ');
-    return { имя, ок: false, мс: Date.now() - начало, вывод: String(текст).trim().slice(0, 1200) };
+    return { имя, ок: false, мс: Date.now() - начало, вывод: String(текст).trim().slice(0, 1500) };
   }
 }
 
 const jxa = (код) => ['-l', 'JavaScript', '-e', код];
-
-// 1. Список окон через CoreGraphics. Имя программы и рамка — без разрешений;
-//    заголовок приходит только с «Записью экрана».
-const CG_LIST = `
-  ObjC.import('CoreGraphics');
-  ObjC.import('Foundation');
-  const list = $.CGWindowListCopyWindowInfo(
-    $.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements,
-    $.kCGNullWindowID,
-  );
-  const data = ObjC.deepUnwrap(list) || [];
-  const rows = data.slice(0, 12).map((w) => ({
-    app: w.kCGWindowOwnerName,
-    title: w.kCGWindowName === undefined ? '(нет заголовка)' : w.kCGWindowName,
-    pid: w.kCGWindowOwnerPID,
-    layer: w.kCGWindowLayer,
-    bounds: w.kCGWindowBounds,
-  }));
-  JSON.stringify({ всего: data.length, первые: rows }, null, 1);
-`;
-
-// 2. Тот же список через System Events — этот путь требует «Универсальный доступ».
-const SE_LIST = `
-  tell application "System Events"
-    set out to {}
-    repeat with p in (every process whose background only is false)
-      repeat with w in (every window of p)
-        set end of out to (name of p) & " :: " & (name of w)
-      end repeat
-    end repeat
-    return out
-  end tell
-`;
-
-// 3. Признак свёрнутости — то, на чём мы сегодня погорели на Windows.
-const SE_MINIMIZED = `
-  tell application "System Events"
-    set out to {}
-    repeat with p in (every process whose background only is false)
-      repeat with w in (every window of p)
-        set end of out to (name of w) & " свёрнуто=" & (value of attribute "AXMinimized" of w as text)
-      end repeat
-    end repeat
-    return out
-  end tell
-`;
-
-// 4. Разрешён ли «Универсальный доступ» вообще — спрашиваем прямо, не пробуя
-//    ничего сделать. Это и будет проверкой перед работой.
-const AX_TRUSTED = `
-  ObjC.import('ApplicationServices');
-  String($.AXIsProcessTrusted());
-`;
-
-const пробы = [
-  ['CGWindowList: список окон', 'osascript', jxa(CG_LIST)],
-  ['AXIsProcessTrusted: дан ли Универсальный доступ', 'osascript', jxa(AX_TRUSTED)],
-  ['System Events: список окон', 'osascript', ['-e', SE_LIST]],
-  ['System Events: признак свёрнутости', 'osascript', ['-e', SE_MINIMIZED]],
-  ['screencapture: снимок экрана', 'screencapture', ['-x', '/tmp/rujarvis-probe.png']],
-  ['есть ли cliclick', 'which', ['cliclick']],
-];
+const applescript = (код) => ['-e', код];
 
 const итоги = [];
-for (const [имя, файл, аргументы] of пробы) {
+async function проба(имя, файл, аргументы) {
   const итог = await попытка(имя, файл, аргументы);
   итоги.push(итог);
   console.log(`\n=== ${имя} — ${итог.ок ? 'вышло' : 'ОТКАЗ'} (${итог.мс} мс)`);
   console.log(итог.вывод || '(пусто)');
+  return итог;
 }
+
+// --- 1. Список окон без Универсального доступа -------------------------------
+//
+// CGWindowListCopyWindowInfo отдаёт CFArrayRef. В JXA его надо сперва
+// превратить в объект ObjC, иначе deepUnwrap возвращает не массив — на этом
+// первый заход и упал.
+const CG_LIST = `
+  ObjC.import('CoreGraphics');
+  ObjC.import('Foundation');
+  const ref = $.CGWindowListCopyWindowInfo(1 | 16, 0);
+  const data = ObjC.deepUnwrap(ObjC.castRefToObject(ref)) || [];
+  const rows = data.slice(0, 15).map((w) => ({
+    app: w.kCGWindowOwnerName,
+    title: w.kCGWindowName === undefined ? '(заголовок скрыт)' : w.kCGWindowName,
+    pid: w.kCGWindowOwnerPID,
+    layer: w.kCGWindowLayer,
+  }));
+  JSON.stringify({ всего: data.length, первые: rows }, null, 1);
+`;
+
+// --- 2. Мышь через CoreGraphics ----------------------------------------------
+// cliclick на маке не стоит, ставить его установщиком не хочется: лишняя
+// зависимость ради двух вызовов. CGEvent есть в системе всегда.
+const CG_MOUSE = `
+  ObjC.import('CoreGraphics');
+  const point = $.CGPointMake(120, 120);
+  const move = $.CGEventCreateMouseEvent($(), $.kCGEventMouseMoved, point, $.kCGMouseButtonLeft);
+  $.CGEventPost($.kCGHIDEventTap, move);
+  const where = $.CGEventGetLocation($.CGEventCreate($()));
+  'курсор после переноса: ' + where.x + ',' + where.y;
+`;
+
+// --- 3. Клавиши через System Events ------------------------------------------
+const SE_KEY = `
+  tell application "System Events" to key code 123
+  return "клавиша ушла"
+`;
+
+// --- 4. Весь путь управления окном на настоящем окне -------------------------
+//
+// Запускаем TextEdit и проверяем то самое, на чём сегодня погорели на
+// Windows: видно ли окно, когда оно свёрнуто, и разворачивается ли обратно.
+const SE_WINDOW_CYCLE = `
+  tell application "TextEdit" to activate
+  delay 1.5
+  tell application "System Events"
+    tell process "TextEdit"
+      set имена to name of every window
+      if (count of windows) is 0 then return "TextEdit без окон: " & (имена as text)
+      set w to window 1
+      set былоСвёрнуто to (value of attribute "AXMinimized" of w) as text
+      set value of attribute "AXMinimized" of w to true
+      delay 1
+      set сталоСвёрнуто to (value of attribute "AXMinimized" of w) as text
+      set видноСвёрнутым to (name of w)
+      set value of attribute "AXMinimized" of w to false
+      delay 1
+      set послеРазворота to (value of attribute "AXMinimized" of w) as text
+      set frontmost to true
+      return "окно «" & видноСвёрнутым & "»; было=" & былоСвёрнуто & " свернули=" & сталоСвёрнуто & " развернули=" & послеРазворота
+    end tell
+  end tell
+`;
+
+// --- 5. Поднять программу по имени -------------------------------------------
+const SE_RAISE = `
+  tell application "System Events"
+    set p to first process whose name contains "TextEdit"
+    set frontmost of p to true
+    return "впереди: " & (name of first process whose frontmost is true)
+  end tell
+`;
+
+await проба('CGWindowList: список окон без Универсального доступа', 'osascript', jxa(CG_LIST));
+await проба('CGEvent: перенос курсора', 'osascript', jxa(CG_MOUSE));
+await проба('System Events: клавиша', 'osascript', applescript(SE_KEY));
+await проба('Весь путь: найти окно, свернуть, увидеть, развернуть', 'osascript', applescript(SE_WINDOW_CYCLE));
+await проба('System Events: поднять программу по имени', 'osascript', applescript(SE_RAISE));
+await проба('CGWindowList ПОСЛЕ запуска TextEdit', 'osascript', jxa(CG_LIST));
 
 console.log('\n=== сводка');
 for (const итог of итоги) console.log(`${итог.ок ? 'вышло ' : 'ОТКАЗ '} ${итог.имя}`);
