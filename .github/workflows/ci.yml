@@ -21,7 +21,9 @@ jobs:
       matrix:
         # Windows — главная платформа: там живут драйвер рабочего стола и
         # установщик. Linux — чтобы ядро не привязалось к Windows случайно.
-        os: [windows-latest, ubuntu-latest]
+        # macOS — вторая платформа для человека: туда идёт свой установщик, и
+        # проверять его на слово нельзя, машины под рукой нет.
+        os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
