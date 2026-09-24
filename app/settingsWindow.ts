@@ -14,6 +14,7 @@ import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
 
 import { APP_ROOT } from './root';
 import { cliStatus, createClaudeProbe, createCodexProbe } from '../jarvis/backends/cliProbes';
+import { checkLocalModel, normaliseEndpoint } from '../jarvis/backends/localModel';
 import type { JarvisPaths } from '../jarvis/setup/paths';
 import { jarvisOutputDir } from '../jarvis/setup/paths';
 import type { AppSettings, SettingsStore } from '../jarvis/setup/settings';
@@ -122,6 +123,16 @@ async function state() {
   };
 }
 
+/** Сохранить и сказать приложению, что поменялось: от этого зависит перезапуск моста. */
+function applyPatch(patch: Partial<AppSettings>): AppSettings {
+  const options = current as SettingsWindowOptions;
+  const before = options.settings.get();
+  const after = options.settings.update(patch);
+  const changed = (Object.keys(after) as Array<keyof AppSettings>).filter((key) => before[key] !== after[key]);
+  if (changed.length > 0 && after.onboarded) options.onSettingsChanged(changed);
+  return after;
+}
+
 function registerHandlers(): void {
   if (registered) return;
   registered = true;
@@ -134,14 +145,7 @@ function registerHandlers(): void {
 
   ipcMain.handle(`${SETTINGS_CHANNEL}:state`, () => state());
 
-  ipcMain.handle(`${SETTINGS_CHANNEL}:update`, (_event, patch: Partial<AppSettings>) => {
-    const options = current as SettingsWindowOptions;
-    const before = options.settings.get();
-    const after = options.settings.update(patch);
-    const changed = (Object.keys(after) as Array<keyof AppSettings>).filter((key) => before[key] !== after[key]);
-    if (changed.length > 0 && after.onboarded) options.onSettingsChanged(changed);
-    return after;
-  });
+  ipcMain.handle(`${SETTINGS_CHANNEL}:update`, (_event, patch: Partial<AppSettings>) => applyPatch(patch));
 
   ipcMain.handle(`${SETTINGS_CHANNEL}:finish`, () => {
     const options = current as SettingsWindowOptions;
@@ -198,6 +202,15 @@ function registerHandlers(): void {
     if (!window) return null;
     const result = await dialog.showOpenDialog(window, { properties: ['openDirectory', 'createDirectory'] });
     return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+
+  // Проверка настоящим запросом к модели; включается только то, что прошло:
+  // сервер без инструментов оставил бы человека с молчащим агентом.
+  ipcMain.handle(`${SETTINGS_CHANNEL}:checkLocal`, async (_event, url: string, model: string) => {
+    const target = { url: normaliseEndpoint(String(url ?? '')), model: String(model ?? '').trim() };
+    const result = await checkLocalModel(target);
+    if (result.ok && result.tools) applyPatch({ localModelUrl: target.url, localModelName: target.model });
+    return result;
   });
 
   ipcMain.handle(`${SETTINGS_CHANNEL}:signIn`, async (_event, cli: 'claude' | 'codex') => {

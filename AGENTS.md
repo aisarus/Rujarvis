@@ -45,7 +45,9 @@ subscription. These rules say what must stay true.
 - Everything on disk lives under one folder (`jarvis/setup/paths.ts`). Do not
   add files anywhere else.
 - No API keys, no telemetry, no hosted accounts. Agents run through CLIs the
-  user signed into.
+  user signed into — or through the same Claude Code pointed at the user's own
+  model server (`jarvis/backends/localModel.ts`), which must be on this machine
+  or the home network. Never a hosted gateway with a key.
 - Checks answer three ways — passed, failed, or *nothing to measure with*. A
   tool that reports success for something it never did is a bug.
 

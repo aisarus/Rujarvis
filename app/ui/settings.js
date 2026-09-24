@@ -221,6 +221,37 @@ function redLinesCard() {
   return el(`<div class="card"><h2>${s.redLinesTitle}</h2><p class="hint" style="margin:4px 0 0">${s.redLines}</p></div>`);
 }
 
+function localModelCard() {
+  const s = t();
+  const on = Boolean(data.settings.localModelUrl && data.settings.localModelName);
+  const node = el(`<div class="card"><h2>${s.localModel}</h2>
+    <p class="hint" style="margin:4px 0 10px">${s.localModelHint}</p>
+    ${on ? `<p style="margin:0 0 10px"><span class="pill ok">${s.localModelActive}: ${escapeHtml(data.settings.localModelName)} · ${escapeHtml(data.settings.localModelUrl)}</span></p>` : ''}
+    <div class="row"><input type="text" data-f="url" value="${escapeHtml(data.settings.localModelUrl)}" placeholder="http://127.0.0.1:11434"></div>
+    <div class="row" style="margin-top:8px"><input type="text" data-f="model" value="${escapeHtml(data.settings.localModelName)}" placeholder="qwen3-coder:30b"></div>
+    <div class="row" style="justify-content:flex-start;margin-top:12px">
+      <button class="btn primary" data-act="check">${s.localModelCheck}</button>
+      ${on ? `<button class="btn" data-act="off">${s.localModelOff}</button>` : ''}
+    </div>
+    <p class="hint" data-f="result" style="margin:8px 0 0"></p></div>`);
+  const result = node.querySelector('[data-f=result]');
+  node.querySelector('[data-act=check]').onclick = async (event) => {
+    event.target.disabled = true;
+    result.textContent = s.localModelChecking;
+    const url = node.querySelector('[data-f=url]').value;
+    const model = node.querySelector('[data-f=model]').value;
+    const answer = await api.checkLocal(url, model);
+    event.target.disabled = false;
+    if (!answer.ok) { result.textContent = answer.reason; return; }
+    if (!answer.tools) { result.textContent = s.localModelNoTools; return; }
+    toast(s.localModelOk);
+    await refresh();
+  };
+  const off = node.querySelector('[data-act=off]');
+  if (off) off.onclick = () => update({ localModelUrl: '', localModelName: '' });
+  return node;
+}
+
 function folderField(label, hint, key, placeholder) {
   const node = el(`<div class="card"><label class="field">${label}</label><p class="hint" style="margin:0 0 8px">${hint}</p>
     <div class="row"><input type="text" value="${escapeHtml(data.settings[key])}" placeholder="${escapeHtml(placeholder)}">
@@ -323,6 +354,7 @@ function renderSettings(main, nav) {
     const input = model.querySelector('input');
     input.onchange = () => update({ claudeModel: input.value });
     main.append(model);
+    main.append(localModelCard());
   }
   if (tab === 'folders') {
     main.append(folderField(s.outputDir, s.outputDirHint, 'outputDir', data.paths.output));

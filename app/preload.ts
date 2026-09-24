@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('jarvis', {
   preview: (voiceId: string, text: string) => ipcRenderer.invoke(`${CHANNEL}:preview`, voiceId, text),
   open: (target: 'home' | 'log' | 'output') => ipcRenderer.invoke(`${CHANNEL}:open`, target),
   chooseFolder: () => ipcRenderer.invoke(`${CHANNEL}:chooseFolder`),
+  checkLocal: (url: string, model: string) => ipcRenderer.invoke(`${CHANNEL}:checkLocal`, url, model),
   signIn: (cli: 'claude' | 'codex') => ipcRenderer.invoke(`${CHANNEL}:signIn`, cli),
   openUrl: (url: string) => ipcRenderer.invoke(`${CHANNEL}:openUrl`, url),
   onProgress: (listener: (progress: unknown) => void) => {

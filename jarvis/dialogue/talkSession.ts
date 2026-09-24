@@ -27,7 +27,7 @@
 import { createStreamState } from '../backends/cliRunner';
 import { consumeClaudeStreamLine } from '../backends/claudeCode';
 import { LiveSession, type SessionKey } from '../backends/liveSession';
-import { subscriptionEnv } from '../backends/subscriptionEnv';
+import { agentEnv } from '../backends/subscriptionEnv';
 import type { BackendResult } from '../backends/types';
 import { stripUnspeakable, toSpokenResponse } from '../voice/spokenResponse';
 import { buildTalkOpening, buildTalkTurn } from './talkPrompt';
@@ -244,7 +244,7 @@ export class TalkSession {
           command,
           consumeLine: (raw, emit) => consumeClaudeStreamLine(raw, createStreamState(), emit),
           // Подписка, а не ключ: это условие человека, и оно задаётся здесь.
-          env: this.options.env ?? subscriptionEnv(),
+          env: this.options.env ?? agentEnv(),
           turnTimeoutMs: SILENCE_MS,
           // Потолка нет нарочно: он убивает сессию, то есть теряет нить.
         });
