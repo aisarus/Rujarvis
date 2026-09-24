@@ -572,13 +572,33 @@ export function createDesktopMcpServer(): McpServer {
     'browser_tabs',
     {
       title: 'Вкладки',
-      description: 'Перечисляет открытые вкладки браузера.',
-      inputSchema: {},
+      description:
+        'Работа с вкладками браузера: list — перечислить (номер в начале строки, ' +
+        '«→» отмечает рабочую), open — открыть новую и сделать рабочей, switch — ' +
+        'переключиться, close — закрыть. Для switch и close нужен target: номер из ' +
+        'списка или кусок заголовка либо адреса. Переключение меняет и то, куда идут ' +
+        'чтение и нажатия, а не только то, что видно на экране.',
+      inputSchema: {
+        action: z.enum(['list', 'open', 'switch', 'close']).optional().describe('Что сделать. По умолчанию list.'),
+        url: z.string().optional().describe('Адрес для open'),
+        target: z.string().optional().describe('Номер вкладки или кусок заголовка/адреса'),
+      },
     },
-    async () => {
+    async ({ action, url, target }) => {
       try {
+        if (action === 'open') {
+          const tab = await browser.openTab(url);
+          return say(`Открыл вкладку: ${tab.title} — ${tab.url}`);
+        }
+        if (action === 'switch' || action === 'close') {
+          if (!target) return say(`Для ${action} нужен target: номер вкладки или кусок заголовка.`);
+          const tab = action === 'switch' ? await browser.switchTab(target) : await browser.closeTab(target);
+          return say(`${action === 'switch' ? 'Переключился на' : 'Закрыл'}: ${tab.title} — ${tab.url}`);
+        }
+
         const tabs = await browser.listTabs();
-        return say(tabs.length ? tabs.map((t) => `${t.title} — ${t.url}`).join('\n') : 'Вкладок нет.');
+        if (!tabs.length) return say('Вкладок нет.');
+        return say(tabs.map((t, i) => `${t.active ? '→' : ' '} ${i + 1}. ${t.title} — ${t.url}`).join('\n'));
       } catch (error) {
         return failed(error);
       }

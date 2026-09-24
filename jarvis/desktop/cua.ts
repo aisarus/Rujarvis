@@ -29,7 +29,7 @@ import { jarvisPaths } from '../setup/paths';
 
 import {
   countedElements,
-  listedWindows,
+  windowsFromAnswer,
   matchingElements,
   type CuaElement,
   type CuaWindow,
@@ -164,14 +164,33 @@ export class CuaDriver {
     });
   }
 
-  private async call(name: string, args: Record<string, unknown>): Promise<string> {
+  /**
+   * Позвать инструмент драйвера, подняв сессию, если она кончилась.
+   *
+   * У драйвера своя жизнь сессии, и он заканчивает её сам — по простою или
+   * после собственной ошибки. Дальше он отвечает на ВСЁ одной фразой: «this
+   * session has ended; call start_session explicitly to reuse its label».
+   * Управления этим здесь не было вовсе, и глаза с руками Джарвиса умирали
+   * молча до перезапуска приложения.
+   *
+   * Молча — потому что для списка окон эта фраза не разбиралась, и пустота
+   * уходила человеку бодрым «Открытых окон нет». Поймано живым прогоном
+   * 25.09.2026: на экране стояли Блендер, Клод и браузер.
+   */
+  private async call(name: string, args: Record<string, unknown>, ещёРаз = true): Promise<string> {
     await this.start();
-    return this.ask('tools/call', { name, arguments: args });
+    const ответ = await this.ask('tools/call', { name, arguments: args });
+
+    if (ещёРаз && /session has ended|call start_session/iu.test(ответ)) {
+      await this.ask('tools/call', { name: 'start_session', arguments: {} }).catch(() => '');
+      return this.call(name, args, false);
+    }
+    return ответ;
   }
 
   /** Окна, с которыми можно работать. Своё наложение и рабочий стол отсеяны. */
   async windows(): Promise<CuaWindow[]> {
-    return listedWindows(await this.call('list_windows', { on_screen_only: true }));
+    return windowsFromAnswer(await this.call('list_windows', { on_screen_only: true }));
   }
 
   /**

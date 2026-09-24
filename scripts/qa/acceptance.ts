@@ -29,6 +29,7 @@ import { parseDirectCommand } from '../../jarvis/control/commands';
 import { cannotMeasure, failed, passed, type Gate } from '../../jarvis/measure/gate';
 import { командаПоказа, openPath, tidyRoot } from '../../jarvis/desktop/files';
 import { createGridOverlay } from '../../app/gridOverlay';
+import { CuaDriver } from '../../jarvis/desktop/cua';
 
 const ждать = (мс: number): Promise<void> => new Promise((r) => setTimeout(r, мс));
 
@@ -171,6 +172,36 @@ const окна: Случай[] = [
 // работы.
 
 const интерфейс: Случай[] = [
+  {
+    имя: 'окна: список не врёт про пустой экран',
+    async проверка(): Promise<Gate> {
+      // Драйвер окон сам заканчивает свою сессию и дальше отвечает на всё
+      // фразой про `start_session`. Эта фраза не разбиралась как список, и
+      // человек слышал «Открытых окон нет» при живых Блендере и браузере.
+      // Своё окно приёмки здесь же и служит доказательством: хотя бы оно
+      // на экране есть всегда.
+      const окно = new BrowserWindow({ title: ИМЯ_ОКНА, width: 300, height: 160, show: false });
+      const драйвер = new CuaDriver();
+      try {
+        окно.show();
+        await ждать(600);
+
+        const окна = await драйвер.windows();
+        if (окна.length === 0) return failed('список пуст, хотя на экране есть хотя бы своё окно');
+
+        // И второй раз, уже после того как драйвер мог закончить сессию.
+        const снова = await драйвер.windows();
+        return снова.length > 0
+          ? passed(`${окна.length} окон, со второго раза ${снова.length}`)
+          : failed('со второго раза список опустел — сессия не поднялась');
+      } catch (error) {
+        return failed(error instanceof Error ? error.message : String(error));
+      } finally {
+        драйвер.dispose();
+        if (!окно.isDestroyed()) окно.destroy();
+      }
+    },
+  },
   {
     имя: 'сетка: странице достаётся весь экран, а не меньше',
     async проверка(): Promise<Gate> {

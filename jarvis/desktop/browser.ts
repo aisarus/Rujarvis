@@ -94,12 +94,52 @@ function looksLikeProfileLock(error: unknown): boolean {
   return message.includes('exitCode=21') || message.includes('has been closed');
 }
 
+/**
+ * Какая вкладка сейчас рабочая.
+ *
+ * Раньше рабочей считалась последняя открытая, и этого хватало, пока вкладка
+ * была одна. С несколькими так нельзя: переключились на первую — а читать и
+ * нажимать всё равно продолжали в последней. Поэтому рабочая вкладка
+ * запоминается отдельно, а «последняя» остаётся запасным ответом.
+ */
+let активная: Page | null = null;
+
 /** Текущая вкладка, или новая, если все закрыты. */
 async function currentPage(): Promise<Page> {
   const ctx = await ensureBrowser();
+  if (активная && !активная.isClosed()) return активная;
+
   const pages = ctx.pages();
   const page = pages.length > 0 ? pages[pages.length - 1] : await ctx.newPage();
-  return page as Page;
+  активная = page as Page;
+  return активная;
+}
+
+/**
+ * Найти вкладку по номеру или по куску заголовка либо адреса.
+ *
+ * Номер — потому что список вкладок человек и модель видят по номерам. Кусок
+ * текста — потому что вслух говорят «переключись на википедию», а не «на
+ * вкладку два».
+ */
+async function найтиВкладку(target: string): Promise<{ page: Page; index: number } | null> {
+  const ctx = await ensureBrowser();
+  const pages = ctx.pages() as Page[];
+
+  const номер = Number(target.trim());
+  if (Number.isInteger(номер) && номер >= 1 && номер <= pages.length) {
+    return { page: pages[номер - 1] as Page, index: номер };
+  }
+
+  const искомое = target.trim().toLowerCase();
+  if (!искомое) return null;
+  for (const [i, page] of pages.entries()) {
+    const заголовок = (await page.title().catch(() => '')).toLowerCase();
+    if (заголовок.includes(искомое) || page.url().toLowerCase().includes(искомое)) {
+      return { page, index: i + 1 };
+    }
+  }
+  return null;
 }
 
 export async function openUrl(url: string): Promise<{ title: string; url: string }> {
@@ -281,9 +321,58 @@ export async function viewport(): Promise<{ width: number; height: number }> {
   return size ?? { width: 1280, height: 720 };
 }
 
-export async function listTabs(): Promise<Array<{ title: string; url: string }>> {
+export async function listTabs(): Promise<Array<{ title: string; url: string; active: boolean }>> {
   const ctx = await ensureBrowser();
-  return Promise.all(ctx.pages().map(async (page) => ({ title: await page.title(), url: page.url() })));
+  return Promise.all(
+    ctx.pages().map(async (page) => ({
+      title: await page.title().catch(() => ''),
+      url: page.url(),
+      active: page === активная,
+    })),
+  );
+}
+
+/** Новая вкладка рядом с нынешними — и она сразу становится рабочей. */
+export async function openTab(url?: string): Promise<{ title: string; url: string }> {
+  const ctx = await ensureBrowser();
+  const page = (await ctx.newPage()) as Page;
+  активная = page;
+  if (url) {
+    const target = /^[a-z][a-z0-9+.-]*:\/\//iu.test(url) ? url : `https://${url}`;
+    await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  }
+  await page.bringToFront().catch(() => undefined);
+  return { title: await page.title().catch(() => ''), url: page.url() };
+}
+
+/**
+ * Переключиться на вкладку.
+ *
+ * Выводит её вперёд И делает рабочей. Одного `bringToFront` мало: человек
+ * увидел бы нужную вкладку, а чтение и нажатия продолжали бы уходить в
+ * прежнюю — молча и мимо.
+ */
+export async function switchTab(target: string): Promise<{ title: string; url: string }> {
+  const найдено = await найтиВкладку(target);
+  if (!найдено) throw new Error(`Нет вкладки «${target}»`);
+  активная = найдено.page;
+  await найдено.page.bringToFront().catch(() => undefined);
+  return { title: await найдено.page.title().catch(() => ''), url: найдено.page.url() };
+}
+
+/** Закрыть вкладку. Последнюю не закрываем: браузер без вкладок бесполезен. */
+export async function closeTab(target: string): Promise<{ title: string; url: string }> {
+  const ctx = await ensureBrowser();
+  if (ctx.pages().length <= 1) throw new Error('Это последняя вкладка — закрывать нечего');
+
+  const найдено = await найтиВкладку(target);
+  if (!найдено) throw new Error(`Нет вкладки «${target}»`);
+
+  const заголовок = await найдено.page.title().catch(() => '');
+  const адрес = найдено.page.url();
+  await найдено.page.close();
+  if (активная === найдено.page) активная = null;
+  return { title: заголовок, url: адрес };
 }
 
 export async function dispose(): Promise<void> {

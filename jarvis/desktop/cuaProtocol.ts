@@ -42,6 +42,27 @@ const NOT_A_WINDOW = /cua-driver|AgentCursorOverlay|ShellExperienceHost|TextInpu
 
 const WINDOW_LINE = /^- (\S+) \(pid (\d+)\) "([^"]*)" \[window_id: (\d+)\]/gm;
 
+/**
+ * Окна из ответа драйвера — или честный отказ.
+ *
+ * «Окон нет» и «я не понял ответ» — разные новости, и путать их нельзя.
+ * Драйвер сам заканчивает свою сессию (по простою или после своей ошибки) и
+ * дальше отвечает на всё одной фразой про `start_session`. Эта фраза не
+ * разбиралась как список, пустота уходила человеку бодрым «Открытых окон
+ * нет» — при живых Блендере, Клоде и браузере на экране. Поймано живым
+ * прогоном 25.09.2026.
+ *
+ * Признак настоящего списка — заголовок «Found N window(s)»: он есть и когда
+ * окон ноль.
+ */
+export function windowsFromAnswer(answer: string): CuaWindow[] {
+  const окна = listedWindows(answer);
+  if (окна.length === 0 && !/window\(s\)/iu.test(answer)) {
+    throw new Error(`Драйвер окон ответил не списком: ${answer.trim().slice(0, 200)}`);
+  }
+  return окна;
+}
+
 export function listedWindows(answer: string): CuaWindow[] {
   const found: CuaWindow[] = [];
   for (const [, app, pid, title, windowId] of answer.matchAll(WINDOW_LINE)) {
