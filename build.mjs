@@ -31,6 +31,8 @@ await Promise.all([
   esbuild.build({ ...common, entryPoints: ['jarvis/desktop/serve.ts'], outfile: 'dist/jarvis/desktop/mcp.cjs' }),
   // Приёмка: те же слои, тот же драйвер, но без микрофона (pnpm jarvis:qa).
   esbuild.build({ ...common, entryPoints: ['scripts/qa/acceptance.ts'], outfile: 'dist/qa/acceptance.cjs' }),
+  // Замер списка окон на маке: ему нужно настоящее окно Электрона.
+  esbuild.build({ ...common, entryPoints: ['scripts/qa/electron-window-check.ts'], outfile: 'dist/qa/window-check.cjs' }),
 ]);
 
 // Скрипт драйвера мыши и клавиатуры сервер ищет рядом с собой.

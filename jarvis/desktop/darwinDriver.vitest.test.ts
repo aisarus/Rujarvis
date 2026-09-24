@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AX_TRUSTED_SCRIPT,
+  CG_WINDOW_LIST_SCRIPT,
   CURSOR_SCRIPT,
   DarwinDriver,
   ELEMENTS_SCRIPT,
@@ -15,8 +16,10 @@ import {
   explainMiss,
   keyScript,
   macCombo,
+  mergeWindows,
   parseElements,
   parseFront,
+  parseCgWindows,
   parseWindows,
   raiseScript,
   screenshotArgs,
@@ -75,6 +78,68 @@ describe('перечисление окон', () => {
 
   it('обрезанные строки пропускаются, а не роняют разбор', () => {
     expect(parseWindows(`мусор${ROW}${вывод}`)).toHaveLength(2);
+  });
+});
+
+/**
+ * Второй глаз: оконный сервер.
+ *
+ * System Events спрашивает о окнах саму программу, и та отвечает не сразу.
+ * Замер на macos-latest 25.09.2026 на живом окне Электрона: оконный сервер
+ * увидел новое окно через 85 мс, System Events — через 514. Приёмка ждала
+ * 600 мс и получала пустой список при живом окне на экране.
+ */
+describe('свод двух списков окон', () => {
+  const отСобытий = parseWindows(
+    окно(['TextEdit', 501, 1, 'Письмо', 0, 0, 640, 480, 'false', 'true']) +
+      окно(['TextEdit', 501, 2, 'Свёрнутое', 0, 0, 0, 0, 'true', 'false']),
+  );
+
+  it('добирает окно, которого System Events ещё не видит', () => {
+    const сведено = mergeWindows(отСобытий, [
+      { app: 'Electron', pid: 900, title: 'Проба приёмки', x: 10, y: 20, width: 300, height: 160 },
+    ]);
+    expect(сведено).toHaveLength(3);
+    expect(сведено[2]).toMatchObject({ app: 'Electron', pid: 900, title: 'Проба приёмки', index: 0 });
+  });
+
+  it('не двоит окно, которое видно обоим', () => {
+    const сведено = mergeWindows(отСобытий, [
+      { app: 'TextEdit', pid: 501, title: 'Письмо', x: 0, y: 0, width: 640, height: 480 },
+    ]);
+    expect(сведено).toHaveLength(2);
+  });
+
+  it('свёрнутое окно и номер приходят от System Events — у сервера их нет', () => {
+    const сведено = mergeWindows(отСобытий, []);
+    expect(сведено.find((о) => о.title === 'Свёрнутое')).toMatchObject({ minimized: true, index: 2 });
+  });
+
+  it('безымянное окно уже перечисленной программы не добирается', () => {
+    // Заголовок у оконного сервера прячется без разрешения на запись экрана,
+    // и такое окно не отличить от уже перечисленного.
+    expect(
+      mergeWindows(отСобытий, [{ app: 'TextEdit', pid: 501, title: '', x: 0, y: 0, width: 10, height: 10 }]),
+    ).toHaveLength(2);
+  });
+
+  it('безымянное окно незнакомой программы добирается: хоть что-то на экране есть', () => {
+    expect(
+      mergeWindows(отСобытий, [{ app: 'Preview', pid: 700, title: '', x: 0, y: 0, width: 300, height: 200 }]),
+    ).toHaveLength(3);
+  });
+
+  it('разбор ответа оконного сервера', () => {
+    const строки = parseCgWindows(
+      JSON.stringify([{ app: 'Electron', pid: 900, title: 'Проба', x: 1, y: 2, width: 3, height: 4 }]),
+    );
+    expect(строки[0]).toEqual({ app: 'Electron', pid: 900, title: 'Проба', x: 1, y: 2, width: 3, height: 4 });
+  });
+
+  it('скрипт берёт только обычные окна, а не курсор и строку меню', () => {
+    expect(CG_WINDOW_LIST_SCRIPT).toContain('kCGWindowLayer === 0');
+    // Без castRefToObject deepUnwrap возвращает не массив — замерено 24.09.2026.
+    expect(CG_WINDOW_LIST_SCRIPT).toContain('castRefToObject');
   });
 });
 

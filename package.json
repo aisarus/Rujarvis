@@ -35,6 +35,7 @@
     "jarvis:mac-check": "tsx scripts/probe-darwin-driver.ts",
     "jarvis:health": "node scripts/health.mjs",
     "jarvis:icons": "node scripts/make-icons.mjs",
+    "jarvis:window-check": "node build.mjs && electron dist/qa/window-check.cjs",
     "jarvis:qa": "node build.mjs && electron dist/qa/acceptance.cjs"
   },
   "dependencies": {

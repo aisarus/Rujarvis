@@ -34,13 +34,15 @@ import * as comfy from './comfy';
 import * as mid from './inbetween';
 import { makePlan, markStep, renderPlan, type StepState } from '../agent/plan';
 import { buildSkillFile, isSelfAuthored, skillPath } from '../skills/author';
-import { CuaDriver } from './cua';
 import { createDesktopDriver } from './platform';
+import { createWindowTools } from './windowTools';
 
 const driver = createDesktopDriver();
-// Драйвер компьютер-юза поднимается при первом обращении и живёт дальше:
-// прогрев стоит около двух секунд, каждое следующее действие — десятки мс.
-const cua = new CuaDriver();
+// Глаза и руки по чужим окнам. На Windows это cua-driver: он поднимается при
+// первом обращении и живёт дальше — прогрев стоит около двух секунд, каждое
+// следующее действие десятки мс. На маке то же самое делают System Events и
+// CoreGraphics, и поднимать там нечего.
+const cua = createWindowTools();
 const shotDir = mkdtempSync(path.join(os.tmpdir(), 'jarvis-shots-'));
 let shotCounter = 0;
 
@@ -1362,6 +1364,12 @@ ${хвост}` : ''}`,
  * Задача в двадцать шагов по одному окну: 7 078 токенов этим путём против
  * 137 540 полными деревьями. Поэтому дерева целиком здесь нет и не будет:
  * инструмент, которым можно разориться, рано или поздно тем и кончится.
+ *
+ * Работают они на обеих платформах: на Windows через cua-driver, на маке
+ * через System Events и CoreGraphics (`windowTools.ts` выбирает). Раньше эти
+ * шесть были жёстко привязаны к cua-driver, и на маке компьютер-юза не было
+ * вовсе — ни снять чужое окно, ни найти в нём кнопку, ни нажать. Поймано
+ * приёмкой на macos-latest 25.09.2026: «Драйвер компьютер-юза не найден».
  */
 function registerWindowTools(server: McpServer): void {
   server.registerTool(

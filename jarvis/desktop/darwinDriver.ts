@@ -184,6 +184,107 @@ end tell
 return out
 `;
 
+/**
+ * Второй источник списка окон — оконный сервер, мимо Универсального доступа.
+ *
+ * System Events спрашивает о окнах саму программу, и та отвечает не сразу.
+ * Замер на macos-latest 25.09.2026, на живом окне Электрона: оконный сервер
+ * увидел новое окно через 85 мс, System Events — через 514 мс. Приёмка ждала
+ * 600 мс и получала пустой список при окне на экране — «список врёт про
+ * пустой экран» было правдой ровно об этом полусекундном окне слепоты.
+ *
+ * Заменить им System Events нельзя: свёрнутых окон здесь нет (они не на
+ * экране), номера окна внутри программы — тоже, а заголовок без разрешения на
+ * запись экрана приходит пустым. Поэтому он не замена, а второй глаз.
+ *
+ * Слой 0 — обычные окна программ. Курсор, строка меню и док живут на своих
+ * слоях, и показывать их модели значит тратить её шаг на выяснение, что это
+ * не окно.
+ */
+export const CG_WINDOW_LIST_SCRIPT = `
+  ObjC.import('CoreGraphics');
+  ObjC.import('Foundation');
+  const ref = $.CGWindowListCopyWindowInfo(1 | 16, 0);
+  const data = ObjC.deepUnwrap(ObjC.castRefToObject(ref)) || [];
+  JSON.stringify(data.filter((w) => w.kCGWindowLayer === 0).map((w) => {
+    const box = w.kCGWindowBounds || {};
+    const name = w.kCGWindowName;
+    return {
+      app: w.kCGWindowOwnerName || '',
+      pid: w.kCGWindowOwnerPID || 0,
+      title: name === undefined || name === null ? '' : name,
+      x: Math.round(box.X || 0),
+      y: Math.round(box.Y || 0),
+      width: Math.round(box.Width || 0),
+      height: Math.round(box.Height || 0),
+    };
+  }));
+`;
+
+export interface CgWindow {
+  app: string;
+  pid: number;
+  title: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export function parseCgWindows(json: string): CgWindow[] {
+  const rows: unknown = JSON.parse(json);
+  if (!Array.isArray(rows)) return [];
+  return rows.map((row) => {
+    const item = row as Record<string, unknown>;
+    return {
+      app: String(item.app ?? ''),
+      pid: Number(item.pid) || 0,
+      title: String(item.title ?? ''),
+      x: Number(item.x) || 0,
+      y: Number(item.y) || 0,
+      width: Number(item.width) || 0,
+      height: Number(item.height) || 0,
+    };
+  });
+}
+
+/**
+ * Свести два списка в один.
+ *
+ * Главный — System Events: только он знает, свёрнуто ли окно и какой у него
+ * номер внутри программы. Оконный сервер добирает то, чего тот ещё или уже не
+ * видит. У добранного окна номер нулевой — System Events о нём не знает,
+ * значит и адресовать его по номеру нечем; подъём такого окна сводится к
+ * выводу вперёд всей программы (см. `raiseScript`).
+ */
+export function mergeWindows(fromEvents: readonly DarwinWindow[], fromServer: readonly CgWindow[]): DarwinWindow[] {
+  const известные = new Set(fromEvents.map((окно) => `${окно.pid}:${окно.title}`));
+  const добор: DarwinWindow[] = [];
+
+  for (const окно of fromServer) {
+    if (!окно.pid || известные.has(`${окно.pid}:${окно.title}`)) continue;
+    // Окно без заголовка у программы, чьи окна System Events уже перечислил,
+    // отличить не от чего: заголовок прячется без разрешения на запись
+    // экрана, и такое окно — скорее всего одно из уже перечисленных.
+    if (!окно.title && fromEvents.some((своё) => своё.pid === окно.pid)) continue;
+    известные.add(`${окно.pid}:${окно.title}`);
+    добор.push({
+      app: окно.app,
+      pid: окно.pid,
+      index: 0,
+      title: окно.title,
+      x: окно.x,
+      y: окно.y,
+      width: окно.width,
+      height: окно.height,
+      minimized: false,
+      focused: false,
+    });
+  }
+
+  return [...fromEvents, ...добор];
+}
+
 /** Разбор ответа `WINDOW_LIST_SCRIPT`. */
 export function parseWindows(output: string): DarwinWindow[] {
   const windows: DarwinWindow[] = [];
@@ -761,9 +862,34 @@ export class DarwinDriver {
     return JSON.parse(answer) as ScreenBounds;
   }
 
+  /**
+   * Список окон из двух источников сразу.
+   *
+   * Спрашиваем параллельно: оба вызова независимы, и последовательно это
+   * стоило бы суммы, а не большего из двух. Оконный сервер отвечает быстрее
+   * (85 мс против 514 на новом окне), но без него список полнее не становится
+   * — он добирает только то, чего System Events ещё не видит.
+   *
+   * Отказ одного источника не отказ ответа: пока отвечает главный, второй
+   * может и промолчать. Молчат оба — молчим и мы, и говорим почему.
+   */
   async windows(): Promise<DarwinWindow[]> {
     await this.access();
-    return parseWindows(await this.osascript(appleScriptArgs(WINDOW_LIST_SCRIPT)));
+    const [события, сервер] = await Promise.allSettled([
+      this.osascript(appleScriptArgs(WINDOW_LIST_SCRIPT)),
+      this.osascript(jxaArgs(CG_WINDOW_LIST_SCRIPT)),
+    ]);
+
+    if (события.status === 'rejected') throw события.reason as Error;
+    const отСобытий = parseWindows(события.value);
+    if (сервер.status === 'rejected') return отСобытий;
+
+    try {
+      return mergeWindows(отСобытий, parseCgWindows(сервер.value));
+    } catch {
+      // Разбор второго источника сломался — это не повод терять первый.
+      return отСобытий;
+    }
   }
 
   async cursor(): Promise<{ x: number; y: number }> {
@@ -827,13 +953,24 @@ export class DarwinDriver {
     const target = chooseWindow(title, windows);
     if (!target) throw new Error(explainMiss(title, windows));
 
-    const front = parseFront(await this.osascript(appleScriptArgs(raiseScript(target.pid, target.index))));
-    if (front.pid !== target.pid) {
-      throw new Error(
-        `Не вышло поднять окно. Просили: «${target.title || target.app}». Впереди: «${front.title || front.app}»`,
-      );
+    return this.raise(target.pid, target.index, target.title || target.app);
+  }
+
+  /**
+   * Поднять окно, о котором уже всё известно.
+   *
+   * Отдельно от `focus`, потому что оконные инструменты компьютер-юза
+   * (`window_look`, `window_find` и прочие) адресуют окно программой и
+   * номером, а не надписью на нём, — и поднимать его им надо перед каждым
+   * действием: у неактивного окна дерево и отрисовка схлопываются.
+   */
+  async raise(pid: number, index: number, what = `окно ${index}`): Promise<{ title: string }> {
+    await this.access();
+    const front = parseFront(await this.osascript(appleScriptArgs(raiseScript(pid, index))));
+    if (front.pid !== pid) {
+      throw new Error(`Не вышло поднять окно. Просили: «${what}». Впереди: «${front.title || front.app}»`);
     }
-    return { title: front.title || front.app || target.title };
+    return { title: front.title || front.app || what };
   }
 
   /** Демона нет — гасить нечего. Метод есть, чтобы драйверы были взаимозаменяемы. */
