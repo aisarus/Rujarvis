@@ -43,6 +43,7 @@ public class Desk {
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
     // CharSet.Unicode обязателен: без него зовётся однобайтовая версия, и
     // заголовки на кириллице и иврите приходят как «??????» — по ним нельзя
     // ни найти окно, ни показать его человеку.
@@ -218,8 +219,20 @@ function Get-Windows {
                 [void][Desk]::GetWindowRect($handle, [ref] $rect)
                 $width = $rect.Right - $rect.Left
                 $height = $rect.Bottom - $rect.Top
-                # Окна нулевого размера и служебные полоски человеку не нужны.
-                if ($width -gt 80 -and $height -gt 40) {
+
+                # Svyornutoe okno tozhe okno.
+                #
+                # Windows otdayot svyornutoe okno ogryzkom: 159x27 v tochke
+                # (-25600,-25600). Proverka razmera vybrasyvala ego - i
+                # «pereklyuchis na edzh» ne nahodilo Edge imenno togda, kogda
+                # eto nuzhnee vsego: kogda okno svyornuto. Zamereno na mashine
+                # cheloveka 24.09.2026, dvazhdy podryad, s otvetom «ne
+                # poluchilos».
+                #
+                # Poetomu razmer sprashivaem tolko u nesvyornutyh: tam on i
+                # vpravdu otdelyaet okno ot sluzhebnoy poloski.
+                $minimized = [Desk]::IsIconic($handle)
+                if ($minimized -or ($width -gt 80 -and $height -gt 40)) {
                     $processId = 0
                     [void][Desk]::GetWindowThreadProcessId($handle, [ref] $processId)
                     [void]$result.Add([PSCustomObject]@{
@@ -227,6 +240,7 @@ function Get-Windows {
                         handle = [int64]$handle
                         x = $rect.Left; y = $rect.Top; width = $width; height = $height
                         pid = $processId
+                        minimized = [bool]$minimized
                         focused = ($handle -eq [Desk]::GetForegroundWindow())
                     })
                 }
@@ -373,7 +387,19 @@ function Invoke-Command2($message) {
                     ($proc.ProcessName -like "*$needle*")
                 } | Sort-Object { $_.width * $_.height } -Descending | Select-Object -First 1
             }
-            if (-not $target) { throw "Okno ne naydeno: $needle" }
+            if (-not $target) {
+                # Govorim, chto est, a ne prosto «net».
+                #
+                # «Ne poluchilos» ne govorit cheloveku nichego: ni chto
+                # iskali, ni chto ryadom. Spisok togo, chto na ekrane, delaet
+                # sleduyushchuyu popytku osmyslennoy.
+                $nearby = ($windows | Where-Object { $_.title -ne 'Program Manager' } |
+                    ForEach-Object {
+                        $proc = (Get-Process -Id $_.pid -ErrorAction SilentlyContinue).ProcessName
+                        if ($proc) { $proc } else { $_.title }
+                    } | Select-Object -Unique -First 8) -join ', '
+                throw "Okno ne naydeno: $needle. Na ekrane: $nearby"
+            }
             $handle = [IntPtr][int64]$target.handle
             if ($handle -eq [IntPtr]::Zero) { throw "U okna net deskriptora: $($target.title)" }
 
