@@ -21,6 +21,7 @@
     "pnpm": ">=9 <10"
   },
   "scripts": {
+    "postinstall": "node scripts/ensure-electron.mjs",
     "build": "node build.mjs",
     "start": "electron dist/app/main.cjs",
     "dev": "node build.mjs && electron dist/app/main.cjs",
