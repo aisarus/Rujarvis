@@ -80,6 +80,33 @@ function Invoke-Checked {
     }
 }
 
+<#
+    Подхватить PATH, который правили в другом процессе.
+
+    winget и npm дописывают путь в реестр, а текущее окно PowerShell об этом
+    не знает: оно читало PATH при запуске. Без этого только что поставленная
+    команда «не найдена», и установщик останавливается на ровном месте.
+#>
+function Update-SessionPath {
+    # Машинный и пользовательский PATH живут в реестре — это только Windows.
+    if (-not $IsWindows) { return }
+
+    # Дописываем к тому, что уже есть в окне, а не заменяем: в текущем процессе
+    # бывают пути, которых в реестре нет. Так делает CI, так делают менеджеры
+    # версий - замена молча отняла бы у них node.
+    $parts = @(
+        $env:Path,
+        [Environment]::GetEnvironmentVariable('Path', 'Machine'),
+        [Environment]::GetEnvironmentVariable('Path', 'User')
+    ) | Where-Object { $_ }
+
+    $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $kept = foreach ($one in (($parts -join ';') -split ';')) {
+        if ($one -and $seen.Add($one)) { $one }
+    }
+    $env:Path = $kept -join ';'
+}
+
 function Install-WithWinget {
     param(
         [Parameter(Mandatory)] [string] $Id,
@@ -104,8 +131,7 @@ function Install-WithWinget {
     }
 
     # winget правит PATH только для новых процессов — обновляем текущий.
-    $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
-                [Environment]::GetEnvironmentVariable('Path', 'User')
+    Update-SessionPath
 
     if (-not (Test-Command $Command)) {
         throw "$DisplayName установлен, но команда '$Command' не найдена. Перезапустите PowerShell и повторите."
@@ -158,6 +184,28 @@ function Assert-NodeVersion {
         }
     }
 
+    # Ни менеджера версий, ни подходящего Node — обновляем сами тем же winget,
+    # которым поставили бы Node с нуля. Просили одну команду, а не инструкцию
+    # посреди установки.
+    if (Test-Command 'winget') {
+        Write-Note "Установлен Node $current, нужен $wantedMajor или новее - обновляю через winget."
+        winget upgrade --id 'OpenJS.NodeJS.LTS' --source winget --accept-source-agreements `
+            --accept-package-agreements --silent 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            # Node мог прийти не из winget: тогда upgrade нечего обновлять.
+            winget install --id 'OpenJS.NodeJS.LTS' --source winget --accept-source-agreements `
+                --accept-package-agreements --silent --scope user 2>&1 | Out-Null
+        }
+        Update-SessionPath
+
+        $afterWinget = ''
+        try { $afterWinget = (node --version).Trim() } catch { $afterWinget = '' }
+        if ($afterWinget -and [int] (($afterWinget -replace '^v', '') -split '\.')[0] -ge $wantedMajor) {
+            Write-Ok "Node.js $afterWinget (через winget)"
+            return
+        }
+    }
+
     throw @"
 Нужен Node.js $wantedMajor или новее, а установлен $current.
 
@@ -203,6 +251,75 @@ function Invoke-InDirectory {
     try { & $Script } finally { Pop-Location }
 }
 
+<#
+    Какой pnpm отвечает в этой папке. $null - если его вообще нет.
+
+    Спрашивать версию нужно в папке проекта: pnpm 10 и новее читает
+    packageManager из package.json и подменяет себя нужной версией, но только
+    когда его зовут внутри проекта.
+#>
+function Get-PnpmVersion {
+    param([string] $Path = '.')
+
+    if (-not (Test-Command 'pnpm')) { return $null }
+    try {
+        return (Invoke-InDirectory -Path $Path -Script { (pnpm --version).Trim() })
+    } catch {
+        return $null
+    }
+}
+
+<#
+    Поставить pnpm нужной версии, ничего не требуя от человека.
+
+    Порядок важен. `corepack enable` кладёт свою заглушку рядом с системным
+    Node и без прав администратора получает отказ:
+
+        Internal Error: EPERM: operation not permitted,
+        open 'C:\Program Files\nodejs\pnpm'
+
+    А установщик запускают обычным пользователем - на то он и одна строка.
+    Поэтому сначала npm: он идёт вместе с Node, ставит в папку пользователя и
+    прав не просит. Corepack остаётся вторым.
+#>
+function Install-Pnpm {
+    param(
+        [Parameter(Mandatory)] [string] $Version,
+        [string] $CheckIn = '.'
+    )
+
+    $wantedMajor = [int] ($Version -split '\.')[0]
+
+    Write-Note "Ставлю pnpm $Version через npm."
+    npm install -g "pnpm@$Version" 2>&1 | Out-Null
+    Update-SessionPath
+    $after = Get-PnpmVersion -Path $CheckIn
+    if ($after -and [int] ($after -split '\.')[0] -eq $wantedMajor) {
+        Write-Ok "pnpm $after"
+        return
+    }
+
+    Write-Note 'npm не справился - пробую corepack.'
+    corepack enable 2>&1 | Out-Null
+    corepack prepare "pnpm@$Version" --activate 2>&1 | Out-Null
+    Update-SessionPath
+    $after = Get-PnpmVersion -Path $CheckIn
+    if ($after -and [int] ($after -split '\.')[0] -eq $wantedMajor) {
+        Write-Ok "pnpm $after (через corepack)"
+        return
+    }
+
+    throw @"
+Нужен pnpm $Version, а pnpm отвечает «$after».
+
+Ни npm, ни corepack не смогли поставить нужную версию. Выполните вручную и
+запустите установщик снова:
+
+    npm install -g pnpm@$Version
+    pnpm --version
+"@
+}
+
 function Assert-PnpmVersion {
     param([Parameter(Mandatory)] [string] $SourceDir)
 
@@ -224,39 +341,20 @@ function Assert-PnpmVersion {
     #
     # Поймано первым живым прогоном на Windows 24.09.2026: один и тот же pnpm
     # отвечает 11.11.0 из домашней папки и 9.15.9 из папки проекта.
-    $current = (Invoke-InDirectory -Path $SourceDir -Script { (pnpm --version).Trim() })
-    $currentMajor = [int] ($current -split '\.')[0]
+    $current = Get-PnpmVersion -Path $SourceDir
 
-    if ($currentMajor -eq $wantedMajor) {
+    if ($current -and [int] ($current -split '\.')[0] -eq $wantedMajor) {
         Write-Ok "pnpm $current"
         return
     }
 
-    Write-Note "Установлен pnpm $current, нужен $wantedVersion — переключаю через corepack."
-    corepack enable 2>&1 | Out-Null
-    corepack prepare "pnpm@$wantedVersion" --activate 2>&1 | Out-Null
-
-    $switched = (Invoke-InDirectory -Path $SourceDir -Script { (pnpm --version).Trim() })
-    if ([int] ($switched -split '\.')[0] -ne $wantedMajor) {
-        throw @"
-Нужен pnpm $wantedVersion, установлен $switched, и corepack не смог переключить.
-
-Чаще всего corepack упирается в права: свою заглушку он кладёт в папку Node
-рядом с системной, и без администратора получает отказ. Тогда проще поставить
-нужный pnpm себе, без прав:
-
-    npm install -g pnpm@$wantedVersion
-    pnpm --version
-
-Либо, от имени администратора:
-
-    corepack enable
-    corepack prepare pnpm@$wantedVersion --activate
-
-Затем запустите установщик снова.
-"@
+    if ($current) {
+        Write-Note "Установлен pnpm $current, нужен $wantedVersion."
+    } else {
+        Write-Note "pnpm не найден, нужен $wantedVersion."
     }
-    Write-Ok "pnpm $switched (через corepack)"}
+    Install-Pnpm -Version $wantedVersion -CheckIn $SourceDir
+}
 
 
 <#
@@ -404,11 +502,9 @@ if ($env:OS -ne 'Windows_NT') {
 Write-Step 'Проверяю зависимости'
 Install-WithWinget -Id 'Git.Git' -Command 'git' -DisplayName 'Git'
 Install-WithWinget -Id 'OpenJS.NodeJS.LTS' -Command 'node' -DisplayName 'Node.js'
-if (-not (Test-Command 'pnpm')) {
-    Write-Note 'Включаю pnpm через corepack…'
-    corepack enable | Out-Null
-    corepack prepare pnpm@9.15.9 --activate | Out-Null
-}
+# Исходников ещё нет, версия из package.json неизвестна - ставим ту, что закреплена
+# в проекте. Дальше Assert-PnpmVersion сверится с package.json и поправит.
+if (-not (Test-Command 'pnpm')) { Install-Pnpm -Version '9.15.9' }
 
 Write-Step 'Получаю исходники'
 if (Test-Path (Join-Path $SourceDir '.git')) {

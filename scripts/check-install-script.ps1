@@ -78,6 +78,11 @@ function Write-Ok { param([string] $Message) }
 function Write-Note { param([string] $Message) }
 
 try {
+    # winget здесь заглушка. Настоящий ставит программы по-настоящему, а тест,
+    # который меняет машину, — не тест.
+    $global:wingetCalls = 0
+    function global:winget { $global:wingetCalls++; $global:LASTEXITCODE = 1 }
+
     function global:node { 'v22.22.1' }
     $accepted = $true
     try { Assert-NodeVersion -SourceDir $nodeProbe } catch { $accepted = $false }
@@ -88,6 +93,18 @@ try {
     try { Assert-NodeVersion -SourceDir $nodeProbe } catch { $accepted = $false }
     Assert-That 'более новый мажор принимается: нативных модулей больше нет' $accepted
 
+    # Человек просил одну команду. Пока winget может обновить Node, установщик
+    # обязан это сделать, а не выдать инструкцию посреди установки.
+    $global:nodeAnswer = 'v20.11.0'
+    function global:node { $global:nodeAnswer }
+    function global:winget { $global:wingetCalls++; $global:nodeAnswer = 'v24.18.0'; $global:LASTEXITCODE = 0 }
+    $global:wingetCalls = 0
+    $upgraded = $true
+    try { Assert-NodeVersion -SourceDir $nodeProbe } catch { $upgraded = $false }
+    Assert-That 'старый Node обновляется сам, а не отдаётся человеку' $upgraded
+    Assert-That 'обновление шло через winget' ($global:wingetCalls -ge 1)
+
+    function global:winget { $global:wingetCalls++; $global:LASTEXITCODE = 1 }
     function global:node { 'v20.11.0' }
     $rejected = $false
     $nodeMessage = ''
@@ -105,6 +122,7 @@ try {
 finally {
     Remove-Item -Path $nodeProbe -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path 'function:global:node' -ErrorAction SilentlyContinue
+    Remove-Item -Path 'function:global:winget' -ErrorAction SilentlyContinue
 }
 
 # --- Перенос данных прежней установки ----------------------------------------
@@ -136,6 +154,82 @@ try {
 }
 finally {
     Remove-Item -Path $legacy -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# --- pnpm ставится и меняется без прав администратора ------------------------
+# corepack кладёт свою заглушку рядом с системным Node и без администратора
+# получает EPERM. Установщик запускают обычным пользователем — значит первым
+# должен идти npm, который ставит в папку пользователя.
+
+$pnpmProbe = Join-Path ([System.IO.Path]::GetTempPath()) ("rujarvis-pnpm-" + [guid]::NewGuid())
+New-Item -ItemType Directory -Path $pnpmProbe -Force | Out-Null
+Set-Content -Path (Join-Path $pnpmProbe 'package.json') -Value '{"packageManager":"pnpm@9.15.9"}'
+
+try {
+    $global:pnpmAnswer = '11.11.0'
+    $global:whoRan = @()
+    function global:pnpm { $global:pnpmAnswer }
+    function global:npm { $global:whoRan += 'npm'; $global:pnpmAnswer = '9.15.9' }
+    function global:corepack { $global:whoRan += 'corepack' }
+
+    $switched = $true
+    try { Assert-PnpmVersion -SourceDir $pnpmProbe } catch { $switched = $false }
+    Assert-That 'чужая версия pnpm меняется сама' $switched
+    Assert-That 'первым идёт npm: он не просит прав' ($global:whoRan[0] -eq 'npm')
+    Assert-That 'corepack не понадобился' ($global:whoRan -notcontains 'corepack')
+
+    # npm бывает и бессилен — тогда corepack как запасной путь.
+    $global:pnpmAnswer = '11.11.0'
+    $global:whoRan = @()
+    function global:npm { $global:whoRan += 'npm' }
+    function global:corepack { $global:whoRan += 'corepack'; $global:pnpmAnswer = '9.15.9' }
+    $viaCorepack = $true
+    try { Assert-PnpmVersion -SourceDir $pnpmProbe } catch { $viaCorepack = $false }
+    Assert-That 'когда npm бессилен, выручает corepack' $viaCorepack
+    Assert-That 'corepack пробуют вторым' ($global:whoRan -contains 'corepack')
+
+    # Оба не смогли — честная остановка с командой, которую можно скопировать.
+    $global:pnpmAnswer = '11.11.0'
+    function global:npm { }
+    function global:corepack { }
+    $pnpmMessage = ''
+    try { Assert-PnpmVersion -SourceDir $pnpmProbe } catch { $pnpmMessage = $_.Exception.Message }
+    Assert-That 'когда не смог никто — останавливаемся' ($pnpmMessage -ne '')
+    Assert-That 'в сообщении есть готовая команда' ($pnpmMessage -match 'npm install -g pnpm@9\.15\.9')
+
+    # Нужная версия уже стоит — никого не трогаем.
+    $global:pnpmAnswer = '9.15.9'
+    $global:whoRan = @()
+    function global:npm { $global:whoRan += 'npm' }
+    function global:corepack { $global:whoRan += 'corepack' }
+    $quiet = $true
+    try { Assert-PnpmVersion -SourceDir $pnpmProbe } catch { $quiet = $false }
+    Assert-That 'подходящий pnpm оставляют в покое' ($quiet -and $global:whoRan.Count -eq 0)
+}
+finally {
+    Remove-Item -Path $pnpmProbe -Recurse -Force -ErrorAction SilentlyContinue
+    'pnpm', 'npm', 'corepack' | ForEach-Object {
+        Remove-Item -Path "function:global:$_" -ErrorAction SilentlyContinue
+    }
+}
+
+# --- PATH дополняем, а не заменяем -------------------------------------------
+# Замена отняла бы пути, которые есть в процессе, но не в реестре: так собран
+# PATH в CI и у менеджеров версий.
+
+if ($IsWindows) {
+    $ownPath = Join-Path ([System.IO.Path]::GetTempPath()) 'rujarvis-path-probe'
+    $before = $env:Path
+    try {
+        $env:Path = "$ownPath;$env:Path"
+        Update-SessionPath
+        Assert-That 'путь только этого окна переживает обновление' ($env:Path -split ';' -contains $ownPath)
+        Update-SessionPath
+        Assert-That 'повтор не удваивает путь' ((($env:Path -split ';') | Where-Object { $_ -eq $ownPath }).Count -eq 1)
+    }
+    finally {
+        $env:Path = $before
+    }
 }
 
 # --- Драйвер окон ------------------------------------------------------------
