@@ -22,7 +22,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { gridLayout, physicalArea, type GridLayout } from '../jarvis/control/grid';
-import { tr } from '../jarvis/locale/language';
+import { currentLanguage, tr } from '../jarvis/locale/language';
 
 /** Сквозь окно должно быть видно, но номера должны читаться. */
 const OPACITY = 0.45;
@@ -61,7 +61,9 @@ export function createGridOverlay(): GridOverlay {
       frame: false,
       transparent: false,
       backgroundColor: '#000000',
-      resizable: false,
+      // Изменяемое — вынужденно, см. подгонку ниже. Двигать и тянуть его
+      // человек всё равно не может: рамки нет, а мышь сквозь него проходит.
+      resizable: true,
       movable: false,
       minimizable: false,
       maximizable: false,
@@ -70,6 +72,28 @@ export function createGridOverlay(): GridOverlay {
       alwaysOnTop: true,
       show: false,
     });
+
+    /**
+     * Окно во весь экран — не во весь экран.
+     *
+     * `resizable: false` заставляет Windows ужать окно, и странице достаётся
+     * меньше, чем просили. Замер 25.09.2026 на экране 1920×1080 при масштабе
+     * 125% (Electron называет его 1536×864), окно создано ровно по границам
+     * экрана, мерена ширина страницы в физических пикселях:
+     *
+     *   resizable: false                 1858×1050  — не хватает 62×30
+     *   resizable: false + setBounds     1904×1073
+     *   setContentSize                   1904×1073
+     *   resizable: true  + setBounds     1920×1080  ← ровно экран
+     *
+     * Это не косметика. Клетки считаются по физическим размерам ЭКРАНА, а
+     * рисуются в долях ОКНА. При недостаче 62 пикселя нарисованная клетка
+     * выходит 154.8 точки вместо 160, и середина двенадцатого столбца, куда
+     * уходит клик, съезжает от нарисованной на 60 точек — треть клетки. Правый
+     * и нижний края экрана при этом не накрыты ни одной клеткой вовсе:
+     * назвать там точку нельзя.
+     */
+    created.setBounds({ x: area.x, y: area.y, width: area.width, height: area.height });
 
     created.setAlwaysOnTop(true, 'screen-saver');
     created.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
@@ -114,7 +138,7 @@ function buildGridHtml(grid: GridLayout): string {
   }
 
   return `<!doctype html>
-<html lang="ru">
+<html lang="${currentLanguage()}">
 <head>
 <meta charset="utf-8" />
 <title>${tr('Сетка', 'Grid')}</title>

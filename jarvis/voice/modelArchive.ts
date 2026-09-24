@@ -15,6 +15,8 @@ import { pipeline } from 'node:stream/promises';
 import tar, { type Headers as TarHeader } from 'tar-stream';
 import unbzip2Stream from 'unbzip2-stream';
 
+import { tr } from '../locale/language';
+
 export interface ModelInstallProgress {
   stage: 'downloading' | 'extracting' | 'verifying' | 'complete' | 'error';
   /** 0..1 while downloading, undefined otherwise. */
@@ -106,7 +108,10 @@ async function download(options: ArchiveInstall, target: string): Promise<void> 
   const response = await fetchImpl(options.url, { redirect: 'follow', signal: options.signal });
 
   if (!response.ok || !response.body) {
-    throw new Error(`Не удалось скачать модель: HTTP ${response.status}`);
+    // Эти строки уходят прямо в окно настроек, под строку модели.
+    throw new Error(
+      tr(`Не удалось скачать модель: HTTP ${response.status}`, `Could not download the model: HTTP ${response.status}`),
+    );
   }
 
   const declared = Number(response.headers.get('content-length') ?? 0);
@@ -146,7 +151,12 @@ export async function installArchive(options: ArchiveInstall): Promise<string> {
 
     const downloaded = await stat(archivePath);
     if (downloaded.size < 1_000_000) {
-      throw new Error('Скачанный архив слишком мал — вероятно, загрузка прервалась.');
+      throw new Error(
+        tr(
+          'Скачанный архив слишком мал — вероятно, загрузка прервалась.',
+          'The downloaded archive is too small — the download was probably cut off.',
+        ),
+      );
     }
 
     options.onProgress?.({ stage: 'extracting' });
@@ -156,7 +166,12 @@ export async function installArchive(options: ArchiveInstall): Promise<string> {
 
     options.onProgress?.({ stage: 'verifying' });
     if (!(await options.isInstalled())) {
-      throw new Error(`Модель распакована, но файлы не найдены: ${modelRoot}`);
+      throw new Error(
+        tr(
+          `Модель распакована, но файлы не найдены: ${modelRoot}`,
+          `The model was unpacked but its files are missing: ${modelRoot}`,
+        ),
+      );
     }
 
     options.onProgress?.({ stage: 'complete', message: modelRoot });

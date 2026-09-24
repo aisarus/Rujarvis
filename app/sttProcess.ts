@@ -23,6 +23,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { isWhisperModelInstalled, resolveWhisperPaths, resampleTo16k, WHISPER_SAMPLE_RATE } from '../jarvis/voice/whisperRecognizer';
+import { tr } from '../jarvis/locale/language';
 import { type WhisperModelId } from '../jarvis/voice/sttModels';
 import type { Transcriber } from '../jarvis/voice/session';
 
@@ -133,8 +134,13 @@ async function pickInstalledModel(installRoot: string, wanted?: WhisperModelId):
   for (const id of PREFERENCE) {
     if (await isWhisperModelInstalled(installRoot, id)) return id;
   }
+  // Эту строку человек читает в трее: «голос не запустился: …». Оставлять её
+  // только по-русски значит показать русский текст посреди английского меню.
   throw new Error(
-    `Ни одна модель распознавания не установлена в ${installRoot}. Откройте настройки Джарвиса и скачайте модель.`,
+    tr(
+      `Ни одна модель распознавания не установлена в ${installRoot}. Откройте настройки Джарвиса и скачайте модель.`,
+      `No recognition model is installed in ${installRoot}. Open Jarvis settings and download one.`,
+    ),
   );
 }
 

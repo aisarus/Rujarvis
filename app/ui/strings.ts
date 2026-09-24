@@ -41,6 +41,8 @@ const ru = {
     'Работу — код, файлы, экран, браузер — делает Claude Code по вашей подписке. Джарвис не хранит ключей и не читает токены: вход выполняется в самом Claude Code.',
   stepModels: 'Слух и голос',
   stepModelsHint: 'Распознавание и синтез речи работают на вашем компьютере. Модели скачиваются один раз.',
+  stepModelsNeeded:
+    'Чтобы идти дальше, скачайте выбранную модель распознавания и выбранный голос: без них Джарвис не услышит и не ответит.',
   stepMic: 'Микрофон',
   stepMicHint: 'Скажите что-нибудь: полоска должна двигаться.',
   stepReady: 'Всё готово',
@@ -52,6 +54,7 @@ const ru = {
   agentSignedOut: 'вход не выполнен',
   agentUnknown: 'вход не подтверждён',
   agentInstallHint: 'Установите Claude Code: https://claude.ai/code — затем нажмите «Проверить».',
+  agentInstallPage: 'Открыть claude.ai/code',
   agentSignIn: 'Войти',
   agentSignInHint: 'Откроется окно терминала. Войдите в аккаунт и вернитесь сюда.',
   codexOptional: 'Codex (необязательно)',
@@ -147,6 +150,8 @@ const en: UiStrings = {
     'The work — code, files, screen, browser — is done by Claude Code on your subscription. Jarvis stores no keys and reads no tokens: you sign in inside Claude Code itself.',
   stepModels: 'Hearing and voice',
   stepModelsHint: 'Speech recognition and synthesis run on your computer. Models are downloaded once.',
+  stepModelsNeeded:
+    'To go on, download the selected recognition model and the selected voice: without them Jarvis cannot hear you or answer.',
   stepMic: 'Microphone',
   stepMicHint: 'Say something: the bar should move.',
   stepReady: 'All set',
@@ -158,6 +163,7 @@ const en: UiStrings = {
   agentSignedOut: 'not signed in',
   agentUnknown: 'sign-in not confirmed',
   agentInstallHint: 'Install Claude Code: https://claude.ai/code — then press "Check".',
+  agentInstallPage: 'Open claude.ai/code',
   agentSignIn: 'Sign in',
   agentSignInHint: 'A terminal window opens. Sign in there and come back.',
   codexOptional: 'Codex (optional)',

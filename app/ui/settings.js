@@ -40,18 +40,27 @@ function toast(text) {
   toast.timer = setTimeout(() => node.classList.remove('show'), 1600);
 }
 
-function megabytes(bytes) {
-  return `${Math.round(bytes / 1_000_000)} МБ`.replace('МБ', data.settings.language === 'en' ? 'MB' : 'МБ');
+// Размер скачивания. Гигабайты — гигабайтами: «1931 МБ» на кнопке человек
+// перечитывает дважды, прежде чем понять, что это почти два гигабайта.
+function размерФайла(bytes) {
+  const en = data.settings.language === 'en';
+  if (bytes >= 1_000_000_000) {
+    const гб = (bytes / 1_000_000_000).toFixed(1);
+    return `${en ? гб : гб.replace('.', ',')} ${en ? 'GB' : 'ГБ'}`;
+  }
+  return `${Math.round(bytes / 1_000_000)} ${en ? 'MB' : 'МБ'}`;
 }
 
 async function refresh() {
   data = await api.state();
-  document.documentElement.lang = data.settings.language;
   render();
 }
 
+// Сохранение приносит обратно всё, что зависит от настроек: сами настройки,
+// пути и списки моделей. Брать только настройки значит оставить на экране
+// описания моделей и путь к папке результатов от прежнего языка.
 async function update(patch) {
-  data.settings = await api.update(patch);
+  Object.assign(data, await api.update(patch));
   if (page === 'settings') toast(t().saved);
   render();
 }
@@ -74,13 +83,28 @@ function agentCard(key, name, optional) {
     ${installed ? '' : `<p class="hint" style="margin:8px 0 0">${escapeHtml(key === 'claude' ? s.agentInstallHint : 'npm i -g @openai/codex')}</p>`}
     <div class="row" style="justify-content:flex-start;margin-top:12px">
       ${installed && !signed ? `<button class="btn primary" data-act="signin">${s.agentSignIn}</button>` : ''}
+      ${!installed && key === 'claude' ? `<button class="btn primary" data-act="page">${s.agentInstallPage}</button>` : ''}
       <button class="btn" data-act="check">${s.check}</button>
     </div>
     ${installed && !signed ? `<p class="hint" style="margin:8px 0 0">${s.agentSignInHint}</p>` : ''}
   </div>`);
-  node.querySelector('[data-act=check]').onclick = refresh;
+  // Пока идёт проба, кнопка серая: она запускает CLI и думает секунды, а
+  // молчащая кнопка неотличима от сломанной.
+  const check = node.querySelector('[data-act=check]');
+  check.onclick = async () => {
+    check.disabled = true;
+    try {
+      await refresh();
+    } finally {
+      check.disabled = false;
+    }
+  };
   const signIn = node.querySelector('[data-act=signin]');
   if (signIn) signIn.onclick = () => api.signIn(key);
+  // Адрес установки был написан словами в подсказке, а открыть его было
+  // нечем: мост `openUrl` существовал и не вызывался ниоткуда.
+  const openPage = node.querySelector('[data-act=page]');
+  if (openPage) openPage.onclick = () => api.openUrl('https://claude.ai/code');
   return node;
 }
 
@@ -98,7 +122,7 @@ function modelRow(kind, model, selectedId, onSelect) {
       selected ? '' : `<button class="btn" data-act="select">${s.change}</button>`
     }</div>`;
   } else {
-    status = `<button class="btn ${selected ? 'primary' : ''}" data-act="download">${s.download} · ${megabytes(model.bytes)}</button>`;
+    status = `<button class="btn ${selected ? 'primary' : ''}" data-act="download">${s.download} · ${размерФайла(model.bytes)}</button>`;
   }
   const node = el(`<div class="model">
     <div><b>${escapeHtml(model.label)}</b>${selected ? ' <span class="pill ok">✓</span>' : ''}
@@ -298,7 +322,16 @@ function renderWizard(main) {
     main.append(agentCard('claude', 'Claude Code', false));
     main.append(agentCard('codex', s.codexOptional, true));
   }
-  if (name === 'models') main.append(modelsCard());
+  if (name === 'models') {
+    main.append(modelsCard());
+    // Почему «Далее» серое.
+    //
+    // На чистой машине не установлено ничего, шаг не пускает дальше, и
+    // человек остаётся перед серой кнопкой без единого слова о том, чего от
+    // него ждут. Замер 25.09.2026: на всей странице шага не было ни одной
+    // надписи про это.
+    if (!stepReady()) main.append(el(`<p class="hint" style="margin-top:14px">${s.stepModelsNeeded}</p>`));
+  }
   if (name === 'mic') main.append(micCard());
   if (name === 'ready') {
     main.append(keysCard());
@@ -387,6 +420,9 @@ function render() {
   for (const child of [...nav.children].slice(1)) child.remove();
   $('#app').classList.toggle('wizard', page === 'onboarding');
   document.title = t().windowTitle;
+  // Язык страницы — здесь, а не только в refresh: иначе после смены языка
+  // атрибут оставался прежним, и переносы со словарём шли по чужому языку.
+  document.documentElement.lang = data.settings.language;
   if (page === 'onboarding') renderWizard(main);
   else renderSettings(main, nav);
 }

@@ -552,11 +552,42 @@ function note(kind: EventKind, text: string, subject?: string): void {
  * Starts the assistant. Safe to call once the app is ready; calling it twice
  * returns the first bridge rather than fighting over the hotkey.
  */
+/**
+ * Что убрать, если запуск не доедет до конца.
+ *
+ * Окно звука открывается раньше распознавателя, а падает чаще всего именно
+ * распознаватель — например, когда модель ещё не скачана. Замер 25.09.2026:
+ * после двух попыток запуска (их ровно две, см. `main.ts`) в приложении
+ * осталось два невидимых окна звука — три процесса отрисовки вместо одного,
+ * — и ещё по паре на каждое «Перезапустить голос» из трея. Джарвис при этом
+ * честно показывает «не слушаю».
+ */
+const незавершённое: Array<() => void> = [];
+
 export async function startJarvisVoiceBridge(options: {
   settings: SettingsStore;
   onStatus?(status: VoiceStatus): void;
 }): Promise<JarvisVoiceBridge> {
   if (active) return active;
+  незавершённое.length = 0;
+  try {
+    return await поднятьМост(options);
+  } catch (error) {
+    while (незавершённое.length > 0) {
+      try {
+        незавершённое.pop()?.();
+      } catch {
+        // Уже мертво — и хорошо.
+      }
+    }
+    throw error;
+  }
+}
+
+async function поднятьМост(options: {
+  settings: SettingsStore;
+  onStatus?(status: VoiceStatus): void;
+}): Promise<JarvisVoiceBridge> {
   settingsRef = options.settings;
   // Язык — до всего остального: с него начинается каждая сказанная фраза и
   // каждая таблица, которая выбирает ответ.
@@ -580,11 +611,15 @@ export async function startJarvisVoiceBridge(options: {
   if (logPath) console.log(`[jarvis] логи пишутся в ${logPath}`);
 
   const audioWindow = await createAudioWindow();
+  незавершённое.push(() => {
+    if (!audioWindow.isDestroyed()) audioWindow.destroy();
+  });
   const recogniser = await createSttProcess({
     installRoot: PATHS.whisperModels,
     model: settings().whisperModel,
     language: settings().language,
   });
+  незавершённое.push(() => recogniser.dispose());
   // Three recognisers, in order of preference, each falling back to the next.
   //
   // The graphics card first: measured at 425 ms per phrase here, which matches
