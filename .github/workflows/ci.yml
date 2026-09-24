@@ -41,7 +41,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
-      - run: node --test scripts/ci/release-workflow.test.mjs
       - run: pnpm run test:unit
       - run: pnpm run test:vitest
       - run: pnpm run test:qwen-download-contract
@@ -168,7 +167,4 @@ jobs:
       - run: pnpm run download:qwen-asr -- --current-platform
       - run: pnpm run build:js-repl-runtime
       - run: pnpm run build
-      # Exercise the distribution wrapper on every supported runner. This is
-      # especially important on Windows, where package-manager shims require
-      # platform-shell resolution.
-      - run: pnpm run package:smoke:official
+      - run: pnpm run package:smoke

@@ -1,5 +1,12 @@
 # Distribution and release builds
 
+> **Rujarvis:** this page describes upstream Interpreter Workstation's release
+> infrastructure and is kept for reference. Rujarvis removed the official and
+> internal distribution profiles and their workflows — they pointed at Open
+> Interpreter's hosted services, telemetry and update feed. Rujarvis builds use
+> the community `product.json` and are installed from source; see
+> [docs/jarvis/install.md](jarvis/install.md).
+
 Interpreter Workstation has one open application, one canonical repository, and
 one public release implementation. Distribution profiles change public client
 configuration and package identity; they do not unlock client capabilities or

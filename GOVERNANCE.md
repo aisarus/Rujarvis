@@ -1,37 +1,19 @@
 # Governance
 
-## One open client
+Rujarvis is maintained by [@aisarus](https://github.com/aisarus). Decisions are
+made in public issues and pull requests.
 
-Interpreter Workstation has one client: the Apache 2.0 application in this
-repository. Official, community, internal, and enterprise distributions use
-the same client capabilities and differ only through public product
-configuration, service endpoints, signing, packaging, and support.
+## Licence commitment
 
-Hosted subscriptions may pay for operated services such as inference, sync,
-managed compute, enterprise identity, audit, retention, compliance, support,
-and indemnity. They must not unlock client-only features that a downstream
-operator could not provide through the same public configuration boundary.
+Rujarvis is Apache License 2.0, like the Interpreter Workstation code it is
+built on, and will not move to a more restrictive licence. Contributions are
+accepted under the Developer Certificate of Origin, without a contributor
+licence agreement or copyright assignment.
 
-## No-relicense covenant
+## Relationship to Interpreter Workstation
 
-The project commits not to change Interpreter Workstation source code to a
-license more restrictive than Apache License 2.0. Contributions are accepted
-under the Developer Certificate of Origin, without a contributor license
-agreement or copyright assignment that would preserve a unilateral relicensing
-option.
-
-This is a public governance commitment. As stewardship matures, the project
-intends to harden it through independent custody of the marks and release
-infrastructure.
-
-## Marks and official releases
-
-The code license does not grant trademark rights. The marks identify official
-signed builds and their supply-chain and support commitments. See
-[TRADEMARKS.md](TRADEMARKS.md) for the rules governing modified distributions.
-
-## Changes to this document
-
-Material governance changes should be proposed publicly, explain their effect
-on users and downstream distributors, and receive maintainer and community
-review before merge.
+Rujarvis is an independent fork. It is not an official Open Interpreter
+release and is not endorsed by the Open Interpreter project. Upstream's own
+governance, marks and release rules are described in
+[TRADEMARKS.md](TRADEMARKS.md); Rujarvis follows them by using its own name,
+package identifier and support links.

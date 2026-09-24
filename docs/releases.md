@@ -1,5 +1,12 @@
 # Official releases
 
+> **Rujarvis:** this page describes upstream Interpreter Workstation's release
+> infrastructure and is kept for reference. Rujarvis removed the official and
+> internal distribution profiles and their workflows — they pointed at Open
+> Interpreter's hosted services, telemetry and update feed. Rujarvis builds use
+> the community `product.json` and are installed from source; see
+> [docs/jarvis/install.md](jarvis/install.md).
+
 Interpreter Workstation has one public source tree and one public production
 release implementation. The official product is a configured and signed build
 of this repository, not a private fork.

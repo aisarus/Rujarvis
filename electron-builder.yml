@@ -1,7 +1,7 @@
-appId: interpreter
-productName: Interpreter
+appId: io.github.aisarus.rujarvis
+productName: Rujarvis
 protocols:
-  - name: Interpreter
+  - name: Rujarvis
     schemes:
       - workstation
 directories:

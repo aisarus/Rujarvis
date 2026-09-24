@@ -7,12 +7,13 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/openinterpreter/interpreter-workstation.git"
+    "url": "https://github.com/aisarus/Rujarvis.git"
   },
-  "description": "The desktop agent for knowledge work",
+  "homepage": "https://github.com/aisarus/Rujarvis",
+  "bugs": "https://github.com/aisarus/Rujarvis/issues",
+  "description": "Russian-speaking voice assistant for Windows, based on Interpreter Workstation",
   "author": {
-    "name": "Open Interpreter",
-    "email": "help@openinterpreter.com"
+    "name": "Rujarvis contributors"
   },
   "type": "module",
   "packageManager": "pnpm@9.15.9",
@@ -65,7 +66,6 @@
     "browser-page-tools:smoke:negative": "node scripts/browser-page-tools-cli-smoke.cjs --negative",
     "build": "pnpm run ensure:js-repl-runtime-assets && pnpm run ensure:browser-extension-relay-assets && pnpm run build:renderer && pnpm run build:electron",
     "build:community": "pnpm run build",
-    "build:official": "node scripts/with-distribution-config.mjs distribution/product.official.json -- pnpm run build",
     "build:dev-prep": "pnpm run ensure:js-repl-runtime-assets && pnpm run ensure:browser-extension-relay-assets && pnpm run build:electron",
     "build:locked": "node scripts/build-with-lock.cjs",
     "build:renderer": "cross-env NODE_ENV=production vite build",
@@ -99,12 +99,6 @@
     "generate:model-catalog": "bun scripts/generate-model-catalog.ts",
     "build:dist": "pnpm run download:oix -- --current-platform && pnpm run download:pdfcpu -- --current-platform && pnpm run download:qwen-asr -- --current-platform && pnpm run build:js-repl-runtime && pnpm run build && electron-builder",
     "package:smoke": "node scripts/package-smoke.mjs",
-    "package:smoke:official": "node scripts/with-distribution-config.mjs distribution/product.official.json -- pnpm run package:smoke",
-    "package:official": "node scripts/with-distribution-config.mjs distribution/product.official.json -- pnpm run build:dist --config distribution/electron-builder.official.yml",
-    "package:official:candidate:mac-arm64": "PYTHON=/usr/bin/python3 CSC_IDENTITY_AUTO_DISCOVERY=false node scripts/with-distribution-config.mjs distribution/product.official.json -- pnpm run build:dist --config distribution/electron-builder.official-candidate.yml --mac dmg zip --arm64 --publish never",
-    "package:internal:mac-arm64": "PYTHON=/usr/bin/python3 CSC_IDENTITY_AUTO_DISCOVERY=false node scripts/with-distribution-config.mjs distribution/product.official.json -- pnpm run build:dist --config distribution/electron-builder.internal.yml --mac dmg zip --arm64 --publish never",
-    "release:verify:official-candidate": "node scripts/verify-official-release-candidate.mjs",
-    "release:verify:internal": "node scripts/verify-internal-release.mjs",
     "start": "node scripts/run-unpackaged-electron.cjs",
     "test": "pnpm run test:unit && pnpm run test:vitest && pnpm run test:e2e:ci",
     "test:voice": "pnpm run test:unit:voice && pnpm run test:e2e:voice:ci",
