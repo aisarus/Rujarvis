@@ -206,6 +206,23 @@ function Resolve-Key([string] $name) {
     throw "Неизвестная клавиша: $name"
 }
 
+<#
+    Sravnenie bez «yo».
+
+    Razbor frazy privodit rech k odnomu vidu i menyaet «yo» na «e»: chelovek
+    govorit odinakovo, a pishet po-raznomu. No v ZAGOLOVKE okna «yo» ostayotsya
+    kak est, i poisk po dословnomu sovpadeniyu promahivaetsya.
+
+    Poymano priyomkoy 25.09.2026: okno «Proba priyomki Rujarvis» ne nashlos po
+    fraze, kotoraya prishla syuda kak «proba priemki rujarvis». Lyuboe russkoe
+    okno s «yo» v imeni tak zhe ne nashlos by.
+#>
+function Simplify-Text {
+    param([string] $Text)
+    if ($null -eq $Text) { return '' }
+    return $Text.ToLower().Replace([char]0x0451, [char]0x0435).Replace([char]0x0401, [char]0x0435)
+}
+
 function Get-Windows {
     $result = New-Object System.Collections.ArrayList
     $callback = [Desk+EnumProc] {
@@ -375,8 +392,9 @@ function Invoke-Command2($message) {
             # U Chrome sovpadalo sluchayno, u Edge net, i chelovek slyshal
             # «ne poluchilos» na komandu, kotoraya obyazana rabotat vsegda.
             $needle = $message.title
+            $simple = Simplify-Text $needle
             $windows = Get-Windows
-            $target = $windows | Where-Object { $_.title -like "*$needle*" } | Select-Object -First 1
+            $target = $windows | Where-Object { (Simplify-Text $_.title).Contains($simple) } | Select-Object -First 1
             if (-not $target) {
                 # "Program Manager" - eto rabochiy stol, a ne okno Provodnika.
                 # On vo ves ekran, poetomu sortirovka po ploshchadi stavila ego
@@ -384,7 +402,7 @@ function Invoke-Command2($message) {
                 $target = $windows | Where-Object {
                     $_.title -ne 'Program Manager' -and
                     ($proc = Get-Process -Id $_.pid -ErrorAction SilentlyContinue) -and
-                    ($proc.ProcessName -like "*$needle*")
+                    (Simplify-Text $proc.ProcessName).Contains($simple)
                 } | Sort-Object { $_.width * $_.height } -Descending | Select-Object -First 1
             }
             if (-not $target) {

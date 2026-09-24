@@ -40,6 +40,25 @@ export const DEFAULT_VOICE: Record<'ru' | 'en', string> = {
   en: 'vits-piper-en_US-lessac-medium',
 };
 
+/**
+ * Какой голос брать, когда человек сменил язык.
+ *
+ * Голос привязан к языку: русская Ирина по-английски не говорит. Смена языка
+ * меняла только язык, и выбранным оставался прежний голос — а в мастере это
+ * открывало дыру. Список голосов на шаге показывается по языку, но проверка
+ * «можно ли дальше» смотрит на ВЫБРАННЫЙ голос: человек выбирал English,
+ * видел пустой список английских голосов и всё равно шёл дальше, потому что
+ * выбранной оставалась установленная Ирина. Настройка заканчивалась,
+ * интерфейс и слух были английскими, а говорил Джарвис по-русски.
+ *
+ * Прежний голос остаётся, если он уже на нужном языке: человек мог выбрать
+ * Дмитрия вместо Ирины, и отнимать у него этот выбор незачем.
+ */
+export function voiceForLanguage(language: 'ru' | 'en', currentVoiceId: string | undefined): string {
+  const нынешний = VOICES.find((voice) => voice.id === currentVoiceId);
+  return нынешний?.language === language ? нынешний.id : DEFAULT_VOICE[language];
+}
+
 export function getVoice(id: string): VoiceDefinition {
   const voice = VOICES.find((entry) => entry.id === id);
   if (!voice) throw new Error(`Неизвестный голос: ${id}`);
