@@ -6,7 +6,7 @@
 //                                красных линий (роль выбирается при запуске)
 //
 // Запуск: node build.mjs (или pnpm build). Занимает секунды.
-import { copyFileSync, cpSync, mkdirSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
 import esbuild from 'esbuild';
@@ -38,7 +38,24 @@ copyFileSync(
   path.join('dist', 'jarvis', 'desktop', 'win32-driver.ps1'),
 );
 
+/**
+ * Рекурсивная копия без `fs.cpSync`.
+ *
+ * На Windows `cpSync` в Node 22 роняет процесс (0xC0000409, без сообщения) на
+ * пути не латиницей — а папка здесь называется «питон». Поймано CI на
+ * windows-latest; у человека это была бы установка, упавшая на сборке.
+ */
+function copyTree(from, to) {
+  mkdirSync(to, { recursive: true });
+  for (const entry of readdirSync(from, { withFileTypes: true })) {
+    const source = path.join(from, entry.name);
+    const target = path.join(to, entry.name);
+    if (entry.isDirectory()) copyTree(source, target);
+    else copyFileSync(source, target);
+  }
+}
+
 // Скрипты Python для анимации — тоже рядом с сервером (`inbetween.ts`).
-cpSync(path.join('jarvis', 'desktop', 'питон'), path.join('dist', 'jarvis', 'desktop', 'питон'), { recursive: true });
+copyTree(path.join('jarvis', 'desktop', 'питон'), path.join('dist', 'jarvis', 'desktop', 'питон'));
 
 console.log('[build] dist/app/main.cjs, dist/app/preload.cjs, dist/jarvis/desktop/mcp.cjs');
