@@ -132,6 +132,36 @@ async function main(): Promise<void> {
     console.log(`  ОТКАЗ: ${error instanceof Error ? error.message : String(error)}`);
   }
 
+  console.log('\n=== 6. Через сколько новое окно становится видно');
+  /*
+    Случай приёмки ждёт 600 мс и находит пустой список; случай, который
+    проходит, успевает подождать около 1400 мс. Значит, вопрос может быть не
+    «видно ли», а «когда». Меряем это прямо: показываем новое окно и спрашиваем
+    оба источника каждые 100 мс, пока не увидят.
+  */
+  const ВТОРОЕ = 'Второе окно пробы';
+  const второе = new BrowserWindow({ title: ВТОРОЕ, width: 300, height: 160, show: false });
+  второе.setTitle(ВТОРОЕ);
+  const показали = Date.now();
+  второе.show();
+
+  let увиделCg = -1;
+  let увиделSe = -1;
+  for (let шаг = 0; шаг < 40 && (увиделCg < 0 || увиделSe < 0); шаг += 1) {
+    if (увиделCg < 0) {
+      const список = JSON.parse(await osascript(['-l', 'JavaScript', '-e', CG_СПИСОК])) as { title: string | null }[];
+      if (список.some((с) => с.title === ВТОРОЕ)) увиделCg = Date.now() - показали;
+    }
+    if (увиделSe < 0) {
+      const ответ = await osascript(['-e', WINDOW_LIST_SCRIPT]);
+      if (ответ.includes(ВТОРОЕ)) увиделSe = Date.now() - показали;
+    }
+    await ждать(100);
+  }
+  console.log(`  CGWindowList увидел через ${увиделCg < 0 ? 'так и не увидел' : `${увиделCg} мс`}`);
+  console.log(`  System Events увидел через ${увиделSe < 0 ? 'так и не увидел' : `${увиделSe} мс`}`);
+  if (!второе.isDestroyed()) второе.destroy();
+
   const итог = (await driver.windows().catch(() => [])).some((о) => о.title === ИМЯ_ОКНА);
   console.log(`\nИтог: окно Электрона ${итог ? 'видно' : 'НЕ ВИДНО'} драйверу.`);
   if (!окно.isDestroyed()) окно.destroy();
