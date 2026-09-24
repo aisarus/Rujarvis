@@ -61,7 +61,7 @@ import { setLanguage, tr } from '../jarvis/locale/language';
 import type { BackendFileChange } from '../jarvis/backends/types';
 import { jarvisOutputDir, jarvisPaths } from '../jarvis/setup/paths';
 import { DEFAULT_SETTINGS, type AppSettings, type SettingsStore } from '../jarvis/setup/settings';
-import { isVoiceInstalled, Speaker } from '../jarvis/voice/tts';
+import { installVoice, isVoiceInstalled, Speaker } from '../jarvis/voice/tts';
 import { AUDIO_BRIDGE_CHANNELS, buildAudioBridgeHtml } from './audioBridgePage';
 import { createElevenLabsTranscriber } from './cloudTranscriber';
 import { createGpuTranscriber, waitForWhisperServer } from './gpuTranscriber';
@@ -786,6 +786,16 @@ export async function startJarvisVoiceBridge(options: {
   // файла в месте, которое никто не печатал.
   const voiceReady = isVoiceInstalled(PATHS.voiceModels, settings().voiceId);
   console.log(`[jarvis] голос ${settings().voiceId} ${voiceReady ? 'готов' : 'НЕ НАЙДЕН'}: ${PATHS.voiceModels}`);
+  // Язык сменили в настройках, а голос для него ещё не скачан: без этого
+  // Джарвис понимал бы команды и молчал. Качаем в фоне — слушать можно сразу,
+  // а говорить он начнёт, как только голос ляжет на диск.
+  if (!voiceReady) {
+    const voiceId = settings().voiceId;
+    console.log(`[jarvis] скачиваю голос ${voiceId}`);
+    void installVoice(PATHS.voiceModels, voiceId)
+      .then(() => console.log(`[jarvis] голос ${voiceId} скачан`))
+      .catch((error: unknown) => console.error(`[jarvis] голос ${voiceId} не скачался:`, error));
+  }
 
   const overlay = createStatusOverlay();
   overlayRef = overlay;
