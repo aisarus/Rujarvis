@@ -12,8 +12,9 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+
+import { jarvisPaths } from '../setup/paths';
 
 export interface Note {
   key: string;
@@ -21,9 +22,9 @@ export interface Note {
   updatedAt: number;
 }
 
+/** Заметки агента — в папке данных Джарвиса, рядом с журналом. */
 function memoryFile(): string {
-  const home = process.env.JARVIS_HOME ?? path.join(os.homedir(), '.openinterpreter');
-  return path.join(home, 'jarvis', 'agent-notes.json');
+  return path.join(jarvisPaths().data, 'agent-notes.json');
 }
 
 function read(): Note[] {

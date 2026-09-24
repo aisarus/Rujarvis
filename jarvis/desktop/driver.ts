@@ -61,7 +61,7 @@ function findDriverScript(): string {
   // Рядом с собой — так это выглядит из исходников (MCP-сервер, tsx).
   if (typeof __dirname === 'string') {
     candidates.push(path.join(__dirname, 'win32-driver.ps1'));
-    // Из собранного приложения: dist-electron/electron -> исходники проекта.
+    // Из собранного приложения: dist/app -> исходники проекта.
     candidates.push(path.join(__dirname, '..', '..', 'jarvis', 'desktop', 'win32-driver.ps1'));
   }
 

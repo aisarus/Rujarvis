@@ -19,6 +19,7 @@
  */
 
 import { BackendManager, type BackendPreference } from './backends/manager';
+import { currentLanguage, tr } from './locale/language';
 import { BACKEND_IDS } from './backends/types';
 import type {
   BackendId,
@@ -250,6 +251,11 @@ export function taskTitle(decision: RoutingDecision, utterance: string): string 
 }
 
 function describeForApproval(decision: RoutingDecision, utterance: string): string {
+  if (currentLanguage() === 'en') {
+    const where = decision.project ? `in project ${decision.project}` : 'on this computer';
+    const level = decision.risk === 'dangerous' ? 'dangerous' : 'sensitive';
+    return `The request "${utterance.trim()}" ${where} is ${level}. Go ahead?`;
+  }
   const what = decision.project ? `в проекте ${decision.project}` : 'на этом компьютере';
   const level = decision.risk === 'dangerous' ? 'опасное' : 'чувствительное';
   return `Запрос «${utterance.trim()}» ${what} классифицирован как ${level}. Выполнять?`;
@@ -351,8 +357,8 @@ export class JarvisCore {
     if (переключение) {
       this.planMode = переключение === 'on';
       const spoken = this.planMode
-        ? 'Режим плана включён. Сначала покажу замысел, работать начну по «погнали».'
-        : 'Режим плана выключен. Работаю сразу.';
+        ? tr('Режим плана включён. Сначала покажу замысел, работать начну по «погнали».', 'Plan mode on. I will show the plan first and start on "go".')
+        : tr('Режим плана выключен. Работаю сразу.', 'Plan mode off. Working right away.');
       this.say(spoken, settings);
       return { kind: 'chat', spoken };
     }
@@ -414,7 +420,7 @@ export class JarvisCore {
           })
         : false;
       if (!approved) {
-        const spoken = 'Не стал делать — нужно твоё подтверждение.';
+        const spoken = tr('Не стал делать — нужно твоё подтверждение.', 'Not doing it — that needs your confirmation.');
         this.say(spoken, settings);
         return { kind: 'refused', spoken, decision };
       }
@@ -428,7 +434,7 @@ export class JarvisCore {
     // красную сферу. Спасибо» получало высокую уверенность — и Джарвис делал
     // вторую сферу в ответ на благодарность.
     if (!asWork && isPleasantry(utterance)) {
-      const spoken = 'Пожалуйста.';
+      const spoken = tr('Пожалуйста.', 'You are welcome.');
       this.say(spoken, settings);
       return { kind: 'chat', spoken };
     }
@@ -533,7 +539,7 @@ export class JarvisCore {
       permissions: normalized.permissions,
       // Та же сессия агента: продолжая свою работу, он помнит её без пересказа.
       sessionId: resumable?.sessionId ?? continuing?.sessionId ?? conversation?.sessionId,
-      language: 'ru',
+      language: currentLanguage(),
       outputDir: this.options.outputDir,
       instructions: this.options.instructions?.(),
       lessons: this.options.lessons?.(),
@@ -609,7 +615,7 @@ export class JarvisCore {
         capabilities: ['reasoning'],
         risk: 'safe',
         permissions: { read: false, edit: false, execute: false, network: false },
-        language: 'ru',
+        language: currentLanguage(),
         timeoutMs: CHAT_TIMEOUT_MS,
       },
       {},
@@ -624,7 +630,7 @@ export class JarvisCore {
     }
 
     if (шаги.length === 0) {
-      const spoken = 'Не смог составить план. Скажи задачу иначе или «выключи режим плана».';
+      const spoken = tr('Не смог составить план. Скажи задачу иначе или «выключи режим плана».', 'Could not make a plan. Put the task differently or say "plan mode off".');
       this.say(spoken, settings);
       return { kind: 'chat', spoken };
     }
@@ -635,7 +641,7 @@ export class JarvisCore {
 
     // Вслух — сводка, на экран — весь план. Семь шагов подряд голосом человек
     // не удержит, а в окне они уже лежат.
-    const spoken = `${planSummary(plan)} Погнали?`;
+    const spoken = `${planSummary(plan)} ${tr('Погнали?', 'Go?')}`;
     this.say(spoken, settings);
     return { kind: 'plan', spoken, plan };
   }
@@ -723,7 +729,7 @@ export class JarvisCore {
         capabilities: ['reasoning'],
         risk: 'safe',
         permissions: { read: false, edit: false, execute: false, network: false },
-        language: 'ru',
+        language: currentLanguage(),
         timeoutMs: CHAT_TIMEOUT_MS,
       },
       {},
@@ -733,13 +739,13 @@ export class JarvisCore {
     let backend = BACKEND_OF_TALK;
     try {
       const result = await run.result();
-      spoken = result.ok && result.text.trim() ? result.text.trim() : 'Не знаю.';
+      spoken = result.ok && result.text.trim() ? result.text.trim() : tr('Не знаю.', 'I do not know.');
       backend = result.backend || BACKEND_OF_TALK;
     } catch {
-      spoken = 'Не смог ответить.';
+      spoken = tr('Не смог ответить.', 'Could not answer.');
     }
 
-    const short = toSpokenResponse(spoken, { fallback: 'Не знаю.' }).spoken;
+    const short = toSpokenResponse(spoken, { fallback: tr('Не знаю.', 'I do not know.') }).spoken;
 
     // Разговор обязан помнить свой же ответ.
     //

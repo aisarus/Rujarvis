@@ -1007,13 +1007,14 @@ export function createDesktopMcpServer(): McpServer {
       description:
         'Возвращает путь к папке ассистента на рабочем столе человека и список того, ' +
         'что в ней лежит, по разделам. Сюда клади всё, что человек просил получить: ' +
-        'эту папку он видит. Раздел выбирается по типу файла, вручную его называть не надо.',
+        'эту папку он видит. Раздел выбирается по типу файла, вручную его называть не надо; ' +
+        'подпапку по теме задаёт move_to_output.',
       inputSchema: {},
     },
     async () => {
       try {
         const dir = await files.ensureSections();
-        const sections = files.OUTPUT_SECTIONS.join(', ');
+        const sections = files.outputSectionNames().join(', ');
         const tree = await files.readOutputTree(dir);
         return say(`${dir}\n\nРазделы: ${sections} — файл попадает в свой по типу.\n\n${tree}`);
       } catch (error) {
@@ -1057,12 +1058,17 @@ export function createDesktopMcpServer(): McpServer {
       description:
         'Переносит готовый файл в папку ассистента и возвращает новый путь. ' +
         'Нужен, когда программа сохранила результат туда, куда умеет, а не туда, где его ' +
-        'найдёт человек. Файл с таким же именем не затирается.',
-      inputSchema: { file: z.string().describe('Полный путь к файлу, который надо перенести') },
+        'найдёт человек. Раздел выбирается по типу файла. topic — подпапка внутри раздела: ' +
+        'одно и то же короткое название для всех файлов одной задачи («Отчёт за март», ' +
+        '«Логотип кафе»), чтобы они лежали вместе. Файл с таким же именем не затирается.',
+      inputSchema: {
+        file: z.string().describe('Полный путь к файлу, который надо перенести'),
+        topic: z.string().optional().describe('Подпапка по теме задачи — на языке человека, 2–5 слов'),
+      },
     },
-    async ({ file }) => {
+    async ({ file, topic }) => {
       try {
-        const moved = await files.moveIntoFolder(file);
+        const moved = await files.moveIntoFolder(file, undefined, topic);
         return say(`Файл теперь здесь: ${moved}`);
       } catch (error) {
         return failed(error);

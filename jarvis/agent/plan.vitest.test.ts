@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   addStep,
@@ -9,7 +9,9 @@ import {
   planProgress,
   planSummary,
   renderPlan,
+  stepStateLabel,
 } from './plan';
+import { setLanguage } from '../locale/language';
 
 const AT = 1_700_000_000_000;
 
@@ -161,5 +163,16 @@ describe('planSummary', () => {
     plan = markStep(plan, 0, 'сделано', AT);
 
     expect(planSummary(plan)).toContain('выполнен');
+  });
+});
+
+describe('stepStateLabel', () => {
+  afterEach(() => setLanguage('ru'));
+
+  it('говорит состояние на языке человека, не трогая служебное значение', () => {
+    expect(stepStateLabel('не вышло')).toBe('не вышло');
+    setLanguage('en');
+    expect(stepStateLabel('не вышло')).toBe('failed');
+    expect(stepStateLabel('делаю')).toBe('in progress');
   });
 });

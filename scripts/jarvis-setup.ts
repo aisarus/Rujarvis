@@ -1,148 +1,102 @@
 /**
- * `pnpm run jarvis:setup`
+ * `pnpm jarvis:setup` — скачать модели заранее.
  *
- * The onboarding step the Windows installer runs at the end, and the command a
- * user runs again when something needs re-checking. It inspects the machine,
- * prints what it is about to do, downloads the speech models and reports which
- * coding backends are available.
+ * Установщик зовёт его в конце, чтобы после первого запуска всё уже было на
+ * месте и онбординг не ждал загрузки. Можно звать и руками, чтобы сменить
+ * модель. Ставит модель распознавания (по объёму памяти или `--model`) и голос
+ * для языка (`--language ru|en`), и записывает выбор в настройки — окно
+ * настроек увидит его сразу.
  *
- * It never fails because a subscription CLI is missing — that is a note, not an
- * error.
+ * Не падает из-за отсутствующего Claude Code: это заметка, а не ошибка.
+ *
+ *     pnpm jarvis:setup
+ *     pnpm jarvis:setup -- --language en --model small
+ *     pnpm jarvis:setup -- --dry-run
  */
 
-import os from 'node:os';
-import path from 'node:path';
 import process from 'node:process';
-import {
-  buildOnboardingPlan,
-  formatBytes,
-  readMachineFacts,
-  renderGettingStarted,
-  renderOnboardingPlan,
-  type CliStatus,
-} from '../jarvis/setup/onboarding';
-import {
-  WHISPER_MODEL_IDS,
-  type WhisperModelId,
-} from '../jarvis/voice/sttModels';
+
+import { cliStatus } from '../jarvis/backends/cliProbes';
+import type { Language } from '../jarvis/locale/language';
+import { formatBytes, readMachineFacts } from '../jarvis/setup/onboarding';
+import { jarvisPaths } from '../jarvis/setup/paths';
+import { SettingsStore } from '../jarvis/setup/settings';
+import { getWhisperModel, recommendWhisperModel, WHISPER_MODEL_IDS, type WhisperModelId } from '../jarvis/voice/sttModels';
+import type { ModelInstallProgress } from '../jarvis/voice/modelArchive';
+import { DEFAULT_VOICE, getVoice, installVoice, isVoiceInstalled } from '../jarvis/voice/tts';
 import { installWhisperModel } from '../jarvis/voice/whisperInstall';
 import { isWhisperModelInstalled } from '../jarvis/voice/whisperRecognizer';
 
-const PUSH_TO_TALK_HOTKEY = process.platform === 'darwin' ? '⌥ Space' : 'Ctrl + Space';
-
-function userDataRoot(): string {
-  if (process.env.JARVIS_DATA_ROOT) return path.resolve(process.env.JARVIS_DATA_ROOT);
-  if (process.platform === 'win32') {
-    return path.join(process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming'), 'Interpreter');
-  }
-  if (process.platform === 'darwin') {
-    return path.join(os.homedir(), 'Library', 'Application Support', 'Interpreter');
-  }
-  return path.join(process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'), 'Interpreter');
+function flag(name: string): string | undefined {
+  const index = process.argv.indexOf(name);
+  return index === -1 ? undefined : process.argv[index + 1];
 }
 
-async function probeCli(command: string): Promise<CliStatus> {
-  const { execFile } = await import('node:child_process');
-  const { promisify } = await import('node:util');
-  const execFileAsync = promisify(execFile);
-  try {
-    const { stdout } = await execFileAsync(command, ['--version'], {
-      timeout: 10_000,
-      encoding: 'utf-8',
-    });
-    return { installed: true, loggedIn: await probeLogin(command), version: stdout.trim() };
-  } catch {
-    return { installed: false, loggedIn: false };
-  }
-}
-
-/**
- * Login check.
- *
- * Deliberately shallow: it looks for the vendor's own credential file and
- * never reads, parses or copies what is inside it.
- */
-async function probeLogin(command: string): Promise<boolean> {
-  const { existsSync, statSync } = await import('node:fs');
-  if (command === 'claude') {
-    if (process.platform === 'darwin') {
-      // The macOS credential lives in the Keychain; assume signed in and let
-      // the first real run report otherwise.
-      return true;
+function progressPrinter(what: string): (progress: ModelInstallProgress) => void {
+  let last = -1;
+  return (progress) => {
+    if (progress.stage === 'downloading' && progress.ratio !== undefined) {
+      const percent = Math.floor(progress.ratio * 100);
+      if (percent !== last && percent % 5 === 0) {
+        last = percent;
+        process.stdout.write(`\r    ${what}: ${percent}% (${formatBytes(progress.receivedBytes ?? 0)})   `);
+      }
+    } else if (progress.stage === 'extracting') {
+      process.stdout.write(`\r    ${what}: распаковываю…            `);
+    } else if (progress.stage === 'complete') {
+      process.stdout.write(`\r    ${what}: готово.                  \n`);
+    } else if (progress.stage === 'error') {
+      process.stdout.write(`\r    ${what}: ошибка — ${progress.message}\n`);
     }
-    const credentials = path.join(os.homedir(), '.claude', '.credentials.json');
-    return existsSync(credentials) && statSync(credentials).size > 2;
-  }
-  if (command === 'codex') {
-    const auth = path.join(os.homedir(), '.codex', 'auth.json');
-    return existsSync(auth) && statSync(auth).size > 2;
-  }
-  return false;
-}
-
-function parseRequestedModel(): WhisperModelId | undefined {
-  const flagIndex = process.argv.indexOf('--model');
-  const value = flagIndex === -1 ? process.env.JARVIS_WHISPER_MODEL : process.argv[flagIndex + 1];
-  if (value && (WHISPER_MODEL_IDS as readonly string[]).includes(value)) {
-    return value as WhisperModelId;
-  }
-  return undefined;
+  };
 }
 
 async function main(): Promise<void> {
+  const paths = jarvisPaths();
+  const settings = new SettingsStore(paths.settings);
   const dryRun = process.argv.includes('--dry-run');
-  const whisperRoot = path.join(userDataRoot(), 'whisper-models');
 
-  const [claude, codex] = await Promise.all([probeCli('claude'), probeCli('codex')]);
+  const language: Language = (flag('--language') ?? settings.get().language) === 'en' ? 'en' : 'ru';
+  const machine = readMachineFacts();
+  const askedModel = flag('--model') ?? process.env.JARVIS_WHISPER_MODEL;
+  const model: WhisperModelId = (WHISPER_MODEL_IDS as readonly string[]).includes(askedModel ?? '')
+    ? (askedModel as WhisperModelId)
+    : recommendWhisperModel({ totalRamMb: machine.totalRamMb, hasGpu: machine.hasGpu });
+  const voiceId = DEFAULT_VOICE[language];
 
-  const installed: WhisperModelId[] = [];
-  for (const id of WHISPER_MODEL_IDS) {
-    if (await isWhisperModelInstalled(whisperRoot, id)) installed.push(id);
-  }
+  console.log(`Папка Джарвиса: ${paths.home}`);
+  console.log(`Язык: ${language === 'en' ? 'English' : 'русский'}`);
+  console.log(`Распознавание: whisper-${model} (${formatBytes(getWhisperModel(model).downloadBytes)})`);
+  console.log(`Голос: ${getVoice(voiceId).label}`);
 
-  const plan = buildOnboardingPlan({
-    machine: readMachineFacts(),
-    claude,
-    codex,
-    installedWhisperModels: installed,
-    // The Russian voice is installed by the app's own TTS model manager on
-    // first speech; setup only reports whether it is already there.
-    ttsVoiceInstalled: false,
-    requestedWhisperModel: parseRequestedModel(),
-  });
-
-  console.log(renderOnboardingPlan(plan));
+  const claude = await cliStatus('claude');
+  console.log(
+    claude.installed
+      ? `Claude Code: ${claude.version ?? 'установлен'}${claude.loggedIn ? '' : ' — войдите: claude auth login'}`
+      : 'Claude Code не найден — установите его с https://claude.ai/code, без него Джарвис только слушает.',
+  );
 
   if (dryRun) {
     console.log('\n(--dry-run: ничего не скачивается)');
     return;
   }
 
-  const needsWhisper = plan.steps.some((step) => step.id.startsWith('whisper:'));
-  if (needsWhisper) {
-    console.log('');
-    let lastPercent = -1;
-    await installWhisperModel({
-      installRoot: whisperRoot,
-      modelId: plan.whisperModel,
-      onProgress: (progress) => {
-        if (progress.stage === 'downloading' && progress.ratio !== undefined) {
-          const percent = Math.floor(progress.ratio * 100);
-          if (percent !== lastPercent && percent % 5 === 0) {
-            lastPercent = percent;
-            const received = formatBytes(progress.receivedBytes ?? 0);
-            process.stdout.write(`\rСкачиваю модель: ${percent}% (${received})   `);
-          }
-          return;
-        }
-        if (progress.stage === 'extracting') process.stdout.write('\rРаспаковываю модель…          ');
-        if (progress.stage === 'complete') process.stdout.write('\rМодель распознавания готова.  \n');
-        if (progress.stage === 'error') process.stdout.write(`\rОшибка: ${progress.message}\n`);
-      },
-    });
+  console.log('');
+  if (!(await isWhisperModelInstalled(paths.whisperModels, model))) {
+    await installWhisperModel({ installRoot: paths.whisperModels, modelId: model, onProgress: progressPrinter('распознавание') });
+  } else {
+    console.log('    распознавание: уже установлено.');
+  }
+  if (!isVoiceInstalled(paths.voiceModels, voiceId)) {
+    await installVoice(paths.voiceModels, voiceId, progressPrinter('голос'));
+  } else {
+    console.log('    голос: уже установлен.');
   }
 
-  console.log(renderGettingStarted(PUSH_TO_TALK_HOTKEY));
+  // Выбор — в настройки: окно настроек и мост увидят его сразу. Онбординг
+  // остаётся непройденным: вход в Claude Code и микрофон человек проверит сам.
+  settings.update({ language, whisperModel: model, voiceId });
+  console.log(`\nНастройки: ${paths.settings}`);
 }
 
 main().catch((error: unknown) => {

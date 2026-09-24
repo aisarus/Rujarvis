@@ -12,6 +12,7 @@
  */
 
 import type { JarvisIntent, RoutingDecision } from '../router/router';
+import { byLanguage, tr } from '../locale/language';
 
 /**
  * Acknowledgements per intent.
@@ -19,7 +20,7 @@ import type { JarvisIntent, RoutingDecision } from '../router/router';
  * Several per intent, because hearing the identical phrase every single time
  * is the fastest way to make an assistant feel like a phone menu.
  */
-const ACKNOWLEDGEMENTS: Record<JarvisIntent, string[]> = {
+const ACKNOWLEDGEMENTS_RU: Record<JarvisIntent, string[]> = {
   open_app: ['Открываю.', 'Сейчас открою.', 'Секунду, открываю.'],
   // «Открываю» в ответ на «создай сферу» обещает не то, что произойдёт.
   make: ['Делаю.', 'Сейчас сделаю.', 'Принялся.'],
@@ -35,10 +36,25 @@ const ACKNOWLEDGEMENTS: Record<JarvisIntent, string[]> = {
   chat: ['Да, слушаю.', 'Сейчас.', 'Понял.'],
 };
 
+const ACKNOWLEDGEMENTS_EN: Record<JarvisIntent, string[]> = {
+  open_app: ['Opening.', 'Opening it now.', 'One second, opening.'],
+  make: ['On it.', 'Making it now.', 'Starting.'],
+  control_window: ['Sure.', 'Doing it.', 'Right away.'],
+  modify_project: ['Got it, on it.', 'Looking at the project.', 'OK, working on it.'],
+  inspect_project: ['Looking at the project.', 'Checking.', 'Let me look.'],
+  query_screen: ['Looking at the screen.', 'Let me see.', 'One second, looking.'],
+  browse: ['Opening the browser.', 'Let me look.', 'One second.'],
+  file_task: ['Searching.', 'Let me find it.', 'Looking at the files.'],
+  communicate: ['I will prepare it.', 'Putting it together.', 'Got it.'],
+  system: ['Checking the settings.', 'Looking.', 'One second.'],
+  continue: ['Resuming.', 'OK, continuing.', 'Back to it.'],
+  chat: ['Yes, listening.', 'Sure.', 'Got it.'],
+};
+
 /** Named a coding backend out loud — say which one is picking it up. */
-const BACKEND_ACKNOWLEDGEMENTS: Record<string, string> = {
-  'claude-code': 'Передаю Клод Коду.',
-  codex: 'Передаю Кодексу.',
+const BACKEND_ACKNOWLEDGEMENTS: Record<string, [string, string]> = {
+  'claude-code': ['Передаю Клод Коду.', 'Handing it to Claude Code.'],
+  codex: ['Передаю Кодексу.', 'Handing it to Codex.'],
 };
 
 export interface AcknowledgementOptions {
@@ -49,7 +65,7 @@ export interface AcknowledgementOptions {
 }
 
 function defaultPick(options: readonly string[]): string {
-  return options[Math.floor(Math.random() * options.length)] ?? options[0] ?? 'Понял.';
+  return options[Math.floor(Math.random() * options.length)] ?? options[0] ?? tr('Понял.', 'Got it.');
 }
 
 /**
@@ -64,14 +80,14 @@ export function acknowledgementFor(
 ): string {
   const pick = options.pick ?? defaultPick;
 
-  if (decision.requestedBackend && BACKEND_ACKNOWLEDGEMENTS[decision.requestedBackend]) {
-    return BACKEND_ACKNOWLEDGEMENTS[decision.requestedBackend] as string;
-  }
+  const handoff = decision.requestedBackend ? BACKEND_ACKNOWLEDGEMENTS[decision.requestedBackend] : undefined;
+  if (handoff) return tr(handoff[0], handoff[1]);
 
-  const base = pick(ACKNOWLEDGEMENTS[decision.intent] ?? ACKNOWLEDGEMENTS.chat);
+  const table = byLanguage({ ru: ACKNOWLEDGEMENTS_RU, en: ACKNOWLEDGEMENTS_EN });
+  const base = pick(table[decision.intent] ?? table.chat);
 
   if (options.mentionProject !== false && decision.project && isProjectIntent(decision.intent)) {
-    return `${base.replace(/[.!]$/, '')} — проект ${decision.project}.`;
+    return `${base.replace(/[.!]$/, '')} — ${tr('проект', 'project')} ${decision.project}.`;
   }
   return base;
 }
@@ -88,5 +104,5 @@ function isProjectIntent(intent: JarvisIntent): boolean {
 export function clarificationFor(decision: RoutingDecision): string | null {
   if (decision.confidence >= 0.4) return null;
   if (decision.intent === 'continue') return null;
-  return 'Не понял, что именно сделать. Уточни?';
+  return tr('Не понял, что именно сделать. Уточни?', 'I am not sure what to do. Could you say it differently?');
 }

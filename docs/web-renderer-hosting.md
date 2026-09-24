@@ -1,5 +1,12 @@
 # Host the Workstation web renderer
 
+> **Rujarvis:** this page describes upstream Interpreter Workstation's release
+> infrastructure and is kept for reference. Rujarvis removed the official and
+> internal distribution profiles and their workflows — they pointed at Open
+> Interpreter's hosted services, telemetry and update feed. Rujarvis builds use
+> the community `product.json` and are installed from source; see
+> [docs/jarvis/install.md](jarvis/install.md).
+
 Workstation includes a static browser renderer built from the same React user
 interface as the desktop application. It can show the complete Workstation
 shell, the maintained conversation component, or a seeded demonstration. The

@@ -79,6 +79,13 @@ export interface ClaudeCodeBackendOptions {
   /** Enables computer use by handing the agent the desktop MCP server. */
   desktopMcpConfig?: string;
   /**
+   * Настройки Claude Code с хуком красных линий (`risk/gateHook.ts`).
+   *
+   * Без него агент не получает инструментов, которыми красную линию можно
+   * перейти молча: оболочки, записи навыков и своей папки на запись.
+   */
+  gateSettings?: string;
+  /**
    * Папка, в которой Джарвис живёт.
    *
    * Даётся агенту на чтение всегда, чтобы он знал о себе: свой код, свои
@@ -147,6 +154,8 @@ export function buildClaudeArgs(
     desktopMcpConfig?: string;
     /** Папка, в которой Джарвис живёт: его код, настройки, журнал, навыки. */
     homeDir?: string;
+    /** Настройки с хуком красных линий. */
+    gateSettings?: string;
   },
 ): string[] {
   const args = ['-p', '--output-format', 'stream-json', '--verbose'];
@@ -157,8 +166,9 @@ export function buildClaudeArgs(
   if (request.sessionId) {
     args.push('--resume', request.sessionId);
   }
+  args.push(...gateArgs(options.gateSettings));
 
-  // Собственная папка — всегда, независимо от того, что за работа.
+  // Собственная папка — в любой работе, если стоит хук красных линий.
   //
   // Человек попросил прямо: «дай ему права свободно читать собственную папку,
   // чтоб он всё знал о себе». Без этого агент заперт в папке задачи, и на
@@ -168,9 +178,10 @@ export function buildClaudeArgs(
   //
   // Это доступ на чтение к своему же коду и своим же данным, а не к чужим
   // файлам: папка одна и известна заранее.
-  if (options.homeDir && !sameFolder(options.homeDir, request.cwd)) {
-    args.push('--add-dir', options.homeDir);
-  }
+  //
+  // В режиме acceptEdits добавленная папка доступна и на запись, поэтому
+  // даётся только вместе с хуком: он спрашивает человека о правке там.
+  args.push(...homeArgs(options.homeDir, request.cwd, options.gateSettings));
 
   // Passed per run rather than registered once for the whole machine. A tool
   // that moves the mouse and types should reach the assistant's own agent, not
@@ -188,9 +199,18 @@ export function buildClaudeArgs(
     // Headless Claude Code withholds the web tools and anything that runs
     // commands unless they are named. Naming them is the difference between an
     // agent that can look something up mid-task and one that can only guess.
-    args.push('--allowedTools', toolsFor(request.capabilities).join(','));
+    args.push('--allowedTools', toolsFor(request.capabilities, Boolean(options.gateSettings)).join(','));
   }
   return args;
+}
+
+function gateArgs(gateSettings: string | undefined): string[] {
+  return gateSettings ? ['--settings', gateSettings] : [];
+}
+
+function homeArgs(homeDir: string | undefined, cwd: string | undefined, gateSettings: string | undefined): string[] {
+  if (!homeDir || !gateSettings || sameFolder(homeDir, cwd)) return [];
+  return ['--add-dir', homeDir];
 }
 
 /**
@@ -312,8 +332,15 @@ const BROWSER_TOOLS = [
   'mcp__jarvis-desktop__page_depth',
 ];
 
+/**
+ * Инструменты, которыми красную линию можно перейти, не назвав её: оболочка
+ * выполняет что угодно, навык ложится во все сессии Claude Code человека.
+ * Без хука красных линий (`risk/gateHook.ts`) они не выдаются.
+ */
+const UNGATED_FORBIDDEN = new Set(['Bash', 'mcp__jarvis-desktop__write_skill']);
+
 /** Что агенту дать под эту задачу. */
-export function toolsFor(capabilities: readonly JarvisCapability[]): string[] {
+export function toolsFor(capabilities: readonly JarvisCapability[], gated = true): string[] {
   const wanted = new Set(ALWAYS);
   const has = (name: JarvisCapability): boolean => capabilities.includes(name);
 
@@ -323,7 +350,7 @@ export function toolsFor(capabilities: readonly JarvisCapability[]): string[] {
   // Ни одного признака — значит разговор; хватает памяти и чтения.
   if (wanted.size === ALWAYS.length) for (const t of WINDOW_TOOLS) wanted.add(t);
 
-  return [...wanted];
+  return [...wanted].filter((tool) => gated || !UNGATED_FORBIDDEN.has(tool));
 }
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit']);
@@ -535,6 +562,7 @@ export class ClaudeCodeBackend implements AgentBackend {
           permissionMode,
           desktopMcpConfig: this.options.desktopMcpConfig,
           homeDir: this.options.homeDir,
+          gateSettings: this.options.gateSettings,
         }),
       cwd: request.cwd,
       timeoutMs: request.timeoutMs ?? this.options.defaultTimeoutMs ?? WORK_CEILING_MS,
@@ -577,7 +605,7 @@ export class ClaudeCodeBackend implements AgentBackend {
 
     const key: SessionKey = {
       cwd: request.cwd,
-      tools: toolsFor(request.capabilities).join(','),
+      tools: toolsFor(request.capabilities, Boolean(this.options.gateSettings)).join(','),
       permissionMode,
       mcpConfig: needsDesktopTools(request.capabilities) ? this.options.desktopMcpConfig : undefined,
       model: this.options.model,
@@ -597,9 +625,10 @@ export class ClaudeCodeBackend implements AgentBackend {
     const свежая = new LiveSession({
       key,
       command: path,
-      extraArgs: this.options.homeDir && !sameFolder(this.options.homeDir, request.cwd)
-        ? ['--add-dir', this.options.homeDir]
-        : [],
+      extraArgs: [
+        ...gateArgs(this.options.gateSettings),
+        ...homeArgs(this.options.homeDir, request.cwd, this.options.gateSettings),
+      ],
       consumeLine: (raw, emit) => consumeClaudeStreamLine(raw, createStreamState(), emit),
       env: subscriptionEnv(),
       // Молчание — предел работы, потолок — предел ожидания. Короткий запрос

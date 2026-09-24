@@ -20,6 +20,8 @@ export interface WhisperModelDefinition {
   id: WhisperModelId;
   label: string;
   description: string;
+  /** То же по-английски: для окна настроек в английском режиме. */
+  descriptionEn: string;
   assetName: string;
   rootDirName: string;
   /** Archive size in bytes, as served. */
@@ -33,8 +35,9 @@ const RELEASE_BASE = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/as
 export const WHISPER_MODELS: readonly WhisperModelDefinition[] = [
   {
     id: 'tiny',
-    label: 'Whisper Tiny (многоязычный)',
+    label: 'Whisper Tiny (multilingual)',
     description: 'Самый быстрый. Русский понимает, но путает слова — годится для слабых машин.',
+    descriptionEn: 'Fastest. Understands speech but mixes up words — for slow machines.',
     assetName: 'sherpa-onnx-whisper-tiny.tar.bz2',
     rootDirName: 'sherpa-onnx-whisper-tiny',
     downloadBytes: 116_204_861,
@@ -42,8 +45,9 @@ export const WHISPER_MODELS: readonly WhisperModelDefinition[] = [
   },
   {
     id: 'base',
-    label: 'Whisper Base (многоязычный)',
+    label: 'Whisper Base (multilingual)',
     description: 'Рекомендуемый баланс скорости и качества для русского на CPU.',
+    descriptionEn: 'Recommended balance of speed and quality on a CPU.',
     assetName: 'sherpa-onnx-whisper-base.tar.bz2',
     rootDirName: 'sherpa-onnx-whisper-base',
     downloadBytes: 207_557_382,
@@ -51,8 +55,9 @@ export const WHISPER_MODELS: readonly WhisperModelDefinition[] = [
   },
   {
     id: 'small',
-    label: 'Whisper Small (многоязычный)',
+    label: 'Whisper Small (multilingual)',
     description: 'Заметно точнее на длинных фразах, но втрое медленнее base на CPU.',
+    descriptionEn: 'Noticeably more accurate on long phrases, three times slower than base on a CPU.',
     assetName: 'sherpa-onnx-whisper-small.tar.bz2',
     rootDirName: 'sherpa-onnx-whisper-small',
     downloadBytes: 639_387_718,
@@ -60,8 +65,9 @@ export const WHISPER_MODELS: readonly WhisperModelDefinition[] = [
   },
   {
     id: 'turbo',
-    label: 'Whisper Turbo (многоязычный)',
+    label: 'Whisper Turbo (multilingual)',
     description: 'Качество уровня large при меньшей задержке. Нужна быстрая машина или GPU.',
+    descriptionEn: 'Large-level quality with lower latency. Needs a fast machine or a GPU.',
     assetName: 'sherpa-onnx-whisper-turbo.tar.bz2',
     rootDirName: 'sherpa-onnx-whisper-turbo',
     downloadBytes: 563_790_207,
@@ -69,8 +75,9 @@ export const WHISPER_MODELS: readonly WhisperModelDefinition[] = [
   },
   {
     id: 'medium',
-    label: 'Whisper Medium (многоязычный)',
+    label: 'Whisper Medium (multilingual)',
     description: 'Самый точный из доступных. Медленный на CPU, рассчитан на GPU.',
+    descriptionEn: 'The most accurate one. Slow on a CPU, meant for a GPU.',
     assetName: 'sherpa-onnx-whisper-medium.tar.bz2',
     rootDirName: 'sherpa-onnx-whisper-medium',
     downloadBytes: 1_931_372_882,

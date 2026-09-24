@@ -12,6 +12,7 @@
  * слово», «останови сервис после тестов») must not fire.
  */
 
+import { tr } from '../locale/language';
 import { normalizeForMatching, tokenize } from '../router/text';
 import { stripFiller } from './filler';
 
@@ -40,6 +41,10 @@ const CONTROL_PHRASES: Array<{ control: VoiceControl; phrases: string[] }> = [
       'останови', 'останови все', 'останови всё', 'остановите', 'отставить',
       'все хватит', 'да хватит', 'блядь хватит', 'стоп стоп', 'стоп стоп стоп',
       'тормози', 'заткнись', 'молчи', 'стоп джарвис', 'джарвис стоп',
+      // Английские — всегда, в любом режиме: остановка не должна зависеть от
+      // того, какой язык выбран в настройках.
+      'stop', 'stop it', 'stop that', 'stop now', 'stop stop', 'stop jarvis', 'jarvis stop',
+      'enough', 'halt', 'abort', 'stop everything', 'stop all',
     ],
   },
   {
@@ -47,6 +52,7 @@ const CONTROL_PHRASES: Array<{ control: VoiceControl; phrases: string[] }> = [
     phrases: [
       'отмена', 'отмени', 'отменяй', 'не надо', 'не делай это', 'не делай',
       'забудь', 'отбой', 'отставить',
+      'cancel', 'cancel that', 'cancel it', 'never mind', 'nevermind', 'forget it', 'don t',
     ],
   },
   {
@@ -54,6 +60,7 @@ const CONTROL_PHRASES: Array<{ control: VoiceControl; phrases: string[] }> = [
     phrases: [
       'пауза', 'паузу', 'на паузу', 'поставь на паузу', 'поставь паузу',
       'подожди', 'погоди', 'секунду', 'минуту', 'притормози', 'обожди',
+      'pause', 'pause it', 'wait', 'hold on', 'hang on', 'one second', 'one moment',
     ],
   },
   {
@@ -61,6 +68,7 @@ const CONTROL_PHRASES: Array<{ control: VoiceControl; phrases: string[] }> = [
     phrases: [
       'продолжай', 'продолжи', 'дальше', 'давай дальше', 'поехали',
       'продолжаем', 'продолжай дальше',
+      'continue', 'resume', 'go on', 'keep going', 'carry on',
     ],
   },
   {
@@ -79,6 +87,8 @@ const CONTROL_PHRASES: Array<{ control: VoiceControl; phrases: string[] }> = [
       'тишина', 'тишину', 'тихо', 'тише', 'помолчи', 'помолчите', 'молчание',
       'не говори', 'не говори ничего', 'без голоса',
       'замолкни', 'прекрати говорить', 'хватит говорить',
+      'silence', 'quiet', 'be quiet', 'shut up', 'shush', 'hush', 'stop talking',
+      'mute', 'no voice',
     ],
   },
 ];
@@ -91,7 +101,7 @@ const CONTROL_PHRASES: Array<{ control: VoiceControl; phrases: string[] }> = [
  * «показывай всё» — настоящая команда, и общим списком их выбрасывать нельзя.
  * Поэтому они живут здесь, а не в `SPEECH_FILLER`.
  */
-const IGNORABLE_HERE = ['так', 'ладно', 'okay', 'ок', 'окей', 'да', 'нет', 'все'];
+const IGNORABLE_HERE = ['так', 'ладно', 'okay', 'ок', 'окей', 'да', 'нет', 'все', 'ok', 'yes', 'no', 'right', 'please'];
 
 const MAX_CONTROL_TOKENS = 4;
 
@@ -158,21 +168,21 @@ export function applyVoiceControl(match: ControlMatch, target: ControlTarget): C
       target.stopSpeaking();
       const stopped = target.cancelForeground();
       return stopped
-        ? { action: 'stopped', spoken: 'Остановил.' }
-        : { action: 'nothing', spoken: 'Нечего останавливать.' };
+        ? { action: 'stopped', spoken: tr('Остановил.', 'Stopped.') }
+        : { action: 'nothing', spoken: tr('Нечего останавливать.', 'Nothing to stop.') };
     }
     case 'pause': {
       target.stopSpeaking();
       const paused = target.pauseForeground();
       return paused
-        ? { action: 'paused', spoken: 'Пауза.' }
-        : { action: 'nothing', spoken: 'Сейчас нечего ставить на паузу.' };
+        ? { action: 'paused', spoken: tr('Пауза.', 'Paused.') }
+        : { action: 'nothing', spoken: tr('Сейчас нечего ставить на паузу.', 'Nothing to pause right now.') };
     }
     case 'resume': {
       const resumed = target.resumeLast();
       return resumed
-        ? { action: 'resumed', spoken: 'Продолжаю.' }
-        : { action: 'nothing', spoken: 'Нечего продолжать.' };
+        ? { action: 'resumed', spoken: tr('Продолжаю.', 'Resuming.') }
+        : { action: 'nothing', spoken: tr('Нечего продолжать.', 'Nothing to resume.') };
     }
     case 'mute': {
       target.stopSpeaking();

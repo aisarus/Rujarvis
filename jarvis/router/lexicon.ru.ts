@@ -158,10 +158,6 @@ export const BACKEND_MENTIONS: Array<{ backend: BackendId; stems: string[] }> = 
     backend: 'codex',
     stems: ['кодекс', 'codex', 'кодексом', 'кодексу', 'кодекса'],
   },
-  {
-    backend: 'interpreter',
-    stems: ['интерпретер', 'interpreter', 'воркстейшн', 'workstation'],
-  },
 ];
 
 /** Explicit read-only intent: «только посмотри», «ничего не ломай». */

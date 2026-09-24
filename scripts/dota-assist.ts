@@ -41,9 +41,10 @@ const ЗДЕСЬ = dirname(fileURLToPath(import.meta.url));
 import { advise, createMemory, type OverlayView } from '../jarvis/dota/advice';
 import { loadBuildBook, type BuildBook } from '../jarvis/dota/builds';
 import { startReceiver, type Receiver } from '../jarvis/dota/receiver';
+import { jarvisOutputDir } from '../jarvis/setup/paths';
 import { applyPacket, createState, type DotaState } from '../jarvis/dota/state';
 
-const КОРЕНЬ = argv[2] ?? 'C:/Users/ariel/Desktop/Джарвис/разведка-доты';
+const КОРЕНЬ = argv[2] ?? join(jarvisOutputDir(), 'разведка-доты');
 
 function метка(): string {
   const д = new Date();

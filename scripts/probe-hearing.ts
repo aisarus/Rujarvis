@@ -13,10 +13,12 @@ import { createRequire } from 'node:module';
 // В приложении этот код живёт в CommonJS-сборке, здесь мост нужен явно.
 (globalThis as unknown as { require: NodeRequire }).require = createRequire(import.meta.url);
 
-import { synthesizeSpeech } from '../server/services/ttsService';
-import { createGpuTranscriber, waitForWhisperServer } from '../electron/jarvis/gpuTranscriber';
-import { DEFAULT_TTS_MODEL_ID } from '../shared/types/tts';
+import { createGpuTranscriber, waitForWhisperServer } from '../app/gpuTranscriber';
+import { jarvisPaths } from '../jarvis/setup/paths';
+import { DEFAULT_VOICE, Speaker } from '../jarvis/voice/tts';
 import type { Transcriber } from '../jarvis/voice/session';
+
+const speaker = new Speaker(jarvisPaths().voiceModels, DEFAULT_VOICE.ru);
 
 const PHRASES = [
   // Пробуждение и остановка — важнее всего: без них не работает ничего.
@@ -87,17 +89,9 @@ async function main(): Promise<void> {
 
   let exact = 0;
   for (const phrase of PHRASES) {
-    const spoken = await synthesizeSpeech({
-      text: phrase,
-      modelId: DEFAULT_TTS_MODEL_ID,
-      provider: 'cpu',
-      voiceId: 0,
-      speed: 1,
-      pitch: 0,
-      autotuneEnabled: false,
-    });
+    const spoken = await speaker.say(phrase);
 
-    const { samples, rate } = samplesFromWav(spoken.wavBuffer);
+    const { samples, rate } = samplesFromWav(spoken.wav);
     const started = Date.now();
     const { text } = await transcriber.transcribe(samples, rate);
     const heard = text.trim();

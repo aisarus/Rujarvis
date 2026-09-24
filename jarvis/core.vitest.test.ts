@@ -117,7 +117,7 @@ function harness(options: {
   const approve = { value: true };
 
   const backends = new BackendManager();
-  for (const id of ['interpreter', 'claude-code', 'codex'] as const) {
+  for (const id of ['claude-code', 'codex', 'openai-compatible'] as const) {
     backends.register(fakeBackend(id, recorded, options.respond?.[id]));
   }
 
@@ -326,7 +326,7 @@ describe('Test G — «А пока открой Telegram» during a long coding 
 
     expect(first.task.state).toBe('running');
     expect(first.task.foreground).toBe(false);
-    expect(h.recorded.map((entry) => entry.backend)).toEqual(['claude-code', 'interpreter']);
+    expect(h.recorded.map((entry) => entry.backend)).toEqual(['claude-code', 'claude-code']);
   });
 });
 
@@ -354,7 +354,7 @@ describe('Test H — «Стоп» during a running task', () => {
 
   it('stops only the foreground task, leaving background work alone', async () => {
     const h = harness({
-      respond: { 'claude-code': () => 'hang', interpreter: () => 'hang' },
+      respond: { 'claude-code': () => 'hang', 'openai-compatible': () => 'hang' },
     });
 
     const coding = await h.core.handleUtterance('Почини билд через Клод Код');
@@ -419,7 +419,7 @@ describe('risk gate', () => {
   it('refuses sensitive work when there is no way to ask', async () => {
     const recorded: Recorded[] = [];
     const backends = new BackendManager();
-    backends.register(fakeBackend('interpreter', recorded));
+    backends.register(fakeBackend('claude-code', recorded));
     const core = new JarvisCore({
       backends,
       tasks: new TaskManager({ backends }),
@@ -527,7 +527,7 @@ describe('the local router model stays optional', () => {
     const h2 = harness();
     const refine = vi.fn(async () => null);
     const backends = new BackendManager();
-    for (const id of ['interpreter', 'claude-code', 'codex'] as const) {
+    for (const id of ['claude-code', 'codex', 'openai-compatible'] as const) {
       backends.register(fakeBackend(id, h2.recorded));
     }
     const core2 = new JarvisCore({
@@ -562,7 +562,7 @@ describe('failure reporting', () => {
           text: '',
           error: 'Не удалось запустить: spawn ENOENT\n  at ChildProcess.handle',
         }),
-        interpreter: () => ({
+        'openai-compatible': () => ({
           ok: false,
           text: '',
           error: 'Не удалось запустить: spawn ENOENT\n  at ChildProcess.handle',
@@ -800,7 +800,7 @@ describe('разговор помнит свой ответ', () => {
   it('сказанное вслух ложится в состояние мира', async () => {
     const h = harness({
       respond: {
-        interpreter: () => ({ ok: true, text: 'Лев Толстой.' }),
+        'openai-compatible': () => ({ ok: true, text: 'Лев Толстой.' }),
         'claude-code': () => ({ ok: true, text: 'Лев Толстой.' }),
         codex: () => ({ ok: true, text: 'Лев Толстой.' }),
       },
@@ -828,7 +828,7 @@ describe('режим плана', () => {
   function сПланом() {
     return harness({
       respond: {
-        interpreter: планОтвет,
+        'openai-compatible': планОтвет,
         'claude-code': планОтвет,
         codex: планОтвет,
       },

@@ -28,7 +28,7 @@
  *
  *     NODE_OPTIONS=--max-old-space-size=4096 pnpm exec tsx scripts/dota-overlay-shot.ts
  */
-import { chromium } from '@playwright/test';
+import { chromium } from 'playwright';
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { argv } from 'node:process';
 import { createInterface } from 'node:readline';
@@ -40,7 +40,11 @@ import { readPacket } from '../jarvis/dota/packet';
 import { applyPacket, createState } from '../jarvis/dota/state';
 
 const ЗДЕСЬ = dirname(fileURLToPath(import.meta.url));
-const ПАПКА = argv[2] ?? 'C:/Users/ariel/Desktop/Джарвис/разведка-доты/запись-2026-09-21-1255';
+const ПАПКА = argv[2];
+if (!ПАПКА) {
+  console.error('Укажите папку записи: разведка-доты/запись-…');
+  process.exit(2);
+}
 const КУДА = join(ПАПКА, 'снимки-оверлея');
 const СТРАНИЦА = join(ЗДЕСЬ, '..', 'jarvis', 'dota', 'overlay', 'view.html');
 

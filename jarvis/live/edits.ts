@@ -15,7 +15,13 @@
  *
  * Разбор устроен как у прямых команд (`jarvis/control/commands.ts`): точное
  * совпадение с очисткой заполнителей. Ошибка в сторону «не узнал» стоит секунды
- * ожидания; в обратную — испорченной сцены.
+ * ожидания; в обратную — испорченной сцены. Поэтому объект, названный по имени
+ * и не найденный в сцене, — отказ, а не «тогда возьму выделенный»: «удали
+ * файл» не должно стирать то, что сейчас выделено.
+ *
+ * Таблицы — на обоих языках сразу: сцена одна, и человек, переключивший язык,
+ * не должен терять правки. Мост зовёт разбор только после прямых команд и
+ * только когда блендер жив, так что «scroll down» сюда не доходит.
  *
  * ## Замер на живом окне
  *
@@ -29,41 +35,47 @@
  * дороже движения вдвое: там создаётся материал и трогаются узлы.
  */
 
-const FILLER = ['ну', 'вот', 'уже', 'пожалуйста', 'давай', 'сейчас', 'там', 'же', 'ка'];
+import { tr } from '../locale/language';
 
-const COLOURS: Record<string, [string, string]> = {
-  красн: ['0.9, 0.1, 0.1', 'красным'],
-  син: ['0.1, 0.2, 0.9', 'синим'],
-  зелен: ['0.1, 0.8, 0.2', 'зелёным'],
-  желт: ['0.95, 0.85, 0.1', 'жёлтым'],
-  бел: ['0.95, 0.95, 0.95', 'белым'],
-  черн: ['0.05, 0.05, 0.05', 'чёрным'],
-  оранжев: ['0.95, 0.45, 0.1', 'оранжевым'],
-  фиолетов: ['0.5, 0.2, 0.8', 'фиолетовым'],
-  розов: ['0.95, 0.5, 0.7', 'розовым'],
-  сер: ['0.5, 0.5, 0.5', 'серым'],
-};
+const FILLER = [
+  'ну', 'вот', 'уже', 'пожалуйста', 'давай', 'сейчас', 'там', 'же', 'ка',
+  'please', 'now', 'just', 'the', 'a', 'an', 'can', 'you', 'could',
+];
+
+interface Colour {
+  stems: string[];
+  rgb: string;
+  ru: string;
+  en: string;
+}
+
+const COLOURS: Colour[] = [
+  { stems: ['красн', 'red'], rgb: '0.9, 0.1, 0.1', ru: 'красным', en: 'red' },
+  { stems: ['син', 'blue'], rgb: '0.1, 0.2, 0.9', ru: 'синим', en: 'blue' },
+  { stems: ['зелен', 'green'], rgb: '0.1, 0.8, 0.2', ru: 'зелёным', en: 'green' },
+  { stems: ['желт', 'yellow'], rgb: '0.95, 0.85, 0.1', ru: 'жёлтым', en: 'yellow' },
+  { stems: ['бел', 'white'], rgb: '0.95, 0.95, 0.95', ru: 'белым', en: 'white' },
+  { stems: ['черн', 'black'], rgb: '0.05, 0.05, 0.05', ru: 'чёрным', en: 'black' },
+  { stems: ['оранжев', 'orange'], rgb: '0.95, 0.45, 0.1', ru: 'оранжевым', en: 'orange' },
+  { stems: ['фиолетов', 'purple', 'violet'], rgb: '0.5, 0.2, 0.8', ru: 'фиолетовым', en: 'purple' },
+  { stems: ['розов', 'pink'], rgb: '0.95, 0.5, 0.7', ru: 'розовым', en: 'pink' },
+  { stems: ['сер', 'gray', 'grey'], rgb: '0.5, 0.5, 0.5', ru: 'серым', en: 'grey' },
+];
+
+/** Английские основы короткие: «red» не должно ловить «reduce». */
+function colourMatches(word: string, stem: string): boolean {
+  return /^[a-z]+$/u.test(stem) ? word === stem : word.startsWith(stem);
+}
 
 const NUMBERS: Record<string, number> = {
-  один: 1,
-  одну: 1,
-  два: 2,
-  две: 2,
-  три: 3,
-  четыре: 4,
-  пять: 5,
-  шесть: 6,
-  семь: 7,
-  восемь: 8,
-  девять: 9,
-  десять: 10,
-  пятнадцать: 15,
-  двадцать: 20,
-  тридцать: 30,
-  сорок: 40,
-  пятьдесят: 50,
-  девяносто: 90,
-  сто: 100,
+  один: 1, одну: 1, два: 2, две: 2, три: 3, четыре: 4, пять: 5, шесть: 6, семь: 7,
+  восемь: 8, девять: 9, десять: 10, пятнадцать: 15, двадцать: 20, тридцать: 30,
+  сорок: 40, пятьдесят: 50, шестьдесят: 60, семьдесят: 70, восемьдесят: 80,
+  девяносто: 90, сто: 100,
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+  ten: 10, fifteen: 15, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60,
+  seventy: 70, eighty: 80, ninety: 90, hundred: 100,
+  twice: 2, double: 2, half: 2,
 };
 
 /**
@@ -78,10 +90,24 @@ const VERBS = [
   'подними', 'опусти', 'поверни', 'разверни', 'крутни', 'увеличь', 'уменьши',
   'удали', 'спрячь', 'скрой', 'покажи', 'больше', 'меньше', 'выше', 'ниже',
   'вверх', 'вниз', 'вправо', 'влево', 'анимацию', 'анимация', 'играй',
-  'останови', 'запусти', 'включи', 'выключи', 'стоп',
+  'останови', 'запусти', 'включи', 'выключи', 'стоп', 'градусов', 'градуса',
+  'make', 'paint', 'color', 'colour', 'to', 'by', 'times', 'raise', 'lower',
+  'move', 'up', 'down', 'right', 'left', 'rotate', 'turn', 'spin', 'scale',
+  'bigger', 'smaller', 'larger', 'enlarge', 'shrink', 'delete', 'remove', 'hide',
+  'show', 'play', 'animation', 'cancel', 'degrees', 'units', 'higher', 'it',
 ];
 
-const PRONOUNS = ['её', 'ее', 'его', 'это', 'эту', 'этот', 'их', 'её-то'];
+const PRONOUNS = [
+  'её', 'ее', 'его', 'это', 'эту', 'этот', 'их', 'её-то', 'выделенное', 'выделенный',
+  'it', 'this', 'that', 'them', 'selected', 'selection', 'object',
+];
+
+/**
+ * Не предметы сцены. «Удали файл», «покажи лог» при живом блендере — просьбы
+ * к другим слоям или к агенту, и отвечать на них правкой сцены нельзя.
+ */
+const NOT_SCENE =
+  /(?:^|\s)(?:файл|папк|письм|сообщени|лог(?:\s|$)|план(?:\s|$)|окно|работу|сетк|страниц|вкладк|(?:file|folder|email|message|log|plan|window|page|tab|grid)s?(?:\s|$))/u;
 
 export interface LiveEdit {
   kind: 'python';
@@ -99,12 +125,23 @@ function words(utterance: string): string[] {
     .filter((word) => word && !FILLER.includes(word));
 }
 
-/** Число словом или цифрой. `null` — числа не назвали. */
+/**
+ * Число словом или цифрой. `null` — числа не назвали.
+ *
+ * Десятки складываются с единицами: «сорок пять» — это 45, а не 40, как было,
+ * пока брали первое попавшееся число.
+ */
 function numberIn(parts: readonly string[]): number | null {
-  for (const part of parts) {
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
     if (/^\d+$/u.test(part)) return Number(part);
     const named = NUMBERS[part];
-    if (named !== undefined) return named;
+    if (named === undefined) continue;
+    const next = NUMBERS[parts[index + 1] ?? ''];
+    if (named >= 20 && named % 10 === 0 && named < 100 && next !== undefined && next < 10) {
+      return named + next;
+    }
+    return named;
   }
   return null;
 }
@@ -112,8 +149,9 @@ function numberIn(parts: readonly string[]): number | null {
 /**
  * Кого правим.
  *
- * «Её», «его», «это» — активный объект. Названное вслух ищется по имени, и
- * поиск нестрогий: человек говорит «ракету», а объект зовётся «Ракета_корпус».
+ * «Её», «его», «это», «it» — активный объект. Названное вслух ищется по имени,
+ * и поиск нестрогий: человек говорит «ракету», а объект зовётся
+ * «Ракета_корпус». Не нашлось — отказ, а не подмена выделенным.
  */
 function targetCode(parts: readonly string[]): string {
   const named = parts.find(
@@ -122,18 +160,26 @@ function targetCode(parts: readonly string[]): string {
       !PRONOUNS.includes(word) &&
       !(word in NUMBERS) &&
       !VERBS.includes(word) &&
-      !Object.keys(COLOURS).some((stem) => word.startsWith(stem)),
+      !COLOURS.some((colour) => colour.stems.some((stem) => colourMatches(word, stem))),
   );
   if (!named) return 'bpy.context.active_object';
 
   // Отрезаем одно окончание, не два. «Ракету» → «ракет» находит «Ракета» и
   // «Ракета_корпус»; «раке» нашло бы ещё и «ракушку».
-  const stem = named.slice(0, Math.max(4, named.length - 1));
-  return `next((o for o in bpy.data.objects if ${JSON.stringify(stem)} in o.name.lower()), bpy.context.active_object)`;
+  const stem = /^[a-z]+$/u.test(named) ? named : named.slice(0, Math.max(4, named.length - 1));
+  return `next((o for o in bpy.data.objects if ${JSON.stringify(stem)} in o.name.lower()), None)`;
 }
 
 const HEAD = 'import bpy\nfrom math import radians\n';
-const GUARD = 'if о is None:\n    raise RuntimeError("не понял, что править: ничего не выбрано")\n';
+
+function guard(): string {
+  const message = tr('не нашёл, что править', 'nothing to edit found');
+  return `if о is None:\n    raise RuntimeError(${JSON.stringify(message)})\n`;
+}
+
+function onTarget(target: string, body: string): string {
+  return `${HEAD}о = ${target}\n${guard()}${body}`;
+}
 
 export function parseLiveEdit(utterance: string): LiveEdit | null {
   const parts = words(utterance);
@@ -141,105 +187,108 @@ export function parseLiveEdit(utterance: string): LiveEdit | null {
   const joined = parts.join(' ');
 
   // Анимация — раньше остального: «останови анимацию» не должно попасть в
-  // таблицу движения.
-  if (/(играй|запусти|включи) анимаци/u.test(joined)) {
-    return { kind: 'python', code: `${HEAD}bpy.ops.screen.animation_play()`, said: 'Играю.' };
+  // таблицу движения. «Stop animation» по-английски не ловим: «stop» —
+  // красное слово и перехватывается раньше любых разборов.
+  if (/(играй|запусти|включи) анимаци|play (the )?animation|start (the )?animation/u.test(joined)) {
+    return { kind: 'python', code: `${HEAD}bpy.ops.screen.animation_play()`, said: tr('Играю.', 'Playing.') };
   }
-  if (/(останови|стоп|выключи) анимаци/u.test(joined)) {
+  if (/(останови|стоп|выключи) анимаци|cancel (the )?animation|end (the )?animation/u.test(joined)) {
     return {
       kind: 'python',
       code: `${HEAD}bpy.ops.screen.animation_cancel(restore_frame=False)`,
-      said: 'Остановил.',
+      said: tr('Остановил.', 'Stopped.'),
     };
   }
+
+  if (NOT_SCENE.test(joined)) return null;
 
   const rest = parts.filter((word) => !VERBS.includes(word));
   const target = targetCode(rest);
 
   // Цвет.
-  const colour = Object.entries(COLOURS).find(([stem]) =>
-    rest.some((word) => word.startsWith(stem)),
+  const colour = COLOURS.find((entry) =>
+    rest.some((word) => entry.stems.some((stem) => colourMatches(word, stem))),
   );
-  if (colour && /сделай|покрась|закрась|цвет/u.test(joined)) {
-    const [, pair] = colour;
-    const [rgb, said] = pair;
+  if (colour && /сделай|покрась|закрась|цвет|\bmake\b|\bpaint\b|\bcolou?r\b|\bturn\b/u.test(joined)) {
     return {
       kind: 'python',
-      code:
-        `${HEAD}о = ${target}\n${GUARD}` +
+      code: onTarget(
+        target,
         'м = о.active_material or bpy.data.materials.new("Цвет")\n' +
-        'if not о.data.materials: о.data.materials.append(м)\n' +
-        'м.use_nodes = True\n' +
-        'у = м.node_tree.nodes.get("Principled BSDF")\n' +
-        `if у: у.inputs[0].default_value = (${rgb}, 1)\n` +
-        `м.diffuse_color = (${rgb}, 1)\n` +
-        'print("покрасил", о.name)',
-      said: `Сделал ${said}.`,
+          'if not о.data.materials: о.data.materials.append(м)\n' +
+          'м.use_nodes = True\n' +
+          'у = м.node_tree.nodes.get("Principled BSDF")\n' +
+          `if у: у.inputs[0].default_value = (${colour.rgb}, 1)\n` +
+          `м.diffuse_color = (${colour.rgb}, 1)\n` +
+          'print("покрасил", о.name)',
+      ),
+      said: tr(`Сделал ${colour.ru}.`, `Made it ${colour.en}.`),
     };
   }
 
-  // Движение.
+  // Движение. Английским нужен глагол: голое «up» или «down» — это чаще
+  // клавиша или прокрутка, чем просьба к сцене.
   const moves: Array<[RegExp, string]> = [
-    [/подними|вверх|выше/u, 'location.z += '],
-    [/опусти|вниз|ниже/u, 'location.z -= '],
-    [/вправо/u, 'location.x += '],
-    [/влево/u, 'location.x -= '],
+    [/подними|вверх|выше|\braise\b|move (it )?up|\bhigher\b/u, 'location.z += '],
+    [/опусти|вниз|ниже|\blower\b|move (it )?down/u, 'location.z -= '],
+    [/вправо|move (it )?(to the )?right/u, 'location.x += '],
+    [/влево|move (it )?(to the )?left/u, 'location.x -= '],
   ];
   const move = moves.find(([pattern]) => pattern.test(joined));
   if (move) {
     const by = numberIn(rest) ?? 1;
     return {
       kind: 'python',
-      code: `${HEAD}о = ${target}\n${GUARD}о.${move[1]}${by}\nprint("сдвинул", о.name)`,
-      said: 'Сдвинул.',
+      code: onTarget(target, `о.${move[1]}${by}\nprint("сдвинул", о.name)`),
+      said: tr('Сдвинул.', 'Moved.'),
     };
   }
 
   // Поворот.
-  if (/поверни|разверни|крутни/u.test(joined)) {
+  if (/поверни|разверни|крутни|\brotate\b|\bspin\b|turn (it|this|that)\b/u.test(joined)) {
     const by = numberIn(rest) ?? 90;
     return {
       kind: 'python',
-      code: `${HEAD}о = ${target}\n${GUARD}о.rotation_euler.z += radians(${by})\nprint("повернул", о.name)`,
-      said: `Повернул на ${by}.`,
+      code: onTarget(target, `о.rotation_euler.z += radians(${by})\nprint("повернул", о.name)`),
+      said: tr(`Повернул на ${by}.`, `Rotated by ${by}.`),
     };
   }
 
   // Размер.
-  if (/увеличь|уменьши/u.test(joined)) {
+  const bigger = /увеличь|\bbigger\b|\blarger\b|\benlarge\b|scale (it )?up/u.test(joined);
+  const smaller = /уменьши|\bsmaller\b|\bshrink\b|scale (it )?down|\bhalf\b/u.test(joined);
+  if (bigger || smaller) {
     const by = numberIn(rest) ?? 2;
-    const factor = /уменьши/u.test(joined) ? `1/${by}` : `${by}`;
+    const factor = smaller ? `1/${by}` : `${by}`;
     return {
       kind: 'python',
-      code:
-        `${HEAD}о = ${target}\n${GUARD}` +
-        `к = ${factor}\nо.scale = tuple(з * к for з in о.scale)\nprint("размер", о.name)`,
-      said: 'Готово.',
+      code: onTarget(target, `к = ${factor}\nо.scale = tuple(з * к for з in о.scale)\nprint("размер", о.name)`),
+      said: tr('Готово.', 'Done.'),
     };
   }
 
   // Видимость и удаление.
-  if (/^удали/u.test(joined)) {
+  if (/^(удали|delete|remove)(?=\s|$)/u.test(joined)) {
     return {
       kind: 'python',
-      code: `${HEAD}о = ${target}\n${GUARD}bpy.data.objects.remove(о, do_unlink=True)\nprint("удалил")`,
-      said: 'Удалил.',
+      code: onTarget(target, 'bpy.data.objects.remove(о, do_unlink=True)\nprint("удалил")'),
+      said: tr('Удалил.', 'Deleted.'),
     };
   }
-  if (/^(спрячь|скрой)/u.test(joined)) {
+  if (/^(спрячь|скрой|hide)(?=\s|$)/u.test(joined)) {
     return {
       kind: 'python',
-      code: `${HEAD}о = ${target}\n${GUARD}о.hide_viewport = True\nprint("спрятал", о.name)`,
-      said: 'Спрятал.',
+      code: onTarget(target, 'о.hide_viewport = True\nprint("спрятал", о.name)'),
+      said: tr('Спрятал.', 'Hidden.'),
     };
   }
   // «Покажи» — только про объект. «Покажи папку», «покажи лог», «покажи план»
-  // разбирают другие слои, и перехватывать их отсюда нельзя.
-  if (/^покажи/u.test(joined) && !/папк|файл|лог|план|окно|работу|сетк/u.test(joined)) {
+  // разбирают другие слои (отсечены выше, NOT_SCENE).
+  if (/^(покажи|show|unhide)(?=\s|$)/u.test(joined)) {
     return {
       kind: 'python',
-      code: `${HEAD}о = ${target}\n${GUARD}о.hide_viewport = False\nprint("показал", о.name)`,
-      said: 'Показал.',
+      code: onTarget(target, 'о.hide_viewport = False\nprint("показал", о.name)'),
+      said: tr('Показал.', 'Shown.'),
     };
   }
 

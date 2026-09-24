@@ -3,8 +3,8 @@
  *
  * Jarvis core never talks to a model vendor directly. It talks to a backend,
  * and a backend is whatever can turn a request into a stream of events and a
- * result: the Workstation's own Open Interpreter runtime, an installed Claude
- * Code CLI, an installed Codex CLI, or an OpenAI-compatible endpoint.
+ * result: an installed Claude Code CLI, an installed Codex CLI, or an
+ * OpenAI-compatible endpoint.
  *
  * Adding a vendor means adding an adapter here, never touching Jarvis core.
  */
@@ -16,7 +16,6 @@ import type {
 } from '../types';
 
 export const BACKEND_IDS = [
-  'interpreter',
   'claude-code',
   'codex',
   'openai-compatible',

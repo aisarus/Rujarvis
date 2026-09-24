@@ -7,22 +7,34 @@
  * ## Две роли в одном файле
  *
  * Рабочий стол и разговор — разные наборы инструментов, но один и тот же
- * пусковой скрипт `desktop-mcp.cmd` и одна и та же сборка. Заводить второй
- * скрипт значило бы держать в системе ещё один файл, который можно забыть
- * обновить.
+ * собранный `mcp.cjs` (см. `launch.ts`). Вторую сборку пришлось бы
+ * не забывать обновлять.
  *
  * Роль читается из окружения, а ветка берётся **отложенным** `import`: рабочий
  * сервер при загрузке поднимает драйвер рабочего стола и заводит временные
  * папки, и разговору это всё не нужно ни секунды.
  */
-const роль = process.env.JARVIS_MCP_ROLE?.trim();
+import { setLanguage } from '../locale/language';
 
+// Язык приходит от приложения: от него зависят названия разделов в папке
+// ассистента, и сервер должен звать их так же, как их видит человек.
+setLanguage(process.env.JARVIS_LANGUAGE === 'en' ? 'en' : 'ru');
+
+const роль = process.argv[2] === 'gate' ? 'gate' : process.env.JARVIS_MCP_ROLE?.trim();
+
+// Третья роль — не сервер, а хук PreToolUse (`risk/gateHook.ts`): Claude Code
+// зовёт его перед каждым инструментом агента. Живёт в той же сборке, чтобы не
+// заводить ещё один файл, который надо собирать и находить.
 const запуск =
-  роль === 'talk'
-    ? import('../dialogue/talkMcpServer').then((m) => m.runTalkMcpServer())
-    : import('./mcpServer').then((m) => m.runDesktopMcpServer());
+  роль === 'gate'
+    ? import('../risk/gateHook').then((m) => m.runGateHook(process.argv[3]))
+    : роль === 'talk'
+      ? import('../dialogue/talkMcpServer').then((m) => m.runTalkMcpServer())
+      : import('./mcpServer').then((m) => m.runDesktopMcpServer());
 
 запуск.catch((error: unknown) => {
-  console.error(`[jarvis:${роль === 'talk' ? 'talk' : 'desktop'}] сервер не запустился:`, error);
-  process.exit(1);
+  console.error(`[jarvis:${роль ?? 'desktop'}] не запустился:`, error);
+  // Для хука код 2 значит «запретить»: любой другой Claude Code считает
+  // сбоем хука и пропускает действие — то есть открывает красную линию.
+  process.exit(роль === 'gate' ? 2 : 1);
 });

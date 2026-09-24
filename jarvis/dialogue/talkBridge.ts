@@ -239,7 +239,8 @@ function readRequest(file: string): TalkRequest | null {
     const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
     if (!parsed || typeof parsed !== 'object') return null;
     const request = parsed as Partial<TalkRequest>;
-    if (typeof request.id !== 'string') return null;
+    // id идёт в имя файла ответа: из чужого процесса мог прийти и «../../x».
+    if (typeof request.id !== 'string' || !/^[a-z0-9-]{1,64}$/iu.test(request.id)) return null;
     if (!ВИДЫ.has(request.kind as TalkCommandKind)) return null;
     return {
       id: request.id,

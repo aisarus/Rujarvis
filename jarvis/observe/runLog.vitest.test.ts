@@ -20,8 +20,8 @@ describe('строка на событие', () => {
     ).toBe('claude-code ОШИБКА (откатится): process exited with 1');
 
     expect(
-      lineFor({ type: 'error', backend: 'interpreter', message: 'нет ключа', retryable: false }),
-    ).toBe('interpreter ОШИБКА: нет ключа');
+      lineFor({ type: 'error', backend: 'codex', message: 'нет ключа', retryable: false }),
+    ).toBe('codex ОШИБКА: нет ключа');
   });
 
   it('длинный ответ не режет — журнал для разбора, а не для чтения вслух', () => {
@@ -45,9 +45,9 @@ describe('строка на событие', () => {
   it('у провала называет причину, а не только факт', () => {
     const line = lineFor({
       type: 'completed',
-      backend: 'interpreter',
+      backend: 'codex',
       result: {
-        ok: false, backend: 'interpreter', text: '', durationMs: 1_000,
+        ok: false, backend: 'codex', text: '', durationMs: 1_000,
         filesChanged: [], commands: [], error: 'API Error: 401',
       },
     });
@@ -137,7 +137,7 @@ describe('шапка прогона', () => {
     const head = summarise({
       title: 'Мультяшная ракета',
       prompt: 'Открой блендер и сделай ракету',
-      cwd: 'C:/Users/ariel/Desktop',
+      cwd: 'C:/Users/user/Desktop',
       capabilities: ['computer', 'files'],
       order: ['claude-code', 'codex'],
       rationale: 'Задача про экран',

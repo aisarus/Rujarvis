@@ -59,3 +59,27 @@ describe('опасные совпадения', () => {
     expect(parseDictationEdit('исправь на следующей неделе в среду')).toBe(null);
   });
 });
+
+describe('dictation edits in English', () => {
+  it('deletes the last word and the line', () => {
+    expect(parseDictationEdit('delete last word', 'en')).toEqual({ kind: 'key', keys: 'ctrl+backspace' });
+    expect(parseDictationEdit('Delete line.', 'en')?.kind).toBe('keys');
+  });
+
+  it('breaks lines and paragraphs', () => {
+    expect(parseDictationEdit('new line', 'en')).toEqual({ kind: 'key', keys: 'enter' });
+    expect(parseDictationEdit('new paragraph', 'en')).toEqual({ kind: 'keys', keys: ['enter', 'enter'] });
+  });
+
+  it('replaces the last word only with an explicit verb', () => {
+    expect(parseDictationEdit('correct to Monday', 'en')).toEqual({ kind: 'replace', text: 'monday' });
+    // «I mean» и «no» — обычные слова текста, а не правка.
+    expect(parseDictationEdit('i mean monday', 'en')).toBeNull();
+    expect(parseDictationEdit('replace with the whole new sentence', 'en')).toBeNull();
+  });
+
+  it('держит таблицы языков раздельно: чужая фраза печатается буквами', () => {
+    expect(parseDictationEdit('new line', 'ru')).toBeNull();
+    expect(parseDictationEdit('новая строка', 'en')).toBeNull();
+  });
+});

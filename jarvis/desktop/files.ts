@@ -13,11 +13,13 @@
  */
 
 import { execFile } from 'node:child_process';
-import { constants } from 'node:fs';
-import { access, mkdir, readdir, rename, copyFile, stat, unlink } from 'node:fs/promises';
+import { constants, existsSync } from 'node:fs';
+import { access, cp, mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+
+import { currentLanguage, type Language } from '../locale/language';
 
 const run = promisify(execFile);
 
@@ -29,17 +31,50 @@ const LIST_LIMIT = 40;
  *
  * Одна куча из картинок, роликов и документов перестаёт быть находимой уже на
  * втором десятке файлов. Раскладка по типу — то, что человек сделал бы руками,
- * только делается сразу и без него.
+ * только делается сразу и без него. Названия — на языке человека: папка на его
+ * рабочем столе, и «Images» там читается хуже, чем «Картинки».
  */
-export const OUTPUT_SECTIONS = ['Images', 'Video', 'Docs', 'Files', 'Apps'] as const;
+export const OUTPUT_SECTIONS = [
+  'docs',
+  'tables',
+  'slides',
+  'images',
+  'video',
+  'audio',
+  'code',
+  'archives',
+  'apps',
+  'other',
+] as const;
 
 export type OutputSection = (typeof OUTPUT_SECTIONS)[number];
 
+const SECTION_NAMES: Record<OutputSection, Record<Language, string>> = {
+  docs: { ru: 'Документы', en: 'Documents' },
+  tables: { ru: 'Таблицы', en: 'Spreadsheets' },
+  slides: { ru: 'Презентации', en: 'Presentations' },
+  images: { ru: 'Картинки', en: 'Images' },
+  video: { ru: 'Видео', en: 'Video' },
+  audio: { ru: 'Аудио', en: 'Audio' },
+  code: { ru: 'Код', en: 'Code' },
+  archives: { ru: 'Архивы', en: 'Archives' },
+  apps: { ru: 'Программы', en: 'Apps' },
+  other: { ru: 'Разное', en: 'Other' },
+};
+
 const SECTION_BY_EXTENSION = new Map<string, OutputSection>([
-  ...asEntries('Images', ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'tif', 'tiff', 'ico', 'heic', 'avif', 'psd']),
-  ...asEntries('Video', ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv', 'mpg', 'mpeg', 'flv']),
-  ...asEntries('Docs', ['pdf', 'doc', 'docx', 'odt', 'rtf', 'txt', 'md', 'xls', 'xlsx', 'ods', 'csv', 'ppt', 'pptx', 'odp', 'epub']),
-  ...asEntries('Apps', ['exe', 'msi', 'msix', 'appx', 'lnk', 'apk', 'dmg']),
+  ...asEntries('docs', ['pdf', 'doc', 'docx', 'odt', 'rtf', 'txt', 'md', 'epub', 'fb2', 'djvu']),
+  ...asEntries('tables', ['xls', 'xlsx', 'xlsm', 'ods', 'csv', 'tsv']),
+  ...asEntries('slides', ['ppt', 'pptx', 'odp', 'key']),
+  ...asEntries('images', ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'tif', 'tiff', 'ico', 'heic', 'avif', 'psd', 'kra', 'xcf']),
+  ...asEntries('video', ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv', 'mpg', 'mpeg', 'flv']),
+  ...asEntries('audio', ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'opus', 'wma', 'mid', 'midi']),
+  ...asEntries('code', [
+    'py', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'html', 'htm', 'css', 'json', 'xml', 'yaml', 'yml', 'toml',
+    'ps1', 'bat', 'cmd', 'sh', 'sql', 'c', 'cpp', 'h', 'cs', 'java', 'go', 'rs', 'rb', 'php', 'ipynb',
+  ]),
+  ...asEntries('archives', ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'tgz']),
+  ...asEntries('apps', ['exe', 'msi', 'msix', 'appx', 'lnk', 'apk', 'dmg']),
 ]);
 
 function asEntries(section: OutputSection, extensions: string[]): Array<[string, OutputSection]> {
@@ -49,12 +84,63 @@ function asEntries(section: OutputSection, extensions: string[]): Array<[string,
 /**
  * В какой раздел попадает файл.
  *
- * Всё неопознанное идёт в «Files», а не остаётся в корне: корень — витрина, и
+ * Всё неопознанное идёт в «Разное», а не остаётся в корне: корень — витрина, и
  * пусто в нём быть не должно только потому, что тип файла оказался незнакомым.
  */
 export function sectionFor(fileName: string): OutputSection {
   const extension = path.extname(fileName).replace(/^\./u, '').toLowerCase();
-  return SECTION_BY_EXTENSION.get(extension) ?? 'Files';
+  return SECTION_BY_EXTENSION.get(extension) ?? 'other';
+}
+
+export function sectionName(section: OutputSection, language: Language = currentLanguage()): string {
+  return SECTION_NAMES[section][language];
+}
+
+/** Названия разделов на языке человека — для промпта и подсказок агенту. */
+export function outputSectionNames(language: Language = currentLanguage()): string[] {
+  return OUTPUT_SECTIONS.map((section) => sectionName(section, language));
+}
+
+/** Имя — одно из разделов на любом из языков: такую папку не разбирают. */
+function isSectionName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return OUTPUT_SECTIONS.some((section) =>
+    (['ru', 'en'] as const).some((language) => SECTION_NAMES[section][language].toLowerCase() === lower),
+  );
+}
+
+/**
+ * Папка раздела.
+ *
+ * Если человек сменил язык, а раздел на прежнем языке уже есть и на новом —
+ * нет, остаёмся в прежнем: две «Картинки» и «Images» рядом — хуже любой из них.
+ */
+export function sectionDir(dir: string, section: OutputSection, language: Language = currentLanguage()): string {
+  const own = path.join(dir, sectionName(section, language));
+  if (existsSync(own)) return own;
+  const other = path.join(dir, sectionName(section, language === 'ru' ? 'en' : 'ru'));
+  return existsSync(other) ? other : own;
+}
+
+/**
+ * Имя подпапки, которое примет Windows.
+ *
+ * Название придумывает модель, и в нём бывают двоеточия, кавычки и слеши;
+ * слеш к тому же увёл бы файл из раздела. Пустое после чистки — подпапки нет.
+ */
+export function safeFolderName(name: string | undefined): string | undefined {
+  if (!name) return undefined;
+  const cleaned = name
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .replace(/[. ]+$/u, '')
+    .slice(0, 80)
+    .trim();
+  if (!cleaned || /^\.+$/u.test(cleaned)) return undefined;
+  // Зарезервированные имена Windows: папку «CON» создать нельзя.
+  if (/^(con|prn|aux|nul|com\d|lpt\d)$/iu.test(cleaned)) return `${cleaned}_`;
+  return cleaned;
 }
 
 /**
@@ -79,7 +165,7 @@ export async function ensureFolder(dir: string): Promise<string> {
 export async function ensureSections(dir = outputFolder()): Promise<string> {
   await ensureFolder(dir);
   for (const section of OUTPUT_SECTIONS) {
-    await ensureFolder(path.join(dir, section));
+    await ensureFolder(sectionDir(dir, section));
   }
   return dir;
 }
@@ -135,13 +221,14 @@ export async function readOutputTree(dir = outputFolder()): Promise<string> {
 
   const blocks: string[] = [];
   for (const section of OUTPUT_SECTIONS) {
-    const entries = await readFolder(path.join(dir, section));
+    const where = sectionDir(dir, section);
+    const entries = await readFolder(where);
     if (entries.length === 0) continue;
-    blocks.push(`${section}:\n${formatEntries(entries, 15)}`);
+    blocks.push(`${path.basename(where)}:\n${formatEntries(entries, 15)}`);
   }
 
   // Человек мог положить что-то в корень руками — это тоже надо видеть.
-  const loose = (await readFolder(dir)).filter((entry) => !entry.isFolder);
+  const loose = (await readFolder(dir)).filter((entry) => !entry.isFolder || !isSectionName(entry.name));
   if (loose.length > 0) blocks.push(`В корне:\n${formatEntries(loose, 15)}`);
 
   return blocks.length > 0 ? blocks.join('\n\n') : 'Папка пуста.';
@@ -180,25 +267,94 @@ export function uniqueName(name: string, taken: ReadonlySet<string>): string {
  * Переносит файл в нужный раздел папки ассистента и возвращает новый путь.
  *
  * Раздел выбирается по типу файла, а не по тому, что агент о нём думает:
- * картинка попадёт в «Images», даже если задача называлась иначе.
+ * картинка попадёт в «Картинки», даже если задача называлась иначе. `topic` —
+ * подпапка внутри раздела: десять кадров одной задачи лежат вместе, а не
+ * вперемешку со вчерашними.
  */
-export async function moveIntoFolder(source: string, dir = outputFolder()): Promise<string> {
+export async function moveIntoFolder(source: string, dir = outputFolder(), topic?: string): Promise<string> {
   await access(source, constants.R_OK);
 
-  const section = path.join(dir, sectionFor(source));
-  await ensureFolder(section);
+  const subfolder = safeFolderName(topic);
+  const section = sectionDir(dir, sectionFor(source));
+  const target = await freeTarget(subfolder ? path.join(section, subfolder) : section, path.basename(source));
+  await moveEntry(source, target);
+  return target;
+}
 
-  const taken = new Set(await readdir(section));
-  const target = path.join(section, uniqueName(path.basename(source), taken));
+async function freeTarget(folder: string, name: string): Promise<string> {
+  await ensureFolder(folder);
+  const taken = new Set(await readdir(folder));
+  return path.join(folder, uniqueName(name, taken));
+}
 
+async function moveEntry(source: string, target: string): Promise<void> {
   try {
     await rename(source, target);
   } catch {
     // Переименование не работает между дисками — тогда копия и удаление.
-    await copyFile(source, target);
-    await unlink(source).catch(() => {});
+    await cp(source, target, { recursive: true, errorOnExist: true, force: false });
+    await rm(source, { recursive: true, force: true }).catch(() => {});
   }
-  return target;
+}
+
+/**
+ * Разбирает по разделам то, что агент оставил в корне папки ассистента.
+ *
+ * Промпт просит класть через move_to_output, но модель не всегда слушается и
+ * пишет файл прямо в корень. Порядок в папке — обещание человеку, и держится
+ * оно кодом, а не просьбой. Трогается только сделанное агентом в этом прогоне:
+ * то, что человек положил в корень сам, — его решение.
+ *
+ * Файл уходит в раздел по типу. Папка, которую агент завёл в корне, уходит
+ * целиком подпапкой в раздел, к которому относится большинство её файлов.
+ * Возвращает, что куда переехало, — чтобы назвать человеку новый путь.
+ */
+export async function tidyOutput(dir: string, changed: readonly string[]): Promise<Map<string, string>> {
+  const moves = new Map<string, string>();
+  const rootFiles = new Set<string>();
+  const rootFolders = new Map<string, string[]>();
+
+  for (const file of changed) {
+    const relative = path.relative(dir, file);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) continue;
+    const [head, ...rest] = relative.split(/[\\/]/u);
+    if (rest.length === 0) {
+      rootFiles.add(head);
+    } else if (!isSectionName(head)) {
+      rootFolders.set(head, [...(rootFolders.get(head) ?? []), file]);
+    }
+  }
+
+  for (const name of rootFiles) {
+    const source = path.join(dir, name);
+    const info = await stat(source).catch(() => null);
+    if (!info?.isFile()) continue;
+    moves.set(source, await moveIntoFolder(source, dir));
+  }
+
+  for (const [name, files] of rootFolders) {
+    const source = path.join(dir, name);
+    const info = await stat(source).catch(() => null);
+    if (!info?.isDirectory()) continue;
+    const target = await freeTarget(sectionDir(dir, majoritySection(files)), name);
+    await moveEntry(source, target);
+    for (const file of files) moves.set(file, path.join(target, path.relative(source, file)));
+  }
+
+  return moves;
+}
+
+/** Раздел для папки: по большинству файлов; ничьей нет — «Разное». */
+function majoritySection(files: readonly string[]): OutputSection {
+  const counts = new Map<OutputSection, number>();
+  for (const file of files) {
+    const section = sectionFor(file);
+    counts.set(section, (counts.get(section) ?? 0) + 1);
+  }
+  const ranked = [...counts].sort((a, b) => b[1] - a[1]);
+  if (ranked.length === 0) return 'other';
+  if (ranked.length > 1 && ranked[0][1] === ranked[1][1]) return 'other';
+  return ranked[0][0];
 }
 
 /**

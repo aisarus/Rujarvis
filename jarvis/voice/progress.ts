@@ -20,6 +20,7 @@
  */
 
 import type { BackendEvent } from '../backends/types';
+import { byLanguage, tr } from '../locale/language';
 
 /** Сколько молчать в начале: короткой задаче доклад не нужен. */
 const QUIET_MS = 20_000;
@@ -32,41 +33,42 @@ const GAP_MS = 25_000;
  * Ключ — начало имени: у инструментов рабочего стола оно длинное и с
  * приставкой сервера, и сравнивать целиком незачем.
  */
-const STEPS: Array<[string, string]> = [
-  ['mcp__jarvis-desktop__blender', 'Работаю в блендере'],
-  ['mcp__jarvis-desktop__screenshot', 'Смотрю на экран'],
-  ['mcp__jarvis-desktop__browser', 'Работаю в браузере'],
-  ['mcp__jarvis-desktop__click', 'Нажимаю'],
-  ['mcp__jarvis-desktop__type', 'Печатаю'],
-  ['mcp__jarvis-desktop__press', 'Нажимаю клавиши'],
-  ['mcp__jarvis-desktop__list_windows', 'Смотрю, что открыто'],
-  ['mcp__jarvis-desktop__focus', 'Переключаю окно'],
-  ['mcp__jarvis-desktop__move_to_output', 'Убираю файл в папку'],
-  ['mcp__jarvis-desktop__show_file', 'Показываю файл'],
-  ['mcp__jarvis-desktop__output_folder', 'Смотрю папку'],
-  ['mcp__jarvis-desktop__list_files', 'Смотрю файлы'],
-  ['mcp__jarvis-desktop__write_skill', 'Записываю навык'],
-  ['WebSearch', 'Ищу в интернете'],
-  ['WebFetch', 'Читаю страницу из интернета'],
-  ['Bash', 'Выполняю команду'],
-  ['Write', 'Пишу файл'],
-  ['Edit', 'Правлю файл'],
-  ['MultiEdit', 'Правлю файл'],
-  ['Read', 'Читаю файл'],
-  ['Glob', 'Ищу файлы'],
-  ['Grep', 'Ищу по тексту'],
+const STEPS: Array<[string, string, string]> = [
+  ['mcp__jarvis-desktop__blender', 'Работаю в блендере', 'Working in Blender'],
+  ['mcp__jarvis-desktop__screenshot', 'Смотрю на экран', 'Looking at the screen'],
+  ['mcp__jarvis-desktop__browser', 'Работаю в браузере', 'Working in the browser'],
+  ['mcp__jarvis-desktop__click', 'Нажимаю', 'Clicking'],
+  ['mcp__jarvis-desktop__type', 'Печатаю', 'Typing'],
+  ['mcp__jarvis-desktop__press', 'Нажимаю клавиши', 'Pressing keys'],
+  ['mcp__jarvis-desktop__list_windows', 'Смотрю, что открыто', 'Checking what is open'],
+  ['mcp__jarvis-desktop__focus', 'Переключаю окно', 'Switching windows'],
+  ['mcp__jarvis-desktop__move_to_output', 'Убираю файл в папку', 'Moving the file to the folder'],
+  ['mcp__jarvis-desktop__show_file', 'Показываю файл', 'Showing the file'],
+  ['mcp__jarvis-desktop__output_folder', 'Смотрю папку', 'Looking at the folder'],
+  ['mcp__jarvis-desktop__list_files', 'Смотрю файлы', 'Looking at the files'],
+  ['mcp__jarvis-desktop__write_skill', 'Записываю навык', 'Writing a skill'],
+  ['WebSearch', 'Ищу в интернете', 'Searching the web'],
+  ['WebFetch', 'Читаю страницу из интернета', 'Reading a web page'],
+  ['Bash', 'Выполняю команду', 'Running a command'],
+  ['Write', 'Пишу файл', 'Writing a file'],
+  ['Edit', 'Правлю файл', 'Editing a file'],
+  ['MultiEdit', 'Правлю файл', 'Editing a file'],
+  ['Read', 'Читаю файл', 'Reading a file'],
+  ['Glob', 'Ищу файлы', 'Looking for files'],
+  ['Grep', 'Ищу по тексту', 'Searching the text'],
 ];
 
 /** Когда сказать по делу нечего — чтобы тишина не читалась как поломка. */
-const NEUTRAL = ['Ещё работаю.', 'Продолжаю.', 'Пока занят этим.'];
+const NEUTRAL_RU = ['Ещё работаю.', 'Продолжаю.', 'Пока занят этим.'];
+const NEUTRAL_EN = ['Still working.', 'Continuing.', 'Still busy with this.'];
 
 /** Что сказать про этот шаг, или ничего. */
 export function describeStep(event: BackendEvent): string | null {
-  if (event.type === 'command') return 'Выполняю команду';
+  if (event.type === 'command') return tr('Выполняю команду', 'Running a command');
   if (event.type !== 'tool') return null;
 
-  for (const [prefix, phrase] of STEPS) {
-    if (event.name.startsWith(prefix)) return phrase;
+  for (const [prefix, ru, en] of STEPS) {
+    if (event.name.startsWith(prefix)) return tr(ru, en);
   }
   return null;
 }
@@ -129,7 +131,8 @@ export class ProgressVoice {
     // нейтральное «ещё работаю», оно хотя бы меняется.
     if (fromStep && fromStep !== this.lastLine) return fromStep;
 
-    const neutral = NEUTRAL[this.neutralIndex % NEUTRAL.length] as string;
+    const phrases = byLanguage({ ru: NEUTRAL_RU, en: NEUTRAL_EN });
+    const neutral = phrases[this.neutralIndex % phrases.length] as string;
     this.neutralIndex += 1;
     return neutral;
   }

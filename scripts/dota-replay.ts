@@ -30,7 +30,11 @@ import { readPacket, type DotaPacket } from '../jarvis/dota/packet';
 import { applyPacket, createState } from '../jarvis/dota/state';
 import { judgeDanger, judgeGold } from '../jarvis/dota/thresholds';
 
-const ПАПКА = argv[2] ?? 'C:/Users/ariel/Desktop/Джарвис/разведка-доты/запись-2026-09-21-1255';
+const ПАПКА = argv[2];
+if (!ПАПКА) {
+  console.error('Укажите папку записи: разведка-доты/запись-…');
+  process.exit(2);
+}
 
 /** Столько ждём смерть после того, как тревога смолкла. */
 const ОКНО = 15_000;

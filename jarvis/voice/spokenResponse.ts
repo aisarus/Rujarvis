@@ -12,6 +12,8 @@
  * summary when nothing speakable survives.
  */
 
+import { tr } from '../locale/language';
+
 export interface SpokenSplit {
   /** Everything, for the UI. */
   full: string;
@@ -42,7 +44,7 @@ const DEFAULT_MAX_SENTENCES = 8;
 const DEFAULT_MAX_CHARS = 900;
 
 /** Чем сказать, что сказано не всё. Молчаливый обрыв читается как поломка. */
-const THERE_IS_MORE = 'Дальше — на экране.';
+const thereIsMore = (): string => tr('Дальше — на экране.', 'The rest is on screen.');
 
 /** Removes anything that is noise when read aloud. */
 export function stripUnspeakable(text: string): string {
@@ -148,19 +150,21 @@ export function toSpokenResponse(
     length += sentence.length + 1;
   }
 
-  if (dropped && picked.length > 0) picked.push(THERE_IS_MORE);
+  if (dropped && picked.length > 0) picked.push(thereIsMore());
 
   const spoken = picked.join(' ').trim();
   return {
     full,
-    spoken: spoken || options.fallback || 'Готово. Подробности на экране.',
+    spoken: spoken || options.fallback || tr('Готово. Подробности на экране.', 'Done. Details are on screen.'),
   };
 }
 
 /** The spoken line for a task that failed. */
 export function spokenFailure(error: string | undefined): string {
-  if (!error) return 'Не получилось. Подробности на экране.';
+  if (!error) return tr('Не получилось. Подробности на экране.', 'That did not work. Details are on screen.');
   const cleaned = stripUnspeakable(error);
   const first = splitSentences(cleaned)[0] ?? '';
-  return isSpeakable(first) ? `Не получилось. ${shorten(first, 160)}` : 'Не получилось. Подробности на экране.';
+  return isSpeakable(first)
+    ? `${tr('Не получилось.', 'That did not work.')} ${shorten(first, 160)}`
+    : tr('Не получилось. Подробности на экране.', 'That did not work. Details are on screen.');
 }

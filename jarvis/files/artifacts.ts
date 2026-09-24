@@ -12,6 +12,7 @@
  */
 
 import type { BackendFileChange } from '../backends/types';
+import { tr } from '../locale/language';
 
 export interface ArtifactReport {
   /** Абсолютные пути: сначала то, что в папке ассистента, потом остальное. */
@@ -72,9 +73,10 @@ export function describeArtifacts(
     const where = folderPhrase(options.outputDir);
     const names = inFolder.map(baseName);
     if (names.length === 1) {
-      // Раздел называется вслух: «в папке Джарвис» мало, когда разделов пять.
+      // Раздел называется вслух: «в папке Джарвис» мало, когда разделов десять.
       const section = sectionOf(inFolder[0], options.outputDir);
-      sentences.push(`Файл «${names[0]}» — ${where}${section ? `, раздел ${section}` : ''}.`);
+      const inSection = section ? tr(`, раздел «${section}»`, `, section ${section}`) : '';
+      sentences.push(tr(`Файл «${names[0]}» — ${where}${inSection}.`, `The file ${names[0]} is ${where}${inSection}.`));
     } else {
       sentences.push(`${capitalise(where)}: ${listNames(names)}.`);
     }
@@ -83,11 +85,11 @@ export function describeArtifacts(
   if (elsewhere.length > 0) {
     // Тут имени файла мало: человек не знает каталога, поэтому путь целиком.
     const shown = elsewhere.slice(0, MAX_SPOKEN_NAMES);
-    const tail = elsewhere.length > shown.length ? ` и ещё ${elsewhere.length - shown.length}` : '';
+    const tail = elsewhere.length > shown.length ? tr(` и ещё ${elsewhere.length - shown.length}`, ` and ${elsewhere.length - shown.length} more`) : '';
     sentences.push(
       shown.length === 1
-        ? `Файл «${baseName(shown[0])}» лежит здесь: ${shown[0]}.`
-        : `Файлы лежат здесь: ${shown.join(', ')}${tail}.`,
+        ? tr(`Файл «${baseName(shown[0])}» лежит здесь: ${shown[0]}.`, `The file ${baseName(shown[0])} is here: ${shown[0]}.`)
+        : tr(`Файлы лежат здесь: ${shown.join(', ')}${tail}.`, `The files are here: ${shown.join(', ')}${tail}.`),
     );
   }
 
@@ -138,13 +140,15 @@ function folderPhrase(outputDir: string): string {
   const label = baseName(outputDir);
   const parent = baseName(outputDir.replace(/[\\/]+$/u, '').replace(/[\\/][^\\/]+$/u, ''));
   const onDesktop = /^(desktop|рабочий стол)$/iu.test(parent);
-  return onDesktop ? `в папке «${label}» на рабочем столе` : `в папке «${label}»`;
+  return onDesktop
+    ? tr(`в папке «${label}» на рабочем столе`, `in the ${label} folder on the desktop`)
+    : tr(`в папке «${label}»`, `in the ${label} folder`);
 }
 
 function listNames(names: string[]): string {
   if (names.length <= MAX_SPOKEN_NAMES) return names.join(', ');
   const head = names.slice(0, MAX_SPOKEN_NAMES).join(', ');
-  return `${head} и ещё ${names.length - MAX_SPOKEN_NAMES}`;
+  return tr(`${head} и ещё ${names.length - MAX_SPOKEN_NAMES}`, `${head} and ${names.length - MAX_SPOKEN_NAMES} more`);
 }
 
 function capitalise(value: string): string {

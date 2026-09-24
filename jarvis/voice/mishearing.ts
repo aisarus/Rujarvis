@@ -82,7 +82,42 @@ const WHOLE: Record<string, string> = {
   'тешена': 'тишина',
   // «Молкин» — один раз, и это явно «молчи»: самостоятельным словом не бывает.
   'молкин': 'молчи',
+
+  // По-английски Whisper теряет начальный согласный короткой команды: замер
+  // синтезом Piper → Whisper base и turbo (scripts/voice-roundtrip.ts), оба
+  // выдали «Top» вместо «Stop» и «Crawl/Roll down» вместо «Scroll down».
+  // Только целой фразой: одно слово «top» помощнику не говорят, а «stop» —
+  // красная линия.
+  'top': 'stop',
+  'crawl down': 'scroll down',
+  'roll down': 'scroll down',
+  'crawl up': 'scroll up',
+  'roll up': 'scroll up',
 };
+
+/**
+ * Повтор одной и той же фразы — петля распознавателя, а не речь.
+ *
+ * На коротком звуке Whisper зацикливается: замер turbo дал «Silence. Silence.
+ * Silence. Silence» на одно сказанное слово. Такая «тишина» не совпадала ни с
+ * чем, и красная линия не срабатывала. Одна копия — то, что сказали.
+ */
+export function collapseRepeats(text: string): string {
+  const parts = text
+    .split(/[.!?,;]+/u)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length >= 2) {
+    const first = parts[0]?.toLowerCase();
+    if (parts.every((part) => part.toLowerCase() === first)) return parts[0] as string;
+  }
+  const words = text.trim().split(/\s+/u);
+  if (words.length >= 3) {
+    const first = words[0]?.toLowerCase().replace(/[.,!?;:]+$/u, '');
+    if (words.every((word) => word.toLowerCase().replace(/[.,!?;:]+$/u, '') === first)) return first as string;
+  }
+  return text;
+}
 
 /**
  * Слипшиеся слова: распознаватель иногда теряет границу между ними.
@@ -96,8 +131,9 @@ const SPLITS: Array<[RegExp, string]> = [
   [/(?<!\p{L})кликдесять(?!\p{L})/giu, 'клик десять'],
 ];
 
-export function fixMishearings(text: string): string {
-  if (!text.trim()) return text;
+export function fixMishearings(input: string): string {
+  if (!input.trim()) return input;
+  const text = collapseRepeats(input);
 
   // Знаки препинания распознаватель ставит как хочет, и на смысл они не
   // влияют — для сравнения целой фразы их лучше снять.

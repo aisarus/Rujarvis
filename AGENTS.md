@@ -1,91 +1,85 @@
 # Contributor and agent guidance
 
-These rules are architecture constraints for this repository.
-
-## Canonical checkout guard
-
-This repository is the canonical OSS Workstation application. Before editing
-or testing application code, run `git rev-parse --show-toplevel` and verify that
-the result is this repository's root. Read every applicable ancestor
-`AGENTS.md`; if one marks the checkout as legacy or migration-only, stop. Work
-performed or tested in a copied legacy tree is not current Workstation work and
-must never be reported as verification of this repository.
-
-The product website is a separate repository. Do not add website source,
-website build output, or website release configuration here. This repository
-owns the official client configuration, packaging profiles, and client release
-workflows as well as all application behavior and tests. A private operations
-repository may trigger these workflows or hold deployment credentials,
-organization-specific policy, and internal binary artifacts, but it must never
-become a second application or owner of canonical client release logic.
+Rujarvis is a standalone Electron voice assistant for Windows, in Russian and
+English, that drives the official Claude Code and Codex CLIs on the user's own
+subscription. These rules say what must stay true.
 
 ## Before changing code
 
-- Use `pnpm` for repository commands.
-- Read `README.md` and the relevant document under `docs/` before editing that
-  subsystem.
-- Verify the canonical checkout guard above before making the first edit or
-  running acceptance tests.
-- Read `docs/agent-testing.md` before writing or running tests.
+- Run `git rev-parse --show-toplevel` and check that it is this repository's
+  root. Work done or tested in another copy is not verification of this one.
+- Use `pnpm`. Read `README.md` and `docs/jarvis/architecture.md` first.
 - Preserve user work and unrelated changes. Never publish, push, or create a
   public artifact without explicit authorization.
 
-## Product boundaries
+## Where things are
 
-- Open Interpreter is the runtime core. Provider/model discovery, harness
-  selection, agent execution, and app-server behavior belong there.
-- Workstation is a client of the OIX app-server contract. Do not recreate OIX
-  provider catalogs or harness logic in the Electron app.
-- Model-facing Workstation tools use the `interpreter-app` CLI surface. Do not
-  introduce a parallel direct-MCP tool surface for the model.
-- File permissions are per agent. Every tool path must enforce the effective
-  agent scope, not merely a global workspace setting.
-- The community distribution is fully usable without hosted accounts,
-  telemetry, or proprietary services.
-- Official, internal, community, and enterprise profiles use the same open
-  client capabilities. A subscription may authorize operated services; it must
-  not unlock a private client feature.
-- Distribution-specific endpoints and branding are injected through
-  `product.json` overlays. Do not fork application behavior for a distribution.
-- Rich document engines are optional external integrations. The default
-  document workflow is code execution plus skills.
+- `app/` — the Electron app: `main.ts` (tray, single instance, startup),
+  `settingsWindow.ts` + `ui/` (onboarding and settings), `voiceBridge.ts`
+  (microphone, recognition, direct commands, speech), overlays.
+- `jarvis/` — everything else: core, router, risk, backends, voice, dialogue,
+  desktop MCP server, locale, setup (paths and settings).
+- `scripts/` — installer helpers and live checks (`jarvis-*`, `probe-*`,
+  `voice-roundtrip.ts`).
+- Files outside `app/`, `jarvis/`, `scripts/`, `resources/`, `docs/jarvis/`
+  and the root config are leftovers from Interpreter Workstation: nothing
+  builds, imports or tests them. Do not build on them.
 
-## Dependencies and provenance
+## Invariants
 
-- `apps/interpreter-extension` is the Open Interpreter browser-extension
-  submodule and retains its independent release history and Playwriter ancestry.
-- `submodules/interpreter-cua` is the Open Interpreter computer-use fork and
-  retains its upstream attribution. Workstation consumes its pinned driver
-  contract; a local checkout name does not imply cloud-provider compatibility.
-- Never commit credentials, token backups, signing material, paid SDKs, or
-  proprietary binary licenses.
+- **Red lines are enforced in code, twice.** The spoken phrase is classified
+  before an agent starts (`jarvis/router`, `jarvis/risk/policy.ts`), and every
+  agent tool call goes through the PreToolUse hook (`jarvis/risk/gateHook.ts`,
+  `jarvis/risk/toolGate.ts`). Silence, an unreadable call and any failure mean
+  *deny*. Without the hook the agent gets no shell, no skill writing and no
+  write access to Jarvis's own folder. Do not pre-approve a new tool that can
+  spend money, contact people, run commands or write outside the task without
+  teaching the hook about it.
+- Model text can raise a risk class, never lower it. Normalisation only narrows
+  permissions. The user's original phrase always reaches the backend.
+- Stop, silence, pause and continue — and yes/no answers — are matched before
+  anything else, in **both** languages whatever the selected language is, and
+  must never wait behind a model, a queue or another command. No command may
+  use one of those words (`jarvis/voice/redLines.vitest.test.ts` guards this).
+- Dictated text and speech not addressed to Jarvis are not logged unless the
+  user chose *everything* in settings (`speechLogging`).
+- Everything on disk lives under one folder (`jarvis/setup/paths.ts`). Do not
+  add files anywhere else.
+- No API keys, no telemetry, no hosted accounts. Agents run through CLIs the
+  user signed into.
+- Checks answer three ways — passed, failed, or *nothing to measure with*. A
+  tool that reports success for something it never did is a bug.
+
+## Two languages
+
+User-facing text goes through `tr('русский', 'english')`
+(`jarvis/locale/language.ts`); tables that recognise speech hold both
+languages. Adding a Russian phrase to a command table means adding the English
+one too, and the catalogue test (`jarvis/control/catalogue.vitest.test.ts`)
+checks that every promised phrase in both languages really parses.
 
 ## Code rules
 
 - Prefer the simplest complete structural fix. Do not add compatibility
-  fallbacks for obsolete local formats.
-- Use Interpreter branding in user-facing copy.
-- Route frontend path handling through the helpers in `src/ipc.ts`; read
-  `docs/agent-paths.md` before changing path behavior.
-- Read `docs/agent-ipc.md` before changing preload, IPC, or subscriptions.
-- Read `docs/agent-tools.md` before changing tools, permissions, MCP bridging,
-  or native modules.
-- Read `docs/agent-frontend.md` before changing UI or interaction behavior.
+  fallbacks for obsolete local formats — migrate once (see `install.ps1`,
+  `Move-LegacyData`).
+- Comments explain why, not what. In `jarvis/` and `app/` they are mostly in
+  Russian.
+- Windows-only behaviour (PowerShell desktop driver, `tasklist`/`taskkill`,
+  the Start menu) must fail gracefully elsewhere, never crash the app.
 
 ## Verification
 
-Run checks proportional to the change. The normal pre-commit floor is:
-
 ```bash
 pnpm typecheck
-pnpm run test:unit
-pnpm run test:vitest
+pnpm test
+pnpm build
 ```
 
-For app-server or bundled-runtime work, also download/build the pinned OIX
-runtime and run `pnpm run test:interpreter:smoke`. For Electron behavior, run the
-relevant Playwright project. For browser-extension or computer-use changes, test
-the real pinned submodule path in addition to unit coverage.
+Anything that crosses a process boundary — spawning a CLI, the MCP server,
+the hook, the speech models — needs a run against the real thing, not only a
+fake: `pnpm jarvis:roundtrip` for the voice path, `pnpm jarvis:talk-check` for
+the conversation stream, the app under a display for the UI. Most desktop
+behaviour runs only on Windows: say so when you could not test it there.
 
-Never claim an end-to-end path works from typechecking alone. Prove the actual
-boundary and report any platform or credential-dependent step that was not run.
+Never claim an end-to-end path works from typechecking alone.

@@ -22,6 +22,7 @@ import {
   whisperModelFiles,
   type WhisperModelId,
 } from './sttModels';
+import { createRequire } from 'node:module';
 
 export const WHISPER_SAMPLE_RATE = 16_000;
 
@@ -79,18 +80,43 @@ export async function isWhisperModelInstalled(
   }
 }
 
-/** Linear resampling to 16 kHz. Good enough for speech, and dependency-free. */
+/**
+ * Resampling to 16 kHz with band-limited (windowed-sinc) interpolation.
+ *
+ * This used to be plain linear interpolation, and that is not "good enough for
+ * speech": going down from 22 or 48 kHz without a low-pass filter folds
+ * everything above 8 kHz back into the band Whisper listens to. Fricatives and
+ * bursts live exactly there, so the first consonant of a short command got
+ * lost — measured through Piper → Whisper: "Stop" came back as "Top", "Scroll
+ * down" as "Crawl down", «Тишина» as «Дышина».
+ *
+ * The kernel is a Hann-windowed sinc at the target Nyquist; 16 taps each side
+ * cost a few million multiply-adds for a five-second phrase.
+ */
 export function resampleTo16k(samples: Float32Array, sampleRate: number): Float32Array {
   if (sampleRate === WHISPER_SAMPLE_RATE) return samples;
   const ratio = sampleRate / WHISPER_SAMPLE_RATE;
   const output = new Float32Array(Math.floor(samples.length / ratio));
+  // Downsampling narrows the pass band to the new Nyquist; upsampling keeps it.
+  const cutoff = Math.min(1, 1 / ratio);
+  const half = Math.ceil(16 / cutoff);
+
   for (let index = 0; index < output.length; index += 1) {
-    const source = index * ratio;
-    const base = Math.floor(source);
-    const fraction = source - base;
-    const current = samples[base] ?? 0;
-    const next = samples[base + 1] ?? current;
-    output[index] = current + (next - current) * fraction;
+    const centre = index * ratio;
+    const first = Math.max(0, Math.ceil(centre - half));
+    const last = Math.min(samples.length - 1, Math.floor(centre + half));
+    let sum = 0;
+    let weight = 0;
+    for (let source = first; source <= last; source += 1) {
+      const distance = source - centre;
+      const x = distance * cutoff;
+      const sinc = x === 0 ? 1 : Math.sin(Math.PI * x) / (Math.PI * x);
+      const window = 0.5 + 0.5 * Math.cos((Math.PI * distance) / (half + 1));
+      const w = sinc * window;
+      sum += (samples[source] ?? 0) * w;
+      weight += w;
+    }
+    output[index] = weight !== 0 ? sum / weight : 0;
   }
   return output;
 }
@@ -157,8 +183,9 @@ export type RecognitionWorkerFactory = (
 ) => Promise<RecognitionWorker>;
 
 function resolveSherpaModulePath(): string {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  return require.resolve('sherpa-onnx');
+  // В сборке (CJS) есть `require`; под tsx (ESM) — только `createRequire`.
+  const find = typeof require === 'function' ? require : createRequire(import.meta.url);
+  return find.resolve('sherpa-onnx');
 }
 
 export const createWorkerThreadRecognizer: RecognitionWorkerFactory = async (options) => {

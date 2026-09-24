@@ -31,6 +31,7 @@ import { spokenCloseTarget, spokenTarget } from '../apps/launch';
 import { commandCatalogue } from '../control/catalogue';
 import { DOTA_OVERLAY_PHRASES, KILL_PHRASES, parseDirectCommand } from '../control/commands';
 import { parseDictationEdit } from '../control/dictationEdits';
+import { parseLiveEdit } from '../live/edits';
 import { EchoGuard } from './echo';
 import {
   applyVoiceControl,
@@ -210,6 +211,8 @@ function handledByLayer(say: string, layer: string): boolean {
       return findWakeWord(say) !== null;
     case 'dictation':
       return parseDictationEdit(say) !== null;
+    case 'blender':
+      return parseLiveEdit(say) !== null;
     case 'control':
       return matchVoiceControl(say) !== null;
     case 'silence':

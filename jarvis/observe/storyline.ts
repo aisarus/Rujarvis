@@ -30,7 +30,9 @@
  * запущенном приложении.
  */
 
+import { stepStateLabel, type StepState } from '../agent/plan';
 import type { BackendEvent } from '../backends/types';
+import { tr } from '../locale/language';
 
 /** О чём строка. Вид нужен окну: цвет, значок, отступ. */
 export type StoryKind =
@@ -62,42 +64,42 @@ export interface StoryLine {
  * длинная приставка должна стоять выше более короткой, иначе «browser» съест
  * «browser_download».
  */
-const STEPS: Array<[string, string]> = [
-  ['mcp__jarvis-desktop__blender', 'Работаю в блендере'],
-  ['mcp__jarvis-desktop__browser_download', 'Скачиваю из браузера'],
-  ['mcp__jarvis-desktop__browser', 'Работаю в браузере'],
-  ['mcp__jarvis-desktop__screenshot', 'Смотрю на экран'],
-  ['mcp__jarvis-desktop__elements', 'Разбираю окно'],
-  ['mcp__jarvis-desktop__list_windows', 'Смотрю, что открыто'],
-  ['mcp__jarvis-desktop__focus', 'Переключаю окно'],
-  ['mcp__jarvis-desktop__click', 'Нажимаю'],
-  ['mcp__jarvis-desktop__type', 'Печатаю'],
-  ['mcp__jarvis-desktop__press', 'Нажимаю клавиши'],
-  ['mcp__jarvis-desktop__move_to_output', 'Убираю файл в папку'],
-  ['mcp__jarvis-desktop__show_file', 'Показываю файл'],
-  ['mcp__jarvis-desktop__output_folder', 'Смотрю папку результатов'],
-  ['mcp__jarvis-desktop__list_files', 'Смотрю файлы'],
-  ['mcp__jarvis-desktop__write_skill', 'Записываю навык'],
-  ['mcp__jarvis-desktop__list_skills', 'Смотрю навыки'],
-  ['mcp__jarvis-desktop__recent_actions', 'Вспоминаю, что делал'],
-  ['WebSearch', 'Ищу в интернете'],
-  ['WebFetch', 'Читаю страницу'],
-  ['Bash', 'Выполняю команду'],
-  ['MultiEdit', 'Правлю файл'],
-  ['NotebookEdit', 'Правлю тетрадь'],
-  ['Write', 'Пишу файл'],
-  ['Edit', 'Правлю файл'],
-  ['Read', 'Читаю файл'],
-  ['Glob', 'Ищу файлы'],
-  ['Grep', 'Ищу по тексту'],
-  ['TodoWrite', 'Веду список шагов'],
-  ['Task', 'Отправляю подзадачу'],
+const STEPS: Array<[string, string, string]> = [
+  ['mcp__jarvis-desktop__blender', 'Работаю в блендере', 'Working in Blender'],
+  ['mcp__jarvis-desktop__browser_download', 'Скачиваю из браузера', 'Downloading from the browser'],
+  ['mcp__jarvis-desktop__browser', 'Работаю в браузере', 'Working in the browser'],
+  ['mcp__jarvis-desktop__screenshot', 'Смотрю на экран', 'Looking at the screen'],
+  ['mcp__jarvis-desktop__elements', 'Разбираю окно', 'Reading the window'],
+  ['mcp__jarvis-desktop__list_windows', 'Смотрю, что открыто', 'Checking what is open'],
+  ['mcp__jarvis-desktop__focus', 'Переключаю окно', 'Switching windows'],
+  ['mcp__jarvis-desktop__click', 'Нажимаю', 'Clicking'],
+  ['mcp__jarvis-desktop__type', 'Печатаю', 'Typing'],
+  ['mcp__jarvis-desktop__press', 'Нажимаю клавиши', 'Pressing keys'],
+  ['mcp__jarvis-desktop__move_to_output', 'Убираю файл в папку', 'Moving the file to the folder'],
+  ['mcp__jarvis-desktop__show_file', 'Показываю файл', 'Showing the file'],
+  ['mcp__jarvis-desktop__output_folder', 'Смотрю папку результатов', 'Looking at the results folder'],
+  ['mcp__jarvis-desktop__list_files', 'Смотрю файлы', 'Looking at the files'],
+  ['mcp__jarvis-desktop__write_skill', 'Записываю навык', 'Writing a skill'],
+  ['mcp__jarvis-desktop__list_skills', 'Смотрю навыки', 'Looking at skills'],
+  ['mcp__jarvis-desktop__recent_actions', 'Вспоминаю, что делал', 'Recalling what I did'],
+  ['WebSearch', 'Ищу в интернете', 'Searching the web'],
+  ['WebFetch', 'Читаю страницу', 'Reading a page'],
+  ['Bash', 'Выполняю команду', 'Running a command'],
+  ['MultiEdit', 'Правлю файл', 'Editing a file'],
+  ['NotebookEdit', 'Правлю тетрадь', 'Editing a notebook'],
+  ['Write', 'Пишу файл', 'Writing a file'],
+  ['Edit', 'Правлю файл', 'Editing a file'],
+  ['Read', 'Читаю файл', 'Reading a file'],
+  ['Glob', 'Ищу файлы', 'Looking for files'],
+  ['Grep', 'Ищу по тексту', 'Searching the text'],
+  ['TodoWrite', 'Веду список шагов', 'Keeping a step list'],
+  ['Task', 'Отправляю подзадачу', 'Sending a subtask'],
 ];
 
-const FILE_ACTIONS: Record<string, string> = {
-  created: 'Создал файл',
-  modified: 'Изменил файл',
-  deleted: 'Удалил файл',
+const FILE_ACTIONS: Record<string, [string, string]> = {
+  created: ['Создал файл', 'Created a file'],
+  modified: ['Изменил файл', 'Changed a file'],
+  deleted: ['Удалил файл', 'Deleted a file'],
 };
 
 /** Сколько строк держать: часовая работа — это тысячи событий. */
@@ -138,7 +140,7 @@ function looksLikePath(value: string): boolean {
 export function describeEvent(event: BackendEvent, at: number): StoryLine | null {
   switch (event.type) {
     case 'started':
-      return { at, kind: 'start', text: 'Взялся за работу', detail: event.backend };
+      return { at, kind: 'start', text: tr('Взялся за работу', 'Started the work'), detail: event.backend };
 
     case 'tool': {
       const name = event.name ?? '';
@@ -146,7 +148,7 @@ export function describeEvent(event: BackendEvent, at: number): StoryLine | null
       // Незнакомый инструмент показывается своим именем. Придумать ему
       // красивую фразу значит соврать: человек прочтёт «работаю с файлами»
       // там, где на деле происходит что-то другое.
-      const text = known ? (known[1] as string) : name || 'Делаю что-то';
+      const text = known ? tr(known[1], known[2]) : name || tr('Делаю что-то', 'Doing something');
       const detail = event.detail
         ? short(looksLikePath(event.detail) ? fileName(event.detail) : event.detail)
         : undefined;
@@ -159,7 +161,7 @@ export function describeEvent(event: BackendEvent, at: number): StoryLine | null
       return {
         at,
         kind: failed ? 'error' : 'command',
-        text: failed ? 'Команда не удалась' : 'Команда',
+        text: failed ? tr('Команда не удалась', 'Command failed') : tr('Команда', 'Command'),
         ...(command ? { detail: command } : {}),
       };
     }
@@ -169,7 +171,10 @@ export function describeEvent(event: BackendEvent, at: number): StoryLine | null
       return {
         at,
         kind: 'file',
-        text: (change && FILE_ACTIONS[change.action]) ?? 'Тронул файл',
+        text: (() => {
+          const action = change ? FILE_ACTIONS[change.action] : undefined;
+          return action ? tr(action[0], action[1]) : tr('Тронул файл', 'Touched a file');
+        })(),
         ...(change?.path ? { detail: fileName(change.path) } : {}),
       };
     }
@@ -183,8 +188,8 @@ export function describeEvent(event: BackendEvent, at: number): StoryLine | null
       return {
         at,
         kind: 'error',
-        text: 'Ошибка',
-        detail: short(event.message ?? 'без объяснения'),
+        text: tr('Ошибка', 'Error'),
+        detail: short(event.message ?? tr('без объяснения', 'no explanation')),
       };
 
     case 'completed': {
@@ -197,7 +202,7 @@ export function describeEvent(event: BackendEvent, at: number): StoryLine | null
       return {
         at,
         kind: 'done',
-        text: ok ? 'Готово' : 'Не получилось',
+        text: ok ? tr('Готово', 'Done') : tr('Не получилось', 'Did not work'),
         ...(outcome ? { detail: short(outcome) } : {}),
       };
     }
@@ -261,7 +266,7 @@ export class Storyline {
    */
   heard(text: string, at: number): void {
     const said = short(text);
-    if (said) this.add({ at, kind: 'note', text: 'Ты сказал', detail: said });
+    if (said) this.add({ at, kind: 'note', text: tr('Ты сказал', 'You said'), detail: said });
   }
 
   /**
@@ -271,11 +276,12 @@ export class Storyline {
    * вернувшийся через двадцать минут, должен видеть не «сделано 4 из 7», а
    * когда именно каждый шаг был взят и чем кончился.
    */
-  planStep(index: number, total: number, text: string, state: string, at: number): void {
+  planStep(index: number, total: number, text: string, state: StepState, at: number): void {
+    const label = stepStateLabel(state);
     this.add({
       at,
       kind: 'plan',
-      text: `Шаг ${index + 1} из ${total}: ${state}`,
+      text: tr(`Шаг ${index + 1} из ${total}: ${label}`, `Step ${index + 1} of ${total}: ${label}`),
       detail: short(text),
     });
   }

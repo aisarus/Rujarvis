@@ -1,9 +1,0 @@
-extends: ./electron-builder.yml
-
-appId: interpreter-internal
-productName: Interpreter Internal
-
-mac:
-  sign: null
-  notarize: false
-  hardenedRuntime: false

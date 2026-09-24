@@ -10,9 +10,14 @@ import {
   moveIntoFolder,
   readFolder,
   readOutputTree,
+  safeFolderName,
+  sectionDir,
   sectionFor,
+  sectionName,
+  tidyOutput,
   uniqueName,
 } from './files';
+import { setLanguage } from '../locale/language';
 
 describe('uniqueName', () => {
   it('оставляет имя, когда оно свободно', () => {
@@ -95,23 +100,62 @@ describe('readFolder', () => {
 
 describe('sectionFor', () => {
   it.each([
-    ['закат.png', 'Images'],
-    ['ролик.mp4', 'Video'],
-    ['отчёт.xlsx', 'Docs'],
-    ['договор.pdf', 'Docs'],
-    ['установщик.exe', 'Apps'],
+    ['закат.png', 'images'],
+    ['ролик.mp4', 'video'],
+    ['отчёт.xlsx', 'tables'],
+    ['договор.pdf', 'docs'],
+    ['доклад.pptx', 'slides'],
+    ['песня.mp3', 'audio'],
+    ['скрипт.py', 'code'],
+    ['архив.zip', 'archives'],
+    ['установщик.exe', 'apps'],
   ])('кладёт «%s» в раздел %s', (name, section) => {
     expect(sectionFor(name)).toBe(section);
   });
 
-  it('незнакомое складывает в Files, а не бросает в корень', () => {
+  it('незнакомое складывает в «Разное», а не бросает в корень', () => {
     // Корень — витрина: пусто в нём должно быть только по-настоящему.
-    expect(sectionFor('дамп.bin')).toBe('Files');
-    expect(sectionFor('README')).toBe('Files');
+    expect(sectionFor('дамп.bin')).toBe('other');
+    expect(sectionFor('README')).toBe('other');
   });
 
   it('не зависит от регистра расширения', () => {
-    expect(sectionFor('ФОТО.JPG')).toBe('Images');
+    expect(sectionFor('ФОТО.JPG')).toBe('images');
+  });
+
+  it('называет разделы на языке человека', () => {
+    expect(sectionName('images', 'ru')).toBe('Картинки');
+    expect(sectionName('images', 'en')).toBe('Images');
+  });
+});
+
+describe('sectionDir', () => {
+  afterEach(() => setLanguage('ru'));
+
+  it('после смены языка остаётся в разделе, который уже есть', () => {
+    // «Картинки» и «Images» рядом — хуже любой из них.
+    const to = makeDir();
+    mkdirSync(path.join(to, 'Картинки'));
+    setLanguage('en');
+
+    expect(sectionDir(to, 'images')).toBe(path.join(to, 'Картинки'));
+    expect(sectionDir(to, 'video')).toBe(path.join(to, 'Video'));
+  });
+});
+
+describe('safeFolderName', () => {
+  it('вычищает то, что Windows не примет в имени папки', () => {
+    expect(safeFolderName('Отчёт: март/апрель?')).toBe('Отчёт март апрель');
+  });
+
+  it('пустое и точки — не подпапка', () => {
+    expect(safeFolderName('  ')).toBeUndefined();
+    expect(safeFolderName('..')).toBeUndefined();
+    expect(safeFolderName(undefined)).toBeUndefined();
+  });
+
+  it('обходит зарезервированные имена', () => {
+    expect(safeFolderName('CON')).toBe('CON_');
   });
 });
 
@@ -124,7 +168,7 @@ describe('moveIntoFolder', () => {
 
     const moved = await moveIntoFolder(source, to);
 
-    expect(moved).toBe(path.join(to, 'Images', 'картинка.png'));
+    expect(moved).toBe(path.join(to, 'Картинки', 'картинка.png'));
     expect(await readFile(moved, 'utf8')).toBe('данные');
     expect(await readdir(from)).toEqual([]);
   });
@@ -138,21 +182,31 @@ describe('moveIntoFolder', () => {
     const image = await moveIntoFolder(path.join(from, 'кадр.png'), to);
     const video = await moveIntoFolder(path.join(from, 'ролик.mp4'), to);
 
-    expect(path.dirname(image).endsWith('Images')).toBe(true);
-    expect(path.dirname(video).endsWith('Video')).toBe(true);
+    expect(path.dirname(image).endsWith('Картинки')).toBe(true);
+    expect(path.dirname(video).endsWith('Видео')).toBe(true);
   });
 
   it('не затирает то, что уже лежит в разделе', async () => {
     const from = makeDir();
     const to = makeDir();
-    mkdirSync(path.join(to, 'Images'), { recursive: true });
-    writeFileSync(path.join(to, 'Images', 'картинка.png'), 'старое');
+    mkdirSync(path.join(to, 'Картинки'), { recursive: true });
+    writeFileSync(path.join(to, 'Картинки', 'картинка.png'), 'старое');
     writeFileSync(path.join(from, 'картинка.png'), 'новое');
 
     const moved = await moveIntoFolder(path.join(from, 'картинка.png'), to);
 
     expect(path.basename(moved)).toBe('картинка (2).png');
-    expect(await readFile(path.join(to, 'Images', 'картинка.png'), 'utf8')).toBe('старое');
+    expect(await readFile(path.join(to, 'Картинки', 'картинка.png'), 'utf8')).toBe('старое');
+  });
+
+  it('кладёт файлы одной задачи в подпапку внутри раздела', async () => {
+    const from = makeDir();
+    const to = makeDir();
+    writeFileSync(path.join(from, 'кадр.png'), 'a');
+
+    const moved = await moveIntoFolder(path.join(from, 'кадр.png'), to, 'Логотип: кафе');
+
+    expect(moved).toBe(path.join(to, 'Картинки', 'Логотип кафе', 'кадр.png'));
   });
 
   it('жалуется, когда переносить нечего', async () => {
@@ -173,12 +227,12 @@ describe('readOutputTree', () => {
 
     const tree = await readOutputTree(to);
 
-    expect(tree).toContain('Images:');
+    expect(tree).toContain('Картинки:');
     expect(tree).toContain('кадр.png');
-    expect(tree).toContain('Video:');
+    expect(tree).toContain('Видео:');
     expect(tree).toContain('ролик.mp4');
     // Пустые разделы не занимают место в ответе.
-    expect(tree).not.toContain('Apps:');
+    expect(tree).not.toContain('Программы:');
   });
 
   it('признаётся, что папка пуста, вместо списка разделов', async () => {
@@ -190,5 +244,45 @@ describe('readOutputTree', () => {
     writeFileSync(path.join(to, 'заметка.txt'), 'x');
 
     expect(await readOutputTree(to)).toContain('заметка.txt');
+  });
+});
+
+describe('tidyOutput', () => {
+  it('раскладывает по разделам файлы, которые агент бросил в корень', async () => {
+    const to = makeDir();
+    const file = path.join(to, 'отчёт.pdf');
+    writeFileSync(file, 'x');
+
+    const moves = await tidyOutput(to, [file]);
+
+    expect(moves.get(file)).toBe(path.join(to, 'Документы', 'отчёт.pdf'));
+    expect(await readdir(to)).toEqual(['Документы']);
+  });
+
+  it('папку агента уносит целиком в раздел большинства её файлов', async () => {
+    const to = makeDir();
+    const folder = path.join(to, 'Кафе');
+    mkdirSync(folder);
+    const files = ['1.png', '2.png', 'заметки.txt'].map((name) => path.join(folder, name));
+    for (const file of files) writeFileSync(file, 'x');
+
+    const moves = await tidyOutput(to, files);
+
+    expect(moves.get(files[0])).toBe(path.join(to, 'Картинки', 'Кафе', '1.png'));
+    expect(await readFile(path.join(to, 'Картинки', 'Кафе', 'заметки.txt'), 'utf8')).toBe('x');
+  });
+
+  it('не трогает то, что человек положил сам, и то, что уже в разделе', async () => {
+    const to = makeDir();
+    const mine = path.join(to, 'моё.txt');
+    writeFileSync(mine, 'x');
+    mkdirSync(path.join(to, 'Картинки'));
+    const sorted = path.join(to, 'Картинки', 'кадр.png');
+    writeFileSync(sorted, 'x');
+
+    const moves = await tidyOutput(to, [sorted, path.join(os.tmpdir(), 'чужое.png')]);
+
+    expect(moves.size).toBe(0);
+    expect((await readdir(to)).sort()).toEqual(['Картинки', 'моё.txt']);
   });
 });

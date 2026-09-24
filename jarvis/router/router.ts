@@ -29,7 +29,7 @@ import {
   INSPECT_ONLY_PHRASES,
   NO_EXECUTE_PHRASES,
   REFERENTIAL_STEMS,
-} from './lexicon.ru';
+} from './lexicon';
 import {
   hasAnyPhrase,
   hasAnyStem,
@@ -217,7 +217,7 @@ function detectIntent(
   if (capabilities.has('system')) return 'system';
   if (capabilities.has('files')) return 'file_task';
   if (capabilities.has('computer')) {
-    return hasAnyStem(tokens, ['закро', 'сверн', 'разверн', 'переключ'])
+    return hasAnyStem(tokens, ['закро', 'сверн', 'разверн', 'переключ', 'close', 'minimi', 'maximi', 'switch'])
       ? 'control_window'
       : 'open_app';
   }
@@ -234,6 +234,9 @@ const QUESTION_WORDS = [
   'что', 'чего', 'чему', 'чем', 'кто', 'кого', 'кому', 'кем', 'чей', 'чья',
   'где', 'куда', 'откуда', 'когда', 'почему', 'зачем', 'сколько', 'насколько',
   'какой', 'какая', 'какое', 'какие', 'каков', 'который', 'правда',
+  'what', 'who', 'whom', 'whose', 'where', 'when', 'why', 'how', 'which',
+  'is', 'are', 'was', 'were', 'do', 'does', 'did', 'can', 'could', 'would',
+  'will', 'should', 'have', 'has',
 ];
 
 /**
@@ -296,7 +299,7 @@ function asksSomething(tokens: readonly string[]): boolean {
 
 /** Спрашивают ли про то, что сейчас на экране. */
 function aboutTheScreen(tokens: readonly string[]): boolean {
-  return hasAnyStem(tokens, ['окн', 'экран', 'программ', 'вкладк', 'видн', 'открыт']);
+  return hasAnyStem(tokens, ['окн', 'экран', 'программ', 'вкладк', 'видн', 'открыт', 'window', 'screen', 'program', 'visible', 'open']);
 }
 
 /**
@@ -305,7 +308,7 @@ function aboutTheScreen(tokens: readonly string[]): boolean {
  * «Это», «оно», «так» — отсылка к предыдущей реплике или к тому, что Джарвис
  * сейчас делал. Ответ на такой вопрос лежит в журнале, а не в исходниках.
  */
-const УКАЗАТЕЛЬНЫЕ = ['это', 'оно', 'этот', 'эта', 'так', 'тут', 'там', 'все'];
+const УКАЗАТЕЛЬНЫЕ = ['это', 'оно', 'этот', 'эта', 'так', 'тут', 'там', 'все', 'it', 'this', 'that', 'there'];
 
 /**
  * Вопрос о происходящем, а не о проекте.
@@ -341,6 +344,8 @@ const MAKING_VERBS = [
   'перекрас', 'помен', 'измен', 'испра', 'переде',
   // Неопределённая форма: распознаватель слышит «поменять» вместо «поменяй».
   'сделать', 'создать', 'нарисовать', 'построить', 'поменять', 'изменить',
+  'creat', 'make', 'draw', 'build', 'render', 'generat', 'write', 'paint', 'chang',
+  'modif', 'redo', 'sculpt',
 ];
 
 /**
@@ -369,6 +374,22 @@ const DESTRUCTIVE_HINT_PHRASES: string[][] = [
   ['отключ', 'защит'],
   ['отключ', 'антивирус'],
   ['отключ', 'брандмауэр'],
+  ['delet', 'everything'],
+  ['wipe'],
+  ['format', 'the', 'drive'],
+  ['format', 'disk'],
+  ['reset', 'setting'],
+  ['factory', 'reset'],
+  ['disabl', 'defender'],
+  ['disabl', 'antivirus'],
+  ['disabl', 'firewall'],
+  ['turn', 'off', 'firewall'],
+  ['turn', 'off', 'the', 'firewall'],
+  ['turn', 'off', 'defender'],
+  ['turn', 'off', 'the', 'defender'],
+  ['turn', 'off', 'the', 'antivirus'],
+  ['disabl', 'the', 'firewall'],
+  ['disabl', 'the', 'antivirus'],
 ];
 
 /** Системные места Windows: ошибка здесь чинится переустановкой. */
@@ -382,6 +403,9 @@ const MONEY_STEMS = [
   'куп', 'покуп', 'оплат', 'плат', 'платеж', 'платёж', 'подписк', 'заказ',
   'карт', 'счёт', 'счет', 'банк', 'кошел', 'биткоин',
   'крипт', 'продай', 'ставк',
+  'buy', 'purchas', 'pay', 'order', 'subscri', 'checkout', 'bank', 'wallet',
+  // Не «bet»: так начинаются «better» и «between».
+  'bitcoin', 'crypto', 'sell', 'betting', 'donat',
 ];
 
 /**
@@ -396,15 +420,16 @@ const MONEY_STEMS = [
  * Различает не слово, а то, что стоит рядом. Деньги переводят на счёт, на
  * карту, в рублях; тексты — на язык.
  */
-const TRANSFER_STEMS = ['переведи', 'перевод', 'переведён', 'переведен'];
+const TRANSFER_STEMS = ['переведи', 'перевод', 'переведён', 'переведен', 'transfer', 'wire'];
 
 const MONEY_NEIGHBOURS = [
   'деньг', 'рубл', 'доллар', 'евро', 'шекел', 'гривн', 'тенге', 'сум',
   'карт', 'счёт', 'счет', 'банк', 'кошел', 'крипт', 'биткоин', 'зарплат',
+  'money', 'dollar', 'euro', 'card', 'account', 'bank', 'salary', 'usd', 'eur', 'cash',
 ];
 
 /** Действия с машиной, у которых цена ошибки — чужая несохранённая работа. */
-const MACHINE_STEMS = ['перезагруз', 'выключ', 'выруб', 'заверш', 'выйти'];
+const MACHINE_STEMS = ['перезагруз', 'выключ', 'выруб', 'заверш', 'выйти', 'restart', 'reboot', 'shut', 'shutdown', 'power', 'logout', 'sign out'];
 
 function aprioriRisk(
   capabilities: ReadonlySet<JarvisCapability>,
@@ -420,6 +445,7 @@ function aprioriRisk(
   // «почисти system32» проходило как безопасное.
   const destroys = hasAnyStem(tokens, [
     'удал', 'сотр', 'снеси', 'очист', 'почист', 'вычист', 'перезапиш', 'перепиш', 'формат',
+    'delet', 'eras', 'wipe', 'remov', 'overwrit', 'clean', 'format',
   ]);
   if (touchesSystemPlace && destroys) return 'dangerous';
 
@@ -439,7 +465,7 @@ function aprioriRisk(
   if (hasAnyStem(tokens, TRANSFER_STEMS) && hasAnyStem(tokens, MONEY_NEIGHBOURS)) {
     level = maxRisk(level, 'sensitive');
   }
-  if (hasAnyStem(tokens, ['push', 'запуш', 'запушь', 'опублик'])) {
+  if (hasAnyStem(tokens, ['push', 'запуш', 'запушь', 'опублик', 'publish'])) {
     level = maxRisk(level, 'sensitive');
   }
 
@@ -568,10 +594,6 @@ function pickTarget(input: {
 }): BackendId {
   if (input.requested) return input.requested;
 
-  // Переписка — единственное, что остаётся рантайму по умолчанию: у него живые
-  // учётные записи в мессенджерах, а у агента только мышь.
-  if (input.capabilities.has('communication')) return 'interpreter';
-
   // Код проверяется раньше экрана: у задачи по коду почти всегда есть заодно
   // capability «файлы», и экранная ветка иначе отменяла бы выбор кодового
   // backend в настройках.
@@ -584,21 +606,22 @@ function pickTarget(input: {
     if (!input.excluded.includes('codex')) return 'codex';
   }
 
-  // Экран, окна, файлы, браузер, 3D — к Claude Code. Инструменты рабочего
-  // стола и скиллы под программы есть только там; рантайм, получив такую
-  // задачу, не мог ни открыть Blender, ни положить файл в папку человека.
+  // Экран, окна, файлы, браузер, 3D, переписка — к Claude Code: инструменты
+  // рабочего стола и скиллы под программы есть только там.
   const needsScreen =
     input.capabilities.has('computer') ||
     input.capabilities.has('browser') ||
     input.capabilities.has('vision') ||
     input.capabilities.has('files') ||
     input.capabilities.has('system');
-  if (needsScreen && !input.excluded.includes('claude-code')) return 'claude-code';
-  if (needsScreen) return 'interpreter';
+  if ((needsScreen || input.capabilities.has('communication')) && !input.excluded.includes('claude-code')) {
+    return 'claude-code';
+  }
 
   const main = input.mainPreference;
   if (main && main !== 'auto' && !input.excluded.includes(main)) return main;
-  return 'interpreter';
+  if (!input.excluded.includes('claude-code')) return 'claude-code';
+  return 'codex';
 }
 
 /**

@@ -1,11 +1,11 @@
 name: Bug report
-description: Report reproducible Workstation behavior
+description: Report reproducible Rujarvis behavior
 title: "[Bug]: "
 labels: [bug]
 body:
   - type: markdown
     attributes:
-      value: Do not include API keys, access tokens, customer data, or private documents.
+      value: Do not include API keys, access tokens, personal data, or private documents. Read jarvis.log before attaching it — it contains your commands to the assistant.
   - type: input
     id: version
     attributes:

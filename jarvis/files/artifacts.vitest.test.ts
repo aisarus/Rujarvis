@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { describeArtifacts } from './artifacts';
 
-const OUTPUT = 'C:\\Users\\ariel\\Desktop\\Джарвис';
-const WORKSPACE = 'C:\\Users\\ariel\\AppData\\Local\\Rujarvis\\src';
+const OUTPUT = 'C:\\Users\\user\\Desktop\\Джарвис';
+const WORKSPACE = 'C:\\Users\\user\\AppData\\Local\\Rujarvis\\src';
 
 describe('describeArtifacts', () => {
   it('называет файл и папку, когда результат лёг в папку ассистента', () => {
@@ -17,13 +17,13 @@ describe('describeArtifacts', () => {
   });
 
   it('называет раздел, в котором лежит файл', () => {
-    // «В папке Джарвис» мало, когда внутри пять разделов.
+    // «В папке Джарвис» мало, когда внутри десять разделов.
     const report = describeArtifacts(
-      [{ path: `${OUTPUT}\\Images\\закат.png`, action: 'created' }],
+      [{ path: `${OUTPUT}\\Картинки\\закат.png`, action: 'created' }],
       { outputDir: OUTPUT },
     );
 
-    expect(report?.spoken).toContain('раздел Images');
+    expect(report?.spoken).toContain('раздел «Картинки»');
   });
 
   it('не выдумывает раздел для файла в корне папки', () => {
@@ -36,12 +36,12 @@ describe('describeArtifacts', () => {
 
   it('называет полный путь, когда файл лёг мимо папки ассистента', () => {
     const report = describeArtifacts(
-      [{ path: 'C:\\Users\\ariel\\Pictures\\кот.png', action: 'created' }],
+      [{ path: 'C:\\Users\\user\\Pictures\\кот.png', action: 'created' }],
       { outputDir: OUTPUT },
     );
 
     // Человек не найдёт файл, которого не назвали: тут важен весь путь.
-    expect(report?.spoken).toContain('C:\\Users\\ariel\\Pictures\\кот.png');
+    expect(report?.spoken).toContain('C:\\Users\\user\\Pictures\\кот.png');
   });
 
   it('молчит про правку исходников — это работа, а не подарок человеку', () => {
@@ -58,7 +58,7 @@ describe('describeArtifacts', () => {
 
   it('молчит про временные файлы', () => {
     const report = describeArtifacts(
-      [{ path: 'C:\\Users\\ariel\\AppData\\Local\\Temp\\jarvis-x\\task.py', action: 'created' }],
+      [{ path: 'C:\\Users\\user\\AppData\\Local\\Temp\\jarvis-x\\task.py', action: 'created' }],
       { outputDir: OUTPUT },
     );
 
@@ -89,7 +89,7 @@ describe('describeArtifacts', () => {
 
   it('считает папку своей независимо от регистра и вида слешей', () => {
     const report = describeArtifacts(
-      [{ path: 'c:/users/ariel/desktop/Джарвис/отчёт.xlsx', action: 'created' }],
+      [{ path: 'c:/users/user/desktop/Джарвис/отчёт.xlsx', action: 'created' }],
       { outputDir: OUTPUT },
     );
 

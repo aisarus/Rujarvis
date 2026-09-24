@@ -22,11 +22,11 @@ const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0
 
 function hangingBackend(): AgentBackend {
   return {
-    id: 'interpreter',
-    name: 'interpreter',
+    id: 'codex',
+    name: 'codex',
     capabilities: new Set(),
     checkAvailability: async () => ({
-      id: 'interpreter' as const,
+      id: 'codex' as const,
       installed: true,
       authenticated: true,
       ready: true,
@@ -36,7 +36,7 @@ function hangingBackend(): AgentBackend {
       const channel = new EventChannel<BackendEvent>();
       const cancelled: BackendResult = {
         ok: false,
-        backend: 'interpreter',
+        backend: 'codex',
         text: '',
         durationMs: 1,
         filesChanged: [],
@@ -46,10 +46,10 @@ function hangingBackend(): AgentBackend {
       };
       return {
         id: 'run',
-        backend: 'interpreter',
+        backend: 'codex',
         events: channel,
         cancel: () => {
-          channel.push({ type: 'completed', backend: 'interpreter', result: cancelled });
+          channel.push({ type: 'completed', backend: 'codex', result: cancelled });
           channel.close();
         },
         result: () => Promise.resolve(cancelled),

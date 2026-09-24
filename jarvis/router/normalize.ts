@@ -21,7 +21,7 @@ import {
   permissionsWithin,
   type TaskPermissions,
 } from '../types';
-import { LEADING_FILLER_STEMS } from './lexicon.ru';
+import { LEADING_FILLER_STEMS } from './lexicon';
 import { normalizeForMatching, tokenize } from './text';
 import type { RoutingDecision } from './router';
 

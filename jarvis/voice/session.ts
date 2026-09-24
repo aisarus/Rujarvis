@@ -16,6 +16,7 @@
 import type { JarvisCore, JarvisTurn } from '../core';
 import { matchVoiceControl } from './interrupts';
 import { WakeWordListener, type WakeWordListenerOptions } from './wakeWord';
+import { byLanguage, tr } from '../locale/language';
 
 export type VoiceIndicator =
   | 'idle'
@@ -47,7 +48,7 @@ export interface VoiceStatus {
   activeTaskTitle?: string;
 }
 
-const INDICATOR_LABELS: Record<VoiceIndicator, string> = {
+const INDICATOR_LABELS_RU: Record<VoiceIndicator, string> = {
   idle: '',
   listening: 'Слушаю…',
   transcribing: 'Распознаю…',
@@ -55,6 +56,16 @@ const INDICATOR_LABELS: Record<VoiceIndicator, string> = {
   chatting: 'Разговариваю',
   working: 'Работаю',
   speaking: 'Отвечаю…',
+};
+
+const INDICATOR_LABELS_EN: Record<VoiceIndicator, string> = {
+  idle: '',
+  listening: 'Listening…',
+  transcribing: 'Recognising…',
+  thinking: 'Thinking…',
+  chatting: 'Talking',
+  working: 'Working',
+  speaking: 'Answering…',
 };
 
 /** Captures microphone audio. Supplied by the desktop layer. */
@@ -113,8 +124,8 @@ export class VoiceSession {
   get status(): VoiceStatus {
     const label =
       this.indicator === 'working' && this.activeTaskTitle
-        ? `Работаю: ${this.activeTaskTitle}`
-        : INDICATOR_LABELS[this.indicator];
+        ? `${tr('Работаю', 'Working')}: ${this.activeTaskTitle}`
+        : byLanguage({ ru: INDICATOR_LABELS_RU, en: INDICATOR_LABELS_EN })[this.indicator];
     return {
       indicator: this.indicator,
       label,
