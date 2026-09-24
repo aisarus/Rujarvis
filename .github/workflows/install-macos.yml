@@ -67,11 +67,16 @@ jobs:
         # Папку задаём внутри: `working-directory` не разворачивает ~ и плохо
         # дружит с пробелом в «Application Support».
         run: |
+          # pipefail обязателен: без него `| tail` съедает код возврата, и
+          # упавший прогон показывает «success». Поймано на первом же запуске —
+          # приёмка упала с двумя провалами, а шаг был зелёным.
+          set -o pipefail
           cd "$HOME/Library/Application Support/Rujarvis/src"
           pnpm jarvis:roundtrip 2>&1 | tail -30
 
       - name: Приёмка
         run: |
+          set -o pipefail
           cd "$HOME/Library/Application Support/Rujarvis/src"
           pnpm jarvis:qa 2>&1 | tail -30
 
