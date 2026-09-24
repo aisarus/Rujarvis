@@ -396,6 +396,9 @@ api.onProgress((p) => {
   if (p.stage === 'complete') { progress.delete(`${p.kind}:${p.id}`); void refresh(); return; }
   render();
 });
-api.onPage((next) => { page = next; step = 0; render(); });
+// Шаг сбрасываем, только когда страница ДЕЙСТВИТЕЛЬНО сменилась. Иначе
+// человек, свернувший окно на середине настройки и открывший его снова из
+// трея, каждый раз начинал бы мастер сначала.
+api.onPage((next) => { if (next !== page) { page = next; step = 0; } render(); });
 
 void refresh();
