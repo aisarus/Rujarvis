@@ -1,13 +1,14 @@
 // Сколько времени проходит от запуска MCP-сервера до его первого ответа.
 import { spawn, spawnSync } from 'node:child_process';
+import path from 'node:path';
 
-const launcher = 'C:\\Users\\ariel\\AppData\\Local\\Rujarvis\\desktop-mcp.cmd';
+const bundle = path.join(process.cwd(), 'dist-electron', 'jarvis', 'desktop', 'mcp.cjs');
 const started = Date.now();
 
 // Без `detached`: с ним Windows не доносит до cmd.exe написанное в stdin, и
 // замер показывал «не ответил» на живом сервере. Гасим потом по номеру —
 // сигналом прерывания задело бы и запущенного Джарвиса.
-const child = spawn('cmd.exe', ['/c', launcher], {
+const child = spawn(process.execPath, [bundle], {
   stdio: ['pipe', 'pipe', 'pipe'],
   windowsHide: true,
 });

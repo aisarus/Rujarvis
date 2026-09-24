@@ -18,7 +18,7 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, type Dirent } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, type Dirent } from 'node:fs';
 import { access, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -48,6 +48,7 @@ import { parseDictationEdit, type DictationEdit } from '../../jarvis/control/dic
 import { chooseElement } from '../../jarvis/control/elements';
 import { cellCenter, subCellCenter } from '../../jarvis/control/grid';
 import { DesktopDriver, driverStamp } from '../../jarvis/desktop/driver';
+import { resolveDesktopMcpLaunch } from '../../jarvis/desktop/launch';
 import { EchoGuard } from '../../jarvis/voice/echo';
 import { StandingInstructions } from '../../jarvis/backends/standingInstructions';
 import { ProgressVoice } from '../../jarvis/voice/progress';
@@ -1807,16 +1808,9 @@ async function launchApplication(
  * use is then simply absent instead of failing halfway through a task.
  */
 function writeDesktopMcpConfig(outputDir?: string): string | undefined {
-  // The launcher may say where the server is; if it does not, it sits beside
-  // the data directory, which does reach us. Deriving it beats depending on a
-  // variable surviving cmd's parsing rules.
-  const dataRoot = process.env.JARVIS_DATA_ROOT?.trim();
-  const server =
-    process.env.JARVIS_DESKTOP_MCP?.trim() ||
-    (dataRoot ? path.join(path.dirname(path.resolve(dataRoot)), 'desktop-mcp.cmd') : undefined);
-
-  if (!server || !existsSync(server)) {
-    console.log(`[jarvis] управление экраном выключено: не найден ${server ?? 'MCP-сервер'}`);
+  const server = resolveDesktopMcpLaunch({ appRoot: app.getAppPath() });
+  if (!server.ok) {
+    console.log(`[jarvis] управление экраном выключено: не найден ${server.missing}`);
     return undefined;
   }
 
@@ -1829,12 +1823,13 @@ function writeDesktopMcpConfig(outputDir?: string): string | undefined {
         mcpServers: {
           'jarvis-desktop': {
             type: 'stdio',
-            command: server,
-            args: [],
+            command: server.launch.command,
+            args: server.launch.args,
             // Сервер — отдельный процесс и сам рабочего стола не знает. Без
             // этой переменной его файловые инструменты складывали бы результат
             // не туда, где человек его ищет.
             env: {
+              ...server.launch.env,
               ...(outputDir ? { JARVIS_OUTPUT_DIR: outputDir } : {}),
               // Журнал тот же самый: агент должен видеть ровно то, что помнит
               // сам Джарвис, а не собственную отдельную.
@@ -1850,7 +1845,7 @@ function writeDesktopMcpConfig(outputDir?: string): string | undefined {
       }),
       'utf8',
     );
-    console.log(`[jarvis] управление экраном включено: ${server}`);
+    console.log(`[jarvis] управление экраном включено: ${server.launch.args[0] ?? server.launch.command}`);
     return file;
   } catch (error) {
     console.error('[jarvis] не удалось подготовить управление экраном:', error);
@@ -1861,20 +1856,15 @@ function writeDesktopMcpConfig(outputDir?: string): string | undefined {
 /**
  * Конфиг MCP для разговора: тот же сервер, другая роль.
  *
- * Отдельного пускового файла нет нарочно. `desktop-mcp.cmd` уже найден,
- * собран и обновляется вместе со сборкой; второй такой же пришлось бы держать
- * в системе и не забывать обновлять. Роль читается из окружения, и сервер в
+ * Отдельной сборки нет нарочно: сервер тот же, что у рабочего стола, и
+ * обновляется вместе со сборкой приложения. Роль читается из окружения, и сервер в
  * ней регистрирует только пять глаголов разговора — рабочих инструментов в
  * этом процессе нет вовсе, а не «есть, но запрещены».
  */
 function writeTalkMcpConfig(bridgeDir: string): string | undefined {
-  const dataRoot = process.env.JARVIS_DATA_ROOT?.trim();
-  const server =
-    process.env.JARVIS_DESKTOP_MCP?.trim() ||
-    (dataRoot ? path.join(path.dirname(path.resolve(dataRoot)), 'desktop-mcp.cmd') : undefined);
-
-  if (!server || !existsSync(server)) {
-    console.log('[jarvis] разговор без рычагов: не найден MCP-сервер');
+  const server = resolveDesktopMcpLaunch({ appRoot: app.getAppPath() });
+  if (!server.ok) {
+    console.log(`[jarvis] разговор без рычагов: не найден ${server.missing}`);
     return undefined;
   }
 
@@ -1887,9 +1877,10 @@ function writeTalkMcpConfig(bridgeDir: string): string | undefined {
         mcpServers: {
           'jarvis-talk': {
             type: 'stdio',
-            command: server,
-            args: [],
+            command: server.launch.command,
+            args: server.launch.args,
             env: {
+              ...server.launch.env,
               JARVIS_MCP_ROLE: 'talk',
               JARVIS_TALK_BRIDGE: bridgeDir,
               JARVIS_JOURNAL: journalFile(),

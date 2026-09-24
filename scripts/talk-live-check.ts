@@ -13,7 +13,7 @@
  * что его попросили.
  */
 
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -21,23 +21,18 @@ import { TalkBridge, type TalkRequest } from '../jarvis/dialogue/talkBridge';
 import { TalkSession } from '../jarvis/dialogue/talkSession';
 import { createWorkstationClaudeProbe } from '../jarvis/backends/workstationProbes';
 import { makePlan, renderPlan, type Plan } from '../jarvis/agent/plan';
+import { resolveDesktopMcpLaunch } from '../jarvis/desktop/launch';
 
 const ДОМ = mkdtempSync(path.join(os.tmpdir(), 'jarvis-talk-live-'));
 const МОСТ = path.join(ДОМ, 'bridge');
 const ЖУРНАЛ = path.join(ДОМ, 'journal.json');
 const ПЛАН = path.join(ДОМ, 'plan.json');
 
-/** Тот же пусковой файл, что у рабочего сервера, — с другой ролью. */
+/** Тот же сервер, что у рабочего стола, — с другой ролью. */
 function конфиг(): string | undefined {
-  const server =
-    process.env.JARVIS_DESKTOP_MCP?.trim() ||
-    path.join(
-      process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
-      'Rujarvis',
-      'desktop-mcp.cmd',
-    );
-  if (!existsSync(server)) {
-    console.log(`НЕТ пускового файла сервера: ${server}`);
+  const server = resolveDesktopMcpLaunch({ appRoot: process.cwd() });
+  if (!server.ok) {
+    console.log(`НЕТ сервера: ${server.missing} — сначала pnpm run build`);
     return undefined;
   }
 
@@ -48,9 +43,10 @@ function конфиг(): string | undefined {
       mcpServers: {
         'jarvis-talk': {
           type: 'stdio',
-          command: server,
-          args: [],
+          command: server.launch.command,
+          args: server.launch.args,
           env: {
+            ...server.launch.env,
             JARVIS_MCP_ROLE: 'talk',
             JARVIS_TALK_BRIDGE: МОСТ,
             JARVIS_JOURNAL: ЖУРНАЛ,
@@ -62,7 +58,7 @@ function конфиг(): string | undefined {
     }),
     'utf8',
   );
-  console.log(`сервер разговора: ${server}`);
+  console.log(`сервер разговора: ${server.launch.args[0] ?? server.launch.command}`);
   return file;
 }
 

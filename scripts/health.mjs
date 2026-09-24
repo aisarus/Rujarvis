@@ -14,6 +14,12 @@ const LOCAL = process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Lo
 const ROOT = path.join(LOCAL, 'Rujarvis');
 const results = [];
 
+// Тот же выбор сервера, что в `jarvis/desktop/launch.ts`: явная подмена или
+// собранный `mcp.cjs` из исходников рядом с данными.
+const MCP = process.env.JARVIS_DESKTOP_MCP?.trim()
+  ? { command: 'cmd.exe', args: ['/c', process.env.JARVIS_DESKTOP_MCP.trim()] }
+  : { command: process.execPath, args: [path.join(ROOT, 'src', 'dist-electron', 'jarvis', 'desktop', 'mcp.cjs')] };
+
 const ok = (name, detail) => results.push({ good: true, name, detail });
 const bad = (name, detail) => results.push({ good: false, name, detail });
 
@@ -36,7 +42,7 @@ function askMcp() {
     // молча ждёт запроса, которого не будет, и проверка объявляла мёртвым
     // совершенно живой сервер. Ровно так эта проверка и соврала — сервер в
     // тот момент отвечал за долю секунды.
-    const child = spawn('cmd.exe', ['/c', path.join(ROOT, 'desktop-mcp.cmd')], {
+    const child = spawn(MCP.command, MCP.args, {
       stdio: ['pipe', 'pipe', 'ignore'],
       windowsHide: true,
     });
