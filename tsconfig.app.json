@@ -20,6 +20,7 @@
     "jarvis/**/*.ts",
     "scripts/jarvis-*.ts",
     "scripts/probe-*.ts",
+    "scripts/qa/*.ts",
     "scripts/talk-live-check.ts",
     "scripts/проверка-*.ts",
     "scripts/dota-*.ts"
