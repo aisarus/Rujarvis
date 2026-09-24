@@ -192,8 +192,67 @@ const развёрнутое = послеРазворота.find((item) => item.
 проверить(развёрнутое?.minimized === false, 'окно развернулось обратно');
 проверить(развёрнутое?.focused === true, 'окно действительно впереди');
 
-console.log('\n=== 5. Печать и сочетания клавиш');
-await шаг('напечатать кириллицу', () => driver.type('Привет, мир'));
+console.log('\n=== 5. Чем печатать кириллицу');
+/*
+  Прогон 24.09.2026 показал: `keystroke "Привет"` на маке не печатает ничего.
+  Отказа при этом нет — System Events отвечает «сделано», а в окне пусто.
+  Раскладка на машине латинская, и keystroke гонит символ через неё.
+
+  Меряем три пути на одном и том же окне, чтобы выбрать не по догадке.
+*/
+const ЮНИКОД_JXA = `
+  ObjC.import('CoreGraphics');
+  ObjC.import('Foundation');
+  const text = $('Привет');
+  const length = text.length;
+  const buffer = $.NSMutableData.dataWithLength(length * 2);
+  text.getCharactersRange(buffer.mutableBytes, $.NSMakeRange(0, length));
+  const down = $.CGEventCreateKeyboardEvent($(), 0, true);
+  $.CGEventKeyboardSetUnicodeString(down, length, buffer.mutableBytes);
+  $.CGEventPost($.kCGHIDEventTap, down);
+  const up = $.CGEventCreateKeyboardEvent($(), 0, false);
+  $.CGEventKeyboardSetUnicodeString(up, length, buffer.mutableBytes);
+  $.CGEventPost($.kCGHIDEventTap, up);
+  'ok';
+`;
+const БУФЕР_ОБМЕНА = `
+set saved to ""
+try
+  set saved to the clipboard as text
+end try
+set the clipboard to "Привет"
+tell application "System Events" to key code 9 using {command down}
+delay 0.4
+try
+  set the clipboard to saved
+end try
+return "ok"
+`;
+
+const способы: [string, () => Promise<unknown>][] = [
+  [
+    'System Events keystroke',
+    () =>
+      запустить('osascript', ['-e', 'tell application "System Events" to keystroke "Привет"'], { timeout: 20_000 }),
+  ],
+  ['CGEvent + Unicode', () => запустить('osascript', ['-l', 'JavaScript', '-e', ЮНИКОД_JXA], { timeout: 20_000 })],
+  ['буфер обмена + Cmd+V', () => запустить('osascript', ['-e', БУФЕР_ОБМЕНА], { timeout: 20_000 })],
+];
+
+for (const [имя, способ] of способы) {
+  await driver.key('ctrl+a');
+  await driver.key('backspace');
+  await подождать(400);
+  await шаг(имя, способ, false);
+  await подождать(800);
+  const вышло = await текстОкна().catch(() => '(не прочитать)');
+  console.log(`         «${имя}» → в окне «${вышло}»`);
+}
+
+await driver.key('ctrl+a');
+await driver.key('backspace');
+await подождать(400);
+await шаг('напечатать кириллицу драйвером', () => driver.type('Привет, мир'));
 await подождать(1_000);
 const напечатано = (await шаг('прочитать текст окна', () => текстОкна())) ?? '';
 console.log(`         в окне: «${напечатано}»`);
