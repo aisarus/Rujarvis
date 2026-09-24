@@ -34,6 +34,18 @@ irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 | iex
 «Пуск» и запустит его. Права администратора, компилятор C++ и Rust не нужны.
 Повторный запуск обновляет установку.
 
+macOS, одна строка в терминале:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.sh | bash
+```
+
+Тот же порядок: Homebrew, Git и Node.js ставятся сами, если их нет, приложение
+собирается, модели речи скачиваются, **Rujarvis** появляется в `~/Applications`.
+Голос, разговор и работа через Claude Code работают так же, как на Windows.
+Управление чужими окнами — фокус, клавиши, снимки — пока только на Windows:
+драйвер написан на Windows API.
+
 При первом запуске короткая настройка проведёт по шагам: язык, вход в Claude
 Code, модели речи, проверка микрофона. Потом всё меняется в трее → **Настройки**.
 
