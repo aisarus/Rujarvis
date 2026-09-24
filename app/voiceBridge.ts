@@ -34,7 +34,7 @@ import { listInstalledPrograms } from '../jarvis/apps/installed';
 import { aliasTarget, matchAppLaunch, spokenCloseTarget, spokenTarget, windowAlias } from '../jarvis/apps/launch';
 import { readConfirmation } from '../jarvis/voice/confirm';
 import { chooseShortcut } from '../jarvis/apps/startMenu';
-import { OUTPUT_SECTIONS, revealPath } from '../jarvis/desktop/files';
+import { OUTPUT_SECTIONS, revealPath, sectionDir, tidyOutput } from '../jarvis/desktop/files';
 import { describeArtifacts } from '../jarvis/files/artifacts';
 import { JournalStore } from '../jarvis/memory/journalStore';
 import type { EventKind } from '../jarvis/memory/journal';
@@ -58,6 +58,7 @@ import { findWakeWord } from '../jarvis/voice/wakeWord';
 import { spokenFailure, toSpokenResponse } from '../jarvis/voice/spokenResponse';
 import { createJarvis, type Jarvis } from '../jarvis/createJarvis';
 import { setLanguage, tr } from '../jarvis/locale/language';
+import type { BackendFileChange } from '../jarvis/backends/types';
 import { jarvisOutputDir, jarvisPaths } from '../jarvis/setup/paths';
 import { DEFAULT_SETTINGS, type AppSettings, type SettingsStore } from '../jarvis/setup/settings';
 import { isVoiceInstalled, Speaker } from '../jarvis/voice/tts';
@@ -1373,7 +1374,7 @@ export async function startJarvisVoiceBridge(options: {
   }, 5_000);
   progressTimer.unref?.();
 
-  jarvis.tasks.subscribe((event) => {
+  jarvis.tasks.subscribe(async (event) => {
     if (event.type === 'task-event') {
       runLogs.get(event.task.id)?.saw(event.event);
       progress.saw(event.event);
@@ -1428,7 +1429,7 @@ export async function startJarvisVoiceBridge(options: {
     // сообщила, что картинка «в чате с Джарвисом», — такого места нет, и
     // человек остался без файла, который был уже сделан.
     const made = result?.ok
-      ? describeArtifacts(result.filesChanged ?? [], { outputDir, workspace })
+      ? describeArtifacts(await tidyAgentFiles(result.filesChanged ?? [], outputDir), { outputDir, workspace })
       : null;
 
     const spokenLocation =
@@ -1901,6 +1902,7 @@ function writeDesktopMcpConfig(outputDir?: string): string | undefined {
             env: {
               ...server.launch.env,
               ...(outputDir ? { JARVIS_OUTPUT_DIR: outputDir } : {}),
+              JARVIS_LANGUAGE: settings().language,
               // Журнал тот же самый: агент должен видеть ровно то, что помнит
               // сам Джарвис, а не собственную отдельную.
               JARVIS_JOURNAL: journalFile(),
@@ -2035,13 +2037,37 @@ function ensureOutputDir(): string | undefined {
     // Разделы заводятся сразу: размеченная папка понятнее пустой, и агенту не
     // приходится гадать, куда класть — раздел уже существует.
     for (const section of OUTPUT_SECTIONS) {
-      mkdirSync(path.join(dir, section), { recursive: true });
+      mkdirSync(sectionDir(dir, section), { recursive: true });
     }
     console.log(`[jarvis] папка для файлов: ${dir}`);
     return dir;
   } catch (error) {
     console.error('[jarvis] не удалось создать папку для файлов:', error);
     return undefined;
+  }
+}
+
+/**
+ * Раскладывает по разделам то, что агент бросил в корень папки результатов, и
+ * возвращает изменения уже с новыми путями: назвать человеку надо то место,
+ * где файл лежит сейчас, а не где его оставила модель.
+ */
+async function tidyAgentFiles(
+  changes: readonly BackendFileChange[],
+  outputDir: string | undefined,
+): Promise<BackendFileChange[]> {
+  if (!outputDir) return [...changes];
+  try {
+    const moves = await tidyOutput(
+      outputDir,
+      changes.filter((change) => change.action !== 'deleted').map((change) => change.path),
+    );
+    for (const [from, to] of moves) console.log(`[jarvis] разложил: ${from} → ${to}`);
+    return changes.map((change) => ({ ...change, path: moves.get(change.path) ?? change.path }));
+  } catch (error) {
+    // Беспорядок в папке — не повод потерять ответ человеку.
+    console.error('[jarvis] не удалось разложить файлы по разделам:', error);
+    return [...changes];
   }
 }
 

@@ -92,7 +92,11 @@ Everything lives in one folder, `%LOCALAPPDATA%\Rujarvis`:
 | `logs\jarvis.log` | The log; the tray has **Open log** |
 | `models\` | Speech recognition (`whisper\`) and voices (`voices\`) |
 
-Files the agent makes for you go to **Jarvis** (or **Джарвис**) on your desktop.
+Files the agent makes for you go to **Jarvis** (or **Джарвис**) on your desktop,
+sorted into sections by type — Documents, Spreadsheets, Presentations, Images,
+Video, Audio, Code, Archives, Apps, Other — with one subfolder per task
+(`Images\Cafe logo\`). Anything the agent leaves loose in the folder is sorted
+after the task; files you put there yourself are left alone.
 
 The log records commands addressed to Jarvis, never your dictation or
 conversations around you — unless you choose *everything* in **Settings →

@@ -17,13 +17,13 @@ describe('describeArtifacts', () => {
   });
 
   it('называет раздел, в котором лежит файл', () => {
-    // «В папке Джарвис» мало, когда внутри пять разделов.
+    // «В папке Джарвис» мало, когда внутри десять разделов.
     const report = describeArtifacts(
-      [{ path: `${OUTPUT}\\Images\\закат.png`, action: 'created' }],
+      [{ path: `${OUTPUT}\\Картинки\\закат.png`, action: 'created' }],
       { outputDir: OUTPUT },
     );
 
-    expect(report?.spoken).toContain('раздел Images');
+    expect(report?.spoken).toContain('раздел «Картинки»');
   });
 
   it('не выдумывает раздел для файла в корне папки', () => {

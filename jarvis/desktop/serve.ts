@@ -14,6 +14,12 @@
  * сервер при загрузке поднимает драйвер рабочего стола и заводит временные
  * папки, и разговору это всё не нужно ни секунды.
  */
+import { setLanguage } from '../locale/language';
+
+// Язык приходит от приложения: от него зависят названия разделов в папке
+// ассистента, и сервер должен звать их так же, как их видит человек.
+setLanguage(process.env.JARVIS_LANGUAGE === 'en' ? 'en' : 'ru');
+
 const роль = process.argv[2] === 'gate' ? 'gate' : process.env.JARVIS_MCP_ROLE?.trim();
 
 // Третья роль — не сервер, а хук PreToolUse (`risk/gateHook.ts`): Claude Code
