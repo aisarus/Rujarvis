@@ -46,7 +46,7 @@ import { reapAll } from '../jarvis/tasks/reaper';
 import { parseDictationEdit, type DictationEdit } from '../jarvis/control/dictationEdits';
 import { chooseElement } from '../jarvis/control/elements';
 import { cellCenter, subCellCenter } from '../jarvis/control/grid';
-import { DesktopDriver, driverStamp } from '../jarvis/desktop/driver';
+import { createDesktopDriver, desktopStamp } from '../jarvis/desktop/platform';
 import { resolveDesktopMcpLaunch } from '../jarvis/desktop/launch';
 import { GateBridge } from '../jarvis/risk/gateBridge';
 import { prepareGate } from '../jarvis/risk/gateSetup';
@@ -160,11 +160,12 @@ const echoGuard = new EchoGuard();
 /**
  * Мышь и клавиатура для прямых команд.
  *
- * Тот же драйвер, что у агента, но вызывается напрямую: постоянный процесс
- * PowerShell с построчным протоколом, поэтому после первой команды нажатие
- * стоит миллисекунды, а не полминуты похода к модели.
+ * Тот же драйвер, что у агента, но вызывается напрямую: на Windows это
+ * постоянный процесс PowerShell с построчным протоколом, на маке — вызовы
+ * `osascript`. В обоих случаях нажатие стоит миллисекунды, а не полминуты
+ * похода к модели.
  */
-const desktop = new DesktopDriver();
+const desktop = createDesktopDriver();
 
 /**
  * Идёт ли диктовка.
@@ -1453,7 +1454,7 @@ export async function startJarvisVoiceBridge(options: {
         prompt: event.task.request.utterance,
         cwd: event.task.request.cwd ?? '(папка не задана)',
         capabilities: event.task.request.capabilities,
-        driver: driverStamp(),
+        driver: desktopStamp(),
       });
       runLogs.set(event.task.id, log);
       progress.reset();

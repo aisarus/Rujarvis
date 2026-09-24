@@ -35,6 +35,37 @@ export interface DesktopWindow {
   height: number;
   pid: number;
   focused: boolean;
+  /**
+   * Свёрнуто ли окно.
+   *
+   * Отдают оба драйвера, и оба по одной причине: свёрнутое окно — тоже окно.
+   * На Windows его выбрасывала проверка размера, и «переключись на Edge» не
+   * находило Edge ровно тогда, когда это нужнее всего.
+   */
+  minimized?: boolean;
+}
+
+/**
+ * Что умеет рабочий стол — одинаково на Windows и на macOS.
+ *
+ * Драйверы устроены по-разному: на Windows живёт процесс PowerShell с
+ * построчным протоколом, на маке каждая операция — отдельный `osascript`.
+ * Общим остаётся только этот набор, и всё, что выше по течению (голосовой
+ * слой, MCP-сервер), знает лишь его.
+ */
+export interface DesktopControl {
+  screen(): Promise<ScreenBounds>;
+  windows(): Promise<DesktopWindow[]>;
+  cursor(): Promise<{ x: number; y: number }>;
+  screenshot(filePath: string, region?: ScreenBounds): Promise<ScreenBounds & { path: string }>;
+  move(x: number, y: number): Promise<void>;
+  click(options: { x?: number; y?: number; button?: 'left' | 'right' | 'middle'; double?: boolean }): Promise<void>;
+  scroll(amount: number, at?: { x: number; y: number }): Promise<void>;
+  type(text: string): Promise<void>;
+  key(keys: string): Promise<void>;
+  elements(): Promise<{ title: string; elements: UiElement[] }>;
+  focus(title: string): Promise<{ title: string }>;
+  dispose(): void;
 }
 
 type Command = Record<string, unknown> & { cmd: string };

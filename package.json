@@ -32,6 +32,7 @@
     "jarvis:try": "tsx scripts/jarvis-try.ts",
     "jarvis:talk-check": "tsx scripts/talk-live-check.ts",
     "jarvis:roundtrip": "tsx scripts/voice-roundtrip.ts",
+    "jarvis:mac-check": "tsx scripts/probe-darwin-driver.ts",
     "jarvis:health": "node scripts/health.mjs",
     "jarvis:icons": "node scripts/make-icons.mjs"
   },

@@ -35,9 +35,9 @@ import * as mid from './inbetween';
 import { makePlan, markStep, renderPlan, type StepState } from '../agent/plan';
 import { buildSkillFile, isSelfAuthored, skillPath } from '../skills/author';
 import { CuaDriver } from './cua';
-import { DesktopDriver } from './driver';
+import { createDesktopDriver } from './platform';
 
-const driver = new DesktopDriver();
+const driver = createDesktopDriver();
 // Драйвер компьютер-юза поднимается при первом обращении и живёт дальше:
 // прогрев стоит около двух секунд, каждое следующее действие — десятки мс.
 const cua = new CuaDriver();

@@ -1,0 +1,37 @@
+# Драйвер рабочего стола macOS — на настоящем маке.
+#
+# Локального мака нет ни у кого, кто пишет этот драйвер, а «Универсальный
+# доступ», CGEvent и System Events на слово проверить нельзя: без разрешения
+# они не падают, а молча не делают ничего. Поэтому весь путь — найти окно,
+# свернуть, увидеть свёрнутым, развернуть, поднять, напечатать — гоняется
+# здесь, на macos-latest.
+#
+# Запускается пушем в ветки mac/** и руками
+# (`gh workflow run check-darwin-driver.yml --ref <ветка>`). В основной CI не
+# входит: там три платформы и никакого живого рабочего стола.
+name: Darwin window driver
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['mac/**']
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Настоящее окно на macOS
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm jarvis:mac-check
