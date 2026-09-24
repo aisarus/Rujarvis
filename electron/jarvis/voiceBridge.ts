@@ -234,6 +234,18 @@ let overlayRef: StatusOverlay | null = null;
 let talkRef: TalkSession | null = null;
 /** Как остановить мост разговора при выходе. */
 let stopTalkBridge: (() => void) | null = null;
+/**
+ * Что писать в лог вместо сказанного.
+ *
+ * Лог уходит в файл, а файл — в сообщения об ошибках. Диктовка бывает
+ * паролем, а речь, обращённая не к Джарвису, — чужим разговором в комнате.
+ * Ни то, ни другое не нужно для разбора, и ни то, ни другое не должно лежать
+ * на диске. Команды Джарвису остаются: без них лог не объясняет ничего.
+ */
+function unlogged(text: string): string {
+  return `(${text.length} знаков, текст не записан)`;
+}
+
 /** Как остановить мост вопросов хука красных линий. */
 let stopGateBridge: (() => void) | null = null;
 
@@ -580,7 +592,7 @@ export async function startJarvisVoiceBridge(options: {
       if (corrected !== text) console.log(`[jarvis] расслышал точнее: ${text} → ${corrected}`);
 
       const speech = meaningfulSpeech(corrected);
-      if (!speech && text.trim()) console.log(`[jarvis] шум, пропускаю: ${text}`);
+      if (!speech && text.trim()) console.log(`[jarvis] шум, пропускаю: ${unlogged(text)}`);
       return { text: speech ?? '' };
     },
   };
@@ -640,7 +652,7 @@ export async function startJarvisVoiceBridge(options: {
       // модели за «ага» — плохая сделка, и отвечать там нечего.
       const пустое = obviousAside(whole);
       if (пустое?.kind === 'ignore') {
-        console.log(`[jarvis] мимо (${пустое.why}): ${whole}`);
+        console.log(`[jarvis] мимо (${пустое.why}): ${unlogged(whole)}`);
         return;
       }
 
@@ -1021,7 +1033,7 @@ export async function startJarvisVoiceBridge(options: {
           // крошечный нарочно — всё остальное печатается буквами.
           const edit = parseDictationEdit(text);
           if (edit) {
-            console.log(`[jarvis] правка диктовки: ${text}`);
+            console.log(`[jarvis] правка диктовки: ${unlogged(text)}`);
             try {
               await applyDictationEdit(edit);
             } catch (error) {
@@ -1032,7 +1044,7 @@ export async function startJarvisVoiceBridge(options: {
             return;
           }
 
-          console.log(`[jarvis] диктую: ${text}`);
+          console.log(`[jarvis] диктую: ${unlogged(text)}`);
           try {
             await desktop.type(text);
           } catch (error) {
@@ -1093,7 +1105,7 @@ export async function startJarvisVoiceBridge(options: {
         // не поднимется, и фильтр снова станет нужен.
         const talking = talk.isAlive() || jarvis.core.hasOpenConversation();
         if (awake && command && !talking && looksLikeChatter(text)) {
-          console.log(`[jarvis] разговор не со мной, пропускаю: ${text}`);
+          console.log(`[jarvis] разговор не со мной, пропускаю: ${unlogged(text)}`);
           // Человек должен видеть, что услышано и почему ничего не произошло —
           // иначе молчание выглядит поломкой.
           overlay.note(session.status, `«${short(text)}» — не команда`);
