@@ -304,16 +304,25 @@ async function runDirectCommand(command: DirectCommand, session: VoiceSession): 
         // имя программы, но окно может называться иначе — «Riot Client» в
         // таблице нет, а сказать про него человек может.
         let found: { title: string } | null = null;
+        // Причину последней попытки не теряем.
+        //
+        // Раньше здесь стоял пустой `catch`, и человек слышал «не
+        // получилось» без единой подсказки: ни что искали, ни что рядом.
+        // Драйвер теперь перечисляет, что на экране, - и это должно дойти
+        // до человека, а не осесть в пустых скобках.
+        let почему = '';
         for (const candidate of [alias, command.title]) {
           if (!candidate) continue;
           try {
             found = await desktop.focus(candidate);
             break;
-          } catch {
-            // Пробуем следующее написание.
+          } catch (error) {
+            почему = error instanceof Error ? error.message : String(error);
           }
         }
-        if (!found) throw new Error(`не нашёл окно «${command.title}»`);
+        if (!found) {
+          throw new Error(`не нашёл окно «${command.title}»${почему ? `: ${почему}` : ''}`);
+        }
         console.log(`[jarvis] переключился на «${found.title}»`);
         break;
       }
