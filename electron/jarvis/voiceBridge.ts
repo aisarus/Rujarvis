@@ -23,7 +23,6 @@ import { access, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { ApprovalRequest } from '../../jarvis/core';
 import {
   VoiceSession,
   type AudioCapture,
@@ -718,7 +717,7 @@ export async function startJarvisVoiceBridge(options: {
     // Жёлтый — разговор. Человек попросил видеть разницу с одного взгляда.
     showIndicator: (what) => { session.showIndicator(what); },
     approve: (request) =>
-      askForApproval(request, session, (waiter) => {
+      askForApproval(request.summary, session, (waiter) => {
         awaitingAnswer = waiter;
       }),
   });
@@ -1164,8 +1163,19 @@ export async function startJarvisVoiceBridge(options: {
         // agent costs the same minutes for the same trivial action.
         const toClose = command ? spokenCloseTarget(command) : null;
         if (toClose) {
-          await runAction(`закрыть ${toClose}`, () =>
-            closeApplication(toClose, /убей/u.test(command ?? ''), session));
+          // Принудительное закрытие теряет несохранённое, а имя процесса
+          // подобрано по расслышанному слову — поэтому только с согласия.
+          const confirm = (summary: string) =>
+            askForApproval(summary, session, (waiter) => {
+              awaitingAnswer = waiter;
+            });
+          // Не ждём здесь: фразы разбираются по одной, и ответ «да» встал бы
+          // в очередь за этим же вопросом.
+          void runAction(`закрыть ${toClose}`, () =>
+            closeApplication(toClose, /убей/u.test(command ?? ''), session, confirm),
+          ).catch((error: unknown) => {
+            console.error('[jarvis] закрытие не удалось:', error);
+          });
           session.keepAwake();
           return;
         }
@@ -1627,6 +1637,7 @@ async function closeApplication(
   spoken: string,
   force: boolean,
   session: VoiceSession,
+  confirm: (summary: string) => Promise<boolean>,
 ): Promise<void> {
   // The alias is what bridges «хром» to the process called chrome: the
   // transliteration of the spoken word is "hrom", which matches nothing.
@@ -1674,7 +1685,15 @@ async function closeApplication(
     }
   };
 
+  const forceAllowed = () =>
+    confirm(`Закрою ${target} принудительно, несохранённое в нём пропадёт.`);
+
   if (force) {
+    if (!(await forceAllowed())) {
+      note('close', `не стал закрывать ${spoken}`);
+      await session.speak('Не закрываю.');
+      return;
+    }
     const killed = await kill(true);
     console.log(`[jarvis] ${killed ? 'убил' : 'не смог убить'} ${target}`);
     note(killed ? 'close' : 'error', `${killed ? 'закрыл' : 'не смог закрыть'} ${spoken}`);
@@ -1692,8 +1711,8 @@ async function closeApplication(
 
   // Asking politely does not work on games and launchers — Steam ignores the
   // close request entirely. Making the user say a second, harsher sentence for
-  // something they already asked for is not an assistant. So escalate, except
-  // where forcing would throw away unsaved work.
+  // something they already asked for is not an assistant. So offer to
+  // escalate, except where forcing would throw away unsaved work.
   if (HOLDS_UNSAVED_WORK.has(target.toLowerCase())) {
     console.log(`[jarvis] ${target} не закрылся; там может быть несохранённое`);
     note('error', `не закрыл ${spoken}: там несохранённое`);
@@ -1701,6 +1720,11 @@ async function closeApplication(
     return;
   }
 
+  if (!(await forceAllowed())) {
+    note('close', `${spoken} не закрылся, принудительно не стал`);
+    await session.speak(`${spoken} не закрылся. Оставляю как есть.`);
+    return;
+  }
   const killed = await kill(true);
   console.log(`[jarvis] ${killed ? 'закрыл принудительно' : 'не смог закрыть'} ${target}`);
   note(killed ? 'close' : 'error', `${killed ? 'закрыл' : 'не смог закрыть'} ${spoken}`);
@@ -2237,12 +2261,12 @@ function registerPushToTalk(session: VoiceSession): void {
  * prevent.
  */
 async function askForApproval(
-  request: ApprovalRequest,
+  summary: string,
   session: VoiceSession,
   hold: (waiter: ((answer: 'yes' | 'no') => void) | null) => void,
 ): Promise<boolean> {
-  const question = `${request.summary} Разрешаете?`;
-  console.log(`[jarvis] спрашиваю разрешение: ${request.summary}`);
+  const question = `${summary} Разрешаете?`;
+  console.log(`[jarvis] спрашиваю разрешение: ${summary}`);
 
   return new Promise<boolean>((resolve) => {
     let settled = false;
