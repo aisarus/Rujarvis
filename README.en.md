@@ -36,6 +36,18 @@ app, downloads a speech model sized to your machine and a voice, adds
 **Rujarvis** to the Start menu and starts it. No administrator rights, no C++
 compiler, no Rust. Running it again updates the install.
 
+macOS, one line in the terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.sh | bash -s -- --language en
+```
+
+Same order: Homebrew, Git and Node.js are installed if missing, the app is
+built, the speech models are downloaded, **Rujarvis** lands in `~/Applications`.
+Voice, the conversation and Claude Code work the same as on Windows. Driving
+other windows — focus, keys, screenshots — is Windows-only for now: that driver
+is written against the Windows API.
+
 On first start a short setup walks you through the language, signing in to
 Claude Code, the speech models and a microphone check. Everything can be
 changed later from the tray icon → **Settings**.

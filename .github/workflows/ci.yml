@@ -43,3 +43,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: pwsh -NoProfile -File scripts/check-install-script.ps1
+      - name: macOS installer parses and its pure functions pass
+        if: runner.os != 'Windows'
+        shell: bash
+        run: bash scripts/check-install-sh.sh
