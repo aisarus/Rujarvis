@@ -30,6 +30,12 @@ import { cannotMeasure, failed, passed, type Gate } from '../../jarvis/measure/g
 import { командаПоказа, openPath, tidyRoot } from '../../jarvis/desktop/files';
 import { createGridOverlay } from '../../app/gridOverlay';
 import { CuaDriver } from '../../jarvis/desktop/cua';
+import { createHelpOverlay } from '../../app/helpOverlay';
+import { createLogWindow } from '../../app/logWindow';
+import { createStatusOverlay } from '../../app/statusOverlay';
+import { openSettingsWindow } from '../../app/settingsWindow';
+import { jarvisPaths } from '../../jarvis/setup/paths';
+import { SettingsStore } from '../../jarvis/setup/settings';
 
 const ждать = (мс: number): Promise<void> => new Promise((r) => setTimeout(r, мс));
 
@@ -171,7 +177,190 @@ const окна: Случай[] = [
 // руками и знают, зачем: это не то же самое, что окно, вылезшее посреди чужой
 // работы.
 
+/** Окно, появившееся после действия: сравниваем то, что было, с тем, что стало. */
+function новоеОкно(былиДо: Set<number>): BrowserWindow | undefined {
+  return BrowserWindow.getAllWindows().find((w) => !былиДо.has(w.id));
+}
+
+const снимокОкон = (): Set<number> => new Set(BrowserWindow.getAllWindows().map((w) => w.id));
+
+/** Временный дом: приёмка не должна писать в настройки человека. */
+function временныйДом(): { paths: ReturnType<typeof jarvisPaths>; settings: SettingsStore } {
+  const дом = mkdtempSync(path.join(os.tmpdir(), 'qa-home-'));
+  const paths = jarvisPaths({ ...process.env, JARVIS_HOME: дом });
+  mkdirSync(paths.data, { recursive: true });
+  return { paths, settings: new SettingsStore(path.join(paths.data, 'settings.json')) };
+}
+
 const интерфейс: Случай[] = [
+  {
+    имя: 'плашка: текст не срезается',
+    async проверка(): Promise<Gate> {
+      const былиДо = снимокОкон();
+      const плашка = createStatusOverlay();
+      try {
+        плашка.note(
+          { indicator: 'thinking', listening: true, awake: true, muted: false } as never,
+          'Слушаю: длинная фраза, которая обязана перенестись на вторую строку',
+        );
+        await ждать(900);
+
+        const окно = новоеОкно(былиДо);
+        if (!окно) return cannotMeasure('окно плашки не нашлось');
+
+        // Меряем саму плашку, а не scrollHeight: тот тянется за окном и
+        // сходится всегда, даже когда содержимое срезано.
+        const [нужно, дали] = (await окно.webContents.executeJavaScript(
+          "[Math.ceil(document.getElementById('pill').getBoundingClientRect().height), window.innerHeight]",
+        )) as [number, number];
+
+        return дали >= нужно
+          ? passed(`плашке нужно ${нужно}, окно ${дали}`)
+          : failed(`срезано на ${нужно - дали}: нужно ${нужно}, окно ${дали}`);
+      } finally {
+        плашка.dispose();
+      }
+    },
+  },
+  {
+    имя: 'плашка: не ужимается от обновлений',
+    async проверка(): Promise<Gate> {
+      // Ужималась ШИРИНА, а не высота.
+      //
+      // При дробном масштабе `setBounds` из `getBounds` терял проценты за
+      // вызов, и плашка усыхала с 320 точек до тридцати с небольшим:
+      // оставалась узкая полоска с точкой состояния, текст не помещался
+      // вовсе, и со стороны это выглядело как «Джарвис не запустился».
+      //
+      // Первая версия этой проверки мерила высоту — и осталась зелёной, когда
+      // я вернул поломку нарочно. Зелёное, которое не может покраснеть, —
+      // украшение.
+      //
+      // На масштабе 1.0 поломка не воспроизводится вовсе, и тогда честнее
+      // сказать «нечем мерить».
+      const масштаб = screen.getPrimaryDisplay().scaleFactor;
+      if (масштаб === 1) {
+        return cannotMeasure(`масштаб экрана ${масштаб} — на нём ужимание не воспроизводится`);
+      }
+
+      const былиДо = снимокОкон();
+      const плашка = createStatusOverlay();
+      const состояние = { indicator: 'thinking', listening: true, awake: true, muted: false } as never;
+      try {
+        плашка.note(состояние, 'Слушаю: длинная фраза для переноса на вторую строку');
+        await ждать(900);
+
+        const окно = новоеОкно(былиДо);
+        if (!окно) return cannotMeasure('окно плашки не нашлось');
+
+        const ширина = async (): Promise<number> =>
+          (await окно.webContents.executeJavaScript('window.innerWidth')) as number;
+
+        const сначала = await ширина();
+        for (let i = 0; i < 10; i += 1) {
+          плашка.note(состояние, `Слушаю: обновление номер ${i + 1}, строка подлиннее для переноса`);
+          await ждать(120);
+        }
+        await ждать(400);
+        const потом = await ширина();
+
+        return потом >= сначала
+          ? passed(`масштаб ${масштаб}: ширина за 10 обновлений ${сначала} → ${потом}`)
+          : failed(`плашка усохла по ширине: ${сначала} → ${потом} за 10 обновлений`);
+      } finally {
+        плашка.dispose();
+      }
+    },
+  },
+  {
+    имя: 'справка: влезает в экран или честно говорит, что длиннее',
+    async проверка(): Promise<Gate> {
+      const былиДо = снимокОкон();
+      const справка = createHelpOverlay();
+      try {
+        справка.show();
+        await ждать(900);
+
+        const окно = новоеОкно(былиДо);
+        if (!окно) return cannotMeasure('окно справки не нашлось');
+
+        const рабочая = screen.getPrimaryDisplay().workAreaSize;
+        const рамка = окно.getBounds();
+        if (рамка.height > рабочая.height) {
+          return failed(`окно ${рамка.height} точек выше рабочей области ${рабочая.height}`);
+        }
+
+        const [нужно, дали, есть_подсказка] = (await окно.webContents.executeJavaScript(
+          "[document.documentElement.scrollHeight, window.innerHeight, /длиннее окна|longer than/iu.test(document.body.innerText)]",
+        )) as [number, number, boolean];
+
+        if (дали >= нужно) return passed(`список влез целиком: ${нужно} ≤ ${дали}`);
+        return есть_подсказка
+          ? passed(`длиннее окна (${нужно} > ${дали}), и об этом сказано`)
+          : failed(`длиннее окна (${нужно} > ${дали}) и молчит об этом`);
+      } finally {
+        справка.dispose();
+      }
+    },
+  },
+  {
+    имя: 'окно событий: открывается и показывает строки',
+    async проверка(): Promise<Gate> {
+      const былиДо = снимокОкон();
+      const журнал = createLogWindow();
+      try {
+        журнал.append({ kind: 'command', text: 'проба приёмки: строка первая' } as never);
+        журнал.open();
+        await ждать(900);
+
+        const окно = новоеОкно(былиДо);
+        if (!окно) return cannotMeasure('окно событий не нашлось');
+
+        const текст = (await окно.webContents.executeJavaScript('document.body.innerText')) as string;
+        return текст.includes('проба приёмки')
+          ? passed('строка дошла до окна')
+          : failed(`в окне нет добавленной строки: «${текст.replace(/\s+/gu, ' ').slice(0, 80)}»`);
+      } finally {
+        журнал.dispose();
+      }
+    },
+  },
+  {
+    имя: 'онбординг: мастер до настройки, вкладки после',
+    async проверка(): Promise<Gate> {
+      const { paths, settings } = временныйДом();
+      const былиДо = снимокОкон();
+      try {
+        settings.update({ onboarded: false });
+        openSettingsWindow({ settings, paths, onFinished: () => {}, onSettingsChanged: () => {} });
+        await ждать(1600);
+
+        const окно = новоеОкно(былиДо);
+        if (!окно) return cannotMeasure('окно настройки не нашлось');
+
+        const мастер = (await окно.webContents.executeJavaScript(
+          "Boolean(document.querySelector('.steps'))",
+        )) as boolean;
+        if (!мастер) return failed('до настройки показаны вкладки, а не мастер');
+
+        // Настройка пройдена — то же окно обязано стать вкладками.
+        settings.update({ onboarded: true });
+        openSettingsWindow({ settings, paths, onFinished: () => {}, onSettingsChanged: () => {} });
+        await ждать(900);
+
+        const всёЕщёМастер = (await окно.webContents.executeJavaScript(
+          "Boolean(document.querySelector('.steps'))",
+        )) as boolean;
+        return всёЕщёМастер
+          ? failed('после настройки всё ещё мастер')
+          : passed('мастер до, вкладки после');
+      } finally {
+        for (const окно of BrowserWindow.getAllWindows()) {
+          if (!былиДо.has(окно.id) && !окно.isDestroyed()) окно.destroy();
+        }
+      }
+    },
+  },
   {
     имя: 'окна: список не врёт про пустой экран',
     async проверка(): Promise<Gate> {
