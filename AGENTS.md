@@ -9,6 +9,7 @@ subscription. These rules say what must stay true.
 - Run `git rev-parse --show-toplevel` and check that it is this repository's
   root. Work done or tested in another copy is not verification of this one.
 - Use `pnpm`. Read `README.md` and `docs/jarvis/architecture.md` first.
+  Current state, what is untested and what is left: `docs/jarvis/handoff.md`.
 - Preserve user work and unrelated changes. Never publish, push, or create a
   public artifact without explicit authorization.
 
