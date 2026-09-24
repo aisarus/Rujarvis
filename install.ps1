@@ -187,6 +187,22 @@ function Assert-NodeVersion {
     onlyBuiltDependencies, which lets Electron download its binary — and the
     install diverges from what the lockfile was resolved against.
 #>
+<#
+    Выполнить что-то в другой папке и вернуться, даже если бросило.
+
+    Нужно там, где ответ команды зависит от текущей папки: pnpm 10 и новее
+    читает packageManager из package.json проекта и подменяет себя нужной
+    версией.
+#>
+function Invoke-InDirectory {
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [Parameter(Mandatory)] [scriptblock] $Script
+    )
+    Push-Location $Path
+    try { & $Script } finally { Pop-Location }
+}
+
 function Assert-PnpmVersion {
     param([Parameter(Mandatory)] [string] $SourceDir)
 
@@ -198,7 +214,17 @@ function Assert-PnpmVersion {
 
     $wantedVersion = ($wanted -split '@')[-1]
     $wantedMajor = [int] ($wantedVersion -split '\.')[0]
-    $current = (pnpm --version).Trim()
+
+    # Версию спрашиваем В ПАПКЕ ПРОЕКТА, а не в своей.
+    #
+    # pnpm 10 и новее читает packageManager из package.json и сам запускает
+    # нужную версию — но только когда его зовут внутри проекта. Снаружи он
+    # отвечает своей. Проверка сравнивала версию проекта с pnpm, запущенным в
+    # папке пользователя, и потому не совпадала никогда.
+    #
+    # Поймано первым живым прогоном на Windows 24.09.2026: один и тот же pnpm
+    # отвечает 11.11.0 из домашней папки и 9.15.9 из папки проекта.
+    $current = (Invoke-InDirectory -Path $SourceDir -Script { (pnpm --version).Trim() })
     $currentMajor = [int] ($current -split '\.')[0]
 
     if ($currentMajor -eq $wantedMajor) {
@@ -210,16 +236,22 @@ function Assert-PnpmVersion {
     corepack enable 2>&1 | Out-Null
     corepack prepare "pnpm@$wantedVersion" --activate 2>&1 | Out-Null
 
-    $switched = (pnpm --version).Trim()
+    $switched = (Invoke-InDirectory -Path $SourceDir -Script { (pnpm --version).Trim() })
     if ([int] ($switched -split '\.')[0] -ne $wantedMajor) {
         throw @"
 Нужен pnpm $wantedVersion, установлен $switched, и corepack не смог переключить.
 
-Выполните:
+Чаще всего corepack упирается в права: свою заглушку он кладёт в папку Node
+рядом с системной, и без администратора получает отказ. Тогда проще поставить
+нужный pnpm себе, без прав:
+
+    npm install -g pnpm@$wantedVersion
+    pnpm --version
+
+Либо, от имени администратора:
 
     corepack enable
     corepack prepare pnpm@$wantedVersion --activate
-    pnpm --version
 
 Затем запустите установщик снова.
 "@
