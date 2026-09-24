@@ -211,6 +211,55 @@ describe('TalkSession', () => {
   });
 });
 
+describe('повтор, пока идёт ход', () => {
+  /** Сессия, которая отвечает не сразу: без этого очередь нечем проверить. */
+  class Медленная implements TalkLive {
+    readonly prompts: string[] = [];
+    private spoken = false;
+    private отпустить: ((r: BackendResult) => void) | null = null;
+
+    isAlive(): boolean { return true; }
+    hasSpoken(): boolean { return this.spoken; }
+
+    ask(prompt: string): { result(): Promise<BackendResult> } {
+      this.prompts.push(prompt);
+      this.spoken = true;
+      return { result: () => new Promise<BackendResult>((r) => { this.отпустить = r; }) };
+    }
+
+    ответить(text: string): void { this.отпустить?.(ok(text)); }
+    dispose(): void {}
+  }
+
+  it('второй раз ту же фразу в очередь не ставит', async () => {
+    // Человек повторяет, когда не слышит ответа. Живая сессия обрабатывает
+    // ходы по очереди, поэтому повтор не ускоряет ответ, а утраивает ожидание.
+    const сессия = new Медленная();
+    const { разговор } = завести([сессия as unknown as Поддельная]);
+
+    void разговор.hear('сделай сферу зелёной');
+    await new Promise((r) => setImmediate(r));
+    void разговор.hear('сделай сферу зелёной');
+    await new Promise((r) => setImmediate(r));
+
+    expect(сессия.prompts).toHaveLength(1);
+    expect(записи.some((line) => line.includes('повтор, уже думаю'))).toBe(true);
+  });
+
+  it('другую фразу пропускает, даже пока думает над первой', async () => {
+    // Отбрасывать всё подряд нельзя: «стоп» и поправка обязаны доходить.
+    const сессия = new Медленная();
+    const { разговор } = завести([сессия as unknown as Поддельная]);
+
+    void разговор.hear('первая');
+    await new Promise((r) => setImmediate(r));
+    void разговор.hear('вторая');
+    await new Promise((r) => setImmediate(r));
+
+    expect(сессия.prompts).toHaveLength(2);
+  });
+});
+
 describe('прогрев', () => {
   it('поднимает процесс, не тратя хода', async () => {
     // Лишний ход стоил бы подписки на каждом запуске — в том числе когда
