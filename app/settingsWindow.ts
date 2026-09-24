@@ -42,12 +42,27 @@ let registered = false;
 let preview: Speaker | null = null;
 const installs = new Map<string, Promise<void>>();
 
+/**
+ * Что показать: мастер или вкладки.
+ *
+ * Решает НЕ вызывающий, а состояние: пока онбординг не пройден, окно всегда
+ * мастер, как бы его ни открыли. Иначе получалось так: человек начинает
+ * настройку, окно уходит за другое, он щёлкает значок в трее — и попадает во
+ * вкладки, где нет ни «Далее», ни «Начать». Онбординг оказывался без
+ * продолжения, а голос не запускался никогда, потому что `onboarded`
+ * ставится только кнопкой в конце мастера.
+ */
+function какуюСтраницу(options: SettingsWindowOptions): 'onboarding' | 'settings' {
+  if (!options.settings.get().onboarded) return 'onboarding';
+  return options.page ?? 'settings';
+}
+
 export function openSettingsWindow(options: SettingsWindowOptions): void {
   current = options;
   registerHandlers();
 
   if (window && !window.isDestroyed()) {
-    window.webContents.send(`${SETTINGS_CHANNEL}:page`, options.page ?? 'settings');
+    window.webContents.send(`${SETTINGS_CHANNEL}:page`, какуюСтраницу(options));
     window.show();
     window.focus();
     return;
@@ -77,7 +92,7 @@ export function openSettingsWindow(options: SettingsWindowOptions): void {
     preview = null;
   });
   void window.loadFile(path.join(APP_ROOT, 'app', 'ui', 'settings.html'), {
-    query: { page: options.page ?? 'settings' },
+    query: { page: какуюСтраницу(options) },
   });
 }
 
