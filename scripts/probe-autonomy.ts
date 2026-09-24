@@ -14,12 +14,10 @@ import { createJarvis } from '../server/jarvis/createJarvis';
 import { describeEvent } from '../jarvis/observe/storyline';
 import { renderPlan } from '../jarvis/agent/plan';
 import { PlanStore } from '../jarvis/agent/planStore';
+import { jarvisDataRoot, jarvisInstallRoot, jarvisOutputDir } from '../jarvis/setup/paths';
 
-// Прямые слэши намеренно: Windows их принимает, а обратные не переживают ни
-// одной перезаписи файла — heredoc и python съедают их молча, и путь
-// превращается в «C:UsersarielAppData…». Так уже трижды за день.
-const ROOT = 'C:/Users/ariel/AppData/Local/Rujarvis';
-const DATA = path.join(ROOT, 'data');
+const ROOT = jarvisInstallRoot();
+const DATA = jarvisDataRoot();
 const started = Date.now();
 const at = (): string => `${((Date.now() - started) / 1000).toFixed(0)}с`;
 
@@ -34,7 +32,7 @@ async function main(): Promise<void> {
 
   const jarvis = createJarvis({
     workspace: path.join(ROOT, 'src'),
-    outputDir: 'C:/Users/ariel/Desktop/Джарвис',
+    outputDir: jarvisOutputDir(),
     homeDir: ROOT,
     desktopMcpConfig: process.env.JARVIS_MCP_CONFIG,
     speak: (text: string) => console.log(`[${at()}] ГОЛОС: ${text}`),

@@ -29,7 +29,7 @@ const only = (): string => {
 const head = {
   title: 'Мультяшная ракета',
   prompt: 'Открой блендер и сделай ракету',
-  cwd: 'C:/Users/ariel/Desktop',
+  cwd: 'C:/Users/user/Desktop',
   capabilities: ['computer'],
 };
 

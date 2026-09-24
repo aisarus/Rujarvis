@@ -8,14 +8,15 @@
  */
 
 import { createJarvis } from '../server/jarvis/createJarvis';
+import { jarvisOutputDir } from '../jarvis/setup/paths';
 
 const started = Date.now();
 const at = (): string => `${((Date.now() - started) / 1000).toFixed(1)}с`;
 
 async function main(): Promise<void> {
   const jarvis = createJarvis({
-    workspace: 'C:\\Users\\ariel\\AppData\\Local\\Rujarvis\\src',
-    outputDir: 'C:\\Users\\ariel\\Desktop\\Джарвис',
+    workspace: process.cwd(),
+    outputDir: jarvisOutputDir(),
     speak: () => {},
   });
   await jarvis.ready();

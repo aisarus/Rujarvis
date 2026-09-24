@@ -137,7 +137,7 @@ describe('шапка прогона', () => {
     const head = summarise({
       title: 'Мультяшная ракета',
       prompt: 'Открой блендер и сделай ракету',
-      cwd: 'C:/Users/ariel/Desktop',
+      cwd: 'C:/Users/user/Desktop',
       capabilities: ['computer', 'files'],
       order: ['claude-code', 'codex'],
       rationale: 'Задача про экран',

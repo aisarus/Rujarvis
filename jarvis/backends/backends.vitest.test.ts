@@ -174,13 +174,13 @@ describe('buildBackendPrompt', () => {
   it('говорит, куда класть файлы, когда папка задана', () => {
     // Без этого агент раскладывает результаты по временным каталогам, и
     // человек их больше не находит.
-    const prompt = buildBackendPrompt(request({ outputDir: 'C:\\Users\\ariel\\Desktop\\Джарвис' }));
-    expect(prompt).toContain('C:\\Users\\ariel\\Desktop\\Джарвис');
+    const prompt = buildBackendPrompt(request({ outputDir: 'C:\\Users\\user\\Desktop\\Джарвис' }));
+    expect(prompt).toContain('C:\\Users\\user\\Desktop\\Джарвис');
   });
 
   it('требует назвать путь и запрещает ссылаться на несуществующий чат', () => {
     // Человек слышит ответ голосом. «Файл в чате» для него — это «файла нет».
-    const prompt = buildBackendPrompt(request({ outputDir: 'C:\\Users\\ariel\\Desktop\\Джарвис' }));
+    const prompt = buildBackendPrompt(request({ outputDir: 'C:\\Users\\user\\Desktop\\Джарвис' }));
     expect(prompt).toContain('назови в ответе его полный путь');
     expect(prompt).toContain('«в чате»');
   });
@@ -188,7 +188,7 @@ describe('buildBackendPrompt', () => {
   it('разбивает указания про файлы на строки, а не склеивает их', () => {
     // Этот блок однажды склеился литеральным «\n» и приехал одной кашей,
     // которую модель перестала замечать.
-    const prompt = buildBackendPrompt(request({ outputDir: 'C:\\Users\\ariel\\Desktop\\Джарвис' }));
+    const prompt = buildBackendPrompt(request({ outputDir: 'C:\\Users\\user\\Desktop\\Джарвис' }));
     expect(prompt).not.toContain('\\n');
     expect(prompt).toContain('WHERE FINISHED FILES GO:\nГотовые файлы');
   });
@@ -433,9 +433,9 @@ describe('Claude Code adapter', () => {
     // который не знает, что она у него есть, туда не заглянет.
     const prompt = buildBackendPrompt({
       ...request({}),
-      homeDir: 'C:/Users/ariel/AppData/Local/Rujarvis',
+      homeDir: 'C:/Users/user/AppData/Local/Rujarvis',
     });
-    expect(prompt).toContain('C:/Users/ariel/AppData/Local/Rujarvis');
+    expect(prompt).toContain('C:/Users/user/AppData/Local/Rujarvis');
     expect(prompt).toContain('характер.md');
     expect(prompt).toContain('journal.json');
   });
@@ -451,10 +451,10 @@ describe('Claude Code adapter', () => {
     // журнал он прочитать не может.
     const args = buildClaudeArgs(request({}), {
       permissionMode: 'acceptEdits',
-      homeDir: 'C:/Users/ariel/AppData/Local/Rujarvis',
+      homeDir: 'C:/Users/user/AppData/Local/Rujarvis',
     });
     expect(args).toEqual(
-      expect.arrayContaining(['--add-dir', 'C:/Users/ariel/AppData/Local/Rujarvis']),
+      expect.arrayContaining(['--add-dir', 'C:/Users/user/AppData/Local/Rujarvis']),
     );
   });
 

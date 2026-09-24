@@ -7,16 +7,16 @@
  */
 
 import { createJarvis } from '../server/jarvis/createJarvis';
+import { jarvisOutputDir } from '../jarvis/setup/paths';
 
 const started = Date.now();
 const at = (): string => `${((Date.now() - started) / 1000).toFixed(1)}с`;
 
 async function main(): Promise<void> {
   const jarvis = createJarvis({
-    workspace: 'C:\\Users\\ariel\\AppData\\Local\\Rujarvis\\src',
-    outputDir: 'C:\\Users\\ariel\\Desktop\\Джарвис',
-    desktopMcpConfig:
-      'C:\\Users\\ariel\\AppData\\Local\\Temp\\claude\\C--Users-ariel-AppData-Local-Rujarvis-src\\96a28a1d-301e-453a-8ca1-8fd5306364a6\\scratchpad\\desktop-mcp.json',
+    workspace: process.cwd(),
+    outputDir: jarvisOutputDir(),
+    desktopMcpConfig: process.env.JARVIS_MCP_CONFIG,
     speak: (text) => console.log(`[${at()}] говорит: ${text}`),
   });
 

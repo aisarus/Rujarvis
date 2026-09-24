@@ -150,7 +150,7 @@ Project docs are in Russian.
 
 **Current:**
 
-- [Design specs](docs/superpowers/specs/) — the living record, one document per
+- [Design specs](docs/jarvis/design/) — the living record, one document per
   feature, each carrying the measurements that justified the decision
 - [Install and manual build](docs/jarvis/install.md)
 
@@ -160,7 +160,6 @@ the conversation stream landed. Useful for shape and intent, not for detail:
 [voice UX](docs/jarvis/voice-ru.md),
 [backends](docs/jarvis/backends.md),
 [upstream sync](docs/jarvis/upstream-sync.md),
-[handoff](docs/jarvis/handoff.md),
 [MVP status](docs/jarvis/mvp-status.md).
 
 Upstream documentation lives in [README.upstream.md](README.upstream.md) and

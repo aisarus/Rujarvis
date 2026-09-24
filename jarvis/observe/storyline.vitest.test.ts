@@ -11,14 +11,14 @@ function tool(name: string, detail?: string): BackendEvent {
 
 describe('describeEvent', () => {
   it('называет шаг так, как его понял бы человек', () => {
-    expect(describeEvent(tool('Write', String.raw`C:\Users\ariel\Desktop\Джарвис\Files\Ракета.blend`), AT))
+    expect(describeEvent(tool('Write', String.raw`C:\Users\user\Desktop\Джарвис\Files\Ракета.blend`), AT))
       .toMatchObject({ kind: 'step', text: 'Пишу файл', detail: 'Ракета.blend' });
   });
 
   it('сокращает путь до имени файла', () => {
     // Человек читает поток на ходу. Полный путь в каждой строке — это стена,
     // в которой не видно, что происходит.
-    const line = describeEvent(tool('Read', '/home/ariel/проект/очень/длинный/путь/к/файлу.ts'), AT);
+    const line = describeEvent(tool('Read', '/home/user/проект/очень/длинный/путь/к/файлу.ts'), AT);
     expect(line?.detail).toBe('файлу.ts');
   });
 
