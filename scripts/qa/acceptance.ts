@@ -24,12 +24,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, screen } from 'electron';
 
 import { runDirectCommand, type ГоворящаяСессия } from '../../app/voiceBridge';
 import { parseDirectCommand } from '../../jarvis/control/commands';
 import { cannotMeasure, failed, passed, type Gate } from '../../jarvis/measure/gate';
 import { командаПоказа, openPath, tidyRoot } from '../../jarvis/desktop/files';
+import { createGridOverlay } from '../../app/gridOverlay';
 
 const run = promisify(execFile);
 const ждать = (мс: number): Promise<void> => new Promise((r) => setTimeout(r, мс));
@@ -214,6 +215,58 @@ const окна: Случай[] = [
   },
 ];
 
+// --- интерфейс ---------------------------------------------------------------
+//
+// Окна здесь показываются по-настоящему, на доли секунды. Приёмку запускают
+// руками и знают, зачем: это не то же самое, что окно, вылезшее посреди чужой
+// работы.
+
+const интерфейс: Случай[] = [
+  {
+    имя: 'сетка: странице достаётся весь экран, а не меньше',
+    async проверка(): Promise<Gate> {
+      // Меряем САМУ СТРАНИЦУ, а не вычисленную раскладку.
+      //
+      // Первая попытка сравнивала раскладку с экраном и проходила даже на
+      // сломанном окне: раскладка — чистая арифметика, она верна всегда.
+      // Ломалось другое: `resizable: false` заставлял Windows ужать окно, и
+      // странице доставалось 1858×1050 вместо 1920×1080 — клик по 12-му
+      // столбцу уезжал от нарисованного на 59 точек.
+      const былиДо = new Set(BrowserWindow.getAllWindows().map((w) => w.id));
+      const сетка = createGridOverlay();
+      try {
+        const раскладка = сетка.show();
+        await ждать(600);
+
+        const окно = BrowserWindow.getAllWindows().find((w) => !былиДо.has(w.id));
+        if (!окно) return cannotMeasure('окно сетки не нашлось среди открытых');
+
+        const [ширинаСтраницы, высотаСтраницы, плотность] = (await окно.webContents.executeJavaScript(
+          '[window.innerWidth, window.innerHeight, window.devicePixelRatio]',
+        )) as [number, number, number];
+
+        const экран = screen.getPrimaryDisplay();
+        const нужноШирина = Math.round(экран.bounds.width * экран.scaleFactor);
+        const нужноВысота = Math.round(экран.bounds.height * экран.scaleFactor);
+        const далоШирина = Math.round(ширинаСтраницы * плотность);
+        const далоВысота = Math.round(высотаСтраницы * плотность);
+
+        if (далоШирина !== нужноШирина || далоВысота !== нужноВысота) {
+          return failed(
+            `странице досталось ${далоШирина}×${далоВысота}, а экран ${нужноШирина}×${нужноВысота}`,
+          );
+        }
+        return passed(
+          `${раскладка.columns}×${раскладка.rows} клеток на ${далоШирина}×${далоВысота}`,
+        );
+      } finally {
+        сетка.hide();
+        сетка.dispose();
+      }
+    },
+  },
+];
+
 // --- файлы -------------------------------------------------------------------
 
 const файлы: Случай[] = [
@@ -264,7 +317,7 @@ const файлы: Случай[] = [
 // --- прогон ------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  const все = [...разборФраз, ...окна, ...файлы];
+  const все = [...разборФраз, ...окна, ...интерфейс, ...файлы];
   let провалов = 0;
   let немеряно = 0;
 
