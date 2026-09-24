@@ -10,6 +10,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { isPrivateEndpoint, normaliseEndpoint } from '../backends/localModel';
 import { WHISPER_MODEL_IDS, type WhisperModelId } from '../voice/sttModels';
 import { DEFAULT_VOICE, VOICES } from '../voice/tts';
 
@@ -36,6 +37,13 @@ export interface AppSettings {
   speechLogging: SpeechLogging;
   /** Модель Claude Code: пусто — выбор самого CLI. */
   claudeModel: string;
+  /**
+   * Свой сервер модели (Ollama, LM Studio, llama.cpp) вместо подписки: адрес
+   * и имя модели. Пусто — подписка. Принимается только адрес на этом
+   * компьютере или в домашней сети (`backends/localModel.ts`).
+   */
+  localModelUrl: string;
+  localModelName: string;
   /** Пройден ли первый запуск. */
   onboarded: boolean;
 }
@@ -48,6 +56,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   outputDir: '',
   speechLogging: 'commands',
   claudeModel: '',
+  localModelUrl: '',
+  localModelName: '',
   onboarded: false,
 };
 
@@ -75,6 +85,12 @@ export function normaliseSettings(raw: unknown): AppSettings {
     outputDir: text('outputDir', ''),
     speechLogging: logging,
     claudeModel: text('claudeModel', ''),
+    // Публичный адрес сюда не пройдёт даже руками в settings.json: это был бы
+    // чужой шлюз, а Джарвис не ходит в платные API.
+    localModelUrl: isPrivateEndpoint(normaliseEndpoint(text('localModelUrl', '')))
+      ? normaliseEndpoint(text('localModelUrl', ''))
+      : '',
+    localModelName: text('localModelName', ''),
     onboarded: input.onboarded === true,
   };
 }

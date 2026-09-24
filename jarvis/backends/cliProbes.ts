@@ -16,6 +16,7 @@ import { promisify } from 'node:util';
 import { hasClaudeEnvironmentAuth, hasCodexEnvironmentAuth, resolveAuthState } from './authHints';
 import type { ClaudeCliProbe } from './claudeCode';
 import type { CodexCliProbe } from './codex';
+import { localModel } from './localModel';
 
 const run = promisify(execFile);
 
@@ -132,6 +133,9 @@ export function createClaudeProbe(env: NodeJS.ProcessEnv = process.env): ClaudeC
   return {
     async status() {
       const status = await cliStatus('claude', env);
+      // Со своей моделью вход в аккаунт Anthropic не нужен: CLI идёт на сервер
+      // человека. Нужен только сам установленный Claude Code.
+      if (localModel()) return { ...status, loggedIn: status.installed };
       return { ...status, loggedIn: resolveAuthState(status.loggedIn, hasClaudeEnvironmentAuth(env)) };
     },
   };

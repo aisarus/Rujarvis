@@ -24,6 +24,8 @@
  * всегда, а не только когда мешает.
  */
 
+import { localModel, localModelEnv } from './localModel';
+
 /**
  * Переменные, которыми CLI входит по ключу вместо подписки.
  *
@@ -50,4 +52,23 @@ export function subscriptionEnv(
 /** Что именно убрали — для журнала, чтобы это не выяснялось второй раз. */
 export function strippedKeys(env: NodeJS.ProcessEnv = process.env): string[] {
   return KEY_VARS.filter((name) => (env[name] ?? '').trim().length > 0);
+}
+
+/**
+ * Окружение для запуска агента: подписка — или своя модель, если человек её
+ * указал в настройках.
+ *
+ * Чужие ключи из окружения убираются всегда, и только потом, поверх, кладётся
+ * адрес своего сервера: он задан явно в настройках Джарвиса, а не просочился
+ * из переменных системы.
+ */
+export function agentEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const clean = subscriptionEnv(env);
+  const own = localModel();
+  if (!own) return clean;
+  // Токен подписки своему серверу ни к чему. Замер показал, что Claude Code и
+  // так шлёт заглушку, но сервер в домашней сети — это чужая машина, и
+  // проверять, не передумает ли CLI в следующей версии, незачем.
+  delete clean.CLAUDE_CODE_OAUTH_TOKEN;
+  return { ...clean, ...localModelEnv(own) };
 }

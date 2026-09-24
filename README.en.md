@@ -44,6 +44,14 @@ You need [Claude Code](https://claude.ai/code) signed in with your own
 subscription for anything beyond direct commands. Codex works as a fallback if
 you have it.
 
+**Your own model instead of a subscription** — for powerful computers. If you
+already run Ollama (0.14+), LM Studio or llama.cpp (`llama-server --jinja`),
+enter its address and model name in **Settings → Agents**. Jarvis points the
+same Claude Code at it: no Anthropic sign-in, same red lines and tools. "Check
+and turn on" asks the model for real and refuses one that cannot call tools.
+Only addresses on this computer or your home network are accepted; Jarvis does
+not download models.
+
 ## Talking to it
 
 | Say | What happens |

@@ -22,7 +22,7 @@ import {
 } from './cliRunner';
 import { LiveSession, type SessionKey } from './liveSession';
 import type { SessionPool } from './sessionPool';
-import { subscriptionEnv } from './subscriptionEnv';
+import { agentEnv } from './subscriptionEnv';
 import {
   unavailable,
   type AgentBackend,
@@ -630,7 +630,7 @@ export class ClaudeCodeBackend implements AgentBackend {
         ...homeArgs(this.options.homeDir, request.cwd, this.options.gateSettings),
       ],
       consumeLine: (raw, emit) => consumeClaudeStreamLine(raw, createStreamState(), emit),
-      env: subscriptionEnv(),
+      env: agentEnv(),
       // Молчание — предел работы, потолок — предел ожидания. Короткий запрос
       // с явным сроком (вопрос в разговоре) получает и то, и другое.
       turnTimeoutMs: request.timeoutMs ?? this.options.defaultTimeoutMs,

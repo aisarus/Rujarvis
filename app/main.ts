@@ -83,7 +83,7 @@ function showSettings(page?: 'onboarding'): void {
     },
     onSettingsChanged: (changed) => {
       // Язык, модель распознавания и папки читаются при запуске моста.
-      if (changed.some((key) => ['language', 'whisperModel', 'workspace', 'outputDir', 'claudeModel'].includes(key))) {
+      if (changed.some((key) => ['language', 'whisperModel', 'workspace', 'outputDir', 'claudeModel', 'localModelUrl', 'localModelName'].includes(key))) {
         void restartVoice();
       }
       refreshTray();

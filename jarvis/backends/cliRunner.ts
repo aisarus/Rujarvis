@@ -16,7 +16,7 @@ import {
   type CliHandle,
   type CliProcessOptions,
 } from './process';
-import { strippedKeys, subscriptionEnv } from './subscriptionEnv';
+import { agentEnv, strippedKeys } from './subscriptionEnv';
 import type {
   BackendAvailability,
   BackendEvent,
@@ -178,7 +178,7 @@ export function createCliRun(spec: CliRunSpec): BackendRun {
       command: availability.path,
       args: spec.buildArgs(availability.path),
       cwd: spec.cwd,
-      env: subscriptionEnv(),
+      env: agentEnv(),
       timeoutMs: spec.timeoutMs,
       idleTimeoutMs: spec.idleTimeoutMs,
       stdin: spec.stdin,

@@ -57,6 +57,7 @@ import { UtteranceBuffer } from '../jarvis/voice/turn';
 import { findWakeWord } from '../jarvis/voice/wakeWord';
 import { spokenFailure, toSpokenResponse } from '../jarvis/voice/spokenResponse';
 import { createJarvis, type Jarvis } from '../jarvis/createJarvis';
+import { setLocalModel } from '../jarvis/backends/localModel';
 import { setLanguage, tr } from '../jarvis/locale/language';
 import type { BackendFileChange } from '../jarvis/backends/types';
 import { jarvisOutputDir, jarvisPaths } from '../jarvis/setup/paths';
@@ -551,12 +552,19 @@ export async function startJarvisVoiceBridge(options: {
   // Язык — до всего остального: с него начинается каждая сказанная фраза и
   // каждая таблица, которая выбирает ответ.
   setLanguage(settings().language);
+  // Своя модель — до первого запуска агента: от неё зависит, куда пойдёт
+  // Claude Code и нужен ли вход в аккаунт.
+  const own = settings().localModelUrl && settings().localModelName
+    ? { url: settings().localModelUrl, model: settings().localModelName }
+    : null;
+  setLocalModel(own);
 
   // Раньше всего остального: если что-то не поднимется, причина должна
   // остаться на диске, а не в закрытом окне консоли.
   const logPath = startLogFile(PATHS.log, [
     `язык: ${settings().language}, голос: ${settings().voiceId}, распознавание: whisper-${settings().whisperModel}`,
     `речь в логе: ${settings().speechLogging}`,
+    own ? `агент: своя модель ${own.model} на ${own.url}` : `агент: подписка${settings().claudeModel ? `, модель ${settings().claudeModel}` : ''}`,
     `папка Джарвиса: ${PATHS.home}`,
     `платформа: ${process.platform} ${os.release()}, Electron ${process.versions.electron ?? '-'}`,
   ]);
@@ -742,6 +750,9 @@ export async function startJarvisVoiceBridge(options: {
 
   const jarvis = createJarvis({
     workspace,
+    // Со своей моделью имя задаёт её сервер (ANTHROPIC_MODEL), а «opus» из
+    // настроек подписки там ничего не значит.
+    claudeModel: own ? undefined : settings().claudeModel || undefined,
     desktopMcpConfig: writeDesktopMcpConfig(outputDir),
     gateSettings: gate.ok ? gate.settings : undefined,
     homeDir: jarvisHome(),
