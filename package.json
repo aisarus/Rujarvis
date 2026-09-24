@@ -34,7 +34,8 @@
     "jarvis:roundtrip": "tsx scripts/voice-roundtrip.ts",
     "jarvis:mac-check": "tsx scripts/probe-darwin-driver.ts",
     "jarvis:health": "node scripts/health.mjs",
-    "jarvis:icons": "node scripts/make-icons.mjs"
+    "jarvis:icons": "node scripts/make-icons.mjs",
+    "jarvis:qa": "node build.mjs && electron dist/qa/acceptance.cjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

@@ -30,6 +30,7 @@ import {
   type VoiceStatus,
 } from '../jarvis/voice/session';
 import { APP_ROOT } from './root';
+import { failed, passed, type Gate } from '../jarvis/measure/gate';
 import { listInstalledPrograms } from '../jarvis/apps/installed';
 import { aliasTarget, matchAppLaunch, spokenCloseTarget, spokenTarget, windowAlias } from '../jarvis/apps/launch';
 import { readConfirmation } from '../jarvis/voice/confirm';
@@ -280,7 +281,23 @@ function setDictation(on: boolean): void {
 }
 
 /** Выполняет прямую команду. Молча: речь после каждого нажатия невыносима. */
-async function runDirectCommand(command: DirectCommand, session: VoiceSession): Promise<void> {
+/**
+ * Что исполнителю прямых команд нужно от сессии на самом деле.
+ *
+ * Только сказать вслух и знать своё состояние. Целая `VoiceSession` тянет за
+ * собой ядро, захват звука и распознаватель — и из-за этого исполнителя
+ * нельзя было запустить на приёмке без микрофона. Узкий тип это развязывает:
+ * слой проверяется тем же кодом, которым работает.
+ */
+export interface ГоворящаяСессия {
+  speak(text: string): Promise<void> | void;
+  readonly status: VoiceStatus;
+}
+
+export async function runDirectCommand(
+  command: DirectCommand,
+  session: ГоворящаяСессия,
+): Promise<Gate> {
   try {
     switch (command.kind) {
       case 'key':
@@ -446,7 +463,10 @@ async function runDirectCommand(command: DirectCommand, session: VoiceSession): 
     console.error(`[jarvis] прямая команда не прошла: ${message}`);
     note('error', `не смог: ${describeDirect(command)}`);
     await session.speak(tr('Не получилось.', 'That did not work.'));
+    return failed(message);
   }
+
+  return passed();
 }
 
 /** Ищет названный элемент в активном окне. */
@@ -1223,7 +1243,9 @@ export async function startJarvisVoiceBridge(options: {
         }
 
         if (direct) {
-          await runAction(describeDirect(direct), () => runDirectCommand(direct, session));
+          await runAction(describeDirect(direct), async () => {
+            await runDirectCommand(direct, session);
+          });
           session.keepAwake();
           return;
         }

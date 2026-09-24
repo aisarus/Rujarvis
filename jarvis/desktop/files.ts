@@ -12,7 +12,7 @@
  * тот докладывает о провале после успеха.
  */
 
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { constants, existsSync } from 'node:fs';
 import { access, cp, mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
@@ -101,9 +101,24 @@ export function outputSectionNames(language: Language = currentLanguage()): stri
   return OUTPUT_SECTIONS.map((section) => sectionName(section, language));
 }
 
-/** Имя — одно из разделов на любом из языков: такую папку не разбирают. */
-function isSectionName(name: string): boolean {
+/**
+ * Разделы прежней раскладки.
+ *
+ * До разделов на языке человека их было пять: Images, Video, Docs, Files,
+ * Apps. Три имени совпали с нынешними английскими, а «Docs» и «Files» — нет,
+ * и на диске у людей эти папки остались.
+ *
+ * Знать их надо не ради красоты. `isSectionName` решает, можно ли утащить
+ * папку в раздел. Стоило агенту записать файл внутрь старой «Docs» — и уборка
+ * уносила ВСЮ папку в «Документы\Docs», вместе с чужой работой за месяц.
+ * Замерено на папке человека 25.09.2026: там лежат оба набора разделов сразу.
+ */
+const LEGACY_SECTION_NAMES = ['images', 'video', 'docs', 'files', 'apps'] as const;
+
+/** Имя — один из разделов на любом из языков: такую папку не разбирают. */
+export function isSectionName(name: string): boolean {
   const lower = name.toLowerCase();
+  if (LEGACY_SECTION_NAMES.includes(lower as (typeof LEGACY_SECTION_NAMES)[number])) return true;
   return OUTPUT_SECTIONS.some((section) =>
     (['ru', 'en'] as const).some((language) => SECTION_NAMES[section][language].toLowerCase() === lower),
   );
@@ -309,6 +324,59 @@ async function moveEntry(source: string, target: string): Promise<void> {
  * целиком подпапкой в раздел, к которому относится большинство её файлов.
  * Возвращает, что куда переехало, — чтобы назвать человеку новый путь.
  */
+/**
+ * Разобрать корень папки по разделам — по просьбе человека, не самовольно.
+ *
+ * `tidyOutput` разбирает только то, что агент трогал в этой задаче, и это
+ * правильно: положенное человеком своими руками трогать нельзя, так и обещано
+ * в README. Но накопившееся всё равно остаётся лежать — на папке человека
+ * 25.09.2026 в корне нашлось 8 файлов, часть из них старше самой уборки.
+ *
+ * Поэтому отдельное действие, которое делается только когда попросили.
+ * Возвращает, что куда уехало: человеку надо видеть, что с его файлами стало,
+ * а не «готово».
+ */
+/**
+ * Что обязано остаться в корне, даже когда разбирают.
+ *
+ * Две разные причины, обе дорогие:
+ *
+ *   - `desktop.ini` — не файл человека, а настройки самой папки: значок, вид,
+ *     имя. Унести его — значит испортить папку, и человек не поймёт, почему.
+ *     То же с `Thumbs.db`.
+ *   - «о папке.txt» — объяснение, что это за папка. Его писала прежняя версия,
+ *     и на дисках оно осталось. Объяснение, уехавшее в «Документы», больше не
+ *     объясняет ничего.
+ *
+ * Замерено на папке человека 25.09.2026: разбор унёс «о папке.txt» в
+ * «Документы», и корень остался без единого слова о себе.
+ */
+function остаётсяВКорне(name: string): boolean {
+  const lower = name.toLowerCase();
+  return (
+    lower === 'desktop.ini' ||
+    lower === 'thumbs.db' ||
+    lower === 'о папке.txt' ||
+    lower === 'about this folder.txt'
+  );
+}
+
+export async function tidyRoot(dir = outputFolder()): Promise<Map<string, string>> {
+  const moves = new Map<string, string>();
+  const names = await readdir(dir).catch(() => [] as string[]);
+
+  for (const name of names) {
+    if (остаётсяВКорне(name)) continue;
+    const source = path.join(dir, name);
+    const info = await stat(source).catch(() => null);
+    // Папки не трогаем вовсе: разделы — на месте, задачи — тоже.
+    if (!info?.isFile()) continue;
+    moves.set(source, await moveIntoFolder(source, dir));
+  }
+
+  return moves;
+}
+
 export async function tidyOutput(dir: string, changed: readonly string[]): Promise<Map<string, string>> {
   const moves = new Map<string, string>();
   const rootFiles = new Set<string>();
@@ -362,16 +430,109 @@ function majoritySection(files: readonly string[]): OutputSection {
  *
  * Именно выделяет, а не просто открывает каталог, — человек ищет глазами один
  * файл среди тридцати.
+ *
+ * Пробел в пути ломал это молча. Node сам берёт в кавычки любой аргумент с
+ * пробелом, и explorer получал `"/select,C:\…\файл с пробелом.txt"` целиком в
+ * кавычках — разобрать такое он не умеет и открывал не ту папку. Замерено
+ * 25.09.2026: путь с пробелами открывал «Документы», через cmd с кавычками —
+ * «Рабочий стол», и оба раза инструмент отчитывался «Показал». А темы задач с
+ * пробелами — обычное дело: «Картинки\Логотип кафе».
+ *
+ * Поэтому командная строка собирается дословно (`windowsVerbatimArguments`):
+ * кавычки стоят вокруг ПУТИ, а не вокруг всего аргумента. В этом написании
+ * проводник открыл нужную папку во всех трёх опытах.
  */
-export async function revealPath(target: string): Promise<void> {
-  const info = await stat(target);
-  const args = info.isDirectory() ? [target] : [`/select,${target}`];
-  // Код возврата explorer не значит ничего: он ненулевой и при успехе.
-  await run('explorer.exe', args, { windowsHide: false }).catch(() => undefined);
+export interface КомандаПоказа {
+  file: string;
+  args: string[];
+  /** Командная строка собирается дословно: Windows иначе всё переупакует. */
+  verbatim: boolean;
 }
 
-/** Открывает файл той программой, которой человек открыл бы его сам. */
+/**
+ * Чем показать файл на этой платформе.
+ *
+ * Вынесено отдельно потому, что ошибка была именно здесь — в том, как
+ * собирается командная строка, а не в том, что делается дальше. Чистую
+ * функцию можно проверить на любой машине, живой проводник — только на своей.
+ */
+export function командаПоказа(
+  target: string,
+  каталог: boolean,
+  platform: NodeJS.Platform = process.platform,
+): КомандаПоказа {
+  if (platform === 'darwin') {
+    // -R показывает файл в Finder, а не открывает его.
+    return { file: 'open', args: каталог ? [target] : ['-R', target], verbatim: false };
+  }
+  if (platform !== 'win32') {
+    return { file: 'xdg-open', args: [каталог ? target : path.dirname(target)], verbatim: false };
+  }
+  // Кавычки стоят вокруг ПУТИ, а не вокруг всего аргумента: именно на этом
+  // ломался показ файла, лежащего в папке с пробелом в имени.
+  return {
+    file: 'explorer.exe',
+    args: [каталог ? `"${target}"` : `/select,"${target}"`],
+    verbatim: true,
+  };
+}
+
+export async function revealPath(target: string): Promise<void> {
+  const info = await stat(target);
+  const команда = командаПоказа(target, info.isDirectory());
+
+  // Код возврата explorer не значит ничего: он ненулевой и при успехе.
+  const дитя = spawn(команда.file, команда.args, {
+    windowsVerbatimArguments: команда.verbatim,
+    windowsHide: false,
+    detached: true,
+    stdio: 'ignore',
+  });
+  дитя.on('error', () => undefined);
+  дитя.unref();
+}
+
+/**
+ * Знает ли Windows, чем открыть такой файл.
+ *
+ * Спрашиваем реестр: раздел `HKEY_CLASSES_ROOT\<расширение>` есть у знакомых
+ * системе типов и отсутствует у незнакомых. Стоит 40 мс против ~700 мс у
+ * `FindExecutable` через PowerShell, а ответ для нашего вопроса тот же.
+ */
+async function естьЧемОткрыть(target: string): Promise<boolean> {
+  const ext = path.extname(target);
+  if (!ext) return false;
+  try {
+    await run('reg.exe', ['query', `HKEY_CLASSES_ROOT\\${ext}`], { windowsHide: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Открывает файл той программой, которой человек открыл бы его сам.
+ *
+ * Бросает, если открывать нечем. Это важнее, чем кажется: `explorer.exe` на
+ * незнакомом расширении не делает НИЧЕГО и не жалуется — замерено 25.09.2026,
+ * ни одного нового окна, а инструмент отвечал «Открыл». Человек ждал окна,
+ * окна не было, и виноватым оказывался он.
+ */
 export async function openPath(target: string): Promise<void> {
   await access(target, constants.R_OK);
+
+  if (process.platform === 'darwin') {
+    // `open` на маке честно возвращает ненулевой код, когда открыть нечем.
+    await run('open', [target]);
+    return;
+  }
+  if (process.platform !== 'win32') {
+    await run('xdg-open', [target]);
+    return;
+  }
+
+  if (!(await естьЧемОткрыть(target))) {
+    throw new Error(`Windows не знает, чем открыть «${path.extname(target) || path.basename(target)}»`);
+  }
   await run('explorer.exe', [target], { windowsHide: false }).catch(() => undefined);
 }

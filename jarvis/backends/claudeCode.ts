@@ -283,6 +283,7 @@ const ALWAYS = [
   'mcp__jarvis-desktop__move_to_output',
   'mcp__jarvis-desktop__show_file',
   'mcp__jarvis-desktop__list_files',
+  'mcp__jarvis-desktop__tidy_folder',
   'mcp__jarvis-desktop__list_skills',
   'mcp__jarvis-desktop__write_skill',
   'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'TodoWrite',

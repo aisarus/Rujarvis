@@ -1077,6 +1077,29 @@ export function createDesktopMcpServer(): McpServer {
   );
 
   server.registerTool(
+    'tidy_folder',
+    {
+      title: 'Разобрать корень папки ассистента',
+      description:
+        'Раскладывает по разделам файлы, лежащие в корне папки ассистента. ' +
+        'Зови ТОЛЬКО когда человек попросил разобрать папку: то, что он положил туда ' +
+        'сам, трогать без просьбы нельзя. Папки не трогаются вовсе — ни разделы, ' +
+        'ни подпапки задач. Отвечает списком, что куда уехало.',
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const moves = await files.tidyRoot();
+        if (moves.size === 0) return say('В корне папки ничего не лежало — разбирать нечего.');
+        const строки = [...moves].map(([было, стало]) => `${path.basename(было)} → ${стало}`);
+        return say(`Разобрал ${moves.size}:\n${строки.join('\n')}`);
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
     'show_file',
     {
       title: 'Показать файл человеку',
@@ -1092,8 +1115,19 @@ export function createDesktopMcpServer(): McpServer {
     async ({ file, open }) => {
       try {
         if (open) {
-          await files.openPath(file);
-          return say(`Открыл ${file}`);
+          // Не вышло открыть — показываем в проводнике, а не бросаем человека.
+          //
+          // Раньше здесь было «Открыл» при любом исходе: на незнакомом
+          // расширении не открывалось НИЧЕГО, окна не появлялось, а отчёт
+          // говорил об успехе. Человек ждал окна и считал виноватым себя.
+          try {
+            await files.openPath(file);
+            return say(`Открыл ${file}`);
+          } catch (причина) {
+            await files.revealPath(file);
+            const текст = причина instanceof Error ? причина.message : String(причина);
+            return say(`${текст} — показал файл в проводнике: ${file}`);
+          }
         }
         await files.revealPath(file);
         return say(`Показал в проводнике: ${file}`);
