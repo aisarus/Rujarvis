@@ -5,6 +5,9 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  isSectionName,
+  tidyRoot,
+  командаПоказа,
   formatEntries,
   formatSize,
   moveIntoFolder,
@@ -284,5 +287,138 @@ describe('tidyOutput', () => {
 
     expect(moves.size).toBe(0);
     expect((await readdir(to)).sort()).toEqual(['Картинки', 'моё.txt']);
+  });
+});
+
+/**
+ * Показ файла в проводнике.
+ *
+ * Пробел в пути ломал это молча, и ломал на самом частом случае: тема задачи с
+ * пробелом («Картинки\Логотип кафе») — это норма, а не край. Node сам берёт в
+ * кавычки любой аргумент с пробелом, и проводник получал `"/select,C:\…"`
+ * целиком в кавычках. Замерено 25.09.2026: открывались «Документы» вместо
+ * нужной папки, а инструмент отвечал «Показал».
+ */
+describe('чем показать файл', () => {
+  it('Windows: кавычки вокруг пути, а не вокруг всего аргумента', () => {
+    const команда = командаПоказа('C:\п\папка с пробелами\файл с пробелом.txt', false, 'win32');
+    expect(команда.file).toBe('explorer.exe');
+    expect(команда.args).toEqual(['/select,"C:\п\папка с пробелами\файл с пробелом.txt"']);
+    // Без этого Windows переупакует строку и всё сломается заново.
+    expect(команда.verbatim).toBe(true);
+  });
+
+  it('Windows: папку открываем, а не выделяем в ней саму себя', () => {
+    const команда = командаПоказа('C:\п\моя папка', true, 'win32');
+    expect(команда.args).toEqual(['"C:\п\моя папка"']);
+  });
+
+  it('macOS: файл показывается в Finder ключом -R, а не открывается', () => {
+    expect(командаПоказа('/п/файл с пробелом.txt', false, 'darwin')).toEqual({
+      file: 'open',
+      args: ['-R', '/п/файл с пробелом.txt'],
+      verbatim: false,
+    });
+  });
+
+  it('macOS: папка открывается как есть', () => {
+    expect(командаПоказа('/п/папка', true, 'darwin').args).toEqual(['/п/папка']);
+  });
+
+  it('Linux: показать файл нечем — открываем папку, где он лежит', () => {
+    const команда = командаПоказа('/п/папка/файл.txt', false, 'linux');
+    expect(команда.file).toBe('xdg-open');
+    expect(команда.args).toEqual(['/п/папка']);
+  });
+});
+
+/**
+ * Папки прежней раскладки нельзя утаскивать в разделы.
+ *
+ * До разделов на языке человека их было пять: Images, Video, Docs, Files,
+ * Apps. «Docs» и «Files» не совпали ни с одним нынешним именем, и уборка
+ * считала их обычной папкой задачи: стоило агенту записать файл внутрь — и
+ * вся папка уезжала в «Документы\Docs» вместе с работой за месяц. На папке
+ * человека 25.09.2026 оба набора разделов лежат рядом, так что случай не
+ * выдуманный.
+ */
+describe('имена разделов', () => {
+  it('нынешние узнаются на обоих языках', () => {
+    for (const имя of ['Картинки', 'Images', 'Документы', 'Documents', 'Разное', 'Other']) {
+      expect(isSectionName(имя), имя).toBe(true);
+    }
+  });
+
+  it('прежние узнаются тоже — иначе уборка их унесёт', () => {
+    for (const имя of ['Docs', 'Files', 'Images', 'Video', 'Apps']) {
+      expect(isSectionName(имя), имя).toBe(true);
+    }
+  });
+
+  it('папка задачи разделом не считается', () => {
+    for (const имя of ['Логотип кафе', 'Мультяшная ракета', 'docsx']) {
+      expect(isSectionName(имя), имя).toBe(false);
+    }
+  });
+});
+
+/**
+ * Разбор корня по просьбе.
+ *
+ * Уборка после задачи трогает только то, что агент в этой задаче писал, — и
+ * это правильно. Но накопившееся так и лежит: на папке человека 25.09.2026 в
+ * корне нашлось восемь файлов. Разбор по просьбе закрывает это, не нарушая
+ * обещания «положенное вами остаётся на месте»: он делается, только когда
+ * попросили.
+ */
+describe('разбор корня по просьбе', () => {
+  it('файлы уезжают в разделы, папки остаются нетронутыми', async () => {
+    const дом = mkdtempSync(path.join(os.tmpdir(), 'jarvis-tidy-'));
+    writeFileSync(path.join(дом, 'снимок.png'), 'x');
+    writeFileSync(path.join(дом, 'заметка.md'), 'x');
+    writeFileSync(path.join(дом, 'песня.mp3'), 'x');
+    mkdirSync(path.join(дом, 'Логотип кафе'));
+    writeFileSync(path.join(дом, 'Логотип кафе', 'внутри.png'), 'x');
+    mkdirSync(path.join(дом, 'Docs'));
+
+    const moves = await tidyRoot(дом);
+
+    expect(moves.size).toBe(3);
+    const корень = (await readdir(дом)).sort();
+    // Папки на месте: и задача, и старый раздел.
+    expect(корень).toContain('Логотип кафе');
+    expect(корень).toContain('Docs');
+    // Ни одного файла в корне не осталось.
+    for (const имя of ['снимок.png', 'заметка.md', 'песня.mp3']) {
+      expect(корень).not.toContain(имя);
+    }
+    // И каждый лёг в свой раздел.
+    expect(await readdir(path.join(дом, 'Картинки'))).toEqual(['снимок.png']);
+    expect(await readdir(path.join(дом, 'Аудио'))).toEqual(['песня.mp3']);
+  });
+
+  it('служебные файлы и пояснение к папке остаются на месте', async () => {
+    const дом = mkdtempSync(path.join(os.tmpdir(), 'jarvis-tidy-'));
+    // desktop.ini — настройки самой папки, а не файл человека.
+    writeFileSync(path.join(дом, 'desktop.ini'), 'x');
+    writeFileSync(path.join(дом, 'Thumbs.db'), 'x');
+    // Пояснение, уехавшее в «Документы», больше ничего не объясняет.
+    writeFileSync(path.join(дом, 'о папке.txt'), 'x');
+    writeFileSync(path.join(дом, 'обычный.png'), 'x');
+
+    const moves = await tidyRoot(дом);
+
+    expect(moves.size).toBe(1);
+    const корень = await readdir(дом);
+    expect(корень).toContain('desktop.ini');
+    expect(корень).toContain('Thumbs.db');
+    expect(корень).toContain('о папке.txt');
+    expect(корень).not.toContain('обычный.png');
+  });
+
+  it('в пустом корне ничего не делает', async () => {
+    const дом = mkdtempSync(path.join(os.tmpdir(), 'jarvis-tidy-'));
+    mkdirSync(path.join(дом, 'Картинки'));
+    expect((await tidyRoot(дом)).size).toBe(0);
   });
 });
