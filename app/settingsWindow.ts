@@ -19,7 +19,7 @@ import type { JarvisPaths } from '../jarvis/setup/paths';
 import { jarvisOutputDir } from '../jarvis/setup/paths';
 import type { AppSettings, SettingsStore } from '../jarvis/setup/settings';
 import { WHISPER_MODELS, type WhisperModelId } from '../jarvis/voice/sttModels';
-import { installVoice, isVoiceInstalled, Speaker, VOICES } from '../jarvis/voice/tts';
+import { installVoice, isVoiceInstalled, Speaker, voiceForLanguage, VOICES } from '../jarvis/voice/tts';
 import { installWhisperModel } from '../jarvis/voice/whisperInstall';
 import { isWhisperModelInstalled } from '../jarvis/voice/whisperRecognizer';
 import { UI_STRINGS } from './ui/strings';
@@ -139,10 +139,34 @@ async function state() {
 }
 
 /** Сохранить и сказать приложению, что поменялось: от этого зависит перезапуск моста. */
+/**
+ * Сменили язык — меняем и голос.
+ *
+ * Голос привязан к языку: русская Ирина по-английски не говорит. А смена
+ * языка меняла только язык, и выбранным оставался прежний голос.
+ *
+ * В мастере это открывало дыру. Список голосов на шаге показывается по
+ * языку, а проверка «можно ли дальше» смотрит на ВЫБРАННЫЙ голос. Человек
+ * выбирал English, видел пустой список английских голосов — и всё равно шёл
+ * дальше, потому что выбранной оставалась установленная Ирина. Настройка
+ * заканчивалась, интерфейс и слух были английскими, а говорил Джарвис
+ * по-русски.
+ *
+ * Теперь при смене языка выбирается голос по умолчанию для нового языка.
+ * Он, скорее всего, ещё не скачан — и мастер честно не пустит дальше, пока
+ * его не поставят.
+ */
+function подобратьГолос(patch: Partial<AppSettings>, before: AppSettings): Partial<AppSettings> {
+  const язык = patch.language;
+  if (!язык || язык === before.language) return patch;
+
+  return { ...patch, voiceId: voiceForLanguage(язык, patch.voiceId ?? before.voiceId) };
+}
+
 function applyPatch(patch: Partial<AppSettings>): AppSettings {
   const options = current as SettingsWindowOptions;
   const before = options.settings.get();
-  const after = options.settings.update(patch);
+  const after = options.settings.update(подобратьГолос(patch, before));
   const changed = (Object.keys(after) as Array<keyof AppSettings>).filter((key) => before[key] !== after[key]);
   if (changed.length > 0 && after.onboarded) options.onSettingsChanged(changed);
   return after;
