@@ -1111,10 +1111,24 @@ export function createDesktopMcpServer(): McpServer {
     },
     async () => {
       try {
-        const moves = await files.tidyRoot();
-        if (moves.size === 0) return say('В корне папки ничего не лежало — разбирать нечего.');
-        const строки = [...moves].map(([было, стало]) => `${path.basename(было)} → ${стало}`);
-        return say(`Разобрал ${moves.size}:\n${строки.join('\n')}`);
+        const { moves, failures } = await files.tidyRoot();
+        if (moves.size === 0 && failures.length === 0) {
+          return say('В корне папки ничего не лежало — разбирать нечего.');
+        }
+
+        const части: string[] = [];
+        if (moves.size > 0) {
+          const строки = [...moves].map(([было, стало]) => `${path.basename(было)} → ${стало}`);
+          части.push(`Разобрал ${moves.size}:\n${строки.join('\n')}`);
+        }
+        // Споткнулись на одном — остальное всё равно переехало, и человеку
+        // надо знать куда. Молчать о переносе из-за одной неудачи значит
+        // оставить его искать свои файлы вслепую.
+        if (failures.length > 0) {
+          const строки = failures.map(({ file, why }) => `${path.basename(file)}: ${why}`);
+          части.push(`Не смог ${failures.length}:\n${строки.join('\n')}`);
+        }
+        return say(части.join('\n\n'));
       } catch (error) {
         return failed(error);
       }

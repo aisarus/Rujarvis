@@ -300,17 +300,26 @@ describe('tidyOutput', () => {
  * нужной папки, а инструмент отвечал «Показал».
  */
 describe('чем показать файл', () => {
+  // Пути — через String.raw.
+  //
+  // В обычных кавычках `\п` это не «слэш и п», а просто «п»: неизвестное
+  // экранирование JS съедает молча. Проверка пути Windows оставалась без
+  // единого обратного слэша — «C:ппапка с пробеламифайл с пробелом.txt» — и
+  // доказывала не то, ради чего написана.
   it('Windows: кавычки вокруг пути, а не вокруг всего аргумента', () => {
-    const команда = командаПоказа('C:\п\папка с пробелами\файл с пробелом.txt', false, 'win32');
+    const путь = String.raw`C:\п\папка с пробелами\файл с пробелом.txt`;
+    const команда = командаПоказа(путь, false, 'win32');
+    expect(путь).toContain(String.fromCharCode(92));
     expect(команда.file).toBe('explorer.exe');
-    expect(команда.args).toEqual(['/select,"C:\п\папка с пробелами\файл с пробелом.txt"']);
+    expect(команда.args).toEqual([`/select,"${путь}"`]);
     // Без этого Windows переупакует строку и всё сломается заново.
     expect(команда.verbatim).toBe(true);
   });
 
   it('Windows: папку открываем, а не выделяем в ней саму себя', () => {
-    const команда = командаПоказа('C:\п\моя папка', true, 'win32');
-    expect(команда.args).toEqual(['"C:\п\моя папка"']);
+    const путь = String.raw`C:\п\моя папка`;
+    const команда = командаПоказа(путь, true, 'win32');
+    expect(команда.args).toEqual([`"${путь}"`]);
   });
 
   it('macOS: файл показывается в Finder ключом -R, а не открывается', () => {
@@ -381,8 +390,9 @@ describe('разбор корня по просьбе', () => {
     writeFileSync(path.join(дом, 'Логотип кафе', 'внутри.png'), 'x');
     mkdirSync(path.join(дом, 'Docs'));
 
-    const moves = await tidyRoot(дом);
+    const { moves, failures } = await tidyRoot(дом);
 
+    expect(failures).toEqual([]);
     expect(moves.size).toBe(3);
     const корень = (await readdir(дом)).sort();
     // Папки на месте: и задача, и старый раздел.
@@ -397,6 +407,42 @@ describe('разбор корня по просьбе', () => {
     expect(await readdir(path.join(дом, 'Аудио'))).toEqual(['песня.mp3']);
   });
 
+  it('пропавшей папки не пугаемся, чужой ошибке не молчим', async () => {
+    // Пропажа — не беда: папку могли убрать руками между вызовами.
+    const нет = path.join(os.tmpdir(), `jarvis-tidy-нет-${Date.now()}`);
+    const { moves } = await tidyRoot(нет);
+    expect(moves.size).toBe(0);
+
+    // А вот «не папка» — беда, и молчать о ней нельзя: раньше `.catch(() =>
+    // [])` превращал любую ошибку чтения в «разбирать нечего», и человек
+    // слышал это там, где на самом деле не смогли даже заглянуть.
+    const файл = path.join(mkdtempSync(path.join(os.tmpdir(), 'jarvis-tidy-')), 'это-файл.txt');
+    writeFileSync(файл, 'x');
+    await expect(tidyRoot(файл)).rejects.toThrow();
+  });
+
+  it('споткнулись на одном — остальные перенесены и названы', async () => {
+    const дом = mkdtempSync(path.join(os.tmpdir(), 'jarvis-tidy-'));
+    writeFileSync(path.join(дом, 'заметка.txt'), 'x');
+    writeFileSync(path.join(дом, 'снимок.png'), 'x');
+
+    // Отказ подаём через шов переноса: в настоящей файловой системе его не
+    // подстроить — занятое имя перенос обходит сам, раздел-файл уезжает
+    // раньше блокируемого, а открытый файл Windows переносить всё равно даёт.
+    const { moves, failures } = await tidyRoot(дом, async (source, куда) => {
+      if (source.endsWith('.png')) throw new Error('раздел занят чем-то чужим');
+      return moveIntoFolder(source, куда);
+    });
+
+    // Раньше исключение уносило с собой весь список, и найти уже
+    // перенесённое было негде.
+    expect(moves.size).toBe(1);
+    expect([...moves.keys()][0]).toContain('заметка.txt');
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.file).toContain('снимок.png');
+    expect(failures[0]?.why).toContain('раздел занят');
+  });
+
   it('служебные файлы и пояснение к папке остаются на месте', async () => {
     const дом = mkdtempSync(path.join(os.tmpdir(), 'jarvis-tidy-'));
     // desktop.ini — настройки самой папки, а не файл человека.
@@ -406,7 +452,7 @@ describe('разбор корня по просьбе', () => {
     writeFileSync(path.join(дом, 'о папке.txt'), 'x');
     writeFileSync(path.join(дом, 'обычный.png'), 'x');
 
-    const moves = await tidyRoot(дом);
+    const { moves } = await tidyRoot(дом);
 
     expect(moves.size).toBe(1);
     const корень = await readdir(дом);
@@ -419,6 +465,8 @@ describe('разбор корня по просьбе', () => {
   it('в пустом корне ничего не делает', async () => {
     const дом = mkdtempSync(path.join(os.tmpdir(), 'jarvis-tidy-'));
     mkdirSync(path.join(дом, 'Картинки'));
-    expect((await tidyRoot(дом)).size).toBe(0);
+    const { moves, failures } = await tidyRoot(дом);
+    expect(moves.size).toBe(0);
+    expect(failures).toEqual([]);
   });
 });

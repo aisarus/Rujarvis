@@ -478,9 +478,10 @@ const файлы: Случай[] = [
       writeFileSync(path.join(дом, 'о папке.txt'), 'x');
       mkdirSync(path.join(дом, 'Логотип кафе'));
 
-      const переезды = await tidyRoot(дом);
+      const { moves: переезды, failures: споткнулись } = await tidyRoot(дом);
       const корень = await readdir(дом);
 
+      if (споткнулись.length > 0) return failed(`споткнулись: ${споткнулись[0]?.why}`);
       if (переезды.size !== 1) return failed(`переехало ${переезды.size}, а должен был один`);
       if (!корень.includes('Логотип кафе')) return failed('папка задачи пропала');
       if (!корень.includes('о папке.txt')) return failed('пояснение к папке унесло');
