@@ -1,0 +1,23 @@
+# Замер на настоящем маке: что доступно без разрешений, а что требует их.
+#
+# Запускается только руками (`gh workflow run probe-darwin.yml --ref <ветка>`).
+# Нужен, пока драйвер окон для macOS пишется вслепую: машины под рукой нет, и
+# гадать о замках Apple дороже, чем один прогон.
+name: Probe macOS windows
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: node scripts/probe-darwin-windows.mjs
