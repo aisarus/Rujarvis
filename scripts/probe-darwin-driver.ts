@@ -12,11 +12,19 @@
  * середина: свёрнутое окно пропадало из списка, и «переключись на Edge» не
  * находило Edge ровно тогда, когда это нужнее всего.
  *
+ * ## Почему TextEdit тут ни о чём не спрашивают
+ *
+ * Первый прогон (24.09.2026) умер на `tell application "TextEdit" to ...`:
+ * «AppleEvent timed out (-1712)» через две минуты ожидания. Собственная
+ * скриптовая надстройка программы отвечает, когда сама сочтёт нужным.
+ * Поэтому программа запускается через `open`, а её содержимое читается через
+ * System Events — тот же путь, которым ходит и сам драйвер, и он измерен.
+ *
  *   pnpm jarvis:mac-check
  */
 
 import { execFile } from 'node:child_process';
-import { readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -32,7 +40,7 @@ if (process.platform !== 'darwin') {
 
 const driver = new DarwinDriver();
 const провалы: string[] = [];
-const снимкиПапка = path.join(os.tmpdir(), 'rujarvis-mac-check');
+const рабочаяПапка = path.join(os.tmpdir(), 'rujarvis-mac-check');
 
 /** Один шаг: что проверяли, сколько это стоило и что вышло. */
 async function шаг<T>(имя: string, что: () => Promise<T>, обязателен = true): Promise<T | null> {
@@ -58,21 +66,42 @@ function проверить(условие: boolean, имя: string): void {
   провалы.push(имя);
 }
 
+const подождать = (мс: number): Promise<void> => new Promise((готово) => setTimeout(готово, мс));
+
 /** Размер PNG из его же заголовка: IHDR лежит с 16-го байта. */
 function размерPng(файл: string): { width: number; height: number } {
   const данные = readFileSync(файл);
   return { width: данные.readUInt32BE(16), height: данные.readUInt32BE(20) };
 }
 
-const текстДокумента = async (): Promise<string> => {
-  const { stdout } = await запустить('osascript', [
-    '-e',
-    'tell application "TextEdit" to if (count of documents) is 0 then return "" ',
-    '-e',
-    'tell application "TextEdit" to get text of document 1',
-  ]);
+/**
+ * Что написано в окне TextEdit — глазами дерева доступности.
+ *
+ * Спрашивать саму программу нельзя (см. шапку), а System Events отвечает за
+ * сотни миллисекунд и тем же путём, что и драйвер.
+ */
+const ТЕКСТ_ОКНА = `
+tell application "System Events"
+  set found to ""
+  tell process "TextEdit"
+    repeat with e in (entire contents of window 1)
+      try
+        if role of e is "AXTextArea" then
+          set found to value of e
+          exit repeat
+        end if
+      end try
+    end repeat
+  end tell
+  if found is missing value then set found to ""
+  return found
+end tell
+`;
+
+async function текстОкна(): Promise<string> {
+  const { stdout } = await запустить('osascript', ['-e', ТЕКСТ_ОКНА], { timeout: 20_000 });
   return stdout.replace(/\n$/u, '');
-};
+}
 
 console.log('=== 1. Разрешение и экран');
 const экран = await шаг('границы экрана', () => driver.screen());
@@ -89,40 +118,38 @@ await шаг('клик', () => driver.click({ x: 120, y: 140 }), false);
 await шаг('колесо', () => driver.scroll(-3), false);
 
 console.log('\n=== 3. Снимок экрана');
-const файлСнимка = path.join(снимкиПапка, 'shot.png');
-await запустить('mkdir', ['-p', снимкиПапка]);
+mkdirSync(рабочаяПапка, { recursive: true });
+const файлСнимка = path.join(рабочаяПапка, 'shot.png');
 const снимок = await шаг('снимок всего экрана', () => driver.screenshot(файлСнимка), false);
 if (снимок) {
   const размер = размерPng(файлСнимка);
   console.log(`         png ${размер.width}×${размер.height}, драйвер сказал ${снимок.width}×${снимок.height}`);
-  // Совпало — экран обычный; вдвое больше — Retina, и координаты клика
-  // живут не в пикселях снимка. Пишем число, а не догадку.
+  // Совпало — экран обычный; вдвое больше — Retina, и координаты клика живут
+  // не в пикселях снимка. Пишем число, а не догадку.
   console.log(
     `         отношение пикселей снимка к координатам: ${(размер.width / Math.max(снимок.width, 1)).toFixed(2)}`,
   );
 }
 
 console.log('\n=== 4. Живое окно TextEdit: найти, свернуть, увидеть, развернуть, поднять');
-await запустить('osascript', [
-  '-e',
-  'tell application "TextEdit" to activate',
-  '-e',
-  'tell application "TextEdit" to if (count of documents) is 0 then make new document',
-]);
+const файлДокумента = path.join(рабочаяПапка, 'rujarvis-check.txt');
+writeFileSync(файлДокумента, '', 'utf8');
+await шаг('запустить TextEdit', () => запустить('open', ['-a', 'TextEdit', файлДокумента], { timeout: 30_000 }));
 
 /** Дождаться окна, а не поверить в него: программа поднимается не мгновенно. */
 async function дождатьсяОкна(): Promise<DarwinWindow[]> {
-  for (let попытка = 0; попытка < 10; попытка += 1) {
-    const окна = await driver.windows();
+  let окна: DarwinWindow[] = [];
+  for (let попытка = 0; попытка < 12; попытка += 1) {
+    окна = await driver.windows();
     if (окна.some((item) => item.app === 'TextEdit')) return окна;
-    await new Promise((готово) => setTimeout(готово, 1_000));
+    await подождать(1_000);
   }
-  return driver.windows();
+  return окна;
 }
 
 const началоСписка = Date.now();
 const окна = await дождатьсяОкна();
-console.log(`  вышло  список окон — ${Date.now() - началоСписка} мс, окон ${окна.length}`);
+console.log(`  вышло  список окон — ${Date.now() - началоСписка} мс на последнюю попытку, окон ${окна.length}`);
 for (const item of окна.slice(0, 8)) {
   console.log(
     `         ${item.focused ? '→' : ' '} ${item.app} «${item.title}» ${item.width}×${item.height}` +
@@ -133,16 +160,25 @@ for (const item of окна.slice(0, 8)) {
   окна.some((item) => item.app === 'TextEdit'),
   'TextEdit есть в списке окон',
 );
+const pidTextEdit = окна.find((item) => item.app === 'TextEdit')?.pid;
+
+const одинСписок = Date.now();
+await driver.windows();
+console.log(`         один список окон стоит ${Date.now() - одинСписок} мс`);
 
 await шаг('поднять TextEdit', () => driver.focus('TextEdit'));
 // «Сверни окно» приходит из таблицы команд как win+down; на маке это Cmd+M.
 await шаг('свернуть окно (win+down → Cmd+M)', () => driver.key('win+down'));
-await new Promise((готово) => setTimeout(готово, 1_500));
+await подождать(1_500);
 
 const послеСворачивания = (await шаг('список окон при свёрнутом', () => driver.windows())) ?? [];
 const свёрнутое = послеСворачивания.find((item) => item.app === 'TextEdit');
 console.log(
-  `         TextEdit: ${свёрнутое ? `«${свёрнутое.title}» ${свёрнутое.width}×${свёрнутое.height}, свёрнуто=${свёрнутое.minimized}` : 'нет в списке'}`,
+  `         TextEdit: ${
+    свёрнутое
+      ? `«${свёрнутое.title}» ${свёрнутое.width}×${свёрнутое.height}, свёрнуто=${свёрнутое.minimized}`
+      : 'нет в списке'
+  }`,
 );
 проверить(свёрнутое !== undefined, 'свёрнутое окно ОСТАЛОСЬ в списке');
 проверить(свёрнутое?.minimized === true, 'свёрнутое окно помечено свёрнутым');
@@ -150,7 +186,7 @@ console.log(
 
 const поднято = await шаг('развернуть и поднять свёрнутое окно', () => driver.focus('TextEdit'));
 if (поднято) console.log(`         впереди «${поднято.title}»`);
-await new Promise((готово) => setTimeout(готово, 1_000));
+await подождать(1_000);
 const послеРазворота = (await шаг('список окон после разворота', () => driver.windows())) ?? [];
 const развёрнутое = послеРазворота.find((item) => item.app === 'TextEdit');
 проверить(развёрнутое?.minimized === false, 'окно развернулось обратно');
@@ -158,25 +194,25 @@ const развёрнутое = послеРазворота.find((item) => item.
 
 console.log('\n=== 5. Печать и сочетания клавиш');
 await шаг('напечатать кириллицу', () => driver.type('Привет, мир'));
-await new Promise((готово) => setTimeout(готово, 700));
-const напечатано = await текстДокумента();
-console.log(`         в документе: «${напечатано}»`);
+await подождать(1_000);
+const напечатано = (await шаг('прочитать текст окна', () => текстОкна())) ?? '';
+console.log(`         в окне: «${напечатано}»`);
 проверить(напечатано.includes('Привет, мир'), 'кириллица дошла до окна буква в букву');
 
 // Выделить всё (ctrl+a из таблицы команд) и напечатать поверх: если Cmd+A не
 // сработал, прежний текст останется на месте — это и будет видно.
 await шаг('выделить всё (ctrl+a → Cmd+A)', () => driver.key('ctrl+a'));
 await шаг('напечатать поверх выделения', () => driver.type('Замена'));
-await new Promise((готово) => setTimeout(готово, 700));
-const послеЗамены = await текстДокумента();
-console.log(`         в документе: «${послеЗамены}»`);
+await подождать(1_000);
+const послеЗамены = (await шаг('прочитать текст окна', () => текстОкна())) ?? '';
+console.log(`         в окне: «${послеЗамены}»`);
 проверить(послеЗамены === 'Замена', 'ctrl+a на маке выделил всё — текст заменён целиком');
 
 console.log('\n=== 6. Элементы окна');
 const элементы = await шаг('дерево доступности активного окна', () => driver.elements(), false);
 if (элементы) {
   console.log(`         окно «${элементы.title}», элементов ${элементы.elements.length}`);
-  for (const item of элементы.elements.slice(0, 6)) {
+  for (const item of элементы.elements.slice(0, 8)) {
     console.log(`         ${item.type} «${item.name || item.id}» в (${item.x}, ${item.y})`);
   }
 }
@@ -191,14 +227,15 @@ try {
   проверить(текст.includes('На экране:'), 'отказ называет, что есть на экране');
 }
 
-// Убираем за собой только своё: TextEdit мы и запустили.
-await запустить('osascript', [
-  '-e',
-  'tell application "TextEdit" to close every document saving no',
-  '-e',
-  'tell application "TextEdit" to quit',
-]).catch(() => undefined);
-rmSync(снимкиПапка, { recursive: true, force: true });
+// Гасим по своему pid, а не по маске: уборка по имени однажды снесла лишнее.
+if (pidTextEdit) {
+  try {
+    process.kill(pidTextEdit);
+  } catch {
+    // Уже закрылся — и хорошо.
+  }
+}
+rmSync(рабочаяПапка, { recursive: true, force: true });
 
 console.log('\n=== Итог');
 if (провалы.length === 0) {
