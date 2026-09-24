@@ -827,13 +827,24 @@ export class DarwinDriver {
     const target = chooseWindow(title, windows);
     if (!target) throw new Error(explainMiss(title, windows));
 
-    const front = parseFront(await this.osascript(appleScriptArgs(raiseScript(target.pid, target.index))));
-    if (front.pid !== target.pid) {
-      throw new Error(
-        `Не вышло поднять окно. Просили: «${target.title || target.app}». Впереди: «${front.title || front.app}»`,
-      );
+    return this.raise(target.pid, target.index, target.title || target.app);
+  }
+
+  /**
+   * Поднять окно, о котором уже всё известно.
+   *
+   * Отдельно от `focus`, потому что оконные инструменты компьютер-юза
+   * (`window_look`, `window_find` и прочие) адресуют окно программой и
+   * номером, а не надписью на нём, — и поднимать его им надо перед каждым
+   * действием: у неактивного окна дерево и отрисовка схлопываются.
+   */
+  async raise(pid: number, index: number, what = `окно ${index}`): Promise<{ title: string }> {
+    await this.access();
+    const front = parseFront(await this.osascript(appleScriptArgs(raiseScript(pid, index))));
+    if (front.pid !== pid) {
+      throw new Error(`Не вышло поднять окно. Просили: «${what}». Впереди: «${front.title || front.app}»`);
     }
-    return { title: front.title || front.app || target.title };
+    return { title: front.title || front.app || what };
   }
 
   /** Демона нет — гасить нечего. Метод есть, чтобы драйверы были взаимозаменяемы. */

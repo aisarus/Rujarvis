@@ -29,7 +29,7 @@ import { parseDirectCommand } from '../../jarvis/control/commands';
 import { cannotMeasure, failed, passed, type Gate } from '../../jarvis/measure/gate';
 import { командаПоказа, openPath, tidyRoot } from '../../jarvis/desktop/files';
 import { createGridOverlay } from '../../app/gridOverlay';
-import { CuaDriver } from '../../jarvis/desktop/cua';
+import { createWindowTools } from '../../jarvis/desktop/windowTools';
 import { createHelpOverlay } from '../../app/helpOverlay';
 import { createLogWindow } from '../../app/logWindow';
 import { createStatusOverlay } from '../../app/statusOverlay';
@@ -369,8 +369,14 @@ const интерфейс: Случай[] = [
       // человек слышал «Открытых окон нет» при живых Блендере и браузере.
       // Своё окно приёмки здесь же и служит доказательством: хотя бы оно
       // на экране есть всегда.
+      //
+      // Берём не cua-driver напрямую, а слой компьютер-юза: на маке
+      // cua-driver'а нет и не будет, а проверять надо то, чем работает
+      // Джарвис. Раньше этот случай на маке отвечал «Драйвер компьютер-юза
+      // не найден» — и это был не сбой проверки, а правда: оконных глаз на
+      // маке не было вовсе.
       const окно = new BrowserWindow({ title: ИМЯ_ОКНА, width: 300, height: 160, show: false });
-      const драйвер = new CuaDriver();
+      const драйвер = createWindowTools();
       try {
         окно.show();
         await ждать(600);

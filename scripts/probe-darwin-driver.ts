@@ -24,12 +24,13 @@
  */
 
 import { execFile } from 'node:child_process';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
 import { DarwinDriver, type DarwinWindow } from '../jarvis/desktop/darwinDriver';
+import { createWindowTools } from '../jarvis/desktop/windowTools';
 
 const запустить = promisify(execFile);
 
@@ -309,6 +310,88 @@ try {
   console.log(`         ${текст}`);
   проверить(текст.includes('На экране:'), 'отказ называет, что есть на экране');
 }
+
+console.log('\n=== 8. Компьютер-юз: глаза и руки по чужому окну');
+/*
+  Те самые шесть инструментов, которых на маке не было вовсе: window_list,
+  window_look, window_find, window_press, window_write, window_key. Проверяем
+  их тем же способом — на живом окне TextEdit, а не на словах.
+*/
+const инструменты = createWindowTools();
+
+const списокОкон = await шаг('window_list', () => инструменты.windows());
+for (const окно of (списокОкон ?? []).slice(0, 8)) {
+  console.log(`         ${окно.title} — ${окно.app}, pid ${окно.pid}, окно ${окно.windowId}`);
+}
+const цель = (списокОкон ?? []).find((окно) => окно.app === 'TextEdit');
+проверить(цель !== undefined, 'TextEdit виден инструментам компьютер-юза');
+
+if (цель) {
+  // Меняется ли номер окна от того, что окно подняли. Ответ решает, можно ли
+  // отдавать порядковый номер наружу как имя окна.
+  const второйФайл = path.join(рабочаяПапка, 'второе-окно.txt');
+  writeFileSync(второйФайл, '', 'utf8');
+  await запустить('open', ['-a', 'TextEdit', второйФайл], { timeout: 30_000 });
+  await подождать(2_000);
+  const доПодъёма = (await инструменты.windows()).filter((окно) => окно.app === 'TextEdit');
+  console.log(`         до подъёма: ${доПодъёма.map((о) => `${о.windowId}=«${о.title}»`).join(', ')}`);
+  const последнее = доПодъёма[доПодъёма.length - 1];
+  if (последнее) {
+    await инструменты.key(последнее.pid, последнее.windowId, 'escape');
+    await подождать(700);
+    const послеПодъёма = (await инструменты.windows()).filter((окно) => окно.app === 'TextEdit');
+    console.log(`         после подъёма: ${послеПодъёма.map((о) => `${о.windowId}=«${о.title}»`).join(', ')}`);
+  }
+
+  const файлОкна = path.join(рабочаяПапка, 'window.png');
+  const снимокОкна = await шаг('window_look', () => инструменты.look(цель.pid, цель.windowId, файлОкна));
+  if (снимокОкна) {
+    console.log(`         окно ${снимокОкна.width}×${снимокОкна.height}, файл ${statSync(файлОкна).size} байт`);
+    проверить(снимокОкна.width > 100 && снимокОкна.height > 100, 'снимок окна не пустой');
+  }
+
+  const найденное = await шаг('window_find «text»', () => инструменты.find(цель.pid, цель.windowId, 'text'));
+  for (const элемент of найденное ?? []) {
+    console.log(`         [${элемент.index}] ${элемент.role} «${элемент.name}»`);
+  }
+  проверить((найденное ?? []).length > 0, 'в окне нашёлся элемент по имени');
+
+  const поле = (найденное ?? [])[0];
+  if (поле) {
+    await шаг('window_press', () => инструменты.press(цель.pid, цель.windowId, поле.index));
+
+    await шаг('window_write кириллицей', () =>
+      инструменты.writeInto(цель.pid, цель.windowId, поле.index, 'Привет из окна'),
+    );
+    await подождать(1_000);
+    const вОкне = await текстОкна().catch(() => '(не прочитать)');
+    console.log(`         в окне: «${вОкне}»`);
+    проверить(вОкне.includes('Привет из окна'), 'window_write напечатал кириллицу в найденное поле');
+
+    await шаг('window_key backspace', () => инструменты.key(цель.pid, цель.windowId, 'backspace'));
+    await подождать(800);
+    const послеКлавиши = await текстОкна().catch(() => '(не прочитать)');
+    console.log(`         в окне: «${послеКлавиши}»`);
+    проверить(послеКлавиши.endsWith('Привет из окн'), 'window_key дошла до окна — последний знак стёрт');
+  }
+
+  await шаг(
+    'отказ на несуществующее окно называет соседей',
+    async () => {
+      try {
+        await инструменты.look(цель.pid, 999, path.join(рабочаяПапка, 'нет.png'));
+      } catch (error) {
+        const текст = error instanceof Error ? error.message : String(error);
+        console.log(`         ${текст}`);
+        проверить(текст.includes('window_list'), 'отказ говорит, где взять номер окна');
+        return;
+      }
+      проверить(false, 'окна 999 быть не может');
+    },
+    false,
+  );
+}
+инструменты.dispose();
 
 // Гасим по своему pid, а не по маске: уборка по имени однажды снесла лишнее.
 if (pidTextEdit) {
