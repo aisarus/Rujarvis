@@ -18,7 +18,7 @@ export type JarvisAction =
   | { kind: 'open-app'; app: string }
   | { kind: 'close-window'; title?: string }
   | { kind: 'read-file'; path: string }
-  | { kind: 'write-file'; path: string; insideProject: boolean }
+  | { kind: 'write-file'; path: string; insideProject: boolean; system?: boolean }
   | { kind: 'delete-files'; paths: string[]; insideProject: boolean }
   | { kind: 'shell'; command: string; insideProject: boolean }
   | { kind: 'browse'; url: string }
@@ -110,6 +110,7 @@ export function classifyAction(action: JarvisAction): RiskLevel {
       return 'safe';
 
     case 'write-file':
+      if (action.system) return 'dangerous';
       return action.insideProject ? 'normal' : 'sensitive';
 
     case 'delete-files':

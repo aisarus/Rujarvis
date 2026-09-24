@@ -76,10 +76,15 @@ export interface CreateJarvisOptions {
    */
   desktopMcpConfig?: string;
   /**
+   * Настройки Claude Code с хуком красных линий (`jarvis/risk/gateHook.ts`).
+   * Без них агент работает без оболочки и без записи в свою папку.
+   */
+  gateSettings?: string;
+  /**
    * Папка, в которой Джарвис живёт: его код, настройки, журнал, навыки.
    *
-   * Агент получает её на чтение всегда — чтобы на вопрос о себе отвечать по
-   * своим файлам, а не по догадкам.
+   * Агент получает её вместе с хуком красных линий — чтобы на вопрос о себе
+   * отвечать по своим файлам, а не по догадкам.
    */
   homeDir?: string;
   /** Папка на рабочем столе, куда агент складывает готовые файлы. */
@@ -145,6 +150,7 @@ export function createJarvis(options: CreateJarvisOptions = {}): Jarvis {
       model: options.claudeModel,
       allowBypassPermissions: options.allowUnrestrictedCli === true,
       desktopMcpConfig: options.desktopMcpConfig,
+      gateSettings: options.gateSettings,
       homeDir: options.homeDir,
       sessions,
     }),

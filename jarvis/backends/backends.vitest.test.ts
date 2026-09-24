@@ -452,6 +452,7 @@ describe('Claude Code adapter', () => {
     const args = buildClaudeArgs(request({}), {
       permissionMode: 'acceptEdits',
       homeDir: 'C:/Users/user/AppData/Local/Rujarvis',
+      gateSettings: 'C:/jarvis/gate-settings.json',
     });
     expect(args).toEqual(
       expect.arrayContaining(['--add-dir', 'C:/Users/user/AppData/Local/Rujarvis']),
@@ -463,8 +464,33 @@ describe('Claude Code adapter', () => {
     const args = buildClaudeArgs(request({ capabilities: ['code'] }), {
       permissionMode: 'acceptEdits',
       homeDir: 'C:/жарвис',
+      gateSettings: 'C:/jarvis/gate-settings.json',
     });
     expect(args).toContain('--add-dir');
+  });
+
+  it('подключает хук красных линий к каждой работе', () => {
+    const args = buildClaudeArgs(request({ capabilities: ['code'] }), {
+      permissionMode: 'acceptEdits',
+      gateSettings: 'C:/jarvis/gate-settings.json',
+    });
+    expect(args).toEqual(expect.arrayContaining(['--settings', 'C:/jarvis/gate-settings.json']));
+  });
+
+  it('без хука не даёт оболочку, запись навыков и свою папку', () => {
+    // В acceptEdits добавленная папка доступна на запись, а оболочка
+    // выполняет что угодно: без хука некому спросить человека.
+    const args = buildClaudeArgs(request({ capabilities: ['computer'] }), {
+      permissionMode: 'acceptEdits',
+      desktopMcpConfig: 'C:/jarvis/desktop.json',
+      homeDir: 'C:/жарвис',
+    });
+    const allowed = (args[args.indexOf('--allowedTools') + 1] ?? '').split(',');
+    expect(args).not.toContain('--add-dir');
+    expect(args).not.toContain('--settings');
+    expect(allowed).not.toContain('Bash');
+    expect(allowed).not.toContain('mcp__jarvis-desktop__write_skill');
+    expect(allowed).toContain('Read');
   });
 
   it('не добавляет папку, которой не назвали', () => {

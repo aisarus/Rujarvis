@@ -48,6 +48,8 @@ import { chooseElement } from '../../jarvis/control/elements';
 import { cellCenter, subCellCenter } from '../../jarvis/control/grid';
 import { DesktopDriver, driverStamp } from '../../jarvis/desktop/driver';
 import { resolveDesktopMcpLaunch } from '../../jarvis/desktop/launch';
+import { GateBridge } from '../../jarvis/risk/gateBridge';
+import { prepareGate } from '../../jarvis/risk/gateSetup';
 import { EchoGuard } from '../../jarvis/voice/echo';
 import { StandingInstructions } from '../../jarvis/backends/standingInstructions';
 import { ProgressVoice } from '../../jarvis/voice/progress';
@@ -232,6 +234,8 @@ let overlayRef: StatusOverlay | null = null;
 let talkRef: TalkSession | null = null;
 /** Как остановить мост разговора при выходе. */
 let stopTalkBridge: (() => void) | null = null;
+/** Как остановить мост вопросов хука красных линий. */
+let stopGateBridge: (() => void) | null = null;
 
 /**
  * Убрать обращение в начале — и только в начале.
@@ -683,9 +687,32 @@ export async function startJarvisVoiceBridge(options: {
   );
   console.log(`[jarvis] характер: ${instructions.ensure()}`);
 
+  // Красные линии на каждом инструменте агента, а не только на фразе: хук
+  // спрашивает человека голосом о чувствительном действии прямо перед ним.
+  const gate = prepareGate({
+    appRoot: app.getAppPath(),
+    dataDir: path.dirname(journalFile()),
+    outputDir,
+    homeDir: jarvisHome(),
+  });
+  if (gate.ok) {
+    const gateBridge = new GateBridge(gate.bridgeDir);
+    gateBridge.clear();
+    stopGateBridge = gateBridge.serve((question) => {
+      note('command', `спрашиваю: ${question.summary}`);
+      return askForApproval(question.summary, session, (waiter) => {
+        awaitingAnswer = waiter;
+      });
+    });
+    console.log(`[jarvis] красные линии на инструментах: ${gate.settings}`);
+  } else {
+    console.log(`[jarvis] красные линии только на фразах, без оболочки у агента: ${gate.reason}`);
+  }
+
   const jarvis = createJarvis({
     workspace,
     desktopMcpConfig: writeDesktopMcpConfig(outputDir),
+    gateSettings: gate.ok ? gate.settings : undefined,
     homeDir: jarvisHome(),
     outputDir,
     recentActions: () => journal?.context() ?? [],
@@ -1537,6 +1564,8 @@ export async function startJarvisVoiceBridge(options: {
       talkRef = null;
       stopTalkBridge?.();
       stopTalkBridge = null;
+      stopGateBridge?.();
+      stopGateBridge = null;
       recogniser.dispose();
       if (!audioWindow.isDestroyed()) audioWindow.destroy();
       active = null;
