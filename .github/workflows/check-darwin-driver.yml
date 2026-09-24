@@ -35,3 +35,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm jarvis:mac-check
+      # Приёмка теми же слоями, которыми работает голос: своё окно Электрона,
+      # настоящий драйвер, настоящая фраза. Отвечает тремя словами —
+      # прошло / не прошло / нечем мерить.
+      - run: pnpm jarvis:qa

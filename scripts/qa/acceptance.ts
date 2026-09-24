@@ -17,12 +17,10 @@
  *   pnpm jarvis:qa
  */
 
-import { execFile, spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { promisify } from 'node:util';
 
 import { app, BrowserWindow } from 'electron';
 
@@ -31,7 +29,6 @@ import { parseDirectCommand } from '../../jarvis/control/commands';
 import { cannotMeasure, failed, passed, type Gate } from '../../jarvis/measure/gate';
 import { командаПоказа, openPath, tidyRoot } from '../../jarvis/desktop/files';
 
-const run = promisify(execFile);
 const ждать = (мс: number): Promise<void> => new Promise((r) => setTimeout(r, мс));
 
 interface Случай {
@@ -76,72 +73,6 @@ const разборФраз: Случай[] = РАЗБОР.map(([фраза, ви
 // Настоящее окно, настоящий драйвер. Блокнот, а не то, что случайно открыто:
 // приёмка не должна зависеть от того, что сейчас на экране у человека.
 
-const ОКНА_СКРИПТ = `
-Add-Type @'
-using System;using System.Text;using System.Runtime.InteropServices;
-public class QaW {
-  [DllImport("user32.dll")] public static extern bool EnumWindows(EP f, IntPtr l);
-  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, StringBuilder s, int n);
-  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
-  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
-  [DllImport("user32.dll")] public static extern int GetWindowThreadProcessId(IntPtr h, out int p);
-  public delegate bool EP(IntPtr h, IntPtr l);
-}
-'@
-`;
-
-/** Свернуть окна этого pid и сказать, сколько свернули. */
-async function свернутьПоPid(pid: number): Promise<number> {
-  const { stdout } = await run('pwsh', ['-NoProfile', '-Command', `${ОКНА_СКРИПТ}
-$n = 0
-[QaW]::EnumWindows({param($h,$l)
-  if ([QaW]::IsWindowVisible($h)) {
-    $id = 0; [QaW]::GetWindowThreadProcessId($h, [ref]$id) | Out-Null
-    $p = (Get-Process -Id $id -ErrorAction SilentlyContinue).ProcessName
-    if ($id -eq ${pid}) { [QaW]::ShowWindow($h, 6) | Out-Null; $script:n++ }
-  }
-  return $true
-}, [IntPtr]::Zero) | Out-Null
-$n
-`]);
-  return Number(stdout.trim()) || 0;
-}
-
-/**
- * Свёрнуты ли ещё окна процесса.
- *
- * Мерить надо это, а не «кто сейчас впереди»: фокус уводит любое окно, которое
- * вылезло за те полсекунды, что мы ждали, — в первом прогоне приёмку обманул
- * сам Claude, выскочивший вперёд. Развёрнутость окна никто у нас не отнимет.
- */
-async function свёрнутоЛиПоPid(pid: number): Promise<boolean> {
-  const { stdout } = await run('pwsh', ['-NoProfile', '-Command', `${ОКНА_СКРИПТ}
-$any = $false
-[QaW]::EnumWindows({param($h,$l)
-  if ([QaW]::IsWindowVisible($h)) {
-    $id = 0; [QaW]::GetWindowThreadProcessId($h, [ref]$id) | Out-Null
-    $p = (Get-Process -Id $id -ErrorAction SilentlyContinue).ProcessName
-    if ($id -eq ${pid} -and [QaW]::IsIconic($h)) { $script:any = $true }
-  }
-  return $true
-}, [IntPtr]::Zero) | Out-Null
-$any
-`]);
-  return stdout.trim().toLowerCase() === 'true';
-}
-
-/** Имя процесса окна, которое сейчас впереди. */
-async function ктоВпереди(): Promise<string> {
-  const { stdout } = await run('pwsh', ['-NoProfile', '-Command', `${ОКНА_СКРИПТ}
-$h = [QaW]::GetForegroundWindow()
-$id = 0; [QaW]::GetWindowThreadProcessId($h, [ref]$id) | Out-Null
-(Get-Process -Id $id -ErrorAction SilentlyContinue).ProcessName
-`]);
-  return stdout.trim();
-}
-
 /**
  * Своё окно для приёмки — своё же, электроновское.
  *
@@ -160,11 +91,23 @@ $id = 0; [QaW]::GetWindowThreadProcessId($h, [ref]$id) | Out-Null
  */
 const ИМЯ_ОКНА = 'Проба приёмки Rujarvis';
 
+/**
+ * Где эта проверка вообще имеет смысл.
+ *
+ * Драйвер окон есть на двух платформах: PowerShell на Windows и `osascript`
+ * на маке (`jarvis/desktop/platform.ts` выбирает). На Linux рабочего стола у
+ * Джарвиса нет, и там честный ответ — «нечем мерить», а не «не прошло».
+ *
+ * Окно приёмка открывает своё, электроновское, и на маке по той же причине,
+ * что и на Windows: чужое окно нельзя ни трогать, ни гасить.
+ */
+const ЕСТЬ_ДРАЙВЕР_ОКОН = process.platform === 'win32' || process.platform === 'darwin';
+
 const окна: Случай[] = [
   {
     имя: 'окно: свёрнутое окно поднимается по фразе',
     async проверка(): Promise<Gate> {
-      if (process.platform !== 'win32') return cannotMeasure('драйвер окон пока только для Windows');
+      if (!ЕСТЬ_ДРАЙВЕР_ОКОН) return cannotMeasure(`драйвера окон для ${process.platform} нет`);
 
       const окно = new BrowserWindow({
         title: ИМЯ_ОКНА,
@@ -198,7 +141,7 @@ const окна: Случай[] = [
   {
     имя: 'окно: отказ называет то, что на экране',
     async проверка(): Promise<Gate> {
-      if (process.platform !== 'win32') return cannotMeasure('драйвер окон пока только для Windows');
+      if (!ЕСТЬ_ДРАЙВЕР_ОКОН) return cannotMeasure(`драйвера окон для ${process.platform} нет`);
 
       const команда = parseDirectCommand('переключись на окнокоторогонет');
       if (!команда) return cannotMeasure('фраза не разобралась — проверять нечего');
@@ -207,7 +150,13 @@ const окна: Случай[] = [
       if (исход.passed !== false) return failed('несуществующее окно «нашлось»');
 
       // «Не получилось» без единой подсказки — это и была беда.
-      return исход.why.includes('Na ekrane') || исход.why.includes('на экране')
+      //
+      // Два драйвера пишут по-разному: win32 — латиницей («Na ekrane»), мак —
+      // по-русски и с большой буквы («На экране»). Поэтому сравнение идёт в
+      // нижнем регистре: иначе маковский отказ выглядел бы как «ничего не
+      // объясняет», хотя он объясняет.
+      const почему = исход.why.toLowerCase();
+      return почему.includes('na ekrane') || почему.includes('на экране')
         ? passed('отказ перечислил соседей')
         : failed(`отказ ничего не объясняет: ${исход.why}`);
     },

@@ -214,6 +214,26 @@ function number(value: string | undefined): number {
 }
 
 /**
+ * Сравнение без «ё».
+ *
+ * Разбор фразы приводит речь к одному виду и меняет «ё» на «е»: человек
+ * говорит одинаково, а пишет по-разному. В ЗАГОЛОВКЕ окна «ё» при этом
+ * остаётся как есть, и поиск по дословному совпадению промахивается.
+ *
+ * Поймано приёмкой на Windows 25.09.2026: окно «Проба приёмки Rujarvis» не
+ * нашлось по фразе, которая дошла до драйвера как «проба приемки rujarvis».
+ * Любое русское окно с «ё» — «Счёт», «Приём», «Ещё одна задача» — не нашлось
+ * бы так же. Поэтому через это приведение проходят ОБЕ стороны сравнения.
+ */
+export function simplify(text: string): string {
+  // Сначала Юникод приводится к составленному виду. «Ё» приезжает двумя
+  // разными кодами: одним знаком (U+0451) или «е» с отдельным знаком над ней
+  // (U+0435 U+0308). Для строки это разные буквы, и замена одной не трогает
+  // вторую — а на маке имена файлов ходят и в том, и в другом виде.
+  return text.normalize('NFC').toLowerCase().replace(/ё/gu, 'е');
+}
+
+/**
  * Какое окно имел в виду человек.
  *
  * Сначала по заголовку, потом по имени программы — как на Windows и по той же
@@ -223,11 +243,11 @@ function number(value: string | undefined): number {
  * в выборе, если других окон нет.
  */
 export function chooseWindow(needle: string, windows: readonly DarwinWindow[]): DarwinWindow | null {
-  const wanted = needle.trim().toLowerCase();
+  const wanted = simplify(needle.trim());
   if (!wanted) return null;
 
-  const byTitle = windows.filter((item) => item.title.toLowerCase().includes(wanted));
-  const byApp = windows.filter((item) => item.app.toLowerCase().includes(wanted));
+  const byTitle = windows.filter((item) => simplify(item.title).includes(wanted));
+  const byApp = windows.filter((item) => simplify(item.app).includes(wanted));
   const found = byTitle.length ? byTitle : byApp;
   if (!found.length) return null;
 
