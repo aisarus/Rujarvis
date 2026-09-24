@@ -1,166 +1,172 @@
 # Rujarvis
 
-**A voice assistant for Windows that speaks Russian and English and gets work
-done with the Claude Code subscription you already have.**
+[English version](README.en.md)
 
-You talk to it in plain language — *"close this window"*, *"find why the build
-fails and fix it"*, *«а пока открой Telegram»* — and it decides what the
-request needs: an instant keyboard or window action, an answer, or real work
-done by Claude Code on your screen, in your browser and in your files. Before
-anything that spends money, messages people or can't be undone, it asks you
-out loud.
+**Голосовой ассистент для Windows: говорите с компьютером по-русски как с
+человеком — он сделает сам или поручит Claude Code по вашей подписке.**
 
-Rujarvis started as a fork of
-[Interpreter Workstation](https://github.com/openinterpreter/interpreter-workstation)
-and is now a standalone app. It is not affiliated with or endorsed by Open
-Interpreter.
+*«Закрой это окно»*, *«прокрути вниз»*, *«найди, почему не собирается проект, и
+почини»*, *«а пока открой Телеграм»*. Простое выполняется сразу, без модели и без
+интернета. Сложное — настоящая работа Claude Code на вашем экране, в браузере и
+в файлах. Перед тем как потратить деньги, написать кому-то или сделать
+необратимое, Джарвис спрашивает вслух.
 
-## Install
+Не нужно учить язык команд, как в Talon. Не нужен английский, как в Windows
+Voice Access. Не нужен облачный сервис для распознавания: речь распознаётся и
+синтезируется на вашем компьютере.
 
-Windows 10/11, one line in PowerShell:
+## Установка
+
+Windows 10/11, одна строка в PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 | iex
 ```
 
-English by default instead of Russian:
+Английский по умолчанию:
 
 ```powershell
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1))) -Language en
 ```
 
-The installer puts Git and Node.js in place if they are missing, builds the
-app, downloads a speech model sized to your machine and a voice, adds
-**Rujarvis** to the Start menu and starts it. No administrator rights, no C++
-compiler, no Rust. Running it again updates the install.
+Установщик сам поставит Git и Node.js, если их нет, соберёт приложение, скачает
+модель распознавания под ваш компьютер и голос, добавит **Rujarvis** в меню
+«Пуск» и запустит его. Права администратора, компилятор C++ и Rust не нужны.
+Повторный запуск обновляет установку.
 
-On first start a short setup walks you through the language, signing in to
-Claude Code, the speech models and a microphone check. Everything can be
-changed later from the tray icon → **Settings**.
+При первом запуске короткая настройка проведёт по шагам: язык, вход в Claude
+Code, модели речи, проверка микрофона. Потом всё меняется в трее → **Настройки**.
 
-You need [Claude Code](https://claude.ai/code) signed in with your own
-subscription for anything beyond direct commands. Codex works as a fallback if
-you have it.
+**Что нужно для ИИ-части.** Прямые команды (ниже) работают без всяких аккаунтов.
+Для настоящей работы нужен [Claude Code](https://claude.ai/code) со своей
+подпиской; Codex подойдёт как запасной вариант. Мы не берём денег и не стоим
+между вами и моделью.
 
-## Talking to it
+## Как с ним говорить
 
-| Say | What happens |
+| Скажите | Что будет |
 | --- | --- |
-| **Jarvis** / **Джарвис** | Wakes it; for a minute after that you can talk without the name |
-| `Ctrl+Space` | Push to talk: press, speak, press again |
-| `Ctrl+M` | Microphone off / on |
-| **stop** / **стоп** | Stops the current work immediately |
-| **silence** / **тишина** | Stops talking and listening |
-| *what can you do* / *что ты умеешь* | Shows every direct command |
+| **Джарвис** | Проснётся; следующую минуту можно без имени |
+| `Ctrl+Space` | Нажать, сказать, нажать ещё раз |
+| `Ctrl+M` | Выключить / включить микрофон |
+| **стоп** | Немедленно остановить любую работу |
+| **тишина** | Замолчать и закончить разговор |
+| *что ты умеешь* | Показать все прямые команды |
 
-Direct commands — scroll, keys, tabs, windows, clicking a button by its name, a
-numbered grid over the screen, dictation, opening and closing apps — are
-answered instantly, without a model. Anything else goes to a live Claude Code
-session that remembers the conversation and can start, correct, pause or stop
-the running work.
+**Прямые команды** — мгновенно, без модели: прокрутка, клавиши, вкладки, окна,
+клик по названию кнопки, нумерованная сетка поверх экрана, диктовка с правкой
+(«удали последнее слово», «новая строка»), запуск и закрытие программ, звук,
+мелкие правки в открытом Blender («сделай её синей», «поверни на сорок пять»).
+Всего больше семидесяти фраз, и каждую проверяет тест.
 
-The stop and silence words, and yes/no answers, work in both languages
-whichever language is selected.
+Всё остальное уходит живой сессии Claude Code, которая помнит разговор: её можно
+поправить на ходу, поставить на паузу или остановить.
 
-## What it asks you before doing
+«Стоп», «тишина», «пауза», «продолжай» и ответы «да/нет» понимаются на обоих
+языках, какой бы ни был выбран.
 
-Four red lines: spending money, contacting other people, changing system files,
-and destructive or outward-reaching commands (`git push`, `rm -rf`, `curl | sh`
-and the like). Everything else runs without interrupting you.
+## О чём он спросит
 
-They are checked twice, in code rather than in a prompt. The phrase you said
-is classified before any agent starts. Then **every tool call the agent makes**
-goes through a Claude Code `PreToolUse` hook that classifies the concrete
-action — the shell command, the file being written, the button being clicked —
-and asks you by voice before anything on a red line. No answer means no. This
-matters because the agent reads web pages and files, and those can try to talk
-it into things you never asked for.
+Четыре красные линии: трата денег, сообщения другим людям, системные файлы и
+разрушительные или «внешние» команды (`git push`, `rm -rf`, `curl | sh` и
+подобные). Всё остальное делается без вопросов.
 
-What the hook cannot see: a click by screen coordinates or by element number
-does not say what is being pressed. Codex runs in its own sandbox
-(`workspace-write`, no network) and gets no desktop tools. Details:
+Проверяются они дважды — в коде, а не в промпте. Сначала сказанная фраза, ещё до
+запуска агента. Потом **каждое действие агента** проходит через хук `PreToolUse`
+Claude Code: он смотрит на конкретную команду, файл или кнопку и спрашивает вас
+голосом перед всем, что на красной линии. Нет ответа — значит нет. Это важно:
+агент читает веб-страницы и файлы, а они могут попытаться уговорить его сделать
+то, чего вы не просили.
+
+Чего хук не видит: клик по координатам или по номеру элемента не говорит, что
+именно нажимается. Codex работает в своей песочнице (`workspace-write`, без
+сети) и инструментов рабочего стола не получает. Подробно —
 [docs/jarvis/architecture.md](docs/jarvis/architecture.md).
 
-## Where things are
+## Где что лежит
 
-Everything lives in one folder, `%LOCALAPPDATA%\Rujarvis`:
+Всё в одной папке, `%LOCALAPPDATA%\Rujarvis`:
 
-| Folder | What is in it |
+| Папка | Что там |
 | --- | --- |
-| `src\` | The app itself |
-| `data\` | Settings, memory, the action journal, the current plan, your standing instructions (`характер.md`) |
-| `logs\jarvis.log` | The log; the tray has **Open log** |
-| `models\` | Speech recognition (`whisper\`) and voices (`voices\`) |
+| `src\` | Само приложение |
+| `data\` | Настройки, память, журнал действий, план, ваши постоянные указания (`характер.md`) |
+| `logs\jarvis.log` | Лог; в трее есть **Открыть лог** |
+| `models\` | Распознавание (`whisper\`) и голоса (`voices\`) |
+| `cua-driver\` | Драйвер окон |
 
-Files the agent makes for you go to **Jarvis** (or **Джарвис**) on your desktop,
-sorted into sections by type — Documents, Spreadsheets, Presentations, Images,
-Video, Audio, Code, Archives, Apps, Other — with one subfolder per task
-(`Images\Cafe logo\`). Anything the agent leaves loose in the folder is sorted
-after the task; files you put there yourself are left alone.
+Файлы, которые агент делает для вас, лежат в папке **Джарвис** на рабочем
+столе — по разделам (Документы, Таблицы, Картинки, Видео, Код…), с подпапкой на
+каждую задачу.
 
-The log records commands addressed to Jarvis, never your dictation or
-conversations around you — unless you choose *everything* in **Settings →
-Folders and log**, which helps when it mishears.
+В лог пишутся команды, обращённые к Джарвису, — но не ваша диктовка и не
+разговоры вокруг. Если он плохо слышит, в **Настройки → Папки и лог** можно
+включить «писать всё».
 
-## Privacy
+## Приватность
 
-Speech is recognised and synthesised locally. The only things that leave your
-machine are what you send to the Claude Code or Codex CLI you signed in to —
-the same as using them directly — and your audio, only if you opt into cloud
-recognition by setting `ELEVENLABS_API_KEY`. There is no telemetry.
+Речь распознаётся и синтезируется локально. С компьютера уходит только то, что
+вы отправляете в Claude Code или Codex, в которые вошли сами, — ровно как при
+работе с ними напрямую. И звук — только если вы сами включили облачное
+распознавание (`ELEVENLABS_API_KEY`). Телеметрии нет.
 
-## Honest status
+## Честный статус
 
-- The app, setup, voice pipeline, red-line hook and both languages are tested
-  on Linux in CI and by hand under a virtual display; the Windows-only parts
-  (desktop driver, app launching, installer) are covered by unit tests but
-  still need a pass on a real Windows machine after this rewrite.
-- Measured by synthesising phrases with the Piper voice and recognising them
-  with Whisper `base` (`pnpm jarvis:roundtrip`): Russian 10/12, English 9/12,
-  and every stop, silence, pause and continue word recognised in both. A real
-  microphone and a larger model do better; synthetic speech is a floor.
-- Window control through UI Automation (`window_*` tools) uses
-  [cua-driver](https://github.com/trycua/cua) (MIT). The installer downloads a
-  pinned release and checks its SHA-256; if that fails, screen, mouse, keyboard
-  and browser still work without it.
-- GPU recognition is optional: run a whisper.cpp server and set
-  `JARVIS_GPU_STT`; otherwise recognition runs on the CPU.
+Это ранняя версия — идёт закрытая бета.
 
-## Development
+- Приложение, настройка, голосовой конвейер, хук красных линий и оба языка
+  проверены в CI на Windows и Linux и вручную под виртуальным дисплеем. Живой
+  прогон с микрофоном на настоящей Windows — сейчас, на бете.
+- Замер синтезом речи и распознаванием Whisper `base` (`pnpm jarvis:roundtrip`):
+  русский 10/12, английский 9/12, все слова остановки — на обоих языках.
+  Живой микрофон и модель побольше дают лучше; синтетическая речь — нижняя
+  граница.
+- Распознавание на видеокарте — по желанию: сервер whisper.cpp и
+  `JARVIS_GPU_STT`; иначе на процессоре.
+
+Нашли ошибку — [issue](https://github.com/aisarus/Rujarvis/issues) с логом
+(прочитайте его перед отправкой).
+
+## Для разработчиков
 
 ```bash
 pnpm install
-pnpm build            # esbuild, a few seconds
-pnpm start            # the app
+pnpm build            # esbuild, несколько секунд
+pnpm start            # приложение
 pnpm typecheck
-pnpm test             # ~1,700 tests
-pnpm jarvis:roundtrip -- --en   # voice round-trip with real models
+pnpm test             # ~1700 тестов
+pnpm jarvis:roundtrip -- --en   # голос по кругу на настоящих моделях
 ```
 
-| Directory | What it does |
+| Папка | Что делает |
 | --- | --- |
-| `app/` | The Electron app: tray, settings and onboarding, voice bridge, overlays |
-| `jarvis/backends` | Claude Code / Codex adapters, warm live sessions, fallback chain |
-| `jarvis/router` | Works out what a request needs and which backend takes it |
-| `jarvis/risk` | Risk classes, the red-line policy and the tool-call hook |
-| `jarvis/voice` | Wake word, stop words, recognition and synthesis, noise filtering |
-| `jarvis/control` | Direct commands and the command catalogue |
-| `jarvis/desktop` | The MCP server that gives the agent the screen, browser, Blender and Krita |
-| `jarvis/dialogue` | The conversation stream and its levers |
-| `jarvis/locale` | Russian / English |
-| `jarvis/setup` | Paths, settings, onboarding helpers |
+| `app/` | Приложение Electron: трей, настройки и онбординг, голосовой мост, оверлеи |
+| `jarvis/backends` | Адаптеры Claude Code / Codex, тёплые сессии, цепочка запасных |
+| `jarvis/router` | Понимает, что нужно просьбе и кто её возьмёт |
+| `jarvis/risk` | Классы риска, политика красных линий и хук на действия |
+| `jarvis/voice` | Имя, стоп-слова, распознавание и синтез, фильтр шума |
+| `jarvis/control` | Прямые команды и справочник команд |
+| `jarvis/desktop` | MCP-сервер: экран, браузер, окна, Blender и Krita для агента |
+| `jarvis/dialogue` | Живой разговор и его рычаги |
+| `jarvis/locale` | Русский / английский |
+| `jarvis/setup` | Пути, настройки, онбординг |
 
-Two habits this codebase is strict about: **measure before claiming** — checks
-answer passed, failed, or *nothing to measure with* — and **comments explain
-why, not what**. Comments and design notes are mostly in Russian.
+Две привычки этого кода: **сначала замерь, потом утверждай** — проверки
+отвечают «прошло», «не прошло» или «нечем измерить»; и **комментарии объясняют
+зачем, а не что**.
 
-## Documentation
+## Документация
 
-- [Install, settings and what stays on disk](docs/jarvis/install.md)
-- [Architecture and the red-line hook](docs/jarvis/architecture.md)
-- [Design notes](docs/jarvis/design/) (Russian)
-- [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Support](SUPPORT.md)
+- [Установка, настройки и что остаётся на диске](docs/jarvis/install.md)
+- [Архитектура и хук красных линий](docs/jarvis/architecture.md)
+- [Заметки о дизайне](docs/jarvis/design/)
+- [Как помочь](CONTRIBUTING.md) · [Безопасность](SECURITY.md) · [Поддержка](SUPPORT.md)
 
-## Licence
+Rujarvis начинался как форк
+[Interpreter Workstation](https://github.com/openinterpreter/interpreter-workstation)
+и стал самостоятельным приложением. Он не связан с Open Interpreter и не
+одобрен им.
 
-Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+## Лицензия
+
+Apache License 2.0. См. [LICENSE](LICENSE) и [NOTICE](NOTICE).

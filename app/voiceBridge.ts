@@ -724,6 +724,7 @@ export async function startJarvisVoiceBridge(options: {
     dataDir: path.dirname(journalFile()),
     outputDir,
     homeDir: jarvisHome(),
+    language: settings().language,
   });
   if (gate.ok) {
     const gateBridge = new GateBridge(gate.bridgeDir);
