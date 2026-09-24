@@ -229,9 +229,75 @@ end try
 return "ok"
 `;
 
+/* Все три пути отдали пустоту — значит, дело может быть не в них. Сначала
+   проверяем само чтение и то, доходят ли до текстового поля хоть какие-то
+   клавиши: иначе мы меряем не то. */
+const ЗАПИСАТЬ_ЗНАЧЕНИЕ = `
+tell application "System Events"
+  tell process "TextEdit"
+    repeat with e in (entire contents of window 1)
+      try
+        if role of e is "AXTextArea" then
+          set value of e to "proverka chteniya"
+          return "записано"
+        end if
+      end try
+    end repeat
+  end tell
+end tell
+return "текстового поля не нашлось"
+`;
+const ЧТО_В_ОКНЕ = `
+set out to ""
+tell application "System Events"
+  tell process "TextEdit"
+    repeat with e in (entire contents of window 1)
+      set r to "?"
+      try
+        set r to role of e
+      end try
+      set v to ""
+      try
+        set v to (value of e) as text
+      end try
+      set f to ""
+      try
+        if (value of attribute "AXFocused" of e) is true then set f to " ФОКУС"
+      end try
+      set out to out & r & f & " = " & v & linefeed
+    end repeat
+  end tell
+end tell
+return out
+`;
+
+const дамп = await шаг('что вообще в окне', () => запустить('osascript', ['-e', ЧТО_В_ОКНЕ], { timeout: 30_000 }), false);
+if (дамп) console.log(дамп.stdout.split('\n').map((s) => `         ${s}`).join('\n'));
+
+const записано = await шаг(
+  'записать текст в поле напрямую — проверка самого чтения',
+  () => запустить('osascript', ['-e', ЗАПИСАТЬ_ЗНАЧЕНИЕ], { timeout: 30_000 }),
+  false,
+);
+if (записано) console.log(`         ${записано.stdout.trim()}`);
+console.log(`         прочитали: «${await текстОкна().catch(() => '(не прочитать)')}»`);
+
+// Клик по самому полю: возможно, после разворота окна набирать некуда, пока
+// в поле не ткнули.
+const поле = (await driver.elements().catch(() => null))?.elements.find((item) => item.type === 'Edit');
+if (поле) {
+  console.log(`         поле ввода в (${поле.x}, ${поле.y}) — кликаем туда`);
+  await driver.click({ x: поле.x, y: поле.y });
+  await подождать(500);
+}
+
 const способы: [string, () => Promise<unknown>][] = [
   [
-    'System Events keystroke',
+    'keystroke латиницей',
+    () => запустить('osascript', ['-e', 'tell application "System Events" to keystroke "Hello"'], { timeout: 20_000 }),
+  ],
+  [
+    'keystroke кириллицей',
     () =>
       запустить('osascript', ['-e', 'tell application "System Events" to keystroke "Привет"'], { timeout: 20_000 }),
   ],
