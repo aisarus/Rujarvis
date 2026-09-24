@@ -112,6 +112,18 @@ export class TalkSession {
   private поднимается: Promise<TalkLive | null> | null = null;
   /** Была ли сессия и умерла ли сама. Нарочное «забудь» сюда не считается. */
   private lostThread = false;
+  /**
+   * Фраза, над которой разговор думает прямо сейчас.
+   *
+   * Человек повторяет себя, когда не слышит ответа, — и это одна просьба, а не
+   * три. Живая сессия обрабатывает ходы по очереди, поэтому повтор не ускоряет
+   * ответ, а встаёт за ним в очередь и удлиняет ожидание втрое.
+   *
+   * Поймано 24.09.2026: «Сделай сферу зелёной» сказано трижды за тридцать
+   * секунд, ответ пришёл через полторы минуты, и со стороны это выглядело как
+   * «игнорирует».
+   */
+  private думаетНад: string | null = null;
   private complained = false;
 
   constructor(private readonly options: TalkSessionOptions) {}
@@ -147,6 +159,12 @@ export class TalkSession {
     const фраза = said.trim();
     if (!фраза) return;
 
+    // Повтор той же фразы, пока идёт ход по ней, — это не вторая просьба.
+    if (this.думаетНад !== null && this.думаетНад === фраза) {
+      this.log(`повтор, уже думаю: ${фраза}`);
+      return;
+    }
+
     const live = await this.ensure();
     if (!live) return;
 
@@ -155,11 +173,14 @@ export class TalkSession {
       : buildTalkOpening({ ...this.options.state(), said: фраза });
 
     let result: BackendResult;
+    this.думаетНад = фраза;
     try {
       result = await live.ask(prompt).result();
     } catch (error) {
       this.log(`ход не удался: ${message(error)}`);
       return;
+    } finally {
+      this.думаетНад = null;
     }
 
     if (!result.ok) {
