@@ -5,7 +5,7 @@
  * автора на машине и которого не создавал ни установщик, ни сборка. На свежей
  * установке управление экраном поэтому молча выключалось.
  *
- * Теперь по умолчанию запускается собранный `dist-electron/jarvis/desktop/mcp.cjs`
+ * Теперь по умолчанию запускается собранный `dist/jarvis/desktop/mcp.cjs`
  * тем же исполняемым файлом, что запустил приложение: у Electron это режим
  * `ELECTRON_RUN_AS_NODE`, у `tsx`/node — обычный node. Отдельный Node в PATH
  * не нужен. `JARVIS_DESKTOP_MCP` оставлен для явной подмены сервера.
@@ -23,7 +23,7 @@ export interface McpLaunch {
 export type McpLaunchResult = { ok: true; launch: McpLaunch } | { ok: false; missing: string };
 
 export interface McpLaunchOptions {
-  /** Корень приложения: там лежит `dist-electron`. */
+  /** Корень приложения: там лежит `dist`. */
   appRoot: string;
   env?: Record<string, string | undefined>;
   /** Исполняемый файл, которым запускать сборку. */
@@ -34,7 +34,7 @@ export interface McpLaunchOptions {
 }
 
 export function desktopMcpBundle(appRoot: string): string {
-  return path.join(appRoot, 'dist-electron', 'jarvis', 'desktop', 'mcp.cjs');
+  return path.join(appRoot, 'dist', 'jarvis', 'desktop', 'mcp.cjs');
 }
 
 export function resolveDesktopMcpLaunch(options: McpLaunchOptions): McpLaunchResult {

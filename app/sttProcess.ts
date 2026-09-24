@@ -22,9 +22,9 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { isWhisperModelInstalled, resolveWhisperPaths, resampleTo16k, WHISPER_SAMPLE_RATE } from '../../jarvis/voice/whisperRecognizer';
-import { type WhisperModelId } from '../../jarvis/voice/sttModels';
-import type { Transcriber } from '../../jarvis/voice/session';
+import { isWhisperModelInstalled, resolveWhisperPaths, resampleTo16k, WHISPER_SAMPLE_RATE } from '../jarvis/voice/whisperRecognizer';
+import { type WhisperModelId } from '../jarvis/voice/sttModels';
+import type { Transcriber } from '../jarvis/voice/session';
 
 /**
  * Accuracy first, because on this engine speed is not bought with a smaller
@@ -114,6 +114,8 @@ function handle(line) {
 
 export interface SttProcessOptions {
   installRoot: string;
+  /** Модель из настроек. Если её нет на диске — любая установленная. */
+  model?: WhisperModelId;
   language?: string;
   /** A recognition that takes longer than this is abandoned. */
   timeoutMs?: number;
@@ -123,8 +125,8 @@ export interface SttProcess extends Transcriber {
   dispose(): void;
 }
 
-async function pickInstalledModel(installRoot: string): Promise<WhisperModelId> {
-  const requested = process.env.JARVIS_WHISPER_MODEL as WhisperModelId | undefined;
+async function pickInstalledModel(installRoot: string, wanted?: WhisperModelId): Promise<WhisperModelId> {
+  const requested = (process.env.JARVIS_WHISPER_MODEL as WhisperModelId | undefined) ?? wanted;
   if (requested && (await isWhisperModelInstalled(installRoot, requested))) {
     return requested;
   }
@@ -132,12 +134,12 @@ async function pickInstalledModel(installRoot: string): Promise<WhisperModelId> 
     if (await isWhisperModelInstalled(installRoot, id)) return id;
   }
   throw new Error(
-    `Ни одна модель распознавания не установлена в ${installRoot}. Выполните: pnpm run jarvis:setup`,
+    `Ни одна модель распознавания не установлена в ${installRoot}. Откройте настройки Джарвиса и скачайте модель.`,
   );
 }
 
 export async function createSttProcess(options: SttProcessOptions): Promise<SttProcess> {
-  const modelId = await pickInstalledModel(options.installRoot);
+  const modelId = await pickInstalledModel(options.installRoot, options.model);
   const paths = resolveWhisperPaths(options.installRoot, modelId, true);
   console.log(`[jarvis:stt] модель: ${modelId}`);
 

@@ -203,7 +203,7 @@ describe('buildBackendPrompt', () => {
 });
 
 /** Минимальный бэкенд: нужен только для того, чтобы он числился у менеджера. */
-function stubBackend(id: 'interpreter' | 'claude-code' | 'codex'): AgentBackend {
+function stubBackend(id: 'openai-compatible' | 'claude-code' | 'codex'): AgentBackend {
   return {
     id,
     name: id,
@@ -222,7 +222,7 @@ function stubBackend(id: 'interpreter' | 'claude-code' | 'codex'): AgentBackend 
 }
 
 describe('задача про рабочий стол не уходит тому, у кого нет инструментов', () => {
-  it('управление экраном не откатывается на интерпретер', () => {
+  it('управление экраном не откатывается туда, где нет инструментов', () => {
     // Живой случай. Claude Code сорвался, задача «открой блендер» ушла
     // интерпретеру — а у того нет ни одного инструмента Джарвиса. Он пять
     // минут дёргал СВОЙ драйвер рабочего стола, упёрся в «blocked by policy» и
@@ -232,14 +232,13 @@ describe('задача про рабочий стол не уходит тому
     // Помощник, который не может сделать работу, обязан сказать это, а не
     // изображать работу другим способом.
     const manager = new BackendManager();
-    for (const id of ['interpreter', 'claude-code', 'codex'] as const) {
+    for (const id of ['openai-compatible', 'claude-code', 'codex'] as const) {
       manager.register(stubBackend(id));
     }
 
     const plan = manager.plan(request({ capabilities: ['computer', 'reasoning'] }));
 
-    expect(plan.order[0]).toBe('claude-code');
-    expect(plan.order).not.toContain('interpreter');
+    expect(plan.order).toEqual(['claude-code']);
   });
 
   // Живой случай 20.09.2026: «Открой блендер и сделай ракету» — это и код, и
@@ -249,25 +248,24 @@ describe('задача про рабочий стол не уходит тому
   // у которой ключей нет вовсе. Соврать так — хуже, чем честно не смочь.
   it('задача про код И управление тоже не откатывается к ключам', () => {
     const manager = new BackendManager();
-    for (const id of ['interpreter', 'claude-code', 'codex', 'openai-compatible'] as const) {
+    for (const id of ['claude-code', 'codex', 'openai-compatible'] as const) {
       manager.register(stubBackend(id));
     }
 
     const plan = manager.plan(request({ capabilities: ['computer', 'code', 'files'] }));
 
     expect(plan.order[0]).toBe('claude-code');
-    expect(plan.order).not.toContain('interpreter');
     expect(plan.order).not.toContain('openai-compatible');
   });
 
   it('но разговор и файлы откат сохраняют', () => {
-    // Там интерпретер способен на работу, и молчать вместо ответа незачем.
+    // Там локальная модель способна ответить, и молчать вместо ответа незачем.
     const manager = new BackendManager();
-    for (const id of ['interpreter', 'claude-code'] as const) {
+    for (const id of ['openai-compatible', 'claude-code'] as const) {
       manager.register(stubBackend(id));
     }
 
-    expect(manager.plan(request({ capabilities: ['reasoning'] })).order).toContain('interpreter');
+    expect(manager.plan(request({ capabilities: ['reasoning'] })).order).toContain('openai-compatible');
   });
 });
 
@@ -989,36 +987,34 @@ describe('BackendManager', () => {
     // Code. Рантайм, получавший такие задачи раньше, не видел ни того ни
     // другого — и не мог ни собрать сцену в Blender, ни положить файл человеку.
     const manager = managerWith(
-      stubBackend('interpreter', result({ ok: true })),
+      stubBackend('openai-compatible', result({ ok: true })),
       stubBackend('claude-code', result({ ok: true })),
     );
     const plan = manager.plan(request({ capabilities: ['computer', 'vision'] }));
     expect(plan.order[0]).toBe('claude-code');
   });
 
-  it('оставляет рантайм запасным для экранной работы', () => {
-    // У него есть то, чего нет у агента; когда агент не установлен или
-    // исчерпан, работа должна доехать, а не упасть.
+  it('оставляет Codex запасным для работы с файлами без мыши', () => {
     const manager = managerWith(
-      stubBackend('interpreter', result({ ok: true })),
+      stubBackend('codex', result({ ok: true })),
       stubBackend('claude-code', result({ ok: true })),
     );
     const plan = manager.plan(request({ capabilities: ['files'] }));
-    expect(plan.order).toEqual(['claude-code', 'interpreter']);
+    expect(plan.order).toEqual(['claude-code', 'codex']);
   });
 
-  it('отправляет переписку в рантайм — там живые учётные записи', () => {
+  it('отправляет переписку Claude Code — окна мессенджеров открываются только его инструментами', () => {
     const manager = managerWith(
-      stubBackend('interpreter', result({ ok: true })),
+      stubBackend('codex', result({ ok: true })),
       stubBackend('claude-code', result({ ok: true })),
     );
     const plan = manager.plan(request({ capabilities: ['communication'] }));
-    expect(plan.order[0]).toBe('interpreter');
+    expect(plan.order[0]).toBe('claude-code');
   });
 
   it('sends coding work to the preferred coding backend first', () => {
     const manager = managerWith(
-      stubBackend('interpreter', result({ ok: true })),
+      stubBackend('openai-compatible', result({ ok: true })),
       stubBackend('claude-code', result({ ok: true })),
       stubBackend('codex', result({ ok: true })),
     );
@@ -1028,7 +1024,7 @@ describe('BackendManager', () => {
 
   it('honours a backend named in the utterance', () => {
     const manager = managerWith(
-      stubBackend('interpreter', result({ ok: true })),
+      stubBackend('openai-compatible', result({ ok: true })),
       stubBackend('claude-code', result({ ok: true })),
       stubBackend('codex', result({ ok: true })),
     );
@@ -1041,18 +1037,18 @@ describe('BackendManager', () => {
     // «Отдай Кодексу» plus an exhausted Codex must still reach Claude Code;
     // otherwise naming a backend silently gives up the coding fallback.
     const manager = managerWith(
-      stubBackend('interpreter', result({ ok: true })),
+      stubBackend('openai-compatible', result({ ok: true })),
       stubBackend('claude-code', result({ ok: true })),
       stubBackend('codex', result({ ok: true })),
     );
     const plan = manager.plan(request(), { requested: 'codex' });
     expect(plan.order.slice(0, 2)).toEqual(['codex', 'claude-code']);
-    expect(plan.order.indexOf('claude-code')).toBeLessThan(plan.order.indexOf('interpreter'));
+    expect(plan.order.indexOf('claude-code')).toBeLessThan(plan.order.indexOf('openai-compatible'));
   });
 
   it('does not drag coding backends into a desktop request', () => {
     const manager = managerWith(
-      stubBackend('interpreter', result({ ok: true })),
+      stubBackend('openai-compatible', result({ ok: true })),
       stubBackend('claude-code', result({ ok: true })),
       stubBackend('codex', result({ ok: true })),
     );
@@ -1066,7 +1062,7 @@ describe('BackendManager', () => {
       result({ backend: 'codex', error: 'Codex не может подключиться к сети.' }),
     );
     const claude = stubBackend('claude-code', result({ ok: true, text: 'Готово.' }));
-    const manager = managerWith(codex, claude, stubBackend('interpreter', result({ ok: true })));
+    const manager = managerWith(codex, claude, stubBackend('openai-compatible', result({ ok: true })));
 
     const final = await manager.run(request(), { requested: 'codex' }).result();
     expect(codex.runs).toBe(1);
@@ -1076,7 +1072,7 @@ describe('BackendManager', () => {
 
   it('drops an excluded backend from the whole chain', () => {
     const manager = managerWith(
-      stubBackend('interpreter', result({ ok: true })),
+      stubBackend('openai-compatible', result({ ok: true })),
       stubBackend('claude-code', result({ ok: true })),
       stubBackend('codex', result({ ok: true })),
     );
@@ -1087,7 +1083,7 @@ describe('BackendManager', () => {
   it('falls back to the next backend when a quota is exhausted', async () => {
     const claude = stubBackend('claude-code', result({ usageLimited: true, error: 'limit' }));
     const codex = stubBackend('codex', result({ ok: true, backend: 'codex', text: 'Готово.' }));
-    const manager = managerWith(claude, codex, stubBackend('interpreter', result({ ok: true })));
+    const manager = managerWith(claude, codex, stubBackend('openai-compatible', result({ ok: true })));
 
     const run = manager.run(request(), { codingPreference: 'claude-code' });
     const events = await drain(run);

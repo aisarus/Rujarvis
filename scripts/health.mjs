@@ -18,7 +18,7 @@ const results = [];
 // собранный `mcp.cjs` из исходников рядом с данными.
 const MCP = process.env.JARVIS_DESKTOP_MCP?.trim()
   ? { command: 'cmd.exe', args: ['/c', process.env.JARVIS_DESKTOP_MCP.trim()] }
-  : { command: process.execPath, args: [path.join(ROOT, 'src', 'dist-electron', 'jarvis', 'desktop', 'mcp.cjs')] };
+  : { command: process.execPath, args: [path.join(ROOT, 'src', 'dist', 'jarvis', 'desktop', 'mcp.cjs')] };
 
 const ok = (name, detail) => results.push({ good: true, name, detail });
 const bad = (name, detail) => results.push({ good: false, name, detail });
@@ -108,15 +108,15 @@ function killTree(pid) {
 }
 async function main() {
   // Сборка приложения и сервера.
-  checkFile('сборка приложения', 'dist-electron/electron/main.cjs', 1_000_000);
-  checkFile('сборка MCP-сервера', 'dist-electron/jarvis/desktop/mcp.cjs', 100_000);
-  checkFile('драйвер мыши', 'dist-electron/jarvis/desktop/win32-driver.ps1', 1_000);
-  checkFile('интерфейс приложения', 'dist/index.html', 100);
+  checkFile('сборка приложения', 'dist/app/main.cjs', 100_000);
+  checkFile('сборка MCP-сервера', 'dist/jarvis/desktop/mcp.cjs', 100_000);
+  checkFile('драйвер мыши', 'dist/jarvis/desktop/win32-driver.ps1', 1_000);
+  checkFile('окно настроек', 'app/ui/settings.html', 100);
 
   // Данные человека.
   checkFile('журнал действий', path.join(ROOT, 'data', 'journal.json'));
   checkFile('файл характера', path.join(ROOT, 'data', 'характер.md'), 100);
-  checkFile('логи', path.join(ROOT, 'data', 'jarvis.log'), 100);
+  checkFile('лог', path.join(ROOT, 'logs', 'jarvis.log'), 100);
 
   // Папка результатов с разделами.
   const output = path.join(os.homedir(), 'Desktop', 'Джарвис');
@@ -138,8 +138,7 @@ async function main() {
   // Голос и распознавание.
   checkFile(
     'голос',
-    path.join(ROOT, 'data', 'tts-models', 'vits-piper-ru_RU-irina-medium',
-      'vits-piper-ru_RU-irina-medium', 'ru_RU-irina-medium.onnx'),
+    path.join(ROOT, 'models', 'voices', 'vits-piper-ru_RU-irina-medium', 'ru_RU-irina-medium.onnx'),
     1_000_000,
   );
 

@@ -18,7 +18,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { commandCatalogue, type CatalogueGroup } from '../../jarvis/control/catalogue';
+import { commandCatalogue, type CatalogueGroup } from '../jarvis/control/catalogue';
 
 export interface HelpOverlay {
   show(): void;

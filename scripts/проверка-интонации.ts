@@ -150,7 +150,7 @@ function создатьГолос(): { сказать(текст: string): Buffe
 
 async function распознать(wav: Buffer): Promise<string> {
   const form = new FormData();
-  form.append('file', new Blob([wav], { type: 'audio/wav' }), 'speech.wav');
+  form.append('file', new Blob([new Uint8Array(wav)], { type: 'audio/wav' }), 'speech.wav');
   form.append('response_format', 'json');
   form.append('language', 'ru');
   form.append('translate', 'false');

@@ -7,10 +7,10 @@
  * отмечал ли шаги, звал ли приборы, чем кончил.
  */
 
-import { readFileSync } from 'node:fs';
+
 import path from 'node:path';
 
-import { createJarvis } from '../server/jarvis/createJarvis';
+import { createJarvis } from '../jarvis/createJarvis';
 import { describeEvent } from '../jarvis/observe/storyline';
 import { renderPlan } from '../jarvis/agent/plan';
 import { PlanStore } from '../jarvis/agent/planStore';

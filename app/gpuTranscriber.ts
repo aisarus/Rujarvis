@@ -11,8 +11,8 @@
  * phrase. The server keeps it resident in video memory.
  */
 
-import type { Transcriber } from '../../jarvis/voice/session';
-import { encodeWav16 } from '../../jarvis/voice/wav';
+import type { Transcriber } from '../jarvis/voice/session';
+import { encodeWav16 } from '../jarvis/voice/wav';
 
 export const WHISPER_SERVER_PORT = 8178;
 export const WHISPER_SERVER_URL = `http://127.0.0.1:${WHISPER_SERVER_PORT}`;
@@ -74,7 +74,7 @@ export function createGpuTranscriber(options: GpuTranscriberOptions = {}): Trans
 
       try {
         const form = new FormData();
-        form.append('file', new Blob([encodeWav16(samples, sampleRate)], { type: 'audio/wav' }), 'speech.wav');
+        form.append('file', new Blob([new Uint8Array(encodeWav16(samples, sampleRate))], { type: 'audio/wav' }), 'speech.wav');
         form.append('response_format', 'json');
         if (options.language) form.append('language', options.language);
         // Without this the server will happily "translate" Russian into

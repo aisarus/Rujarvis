@@ -60,13 +60,13 @@ describe('запись прогона', () => {
     const log = runs();
     log.begin(head);
     log.saw({ type: 'error', backend: 'claude-code', message: 'process exited 1', retryable: true });
-    log.saw({ type: 'status', backend: 'interpreter', text: 'Переключаюсь на Interpreter' });
-    log.saw({ type: 'error', backend: 'interpreter', message: 'API Error: 401', retryable: false });
+    log.saw({ type: 'status', backend: 'codex', text: 'Переключаюсь на Codex' });
+    log.saw({ type: 'error', backend: 'codex', message: 'API Error: 401', retryable: false });
     log.end();
 
     const text = only();
     expect(text).toContain('claude-code ОШИБКА (откатится): process exited 1');
-    expect(text).toContain('interpreter ОШИБКА: API Error: 401');
+    expect(text).toContain('codex ОШИБКА: API Error: 401');
     // Порядок важен: первый срыв обязан стоять раньше последствия.
     expect(text.indexOf('process exited 1')).toBeLessThan(text.indexOf('401'));
   });

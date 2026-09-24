@@ -165,10 +165,6 @@ export class BackendManager {
       ) {
         for (const id of CODING_BACKEND_IDS) push(id);
       }
-    } else if (needsCommunication(request.capabilities)) {
-      push('interpreter');
-      push('claude-code');
-      rationale = 'Переписка и почта — через рантайм, там живые учётные записи';
     } else if (needsCoding(request.capabilities)) {
       // Код проверяется раньше экрана, и это не мелочь: почти у каждой задачи
       // по коду заодно есть capability «файлы», и экранная ветка перехватывала
@@ -181,48 +177,31 @@ export class BackendManager {
         rationale = 'Задача по коду, backend выбран автоматически';
       }
       for (const id of CODING_BACKEND_IDS) push(id);
-      // Та же защита, что и в экранной ветке ниже, и по той же причине.
-      //
-      // «Открой блендер и сделай ракету» — это и код, и управление. Код
-      // проверяется раньше, поэтому задача идёт сюда, а здесь откат стоял без
-      // защиты: Клод Код сорвался, работа ушла интерпретеру, ключа нет — и
-      // человек услышал «API Error: 401 API key is invalid» от системы, у
-      // которой ключей нет вовсе.
-      if (!request.capabilities.includes('computer')) push('interpreter');
-    } else if (needsScreen(request.capabilities)) {
+    } else if (needsScreen(request.capabilities) || needsCommunication(request.capabilities)) {
+      // Экран, программы, переписка — только Claude Code: инструменты рабочего
+      // стола есть только у него. Отката на того, кому работать нечем, нет —
+      // помощник, который не может сделать работу, обязан это сказать, а не
+      // изображать её другим способом. Работу без мыши (файлы, браузер без
+      // окна человека) может подхватить Codex.
       push('claude-code');
-      // Управление экраном — только туда, где есть инструменты.
-      //
-      // Живой случай: Claude Code сорвался, задача «открой блендер» ушла
-      // интерпретеру, а у того нет ни одного инструмента Джарвиса. Он пять
-      // минут дёргал СВОЙ драйвер рабочего стола, упёрся в «blocked by policy»
-      // и сказал человеку «нужен режим Full Access». Всё это неправда: дело
-      // было не в правах, а в том, что работать было нечем.
-      //
-      // Помощник, который не может сделать работу, обязан сказать это, а не
-      // изображать работу другим способом. Поэтому отката здесь нет — но
-      // только для настоящего управления (`computer`): «положи файл в папку»
-      // интерпретер сделать способен, и молчать там незачем.
-      if (!request.capabilities.includes('computer')) push('interpreter');
-      rationale = 'Задача про экран, файлы или программы — там, где инструменты и скиллы';
+      if (!request.capabilities.includes('computer')) push('codex');
+      rationale = 'Задача про экран, файлы, программы или переписку — там, где инструменты';
     } else {
       const preferred = preference.mainPreference;
       if (preferred && preferred !== 'auto') {
         push(preferred);
         rationale = `Main backend выбран в настройках: ${preferred}`;
       } else {
-        rationale = 'Обычная задача, основной runtime';
+        rationale = 'Обычная задача';
       }
-      push('interpreter');
+      push('claude-code');
+      push('codex');
     }
 
-    // Everything falls back to the runtime, then to a plain reasoning backend,
-    // so Jarvis keeps answering even with no cloud subscription at all.
-    //
-    // Кроме настоящего управления экраном: там откат означал бы обещание,
-    // которое некому выполнить.
+    // Без подписки — локальная модель, чтобы Джарвис хоть отвечал. Кроме
+    // настоящего управления экраном: там откат означал бы обещание, которое
+    // некому выполнить.
     if (!request.capabilities.includes('computer')) {
-      push('interpreter');
       push('openai-compatible');
     }
     push('local');
@@ -249,7 +228,7 @@ export class BackendManager {
       settle = resolve;
     });
 
-    const fallbackBackend: BackendId = plan.order[0] ?? 'interpreter';
+    const fallbackBackend: BackendId = plan.order[0] ?? 'claude-code';
 
     const finish = (result: BackendResult): void => {
       channel.push({ type: 'completed', backend: result.backend, result });

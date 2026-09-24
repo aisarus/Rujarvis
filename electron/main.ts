@@ -917,7 +917,6 @@ import {
   unbindWindowSessionWorkspace,
 } from '../server/workspaceWatchRegistry';
 import type { LayoutState } from '../shared/types/layout';
-import { shouldStartJarvis } from './jarvis/startup';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -2716,18 +2715,6 @@ app.whenReady().then(async () => {
     // Mark app as fully ready
     appReady = true;
     console.log('Application started successfully');
-
-    // Jarvis is the product on Windows and an experiment elsewhere: it starts
-    // by default on win32, and on other platforms only with JARVIS_VOICE=on.
-    // JARVIS_VOICE=off turns it off everywhere. A broken microphone or a
-    // missing speech model must not be able to stop the app from starting.
-    if (shouldStartJarvis(process.platform, process.env.JARVIS_VOICE)) {
-      void import('./jarvis/voiceBridge')
-        .then(({ startJarvisVoiceBridge }) => startJarvisVoiceBridge({}))
-        .catch((error: unknown) => {
-          console.error('[Main] Jarvis не запустился:', error);
-        });
-    }
 
     if (app.isPackaged) {
       void ensureShellIntegrationInstalled({

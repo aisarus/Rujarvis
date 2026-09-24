@@ -7,32 +7,27 @@
  * this is it — the function the Electron app calls to get a working assistant.
  */
 
-import type { Plan } from '../../jarvis/agent/plan';
-import { BackendManager } from '../../jarvis/backends/manager';
-import { ClaudeCodeBackend } from '../../jarvis/backends/claudeCode';
-import { SessionPool } from '../../jarvis/backends/sessionPool';
-import { CodexBackend } from '../../jarvis/backends/codex';
-import { InterpreterBackend } from '../../jarvis/backends/interpreter';
+import type { Plan } from './agent/plan';
+import { BackendManager } from './backends/manager';
+import { ClaudeCodeBackend } from './backends/claudeCode';
+import { SessionPool } from './backends/sessionPool';
+import { CodexBackend } from './backends/codex';
 import {
   OpenAiCompatibleBackend,
   createHttpChatClient,
-} from '../../jarvis/backends/openAiCompatible';
-import {
-  createWorkstationClaudeProbe,
-  createWorkstationCodexProbe,
-} from '../../jarvis/backends/workstationProbes';
-import { WorldStateStore, type DesktopObserver } from '../../jarvis/context/worldState';
+} from './backends/openAiCompatible';
+import { createClaudeProbe, createCodexProbe } from './backends/cliProbes';
+import { WorldStateStore, type DesktopObserver } from './context/worldState';
 import {
   DEFAULT_JARVIS_SETTINGS,
   JarvisCore,
   type ApprovalRequest,
   type JarvisSettings,
-} from '../../jarvis/core';
-import { createFileMemoryStorage } from '../../jarvis/memory/fileStorage';
-import { JarvisMemory } from '../../jarvis/memory/store';
-import { LocalRouterModel } from '../../jarvis/router/localModel';
-import { TaskManager } from '../../jarvis/tasks/manager';
-import { createInterpreterRuntimeDriver } from './interpreterRuntimeDriver';
+} from './core';
+import { createFileMemoryStorage } from './memory/fileStorage';
+import { JarvisMemory } from './memory/store';
+import { LocalRouterModel } from './router/localModel';
+import { TaskManager } from './tasks/manager';
 
 export interface LocalRouterConfig {
   /** e.g. http://127.0.0.1:11434/v1 for Ollama. */
@@ -42,7 +37,7 @@ export interface LocalRouterConfig {
 }
 
 export interface CreateJarvisOptions {
-  /** Workspace headless runtime tasks run in. */
+  /** Рабочая папка задач по умолчанию. */
   workspace?: string;
   /** Reads the current settings. Called per turn, so changes take effect live. */
   settings?: () => JarvisSettings;
@@ -134,19 +129,13 @@ export interface Jarvis {
 export function createJarvis(options: CreateJarvisOptions = {}): Jarvis {
   const backends = new BackendManager();
 
-  backends.register(
-    new InterpreterBackend({
-      driver: createInterpreterRuntimeDriver({ defaultWorkspace: options.workspace }),
-    }),
-  );
-
   // Склад живых сессий: первая реплика разговора платит холодный старт, все
   // следующие попадают в прогретый процесс. Замер: 28.5 с, потом 5.4 и 3.2.
   const sessions = new SessionPool();
 
   backends.register(
     new ClaudeCodeBackend({
-      probe: createWorkstationClaudeProbe(),
+      probe: createClaudeProbe(),
       model: options.claudeModel,
       allowBypassPermissions: options.allowUnrestrictedCli === true,
       desktopMcpConfig: options.desktopMcpConfig,
@@ -158,7 +147,7 @@ export function createJarvis(options: CreateJarvisOptions = {}): Jarvis {
 
   backends.register(
     new CodexBackend({
-      probe: createWorkstationCodexProbe(),
+      probe: createCodexProbe(),
       model: options.codexModel,
       allowFullAccess: options.allowUnrestrictedCli === true,
     }),

@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { createJarvis } from './createJarvis';
-import { DEFAULT_JARVIS_SETTINGS } from '../../jarvis/core';
+import { DEFAULT_JARVIS_SETTINGS } from './core';
 
 describe('createJarvis', () => {
-  it('registers the runtime and both subscription backends', () => {
+  it('registers both subscription backends', () => {
     const jarvis = createJarvis({ workspace: '/work' });
     expect(jarvis.backends.list().map((backend) => backend.id).sort()).toEqual([
       'claude-code',
       'codex',
-      'interpreter',
     ]);
   });
 
@@ -37,7 +36,6 @@ describe('createJarvis', () => {
     expect(availability.map((entry) => entry.id).sort()).toEqual([
       'claude-code',
       'codex',
-      'interpreter',
     ]);
     for (const entry of availability) {
       // Whatever the machine has, an unavailable backend explains itself in

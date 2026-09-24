@@ -73,7 +73,7 @@ async function front(): Promise<string> {
 }
 
 /** Переключение проверяется тем, что окно правда впереди, а не ответом драйвера. */
-async function mustFocus(said: string, expect: RegExp): Promise<string | null> {
+async function mustFocus(said: string, expect: RegExp): Promise<Verdict> {
   const parsed = mustParse(said, 'focus');
   if (parsed) return parsed;
 

@@ -17,7 +17,7 @@ import path from 'node:path';
 
 import { app } from 'electron';
 
-import type { VoiceStatus } from '../../jarvis/voice/session';
+import type { VoiceStatus } from '../jarvis/voice/session';
 
 export const STATUS_OVERLAY_CHANNEL = 'jarvis-overlay:status';
 

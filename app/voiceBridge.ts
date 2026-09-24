@@ -18,8 +18,7 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, type Dirent } from 'node:fs';
-import { access, readdir } from 'node:fs/promises';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -29,42 +28,38 @@ import {
   type SpeechPlayback,
   type Transcriber,
   type VoiceStatus,
-} from '../../jarvis/voice/session';
-import { listInstalledPrograms } from '../../jarvis/apps/installed';
-import { aliasTarget, matchAppLaunch, spokenCloseTarget, spokenTarget, windowAlias } from '../../jarvis/apps/launch';
-import { readConfirmation } from '../../jarvis/voice/confirm';
-import { chooseShortcut } from '../../jarvis/apps/startMenu';
-import { OUTPUT_SECTIONS, revealPath } from '../../jarvis/desktop/files';
-import { describeArtifacts } from '../../jarvis/files/artifacts';
-import { JournalStore } from '../../jarvis/memory/journalStore';
-import type { EventKind } from '../../jarvis/memory/journal';
-import { matchVoiceControl } from '../../jarvis/voice/interrupts';
-import { fixMishearings } from '../../jarvis/voice/mishearing';
-import { isPleasantry, isSilenceRequest, looksLikeChatter, meaningfulSpeech } from '../../jarvis/voice/noise';
-import { endsDictation, parseDirectCommand, type DirectCommand } from '../../jarvis/control/commands';
-import { reapAll } from '../../jarvis/tasks/reaper';
-import { parseDictationEdit, type DictationEdit } from '../../jarvis/control/dictationEdits';
-import { chooseElement } from '../../jarvis/control/elements';
-import { cellCenter, subCellCenter } from '../../jarvis/control/grid';
-import { DesktopDriver, driverStamp } from '../../jarvis/desktop/driver';
-import { resolveDesktopMcpLaunch } from '../../jarvis/desktop/launch';
-import { GateBridge } from '../../jarvis/risk/gateBridge';
-import { prepareGate } from '../../jarvis/risk/gateSetup';
-import { EchoGuard } from '../../jarvis/voice/echo';
-import { StandingInstructions } from '../../jarvis/backends/standingInstructions';
-import { ProgressVoice } from '../../jarvis/voice/progress';
-import { UtteranceBuffer } from '../../jarvis/voice/turn';
-import { findWakeWord } from '../../jarvis/voice/wakeWord';
-import { spokenFailure, toSpokenResponse } from '../../jarvis/voice/spokenResponse';
-import { createJarvis, type Jarvis } from '../../server/jarvis/createJarvis';
-import { getCurrentWorkspace } from '../../server/utils/workspace';
-import {
-  getTtsInstallRoot,
-  isTtsModelInstalled,
-  synthesizeSpeech,
-  toPlaybackBase64,
-} from '../../server/services/ttsService';
-import { DEFAULT_TTS_MODEL_ID } from '../../shared/types/tts';
+} from '../jarvis/voice/session';
+import { APP_ROOT } from './root';
+import { listInstalledPrograms } from '../jarvis/apps/installed';
+import { aliasTarget, matchAppLaunch, spokenCloseTarget, spokenTarget, windowAlias } from '../jarvis/apps/launch';
+import { readConfirmation } from '../jarvis/voice/confirm';
+import { chooseShortcut } from '../jarvis/apps/startMenu';
+import { OUTPUT_SECTIONS, revealPath } from '../jarvis/desktop/files';
+import { describeArtifacts } from '../jarvis/files/artifacts';
+import { JournalStore } from '../jarvis/memory/journalStore';
+import type { EventKind } from '../jarvis/memory/journal';
+import { matchVoiceControl } from '../jarvis/voice/interrupts';
+import { fixMishearings } from '../jarvis/voice/mishearing';
+import { isSilenceRequest, looksLikeChatter, meaningfulSpeech } from '../jarvis/voice/noise';
+import { endsDictation, parseDirectCommand, type DirectCommand } from '../jarvis/control/commands';
+import { reapAll } from '../jarvis/tasks/reaper';
+import { parseDictationEdit, type DictationEdit } from '../jarvis/control/dictationEdits';
+import { chooseElement } from '../jarvis/control/elements';
+import { cellCenter, subCellCenter } from '../jarvis/control/grid';
+import { DesktopDriver, driverStamp } from '../jarvis/desktop/driver';
+import { resolveDesktopMcpLaunch } from '../jarvis/desktop/launch';
+import { GateBridge } from '../jarvis/risk/gateBridge';
+import { prepareGate } from '../jarvis/risk/gateSetup';
+import { EchoGuard } from '../jarvis/voice/echo';
+import { StandingInstructions } from '../jarvis/backends/standingInstructions';
+import { ProgressVoice } from '../jarvis/voice/progress';
+import { UtteranceBuffer } from '../jarvis/voice/turn';
+import { findWakeWord } from '../jarvis/voice/wakeWord';
+import { spokenFailure, toSpokenResponse } from '../jarvis/voice/spokenResponse';
+import { createJarvis, type Jarvis } from '../jarvis/createJarvis';
+import { jarvisOutputDir, jarvisPaths } from '../jarvis/setup/paths';
+import { DEFAULT_SETTINGS, type AppSettings, type SettingsStore } from '../jarvis/setup/settings';
+import { isVoiceInstalled, Speaker } from '../jarvis/voice/tts';
 import { AUDIO_BRIDGE_CHANNELS, buildAudioBridgeHtml } from './audioBridgePage';
 import { createElevenLabsTranscriber } from './cloudTranscriber';
 import { createGpuTranscriber, waitForWhisperServer } from './gpuTranscriber';
@@ -73,20 +68,20 @@ import { startLogFile } from './logFile';
 import { createGridOverlay, type GridOverlay } from './gridOverlay';
 import { createHelpOverlay, type HelpOverlay } from './helpOverlay';
 import { createLogWindow, type LogWindow } from './logWindow';
-import { obviousAside } from '../../jarvis/dialogue/aside';
-import { TalkBridge } from '../../jarvis/dialogue/talkBridge';
-import { TalkSession } from '../../jarvis/dialogue/talkSession';
-import { ЭХО_РАЗГОВОРА } from '../../jarvis/dialogue/workDelta';
-import { RunLogStore } from '../../jarvis/observe/runLogStore';
-import { Storyline } from '../../jarvis/observe/storyline';
-import { StartupTiming } from '../../jarvis/observe/timing';
-import { parseLiveEdit } from '../../jarvis/live/edits';
-import { isLive, sendLive } from '../../jarvis/desktop/blenderLive';
-import { NoteStore } from '../../jarvis/dialogue/noteStore';
-import { describeLessons, lessonsFrom } from '../../jarvis/memory/lessons';
-import { PlanStore } from '../../jarvis/agent/planStore';
-import { planSummary, renderPlan } from '../../jarvis/agent/plan';
-import { SpeechQueue } from '../../jarvis/voice/speechQueue';
+import { obviousAside } from '../jarvis/dialogue/aside';
+import { TalkBridge } from '../jarvis/dialogue/talkBridge';
+import { TalkSession } from '../jarvis/dialogue/talkSession';
+import { ЭХО_РАЗГОВОРА } from '../jarvis/dialogue/workDelta';
+import { RunLogStore } from '../jarvis/observe/runLogStore';
+import { Storyline } from '../jarvis/observe/storyline';
+import { StartupTiming } from '../jarvis/observe/timing';
+import { parseLiveEdit } from '../jarvis/live/edits';
+import { isLive, sendLive } from '../jarvis/desktop/blenderLive';
+import { NoteStore } from '../jarvis/dialogue/noteStore';
+import { describeLessons, lessonsFrom } from '../jarvis/memory/lessons';
+import { PlanStore } from '../jarvis/agent/planStore';
+import { planSummary, renderPlan } from '../jarvis/agent/plan';
+import { SpeechQueue } from '../jarvis/voice/speechQueue';
 import { createStatusOverlay, type StatusOverlay } from './statusOverlay';
 
 /** Ctrl+Space is what `jarvis:setup` tells the user to press. */
@@ -122,23 +117,21 @@ interface RecordedAudio {
   speechShare?: number;
 }
 
-function whisperInstallRoot(): string {
-  // Deliberately the same rule as `scripts/jarvis-setup.ts`, so the models the
-  // installer downloaded are the models this finds.
-  if (process.env.JARVIS_DATA_ROOT) return path.join(path.resolve(process.env.JARVIS_DATA_ROOT), 'whisper-models');
-  const roaming = process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming');
-  const root =
-    process.platform === 'win32'
-      ? path.join(roaming, 'Interpreter')
-      : process.platform === 'darwin'
-        ? path.join(os.homedir(), 'Library', 'Application Support', 'Interpreter')
-        : path.join(process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'), 'Interpreter');
-  return path.join(root, 'whisper-models');
+/** Все пути приложения: см. `jarvis/setup/paths.ts`. */
+const PATHS = jarvisPaths();
+
+/** Настройки: задаются при запуске моста. */
+let settingsRef: SettingsStore | null = null;
+
+function settings(): AppSettings {
+  return settingsRef?.get() ?? DEFAULT_SETTINGS;
 }
 
 export interface JarvisVoiceBridge {
   jarvis: Jarvis;
   session: VoiceSession;
+  /** Открыть окно событий: что Джарвис услышал, решил и сделал. */
+  showEvents(): void;
   dispose(): void;
 }
 
@@ -534,20 +527,22 @@ function note(kind: EventKind, text: string, subject?: string): void {
  * returns the first bridge rather than fighting over the hotkey.
  */
 export async function startJarvisVoiceBridge(options: {
-  workspace?: string;
+  settings: SettingsStore;
   onStatus?(status: VoiceStatus): void;
-} = {}): Promise<JarvisVoiceBridge> {
+}): Promise<JarvisVoiceBridge> {
   if (active) return active;
+  settingsRef = options.settings;
 
   // Раньше всего остального: если что-то не поднимется, причина должна
   // остаться на диске, а не в закрытом окне консоли.
-  const logPath = startLogFile(path.join(path.dirname(journalFile()), 'jarvis.log'));
+  const logPath = startLogFile(PATHS.log);
   if (logPath) console.log(`[jarvis] логи пишутся в ${logPath}`);
 
   const audioWindow = await createAudioWindow();
   const recogniser = await createSttProcess({
-    installRoot: whisperInstallRoot(),
-    language: 'ru',
+    installRoot: PATHS.whisperModels,
+    model: settings().whisperModel,
+    language: settings().language,
   });
   // Three recognisers, in order of preference, each falling back to the next.
   //
@@ -600,11 +595,10 @@ export async function startJarvisVoiceBridge(options: {
   const playback = createPlayback(audioWindow);
   const capture = createPushToTalkCapture(audioWindow);
 
-  // Without a workspace the interpreter runtime reports itself unready and
-  // steps aside, and since the other backends cannot drive the desktop, every
-  // «открой хром» came back as "ни один backend не смог". The app already has
-  // a workspace open; Jarvis just has to be told which one.
-  const workspace = options.workspace ?? getCurrentWorkspace() ?? undefined;
+  // Рабочая папка задач: из настроек, а если там пусто — папка результатов.
+  // Агенту нужна какая-то папка, и папка результатов — единственная, про
+  // которую человек точно знает.
+  const workspace = settings().workspace || ensureOutputDir();
   console.log(`[jarvis] рабочая папка: ${workspace ?? 'не выбрана'}`);
 
   // Кого сейчас спрашивают. Пока здесь кто-то есть, следующая фраза — ответ,
@@ -702,7 +696,7 @@ export async function startJarvisVoiceBridge(options: {
   // Красные линии на каждом инструменте агента, а не только на фразе: хук
   // спрашивает человека голосом о чувствительном действии прямо перед ним.
   const gate = prepareGate({
-    appRoot: app.getAppPath(),
+    appRoot: APP_ROOT,
     dataDir: path.dirname(journalFile()),
     outputDir,
     homeDir: jarvisHome(),
@@ -764,28 +758,10 @@ export async function startJarvisVoiceBridge(options: {
   jarvisRef = jarvis;
   await jarvis.ready();
 
-  // Speech has failed twice now for want of a file in a place nobody printed.
-  const voiceReady = await isTtsModelInstalled(DEFAULT_TTS_MODEL_ID);
-  const voiceRoot = path.join(
-    getTtsInstallRoot(),
-    DEFAULT_TTS_MODEL_ID,
-    'vits-piper-ru_RU-irina-medium',
-  );
-  console.log(`[jarvis] голос ${voiceReady ? 'готов' : 'НЕ НАЙДЕН'}: ${voiceRoot}`);
-  if (!voiceReady) {
-    // Name the file that is missing. The same check passes outside Electron
-    // against the same folder, so the disagreement is worth pinning down
-    // rather than guessing at.
-    for (const file of ['', 'ru_RU-irina-medium.onnx', 'tokens.txt', 'espeak-ng-data']) {
-      const full = file ? path.join(voiceRoot, file) : voiceRoot;
-      try {
-        await access(full);
-        console.log(`[jarvis]   есть: ${file || '(каталог)'}`);
-      } catch (error) {
-        console.log(`[jarvis]   НЕТ: ${file || '(каталог)'} — ${String(error)}`);
-      }
-    }
-  }
+  // Голос проверяется и называется вслух в логе: дважды речь пропадала из-за
+  // файла в месте, которое никто не печатал.
+  const voiceReady = isVoiceInstalled(PATHS.voiceModels, settings().voiceId);
+  console.log(`[jarvis] голос ${settings().voiceId} ${voiceReady ? 'готов' : 'НЕ НАЙДЕН'}: ${PATHS.voiceModels}`);
 
   const overlay = createStatusOverlay();
   overlayRef = overlay;
@@ -1551,6 +1527,9 @@ export async function startJarvisVoiceBridge(options: {
   active = {
     jarvis,
     session,
+    showEvents: () => {
+      logWindow?.open();
+    },
     dispose: () => {
       globalShortcut.unregister(PUSH_TO_TALK_ACCELERATOR);
       globalShortcut.unregister(MUTE_ACCELERATOR);
@@ -1579,7 +1558,10 @@ export async function startJarvisVoiceBridge(options: {
       stopGateBridge?.();
       stopGateBridge = null;
       recogniser.dispose();
+      playback.dispose();
       if (!audioWindow.isDestroyed()) audioWindow.destroy();
+      jarvisRef?.dispose();
+      jarvisRef = null;
       active = null;
     },
   };
@@ -1595,7 +1577,7 @@ export async function startJarvisVoiceBridge(options: {
  */
 async function runRecogniserSelfTest(transcriber: Transcriber): Promise<void> {
   const wav = path.join(
-    whisperInstallRoot(),
+    PATHS.whisperModels,
     'sherpa-onnx-whisper-small',
     'test_wavs',
     '0.wav',
@@ -1873,7 +1855,7 @@ async function launchApplication(
  * use is then simply absent instead of failing halfway through a task.
  */
 function writeDesktopMcpConfig(outputDir?: string): string | undefined {
-  const server = resolveDesktopMcpLaunch({ appRoot: app.getAppPath() });
+  const server = resolveDesktopMcpLaunch({ appRoot: APP_ROOT });
   if (!server.ok) {
     console.log(`[jarvis] управление экраном выключено: не найден ${server.missing}`);
     return undefined;
@@ -1927,7 +1909,7 @@ function writeDesktopMcpConfig(outputDir?: string): string | undefined {
  * этом процессе нет вовсе, а не «есть, но запрещены».
  */
 function writeTalkMcpConfig(bridgeDir: string): string | undefined {
-  const server = resolveDesktopMcpLaunch({ appRoot: app.getAppPath() });
+  const server = resolveDesktopMcpLaunch({ appRoot: APP_ROOT });
   if (!server.ok) {
     console.log(`[jarvis] разговор без рычагов: не найден ${server.missing}`);
     return undefined;
@@ -1981,10 +1963,7 @@ function writeTalkMcpConfig(bridgeDir: string): string | undefined {
  * уезжает в другое место — на этом здесь уже один раз потеряли голос.
  */
 function journalFile(): string {
-  const root =
-    process.env.JARVIS_DATA_ROOT?.trim() ||
-    path.join(process.env.LOCALAPPDATA ?? app.getPath('userData'), 'Rujarvis', 'data');
-  return path.join(root, 'journal.json');
+  return path.join(PATHS.data, 'journal.json');
 }
 
 /**
@@ -2015,7 +1994,7 @@ function runsDir(): string {
 }
 
 function jarvisHome(): string {
-  return path.dirname(path.dirname(journalFile()));
+  return PATHS.home;
 }
 
 function openJournal(): JournalStore {
@@ -2026,7 +2005,9 @@ function openJournal(): JournalStore {
 
 function ensureOutputDir(): string | undefined {
   try {
-    const dir = process.env.JARVIS_OUTPUT_DIR?.trim() || path.join(app.getPath('desktop'), 'Джарвис');
+    const dir =
+      settings().outputDir ||
+      jarvisOutputDir(process.env, app.getPath('desktop'), settings().language === 'en' ? 'Jarvis' : 'Джарвис');
     mkdirSync(dir, { recursive: true });
     // Разделы заводятся сразу: размеченная папка понятнее пустой, и агенту не
     // приходится гадать, куда класть — раздел уже существует.
@@ -2091,8 +2072,18 @@ async function createAudioWindow(): Promise<BrowserWindow> {
  * «Тишина» и «стоп» очередь не тормозят, а **выбрасывают**: попросили
  * замолчать — значит и то, что ещё не прозвучало, уже не нужно.
  */
-function createPlayback(audioWindow: BrowserWindow): SpeechPlayback {
+function createPlayback(audioWindow: BrowserWindow): SpeechPlayback & { dispose(): void } {
   let token = 0;
+  // Прогретый синтезатор. Меняется вместе с голосом в настройках.
+  let speaker: Speaker | null = null;
+  const currentSpeaker = (): Speaker => {
+    const voiceId = settings().voiceId;
+    if (speaker?.voiceId !== voiceId) {
+      speaker?.dispose();
+      speaker = new Speaker(PATHS.voiceModels, voiceId);
+    }
+    return speaker;
+  };
   /** Чем закончить фразу, которая звучит прямо сейчас. */
   let finish: ((forToken: number) => void) | null = null;
 
@@ -2104,15 +2095,7 @@ function createPlayback(audioWindow: BrowserWindow): SpeechPlayback {
     // Запоминается до синтеза: эхо возвращается, пока фраза ещё звучит.
     echoGuard.spoke(text);
     try {
-      const result = await synthesizeSpeech({
-        text,
-        modelId: DEFAULT_TTS_MODEL_ID,
-        provider: 'cpu',
-        voiceId: 0,
-        speed: 1,
-        pitch: 0,
-        autotuneEnabled: false,
-      });
+      const result = await currentSpeaker().say(text);
       if (audioWindow.isDestroyed()) return;
 
       token += 1;
@@ -2120,7 +2103,7 @@ function createPlayback(audioWindow: BrowserWindow): SpeechPlayback {
       await new Promise<void>((resolve) => {
         // Срок — на случай, если окно не отзовётся вовсе: молчащая очередь
         // хуже наложившихся фраз, потому что она молчит навсегда.
-        const timer = setTimeout(() => finish?.(mine), wavDurationMs(result.wavBuffer) + 3_000);
+        const timer = setTimeout(() => finish?.(mine), wavDurationMs(result.wav) + 3_000);
         timer.unref?.();
         finish = (forToken: number) => {
           if (forToken !== mine) return;
@@ -2130,7 +2113,7 @@ function createPlayback(audioWindow: BrowserWindow): SpeechPlayback {
         };
         audioWindow.webContents.send(AUDIO_BRIDGE_CHANNELS.speak, {
           token: mine,
-          data: toPlaybackBase64(result.wavBuffer),
+          data: result.wav.toString('base64'),
         });
       });
     } catch (error) {
@@ -2154,6 +2137,12 @@ function createPlayback(audioWindow: BrowserWindow): SpeechPlayback {
     speak: (text: string) => queue.speak(text),
     stop: () => queue.stop(),
     isSpeaking: () => queue.isSpeaking(),
+    dispose: () => {
+      queue.stop();
+      speaker?.dispose();
+      speaker = null;
+      ipcMain.removeAllListeners(AUDIO_BRIDGE_CHANNELS.spoken);
+    },
   };
 }
 

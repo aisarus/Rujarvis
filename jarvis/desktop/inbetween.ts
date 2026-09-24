@@ -148,8 +148,9 @@ function питон(args: readonly string[]): Promise<{ ok: boolean; вывод:
     'C:/ComfyUI_windows_portable/python_embeded/python.exe';
   const [скрипт, ...остальное] = args;
   // Путь от этого файла, а не от рабочей папки: сервер запускают откуда
-  // угодно. `__dirname` тут не годится — сборка идёт в модули, где его нет.
-  const рядом = path.dirname(fileURLToPath(import.meta.url));
+  // угодно. В сборке (CJS) есть `__dirname`, а `import.meta.url` пустой; под
+  // tsx (ESM) — наоборот. Сборка кладёт папку `питон` рядом с собой.
+  const рядом = typeof __dirname === 'string' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
   const путь = path.join(рядом, 'питон', скрипт as string);
 
   return new Promise((resolve) => {

@@ -35,7 +35,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { StoryLine } from '../../jarvis/observe/storyline';
+import type { StoryLine } from '../jarvis/observe/storyline';
 
 export const LOG_WINDOW_CHANNELS = {
   line: 'jarvis-log:line',

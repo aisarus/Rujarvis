@@ -214,7 +214,7 @@ describe('selectWorldStateLines', () => {
     const store = new WorldStateStore();
     store.setActiveWindow({ title: 'Блокнот — заметки.txt', app: 'notepad.exe' });
     store.noteUtterance('открой заметки');
-    store.noteResult({ text: 'Открыл заметки.txt', ok: true, backend: 'interpreter' });
+    store.noteResult({ text: 'Открыл заметки.txt', ok: true, backend: 'codex' });
     // Вторая реплика — та самая, в которой есть «это». Предыдущей она делает
     // первую: до неё никакой предыстории и не было.
     store.noteUtterance('закрой это');

@@ -2,7 +2,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 
-const bundle = path.join(process.cwd(), 'dist-electron', 'jarvis', 'desktop', 'mcp.cjs');
+const bundle = path.join(process.cwd(), 'dist', 'jarvis', 'desktop', 'mcp.cjs');
 const started = Date.now();
 
 // Без `detached`: с ним Windows не доносит до cmd.exe написанное в stdin, и

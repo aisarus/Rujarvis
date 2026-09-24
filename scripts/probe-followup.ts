@@ -6,7 +6,7 @@
  * цвет сферы на зелёный» он отвечал «не понял».
  */
 
-import { createJarvis } from '../server/jarvis/createJarvis';
+import { createJarvis } from '../jarvis/createJarvis';
 import { jarvisOutputDir } from '../jarvis/setup/paths';
 
 const started = Date.now();

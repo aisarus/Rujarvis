@@ -13,8 +13,8 @@
  * local recogniser instead of leaving the assistant deaf.
  */
 
-import type { Transcriber } from '../../jarvis/voice/session';
-import { encodeWav16 } from '../../jarvis/voice/wav';
+import type { Transcriber } from '../jarvis/voice/session';
+import { encodeWav16 } from '../jarvis/voice/wav';
 
 const ENDPOINT = 'https://api.elevenlabs.io/v1/speech-to-text';
 const DEFAULT_MODEL = 'scribe_v2';
@@ -43,7 +43,7 @@ export function createElevenLabsTranscriber(options: CloudTranscriberOptions): T
         if (options.language) form.append('language_code', options.language);
         form.append(
           'file',
-          new Blob([encodeWav16(samples, sampleRate)], { type: 'audio/wav' }),
+          new Blob([new Uint8Array(encodeWav16(samples, sampleRate))], { type: 'audio/wav' }),
           'speech.wav',
         );
 

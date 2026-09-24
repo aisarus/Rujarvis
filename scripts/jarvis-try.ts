@@ -17,7 +17,7 @@ import process from 'node:process';
 import { DEFAULT_JARVIS_SETTINGS, type JarvisSettings } from '../jarvis/core';
 import { buildProgress, renderProgress } from '../jarvis/tasks/progress';
 import { route } from '../jarvis/router/router';
-import { createJarvis } from '../server/jarvis/createJarvis';
+import { createJarvis } from '../jarvis/createJarvis';
 
 const DIM = '\u001b[2m';
 const BOLD = '\u001b[1m';

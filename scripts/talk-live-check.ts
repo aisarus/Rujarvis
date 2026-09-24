@@ -19,7 +19,7 @@ import path from 'node:path';
 
 import { TalkBridge, type TalkRequest } from '../jarvis/dialogue/talkBridge';
 import { TalkSession } from '../jarvis/dialogue/talkSession';
-import { createWorkstationClaudeProbe } from '../jarvis/backends/workstationProbes';
+import { createClaudeProbe } from '../jarvis/backends/cliProbes';
 import { makePlan, renderPlan, type Plan } from '../jarvis/agent/plan';
 import { resolveDesktopMcpLaunch } from '../jarvis/desktop/launch';
 
@@ -92,7 +92,7 @@ async function main(): Promise<void> {
   const сказанное: string[] = [];
   const разговор = new TalkSession({
     cliPath: async () => {
-      const статус = await createWorkstationClaudeProbe().status();
+      const статус = await createClaudeProbe().status();
       console.log(`CLI: ${статус.path ?? 'не найден'} (установлен: ${статус.installed})`);
       return статус.path ?? null;
     },

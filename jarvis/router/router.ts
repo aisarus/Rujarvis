@@ -568,10 +568,6 @@ function pickTarget(input: {
 }): BackendId {
   if (input.requested) return input.requested;
 
-  // Переписка — единственное, что остаётся рантайму по умолчанию: у него живые
-  // учётные записи в мессенджерах, а у агента только мышь.
-  if (input.capabilities.has('communication')) return 'interpreter';
-
   // Код проверяется раньше экрана: у задачи по коду почти всегда есть заодно
   // capability «файлы», и экранная ветка иначе отменяла бы выбор кодового
   // backend в настройках.
@@ -584,21 +580,22 @@ function pickTarget(input: {
     if (!input.excluded.includes('codex')) return 'codex';
   }
 
-  // Экран, окна, файлы, браузер, 3D — к Claude Code. Инструменты рабочего
-  // стола и скиллы под программы есть только там; рантайм, получив такую
-  // задачу, не мог ни открыть Blender, ни положить файл в папку человека.
+  // Экран, окна, файлы, браузер, 3D, переписка — к Claude Code: инструменты
+  // рабочего стола и скиллы под программы есть только там.
   const needsScreen =
     input.capabilities.has('computer') ||
     input.capabilities.has('browser') ||
     input.capabilities.has('vision') ||
     input.capabilities.has('files') ||
     input.capabilities.has('system');
-  if (needsScreen && !input.excluded.includes('claude-code')) return 'claude-code';
-  if (needsScreen) return 'interpreter';
+  if ((needsScreen || input.capabilities.has('communication')) && !input.excluded.includes('claude-code')) {
+    return 'claude-code';
+  }
 
   const main = input.mainPreference;
   if (main && main !== 'auto' && !input.excluded.includes(main)) return main;
-  return 'interpreter';
+  if (!input.excluded.includes('claude-code')) return 'claude-code';
+  return 'codex';
 }
 
 /**

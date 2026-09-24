@@ -121,7 +121,7 @@ describe('TaskManager', () => {
 
   it('keeps a long task running in the background when a new one arrives', async () => {
     const coding = controllableBackend('claude-code');
-    const desktop = controllableBackend('interpreter');
+    const desktop = controllableBackend('codex');
     const backends = new BackendManager();
     backends.register(coding.backend);
     backends.register(desktop.backend);
@@ -138,6 +138,7 @@ describe('TaskManager', () => {
     const spotify = tasks.start({
       title: 'Открыть Spotify',
       request: request({ utterance: 'открой спотифай', capabilities: ['computer'] }),
+      preference: { requested: 'codex' },
     });
     await tick();
 
@@ -147,14 +148,14 @@ describe('TaskManager', () => {
     expect(tasks.background().map((task) => task.id)).toContain(build.id);
     expect(coding.controls.cancelled).toBe(false);
 
-    desktop.controls.finish({ backend: 'interpreter', text: 'Открыл.' });
+    desktop.controls.finish({ backend: 'codex', text: 'Открыл.' });
     await tick();
     expect(build.state).toBe('running');
   });
 
   it('stops only the foreground task when the user says стоп', async () => {
     const coding = controllableBackend('claude-code');
-    const desktop = controllableBackend('interpreter');
+    const desktop = controllableBackend('codex');
     const backends = new BackendManager();
     backends.register(coding.backend);
     backends.register(desktop.backend);
@@ -164,9 +165,10 @@ describe('TaskManager', () => {
     await tick();
     const front = tasks.start({
       title: 'перед',
-      // Переписка — единственная работа, что осталась за рантаймом, поэтому
-      // здесь это два разных backend, как и задумано в проверке.
+      // Два разных backend, как и задумано в проверке: отмена одной задачи не
+      // должна задеть процесс другой.
       request: request({ capabilities: ['communication'] }),
+      preference: { requested: 'codex' },
     });
     await tick();
 
@@ -261,7 +263,7 @@ describe('TaskManager', () => {
 
   it('cancels everything when asked to', async () => {
     const coding = controllableBackend('claude-code');
-    const desktop = controllableBackend('interpreter');
+    const desktop = controllableBackend('codex');
     const backends = new BackendManager();
     backends.register(coding.backend);
     backends.register(desktop.backend);

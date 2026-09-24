@@ -23,7 +23,7 @@ describe('prepareGate', () => {
     const settings = JSON.parse(readFileSync(result.settings, 'utf8'));
     const hook = settings.hooks.PreToolUse[0];
     expect(hook.matcher).toBe('*');
-    expect(hook.hooks[0].command).toMatch(/^node "C:\/Rujarvis\/src\/dist-electron\/jarvis\/desktop\/mcp\.cjs" gate ".+gate\.json"$/u);
+    expect(hook.hooks[0].command).toMatch(/^node "C:\/Rujarvis\/src\/dist\/jarvis\/desktop\/mcp\.cjs" gate ".+gate\.json"$/u);
     expect(hook.hooks[0].command).not.toContain('\\');
     expect(result.bridgeDir).toBe(path.join(root, 'data', 'gate'));
   });

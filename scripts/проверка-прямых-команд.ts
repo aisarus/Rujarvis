@@ -307,7 +307,7 @@ interface Row {
  * списке» обязано сработать, а имя и вежливость обязаны НЕ сработать: это
  * слова, и они должны напечататься.
  */
-function checkDictation(said: string, expect: Expect, label: string, text: string): Verdict {
+function checkDictation(_said: string, expect: Expect, label: string, text: string): Verdict {
   const edit = parseDictationEdit(text) as Record<string, unknown> | null;
   if (label === 'как в списке') return matches(edit, expect);
   if (!edit) return null;

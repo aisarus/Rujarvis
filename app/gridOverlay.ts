@@ -21,7 +21,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { gridLayout, physicalArea, type GridLayout } from '../../jarvis/control/grid';
+import { gridLayout, physicalArea, type GridLayout } from '../jarvis/control/grid';
 
 /** Сквозь окно должно быть видно, но номера должны читаться. */
 const OPACITY = 0.45;

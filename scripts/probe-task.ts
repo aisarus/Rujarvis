@@ -6,7 +6,7 @@
  * backend и причину отказа.
  */
 
-import { createJarvis } from '../server/jarvis/createJarvis';
+import { createJarvis } from '../jarvis/createJarvis';
 import { jarvisOutputDir } from '../jarvis/setup/paths';
 
 const utterance = process.argv.slice(2).join(' ') || 'Создай в блендере красную сферу';
