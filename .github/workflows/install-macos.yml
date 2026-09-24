@@ -1,0 +1,80 @@
+# Установщик macOS — вживую, на настоящем маке.
+#
+# 23 проверки `scripts/check-install-sh.sh` разбирают синтаксис и чистые
+# функции. Этого мало: они не отвечают на вопрос, который задал человек —
+# «точно всё встанет и будет работать?». Ответить на него может только
+# настоящий прогон `install.sh` на macOS.
+#
+# Поэтому здесь установка идёт целиком: Homebrew, Node, pnpm, исходники,
+# сборка, модели речи, ярлык `.app`. Без запуска приложения — у раннера нет
+# ни микрофона, ни человека, — но всё, что до него, проверяется по-настоящему.
+name: Install on macOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['mac/**', 'install/**']
+  schedule:
+    # Раз в неделю: ломается обычно не наш код, а то, что снаружи —
+    # Homebrew, узлы npm, адреса моделей.
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Проверки установщика
+        run: bash scripts/check-install-sh.sh
+
+      - name: Установка целиком
+        # Ветка своя: установщик тянет исходники из GitHub, и на чужой ветке
+        # он поставил бы не то, что проверяем.
+        run: |
+          set -o pipefail
+          bash install.sh --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" --no-launch 2>&1 | tee /tmp/install.log
+
+      - name: Что получилось
+        run: |
+          set -e
+          ROOT="$HOME/Library/Application Support/Rujarvis"
+          echo "=== папка Джарвиса ==="
+          ls -1 "$ROOT"
+
+          echo "=== приложение собрано ==="
+          test -f "$ROOT/src/dist/app/main.cjs" || { echo 'НЕТ dist/app/main.cjs'; exit 1; }
+
+          echo "=== ярлык .app на месте ==="
+          test -x "$HOME/Applications/Rujarvis.app/Contents/MacOS/Rujarvis" || { echo 'НЕТ запускаемого файла в .app'; exit 1; }
+          test -f "$HOME/Applications/Rujarvis.app/Contents/Info.plist" || { echo 'НЕТ Info.plist'; exit 1; }
+          grep -q NSMicrophoneUsageDescription "$HOME/Applications/Rujarvis.app/Contents/Info.plist" \
+            || { echo 'В Info.plist нет ключа микрофона — macOS не даст записывать'; exit 1; }
+
+          echo "=== модели речи скачаны ==="
+          du -sh "$ROOT/models" 2>/dev/null || { echo 'НЕТ папки моделей'; exit 1; }
+          find "$ROOT/models" -name '*.onnx' | head -5
+          test -n "$(find "$ROOT/models" -name '*.onnx' -print -quit)" || { echo 'Ни одной модели .onnx'; exit 1; }
+
+      - name: Речь работает по кругу
+        # Синтез своим голосом и распознавание своим же слухом: это отвечает
+        # на «будет ли он говорить и слышать», не требуя микрофона.
+        #
+        # Папку задаём внутри: `working-directory` не разворачивает ~ и плохо
+        # дружит с пробелом в «Application Support».
+        run: |
+          cd "$HOME/Library/Application Support/Rujarvis/src"
+          pnpm jarvis:roundtrip 2>&1 | tail -30
+
+      - name: Приёмка
+        run: |
+          cd "$HOME/Library/Application Support/Rujarvis/src"
+          pnpm jarvis:qa 2>&1 | tail -30
+
+      - name: Журнал установки, если что-то упало
+        if: failure()
+        run: tail -100 /tmp/install.log || true
