@@ -7,6 +7,8 @@ name: Probe macOS windows
 
 on:
   workflow_dispatch:
+  push:
+    branches: ['mac/**']
 
 permissions:
   contents: read
