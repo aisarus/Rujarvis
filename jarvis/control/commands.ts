@@ -63,8 +63,14 @@ const MAX_REPEAT = 20;
 const HELP_ON = [
   'что ты умеешь', 'помощь', 'какие команды', 'справка', 'что можно сказать',
   'что умеешь', 'какие есть команды',
+  // Английские фразы живут в тех же таблицах: русский режим их тоже
+  // понимает, а английскому не нужна вторая копия логики.
+  'what can you do', 'help', 'show commands', 'which commands', 'what can i say',
 ];
-const HELP_OFF = ['убери список', 'закрой список', 'спрячь список', 'убери помощь'];
+const HELP_OFF = [
+  'убери список', 'закрой список', 'спрячь список', 'убери помощь',
+  'hide commands', 'close the list', 'hide the list', 'hide help',
+];
 
 /**
  * Окно с рассказом о работе: показать и убрать.
@@ -80,10 +86,13 @@ const LOG_ON = [
   // Спрашивают со словом «ты» — и без него почти не спрашивают. Убрать «ты»
   // из речи целиком нельзя: тогда «где ты» превратится в «где».
   'чем ты занят', 'чем ты занимаешься', 'покажи что ты делаешь',
+  'what are you doing', 'show log', 'show the log', 'open log', 'open the log',
+  'show events', 'what is happening', 'what s happening', 'show your work',
 ];
 const LOG_OFF = [
   'закрой лог', 'убери лог', 'спрячь лог', 'закрой окно лога', 'убери окно',
   'закрой окно работы',
+  'close log', 'close the log', 'hide log', 'hide the log', 'hide events',
 ];
 
 /**
@@ -97,6 +106,8 @@ const WHERE = [
   // «Ё» здесь мертва: разбор приводит её к «е» раньше сравнения, и запись с
   // «ё» не совпадёт никогда. «Далеко ещё» пролежало так и не работало.
   'далеко еще', 'на каком ты шаге',
+  'where are you', 'which step', 'what step', 'show plan', 'show the plan',
+  'how much is left', 'what is the plan',
 ];
 
 /**
@@ -109,10 +120,13 @@ const WHERE = [
 const MODE_SHOW = [
   'показывай все', 'работай на виду', 'работай при мне',
   'открывай окна', 'на виду',
+  'show everything', 'work visibly', 'work in front of me', 'open windows',
 ];
 const MODE_QUIET = [
   'работай в фоне', 'работай тихо', 'в фоне', 'фоновый режим', 'не показывай',
   'не открывай окна', 'работай молча', 'не показывай окна',
+  'work in the background', 'work in background', 'background mode', 'work silently',
+  'don t show', 'dont show windows', 'don t open windows',
 ];
 
 /**
@@ -138,14 +152,17 @@ const MODE_QUIET = [
 const DOTA_FULL = [
   'оверлей', 'включи оверлей', 'покажи оверлей', 'подсказки', 'включи подсказки',
   'подсказки в игре', 'включи подсказки в игре',
+  'overlay', 'show overlay', 'turn on overlay', 'hints', 'show hints', 'game hints',
 ];
 const DOTA_SILENT = [
   'только показывай', 'только картинку', 'только на экране', 'подсказки на экран',
   'показывай но не подсказывай',
+  'only show', 'screen only', 'hints on screen only', 'show but don t talk',
 ];
 const DOTA_OFF = [
   'выключи оверлей', 'убери оверлей', 'закрой оверлей', 'спрячь оверлей',
   'выключи подсказки', 'убери подсказки', 'без подсказок',
+  'hide overlay', 'turn off overlay', 'close overlay', 'hide hints', 'turn off hints',
 ];
 
 /** Всё, что относится к оверлею, — одним списком для сторожа красных линий. */
@@ -170,6 +187,7 @@ export const DOTA_OVERLAY_PHRASES: readonly string[] = [
 const KILL_ALL = [
   'убейся', 'умри', 'сдохни', 'убей агента', 'убей все процессы',
   'аварийная остановка', 'руби всё', 'руби все',
+  'emergency stop', 'kill everything', 'kill all processes', 'kill the agent', 'kill switch',
 ];
 
 /** Для сторожа красных линий: аварийные слова тоже не должны красть заглушение. */
@@ -189,14 +207,19 @@ const FORGET_TALK = [
   'забудь разговор', 'забудь наш разговор', 'забудь о чём говорили',
   'забудь о чем говорили', 'начнём разговор заново', 'начнем разговор заново',
   'новый разговор',
+  'forget the conversation', 'forget our conversation', 'new conversation',
+  'start a new conversation', 'start the conversation over',
 ];
 
 /** Для сторожа красных линий. */
 export const FORGET_TALK_PHRASES: readonly string[] = FORGET_TALK;
 
 /** Сетка с номерами: показать и убрать. */
-const GRID_ON = ['сетка', 'покажи сетку', 'включи сетку', 'номера'];
-const GRID_OFF = ['убери сетку', 'спрячь сетку', 'выключи сетку', 'без сетки'];
+const GRID_ON = ['сетка', 'покажи сетку', 'включи сетку', 'номера', 'grid', 'show grid', 'show the grid', 'numbers'];
+const GRID_OFF = [
+  'убери сетку', 'спрячь сетку', 'выключи сетку', 'без сетки',
+  'hide grid', 'hide the grid', 'close the grid', 'no grid',
+];
 
 /**
  * Уточнение — отдельной фразой, а не хвостом к клику.
@@ -205,7 +228,7 @@ const GRID_OFF = ['убери сетку', 'спрячь сетку', 'выкл�
  * числительные не дают отличить номер клетки от номера доли. Два шага
  * однозначны и в цифрах, и в словах.
  */
-const REFINE_PREFIXES = ['точнее', 'уточни', 'внутри', 'подклетка'];
+const REFINE_PREFIXES = ['точнее', 'уточни', 'внутри', 'подклетка', 'refine', 'inside', 'zoom'];
 
 /**
  * Начала фраз «кликни по чему-то».
@@ -214,10 +237,13 @@ const REFINE_PREFIXES = ['точнее', 'уточни', 'внутри', 'под
  * пользуются экранные читалки, — и клик идёт в центр найденного. Не нашли —
  * задача уходит агенту, который посмотрит на экран.
  */
-const CLICK_PREFIXES = ['кликни', 'клик', 'нажми', 'щелкни', 'нажми на'];
+const CLICK_PREFIXES = ['кликни', 'клик', 'нажми', 'щелкни', 'нажми на', 'click', 'press', 'tap'];
 
 /** Слова между глаголом и названием: «кликни по кнопке Войти». */
-const CLICK_GLUE = ['по', 'на', 'в', 'кнопке', 'кнопку', 'кнопка', 'ссылке', 'ссылку', 'пункт', 'пункте', 'вкладку', 'вкладке', 'поле'];
+const CLICK_GLUE = [
+  'по', 'на', 'в', 'кнопке', 'кнопку', 'кнопка', 'ссылке', 'ссылку', 'пункт', 'пункте', 'вкладку', 'вкладке', 'поле',
+  'on', 'the', 'button', 'link', 'tab', 'field', 'item',
+];
 
 /**
  * Начала фраз переключения между окнами.
@@ -236,6 +262,7 @@ const FOCUS_PREFIXES = [
   // «переключи вкладку» без названия остаётся Ctrl+Tab и разбирается раньше.
   'переключи вкладку на', 'переключись на вкладку', 'переключи на',
   'открой вкладку с', 'переключи окно на',
+  'switch to', 'go to', 'bring up', 'show window', 'focus on', 'switch window to',
 ];
 
 /** Включение и выключение диктовки. */
@@ -249,6 +276,7 @@ const FOCUS_PREFIXES = [
 const DICTATION_ON = [
   'печатай', 'режим диктовки', 'включи диктовку', 'записывай за мной',
   'печатай за мной', 'пиши за мной',
+  'start dictation', 'dictation mode', 'dictation on', 'type after me', 'type what i say',
 ];
 
 /**
@@ -261,8 +289,12 @@ const DICTATION_ON = [
 const LONG_SPEECH = [
   'диктую', 'я диктую', 'слушай длинно', 'длинное сообщение', 'длинная мысль',
   'сейчас длинно', 'буду говорить долго',
+  'long message', 'long thought', 'i will talk for a while', 'listen long',
 ];
-const DICTATION_OFF = ['конец диктовки', 'стоп диктовка', 'хватит диктовать', 'выключи диктовку'];
+const DICTATION_OFF = [
+  'конец диктовки', 'стоп диктовка', 'хватит диктовать', 'выключи диктовку',
+  'end dictation', 'stop dictation', 'dictation off',
+];
 
 /**
  * Конец диктовки распознаётся отдельно от остальных команд.
@@ -302,7 +334,7 @@ function dropFiller(phrase: string): string {
 }
 
 /** Глаголы нажатия перед самой клавишей: «нажми enter» — это «enter». */
-const PRESS_VERBS = ['нажми', 'нажмите', 'жми', 'нажать'];
+const PRESS_VERBS = ['нажми', 'нажмите', 'жми', 'нажать', 'press', 'hit'];
 
 /**
  * Начала диктовки.
@@ -322,7 +354,7 @@ const PRESS_VERBS = ['нажми', 'нажмите', 'жми', 'нажать'];
  *
  * Буквальный набор по-прежнему доступен: «напечатай …» и режим диктовки.
  */
-const DICTATION_PREFIXES = ['напечатай', 'введи', 'печатай'];
+const DICTATION_PREFIXES = ['напечатай', 'введи', 'печатай', 'type'];
 
 /**
  * После этих слов «напиши» означает работу, а не диктовку.
@@ -333,6 +365,8 @@ const DICTATION_PREFIXES = ['напечатай', 'введи', 'печатай'
 const WRITTEN_THINGS = [
   'письмо', 'письма', 'документ', 'отчет', 'код', 'программу', 'скрипт',
   'статью', 'текст', 'сообщение', 'план', 'заметку', 'функцию', 'тест',
+  'a', 'an', 'letter', 'email', 'document', 'report', 'code', 'script', 'article',
+  'message', 'note', 'function', 'test', 'program',
 ];
 
 const KEYS: Record<string, string> = {
@@ -419,6 +453,29 @@ const KEYS: Record<string, string> = {
   // значило бы на просьбу подождать переключить музыку.
   'пауза': 'playpause', 'играй': 'playpause', 'продолжи музыку': 'playpause',
   'следующий трек': 'nexttrack', 'предыдущий трек': 'prevtrack',
+
+  // По-английски. «Pause», «stop», «mute» здесь нет нарочно: это слова
+  // остановки и заглушения, и они разбираются раньше таблицы.
+  'arrow down': 'down', 'arrow up': 'up', 'arrow left': 'left', 'arrow right': 'right',
+  'down arrow': 'down', 'up arrow': 'up', 'left arrow': 'left', 'right arrow': 'right',
+  'space': 'space', 'backspace': 'backspace', 'page down': 'pagedown', 'page up': 'pageup',
+  'go to the bottom': 'ctrl+end', 'go to the top': 'ctrl+home',
+  'copy': 'ctrl+c', 'copy that': 'ctrl+c', 'paste': 'ctrl+v', 'paste it': 'ctrl+v', 'cut': 'ctrl+x',
+  'undo': 'ctrl+z', 'undo that': 'ctrl+z', 'redo': 'ctrl+y',
+  'select all': 'ctrl+a', 'save': 'ctrl+s', 'save it': 'ctrl+s', 'find': 'ctrl+f', 'print': 'ctrl+p',
+  'new tab': 'ctrl+t', 'open a new tab': 'ctrl+t', 'open new tab': 'ctrl+t',
+  'close tab': 'ctrl+w', 'close this tab': 'ctrl+w', 'close the tab': 'ctrl+w',
+  'reopen tab': 'ctrl+shift+t', 'next tab': 'ctrl+tab', 'previous tab': 'ctrl+shift+tab',
+  'switch tab': 'ctrl+tab', 'switch window': 'alt+tab', 'switch windows': 'alt+tab',
+  'refresh': 'f5', 'reload': 'f5', 'refresh the page': 'f5', 'reload the page': 'f5',
+  'close window': 'alt+f4', 'close this window': 'alt+f4', 'close the window': 'alt+f4',
+  'maximize': 'win+up', 'maximize window': 'win+up', 'maximize the window': 'win+up',
+  'minimize': 'win+down', 'minimize window': 'win+down', 'minimize the window': 'win+down',
+  'full screen': 'f11', 'fullscreen': 'f11', 'show desktop': 'win+d', 'minimize all': 'win+d',
+  'louder': 'volumeup', 'volume up': 'volumeup', 'turn it up': 'volumeup',
+  'volume down': 'volumedown', 'turn it down': 'volumedown', 'mute sound': 'volumemute',
+  'play music': 'playpause', 'resume music': 'playpause', 'next track': 'nexttrack',
+  'previous track': 'prevtrack', 'next song': 'nexttrack', 'previous song': 'prevtrack',
 };
 
 const SCROLLS: Record<string, number> = {
@@ -427,6 +484,8 @@ const SCROLLS: Record<string, number> = {
   // «Прокрути страницу вниз» — то же самое, только названо полностью.
   'прокрути страницу вниз': -3, 'пролистай вниз': -3,
   'прокрути страницу вверх': 3, 'пролистай вверх': 3,
+  'scroll down': -3, 'scroll up': 3, 'scroll the page down': -3, 'scroll the page up': 3,
+  'lower': -3, 'higher': 3,
 };
 
 const CLICKS: Record<string, { button: 'left' | 'right' | 'middle'; double?: boolean }> = {
@@ -445,6 +504,11 @@ const CLICKS: Record<string, { button: 'left' | 'right' | 'middle'; double?: boo
   'кликни дважды': { button: 'left', double: true },
   'двойной щелчок': { button: 'left', double: true },
   'щелкни дважды': { button: 'left', double: true },
+  'click': { button: 'left' },
+  'left click': { button: 'left' },
+  'right click': { button: 'right' },
+  'double click': { button: 'left', double: true },
+  'middle click': { button: 'middle' },
 };
 
 export function parseDirectCommand(utterance: string): DirectCommand | null {
@@ -512,6 +576,29 @@ const ПРАВИЛА: Array<Rule<DirectCommand>> = [
   {
     pattern: '(прокрути|пролистай|промотай) [страницу] вверх',
     make: () => ({ kind: 'scroll', amount: 3 }),
+  },
+
+  // ПО-АНГЛИЙСКИ. Те же семейства; слова английские совпадают как написаны.
+  { pattern: '[switch|go] [to] [the] next tab', make: () => ({ kind: 'key', keys: 'ctrl+tab' }) },
+  { pattern: '[switch|go] [to] [the] (previous|last) tab', make: () => ({ kind: 'key', keys: 'ctrl+shift+tab' }) },
+  { pattern: '(open|new) [a] [new] tab', make: () => ({ kind: 'key', keys: 'ctrl+t' }) },
+  { pattern: 'close [this|the] tab', make: () => ({ kind: 'key', keys: 'ctrl+w' }) },
+  {
+    pattern: '(switch|go) [to] [the] tab {where}',
+    make: (s) => ({ kind: 'focus', title: s.where as string }),
+  },
+  { pattern: '(minimize|hide) [this|the] [window]', make: () => ({ kind: 'key', keys: 'win+down' }) },
+  { pattern: '(maximize|expand) [this|the] [window]', make: () => ({ kind: 'key', keys: 'win+up' }) },
+  { pattern: 'close [this|the] window', make: () => ({ kind: 'key', keys: 'alt+f4' }) },
+  { pattern: 'scroll [the] [page] down', make: () => ({ kind: 'scroll', amount: -3 }) },
+  { pattern: 'scroll [the] [page] up', make: () => ({ kind: 'scroll', amount: 3 }) },
+  {
+    pattern: '(switch|go|jump) (to|back) [to] [the] {where}',
+    make: (s) => ({ kind: 'focus', title: s.where as string }),
+  },
+  {
+    pattern: '(show|focus) [the] window {where}',
+    make: (s) => ({ kind: 'focus', title: s.where as string }),
   },
 
   // ПЕРЕХОД К ПРОГРАММЕ — последним: самое общее правило.
@@ -602,7 +689,10 @@ function readDirect(phrase: string): DirectCommand | null {
  * проверяется раньше, поэтому «напечатай три раза» остаётся диктовкой.
  */
 function readRepeat(phrase: string): DirectCommand | null {
-  const match = new RegExp('^(.+?)\\s+раз(?:а|ов)?$', 'u').exec(phrase);
+  const match =
+    new RegExp('^(.+?)\\s+раз(?:а|ов)?$', 'u').exec(phrase) ??
+    new RegExp('^(.+?)\\s+times$', 'u').exec(phrase) ??
+    (phrase.endsWith(' twice') ? [phrase, `${phrase.slice(0, -' twice'.length)} two`] : null);
   if (!match) return null;
 
   const words = (match[1] as string).split(' ');
@@ -643,6 +733,8 @@ function readEncore(phrase: string): DirectCommand | null {
   let tail = 0;
   if (last === 'раз' && words[words.length - 2] === 'еще') tail = 2;
   else if (last === 'еще') tail = 1;
+  else if (last === 'again') tail = 1;
+  else if (words.slice(-3).join(' ') === 'one more time') tail = 3;
   if (tail === 0) return null;
 
   const inner = parseDirectCommand(words.slice(0, -tail).join(' '));

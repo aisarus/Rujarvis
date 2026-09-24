@@ -104,7 +104,7 @@ export function splitClauses(text: string): string[] {
 }
 
 /** Negation words that flip a nearby mention: «не используй клод», «без клода». */
-const NEGATION_STEMS = ['не', 'без', 'кроме', 'никак'];
+const NEGATION_STEMS = ['не', 'без', 'кроме', 'никак', 'not', 'no', 'dont', 'don', 'without', 'except', 'never', 'instead'];
 
 /**
  * True when a negation appears within `window` tokens before `index`.

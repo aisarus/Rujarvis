@@ -34,8 +34,15 @@ export const WAKE_WORD_VARIANTS = [
   'чарвис',
   'дживс',
   'джервис',
-  'jarvis',
   'дарвис',
+  // Английское распознавание пишет имя латиницей и тоже путает его.
+  'jarvis',
+  'jervis',
+  'jarviss',
+  'jarvus',
+  'jarvas',
+  'jarves',
+  'javis',
 ];
 
 /** Two-token spellings, for when the recogniser splits the name. */
@@ -43,6 +50,8 @@ const SPLIT_VARIANTS: string[][] = [
   ['джар', 'вис'],
   ['джар', 'виз'],
   ['джа', 'рвис'],
+  ['jar', 'vis'],
+  ['jar', 'viz'],
 ];
 
 /** Levenshtein distance, capped: anything past `limit` is simply "too far". */
@@ -90,8 +99,19 @@ function consonantSkeleton(token: string): string {
 
 const WAKE_SKELETON = consonantSkeleton('джарвис');
 
+/**
+ * Латинское написание: одна правка от «jarvis», и только если слово начинается
+ * с «j». Без этого условия просыпались бы «travis» и «harvey» — обычные имена,
+ * которые звучат в разговоре рядом.
+ */
+function matchesLatinWakeToken(token: string): boolean {
+  if (!token.startsWith('j') || token.length < 5 || token.length > 8) return false;
+  return editDistance(token, 'jarvis', 1) <= 1;
+}
+
 function matchesWakeToken(token: string): boolean {
   if (WAKE_WORD_VARIANTS.includes(token)) return true;
+  if (/^[a-z]+$/u.test(token)) return matchesLatinWakeToken(token);
   // Only test tokens of a plausible length — «да» must never wake Jarvis.
   if (token.length < 5 || token.length > 10) return false;
   if (editDistance(token, 'джарвис', 3) <= toleranceFor(token)) return true;

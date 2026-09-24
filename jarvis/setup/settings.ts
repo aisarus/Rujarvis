@@ -13,7 +13,9 @@ import path from 'node:path';
 import { WHISPER_MODEL_IDS, type WhisperModelId } from '../voice/sttModels';
 import { DEFAULT_VOICE, VOICES } from '../voice/tts';
 
-export type Language = 'ru' | 'en';
+import type { Language } from '../locale/language';
+
+export type { Language };
 
 /**
  * Что из речи писать в лог.

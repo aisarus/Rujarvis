@@ -73,8 +73,13 @@ const HALLUCINATIONS = [
   'подписывайтесь на канал',
   'ставьте лайки',
   'thanks for watching',
+  'thank you for watching',
   'subtitles by',
   'subscribe',
+  'see you in the next video',
+  'see you next time',
+  'transcribed by',
+  'captions by',
 ];
 
 /**
@@ -179,6 +184,8 @@ const CHATTER_OPENERS = [
   'потому', 'это', 'но', 'а', 'и', 'так', 'ну', 'вот', 'значит', 'короче',
   'типа', 'кстати', 'просто', 'да', 'нет', 'ладно', 'вчера', 'сегодня',
   'он', 'она', 'они', 'мы', 'я', 'там', 'тут',
+  'because', 'but', 'well', 'like', 'yeah', 'actually', 'anyway', 'basically',
+  'he', 'she', 'they', 'we', 'i', 'there', 'yesterday', 'today',
 ];
 
 /**
@@ -194,6 +201,11 @@ const REQUEST_WORDS = [
   'переделай', 'повтори', 'продолжай', 'останови', 'отмени', 'поставь',
   'отправь', 'прочитай', 'переведи', 'скачай', 'сохрани', 'удали', 'перенеси',
   'отрендери', 'смени', 'поменяй', 'добавь', 'убери', 'проверь', 'скажи',
+  'open', 'close', 'launch', 'start', 'run', 'kill', 'quit', 'make', 'create',
+  'draw', 'build', 'find', 'search', 'look', 'show', 'write', 'count', 'redo',
+  'repeat', 'continue', 'stop', 'cancel', 'put', 'send', 'read', 'translate',
+  'download', 'save', 'delete', 'move', 'render', 'change', 'add', 'remove',
+  'check', 'tell', 'play', 'type', 'click', 'scroll', 'switch', 'fix', 'go',
 ];
 
 /**
@@ -203,7 +215,7 @@ const REQUEST_WORDS = [
  * сделать, и просит громко ровно тогда, когда громко играет. «ТИШЕ ЗВУК»
  * съедалось как подпись, и громкость оставалась прежней.
  */
-const SHOUTED_REQUEST = new Set([...REQUEST_WORDS, 'тише', 'громче', 'потише', 'погромче']);
+const SHOUTED_REQUEST = new Set([...REQUEST_WORDS, 'тише', 'громче', 'потише', 'погромче', 'louder', 'quieter', 'volume']);
 
 /**
  * Вопросительные слова — но только в начале фразы.
@@ -215,6 +227,8 @@ const SHOUTED_REQUEST = new Set([...REQUEST_WORDS, 'тише', 'громче', '
 const QUESTION_OPENERS = [
   'что', 'где', 'когда', 'сколько', 'какой', 'какая', 'как', 'почему', 'кто',
   'куда', 'зачем', 'можешь', 'можно', 'умеешь',
+  'what', 'where', 'when', 'how', 'why', 'who', 'which', 'can', 'could', 'would',
+  'is', 'are', 'do', 'does', 'did', 'will',
 ];
 
 /**
@@ -232,6 +246,8 @@ const PLEASANTRIES = [
   'пока', 'ага', 'угу', 'окей', 'ок', 'хорошо', 'ладно', 'понятно', 'ясно',
   'класс', 'отлично', 'супер', 'круто', 'ух', 'ого', 'всё', 'все',
   'понял', 'поняла', 'принял', 'договорились', 'спасибки', 'угушки',
+  'thanks', 'thank', 'you', 'hello', 'hi', 'bye', 'goodbye', 'okay', 'good',
+  'great', 'cool', 'nice', 'alright', 'awesome', 'perfect', 'got', 'it', 'sure',
 ];
 
 /**
@@ -252,7 +268,7 @@ export function isPleasantry(transcript: string): boolean {
 }
 
 /** Слова, которыми начинают говорить, пока не начали. */
-const FILLERS = ['ну', 'да', 'а', 'вот', 'так', 'э', 'эм'];
+const FILLERS = ['ну', 'да', 'а', 'вот', 'так', 'э', 'эм', 'well', 'um', 'uh', 'so', 'oh', 'yeah'];
 
 function wordsOf(transcript: string): string[] {
   return transcript
@@ -296,6 +312,8 @@ export function looksLikeChatter(transcript: string): boolean {
  */
 const SILENCE_PHRASES = [
   'тишина', 'тишину', 'тише', 'замолчи', 'молчи', 'хватит слушать', 'спи', 'отбой',
+  // Английские — в любом режиме, как и слова остановки.
+  'silence', 'quiet', 'be quiet', 'shut up', 'stop listening', 'go to sleep', 'sleep',
 ];
 
 /**

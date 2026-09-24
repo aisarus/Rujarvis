@@ -128,12 +128,16 @@ export function subCellCenter(cell: number, sub: number, layout: GridLayout): Po
 const UNITS: Record<string, number> = {
   'один': 1, 'одна': 1, 'два': 2, 'две': 2, 'три': 3, 'четыре': 4, 'пять': 5,
   'шесть': 6, 'семь': 7, 'восемь': 8, 'девять': 9,
+  'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 'seven': 7,
+  'eight': 8, 'nine': 9, 'twice': 2,
 };
 
 const TEENS: Record<string, number> = {
   'десять': 10, 'одиннадцать': 11, 'двенадцать': 12, 'тринадцать': 13,
   'четырнадцать': 14, 'пятнадцать': 15, 'шестнадцать': 16, 'семнадцать': 17,
   'восемнадцать': 18, 'девятнадцать': 19,
+  'ten': 10, 'eleven': 11, 'twelve': 12, 'thirteen': 13, 'fourteen': 14,
+  'fifteen': 15, 'sixteen': 16, 'seventeen': 17, 'eighteen': 18, 'nineteen': 19,
 };
 
 const TENS: Record<string, number> = {
@@ -142,6 +146,8 @@ const TENS: Record<string, number> = {
   // «Сто» в сетке не нужно — клеток меньше, — но нужно повторам: человек
   // говорит «прокрути вниз сто раз», и это должно пониматься, а не молчать.
   'сто': 100,
+  'twenty': 20, 'thirty': 30, 'forty': 40, 'fifty': 50, 'sixty': 60,
+  'seventy': 70, 'eighty': 80, 'ninety': 90, 'hundred': 100,
 };
 
 /**

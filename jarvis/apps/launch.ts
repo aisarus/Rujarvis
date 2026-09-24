@@ -18,6 +18,7 @@ const CLOSE_VERBS = [
   'выключи', 'выключите',
   'останови', 'остановите',
   'убей', 'прикрой', 'сверни',
+  'close', 'quit', 'exit', 'kill',
 ];
 
 /** Verbs that mean "start this program". */
@@ -25,6 +26,8 @@ const LAUNCH_VERBS = [
   'открой', 'открать', 'откройте', 'отткрой',
   'запусти', 'запускай', 'запустите',
   'включи', 'включите',
+  // «Run» и «start» не берём: «run the tests» — работа для агента, а не программа.
+  'open', 'launch',
 ];
 
 /**
@@ -41,10 +44,14 @@ const REFERENTIAL = [
   'его', 'её', 'ее', 'их', 'это', 'этот', 'эту', 'эта', 'тот', 'ту', 'то',
   'там', 'туда', 'обратно', 'снова', 'опять', 'назад', 'же', 'самое', 'самый',
   'всё', 'все', 'что-нибудь', 'нибудь', 'какой-нибудь',
+  'it', 'this', 'that', 'them', 'there', 'again', 'back', 'everything', 'something', 'all',
 ];
 
 /** Words between the verb and the name that carry no meaning here. */
-const FILLER = ['мне', 'пожалуйста', 'давай', 'ка', 'мой', 'моё', 'мою', 'приложение', 'программу'];
+const FILLER = [
+  'мне', 'пожалуйста', 'давай', 'ка', 'мой', 'моё', 'мою', 'приложение', 'программу',
+  'the', 'my', 'please', 'up', 'app', 'application', 'program',
+];
 
 /**
  * Spoken names mapped to what Windows actually starts.
@@ -53,15 +60,15 @@ const FILLER = ['мне', 'пожалуйста', 'давай', 'ка', 'мой'
  * the shapes people say, not the vendors' spellings.
  */
 const APP_ALIASES: ReadonlyArray<readonly [readonly string[], string]> = [
-  [['хром', 'хрома', 'хроме', 'chrome', 'гугл хром', 'гуглхром'], 'chrome'],
-  [['эдж', 'эдже', 'едж', 'edge', 'майкрософт эдж', 'мсэдж'], 'msedge'],
+  [['хром', 'хрома', 'хроме', 'chrome', 'гугл хром', 'гуглхром', 'google chrome', 'browser'], 'chrome'],
+  [['эдж', 'эдже', 'едж', 'edge', 'майкрософт эдж', 'мсэдж', 'microsoft edge'], 'msedge'],
   [['телеграм', 'телега', 'телеграмм', 'telegram'], 'telegram'],
   [['фаерфокс', 'файрфокс', 'фокс', 'firefox'], 'firefox'],
   [['блокнот', 'нотпад', 'notepad'], 'notepad'],
-  [['калькулятор', 'калькулятр', 'calc'], 'calc'],
-  [['проводник', 'эксплорер', 'explorer'], 'explorer'],
-  [['терминал', 'консоль', 'командную строку', 'cmd'], 'wt'],
-  [['код', 'вскод', 'вс код', 'вижуал студио код', 'vscode', 'code'], 'code'],
+  [['калькулятор', 'калькулятр', 'calc', 'calculator'], 'calc'],
+  [['проводник', 'эксплорер', 'explorer', 'file explorer', 'files'], 'explorer'],
+  [['терминал', 'консоль', 'командную строку', 'cmd', 'terminal', 'command prompt', 'console'], 'wt'],
+  [['код', 'вскод', 'вс код', 'вижуал студио код', 'vscode', 'code', 'vs code', 'visual studio code'], 'code'],
   [['спотифай', 'спотик', 'spotify'], 'spotify'],
   // Дискорда здесь нет намеренно, хотя он установлен.
   //
@@ -161,14 +168,14 @@ const WINDOW_ALIASES: ReadonlyArray<readonly [readonly string[], string]> = [
   [['дискорд', 'discord'], 'Discord'],
   [['эдж', 'эдже', 'едж', 'edge'], 'msedge'],
   [['хром', 'хрома', 'хроме', 'chrome'], 'chrome'],
-  [['телеграм', 'телега', 'телеграмм'], 'telegram'],
+  [['телеграм', 'телега', 'телеграмм', 'telegram'], 'telegram'],
   [['повершелл', 'павершелл', 'пауэршелл', 'powershell'], 'powershell'],
-  [['терминал', 'консоль'], 'WindowsTerminal'],
-  [['проводник', 'эксплорер'], 'explorer'],
+  [['терминал', 'консоль', 'terminal'], 'WindowsTerminal'],
+  [['проводник', 'эксплорер', 'explorer', 'file explorer'], 'explorer'],
   // «Закрой настройки» уходило в ms-settings: — это протокол ЗАПУСКА, а не имя
   // процесса, и закрытие искало программу с таким именем. Окно «Параметров»
   // принадлежит SystemSettings.
-  [['настройки', 'параметры'], 'SystemSettings'],
+  [['настройки', 'параметры', 'settings'], 'SystemSettings'],
 ];
 
 /** Как окно называется на самом деле. Для переключения и закрытия. */
