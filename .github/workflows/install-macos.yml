@@ -12,8 +12,9 @@ name: Install on macOS
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
-    branches: ['mac/**', 'install/**']
+    branches: [main, 'mac/**', 'install/**']
   schedule:
     # Раз в неделю: ломается обычно не наш код, а то, что снаружи —
     # Homebrew, узлы npm, адреса моделей.
@@ -35,9 +36,13 @@ jobs:
       - name: Установка целиком
         # Ветка своя: установщик тянет исходники из GitHub, и на чужой ветке
         # он поставил бы не то, что проверяем.
+        #
+        # Модель распознавания закреплена. Без ключа установщик выбирает её по
+        # машине, и два прогона становится не с чем сравнивать: первый дал 7
+        # из 12, второй 6 — и поди пойми, речь просела или модель другая.
         run: |
           set -o pipefail
-          bash install.sh --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" --no-launch 2>&1 | tee /tmp/install.log
+          bash install.sh --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"             --whisper-model tiny --no-launch 2>&1 | tee /tmp/install.log
 
       - name: Что получилось
         run: |
@@ -59,6 +64,26 @@ jobs:
           du -sh "$ROOT/models" 2>/dev/null || { echo 'НЕТ папки моделей'; exit 1; }
           find "$ROOT/models" -name '*.onnx' | head -5
           test -n "$(find "$ROOT/models" -name '*.onnx' -print -quit)" || { echo 'Ни одной модели .onnx'; exit 1; }
+
+      - name: Повторная установка ничего не ломает
+        # README обещает: «повторный запуск обновляет установку». Обещание
+        # без проверки — просто слова, а повторно установщик запускают чаще
+        # всего: за обновлением.
+        #
+        # Здесь же ловится и всё, что установщик делает не начисто: занятые
+        # папки, второй ярлык, перекачка моделей.
+        run: |
+          set -o pipefail
+          before=$(du -sk "$HOME/Library/Application Support/Rujarvis/models" | cut -f1)
+          bash install.sh --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"             --whisper-model tiny --no-launch 2>&1 | tee /tmp/install2.log | tail -20
+          after=$(du -sk "$HOME/Library/Application Support/Rujarvis/models" | cut -f1)
+
+          test -f "$HOME/Library/Application Support/Rujarvis/src/dist/app/main.cjs"             || { echo 'после повторной установки нет собранного приложения'; exit 1; }
+          test -x "$HOME/Applications/Rujarvis.app/Contents/MacOS/Rujarvis"             || { echo 'после повторной установки нет ярлыка'; exit 1; }
+
+          echo "модели до ${before} КБ, после ${after} КБ"
+          test "$after" -ge "$before" || { echo 'модели после повторного запуска поредели'; exit 1; }
+          grep -q 'уже установлено' /tmp/install2.log             || echo 'предупреждение: модели, похоже, качались заново'
 
       - name: Речь работает по кругу
         # Синтез своим голосом и распознавание своим же слухом: это отвечает
