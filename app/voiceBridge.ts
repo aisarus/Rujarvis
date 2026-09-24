@@ -18,7 +18,7 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -685,9 +685,31 @@ export async function startJarvisVoiceBridge(options: {
       note('command', `сказал: ${whole}`, ЭХО_РАЗГОВОРА);
       story?.heard(whole, Date.now());
       overlay.note(session.status, tr(`Слушаю: ${short(whole)}`, `Listening: ${short(whole)}`));
-      void talk.hear(whole).catch((error: unknown) => {
-        console.error('[jarvis] разговор не справился:', error);
-      });
+
+      // Ожидание должно быть видно.
+      //
+      // Ход разговора стоит около десяти секунд - замерено: 8,9 / 10,4 / 11,4
+      // / 11,8 с. Всё это время плашка показывала последнее «Слушаю: …», и
+      // молчание прибора неотличимо от поломки. Дословная жалоба человека:
+      // «игнорирует мои команды». Ответ на неё - не ускорить ход, а перестать
+      // молчать о нём.
+      //
+      // Полсекунды задержки: короткий ход (повтор фразы, обращение не к
+      // Джарвису) успевает закончиться раньше, и «Думаю…» не мигает зря.
+      const думаю = setTimeout(() => {
+        overlay.note(session.status, tr('Думаю…', 'Thinking…'));
+      }, 500);
+      думаю.unref?.();
+
+      void talk
+        .hear(whole)
+        .catch((error: unknown) => {
+          console.error('[jarvis] разговор не справился:', error);
+        })
+        .finally(() => {
+          clearTimeout(думаю);
+          overlay.update(session.status);
+        });
     }, Math.max(50, thought.msUntilComplete()));
 
     thoughtTimer.unref?.();
@@ -2111,6 +2133,27 @@ async function createAudioWindow(): Promise<BrowserWindow> {
   // request that can reach this handler is our own microphone request.
   window.webContents.session.setPermissionRequestHandler((_contents, permission, callback) => {
     callback(permission === 'media');
+  });
+
+  // Почему здесь прибор, а не просто попытка ещё раз.
+  //
+  // Первая попытка запуска голоса падает с `ERR_FAILED (-2)` и поднимается со
+  // второй - замерено 3 раза из 3 на Windows. Три секунды при каждом старте, а
+  // причина неизвестна: `loadFile` отдаёт только код. Гадать дальше нечем,
+  // поэтому окно само рассказывает, что именно не вышло: код, описание, адрес
+  // и размер файла на диске в этот момент. Пустой файл, пропавший файл и отказ
+  // в доступе - разные болезни, и лечатся они по-разному.
+  window.webContents.on('did-fail-load', (_event, code, description, url, mainFrame) => {
+    let size = -1;
+    try {
+      size = statSync(pagePath).size;
+    } catch {
+      size = -1;
+    }
+    console.error(
+      `[voice] окно звука не загрузилось: код ${code} (${description}), адрес ${url}, ` +
+        `главный кадр: ${mainFrame ? 'да' : 'нет'}, файл на диске: ${size} Б`,
+    );
   });
 
   const ready = new Promise<void>((resolve) => {
