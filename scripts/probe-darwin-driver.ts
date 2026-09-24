@@ -138,7 +138,9 @@ if (снимок) {
 }
 
 console.log('\n=== 4. Живое окно TextEdit: найти, свернуть, увидеть, развернуть, поднять');
-const файлДокумента = path.join(рабочаяПапка, 'rujarvis-check.txt');
+// «Ё» в имени файла — не для красоты: заголовок окна получится с «ё», а
+// фраза доходит до драйвера уже без неё. Ровно это прятало окно на Windows.
+const файлДокумента = path.join(рабочаяПапка, 'приёмка-rujarvis.txt');
 writeFileSync(файлДокумента, '', 'utf8');
 await шаг('запустить TextEdit', () => запустить('open', ['-a', 'TextEdit', файлДокумента], { timeout: 30_000 }));
 
@@ -166,7 +168,20 @@ for (const item of окна.slice(0, 8)) {
   окна.some((item) => item.app === 'TextEdit'),
   'TextEdit есть в списке окон',
 );
-const pidTextEdit = окна.find((item) => item.app === 'TextEdit')?.pid;
+const окноTextEdit = окна.find((item) => item.app === 'TextEdit');
+const pidTextEdit = окноTextEdit?.pid;
+
+// Каким именно Юникодом приехала «ё» — одним знаком (451) или «е» со знаком
+// над ней (435 308). Пишем коды, а не догадку.
+if (окноTextEdit) {
+  const коды = [...окноTextEdit.title].map((знак) => знак.codePointAt(0)?.toString(16)).join(' ');
+  console.log(`         заголовок по кодам: ${коды}`);
+}
+
+// Фраза доходит до драйвера без «ё»: разбор речи приводит её к «е».
+const безЁ = await шаг('найти окно с «ё» по фразе без «ё»', () => driver.focus('приемка-rujarvis'));
+if (безЁ) console.log(`         впереди «${безЁ.title}»`);
+проверить(безЁ !== null, '«ё» в заголовке не прячет окно');
 
 const одинСписок = Date.now();
 await driver.windows();
