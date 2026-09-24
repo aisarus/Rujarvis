@@ -38,6 +38,11 @@ async function попытка(имя, файл, аргументы, timeoutMs = 
 }
 
 const jxa = (код) => ['-l', 'JavaScript', '-e', код];
+// В AppleScript имена переменных — только латиница.
+//
+// `set имена to name of every window` даёт «syntax error: Expected expression
+// but found unknown token». Замерено этим же пробником 24.09.2026. Русские
+// строки в кавычках при этом живут прекрасно — ломаются именно имена.
 const applescript = (код) => ['-e', код];
 
 const итоги = [];
@@ -95,19 +100,18 @@ const SE_WINDOW_CYCLE = `
   delay 1.5
   tell application "System Events"
     tell process "TextEdit"
-      set имена to name of every window
-      if (count of windows) is 0 then return "TextEdit без окон: " & (имена as text)
+      if (count of windows) is 0 then return "TextEdit bez okon"
       set w to window 1
-      set былоСвёрнуто to (value of attribute "AXMinimized" of w) as text
+      set wasMin to (value of attribute "AXMinimized" of w) as text
       set value of attribute "AXMinimized" of w to true
       delay 1
-      set сталоСвёрнуто to (value of attribute "AXMinimized" of w) as text
-      set видноСвёрнутым to (name of w)
+      set nowMin to (value of attribute "AXMinimized" of w) as text
+      set seenWhileMin to (name of w)
       set value of attribute "AXMinimized" of w to false
       delay 1
-      set послеРазворота to (value of attribute "AXMinimized" of w) as text
+      set afterRestore to (value of attribute "AXMinimized" of w) as text
       set frontmost to true
-      return "окно «" & видноСвёрнутым & "»; было=" & былоСвёрнуто & " свернули=" & сталоСвёрнуто & " развернули=" & послеРазворота
+      return "okno «" & seenWhileMin & "»; bylo=" & wasMin & " svernuli=" & nowMin & " razvernuli=" & afterRestore
     end tell
   end tell
 `;
@@ -117,7 +121,7 @@ const SE_RAISE = `
   tell application "System Events"
     set p to first process whose name contains "TextEdit"
     set frontmost of p to true
-    return "впереди: " & (name of first process whose frontmost is true)
+    return "vperedi: " & (name of first process whose frontmost is true)
   end tell
 `;
 
