@@ -72,6 +72,21 @@ for pr in $list; do
     continue
   fi
 
+  # «Уже разобран» без единого замечания — не разбор, а тупик.
+  #
+  # Бот отвечает «Already reviewed the last commit» и ничего не делает: он
+  # считает коммит просмотренным, хотя замечаний не появилось. Обычная просьба
+  # тут бесполезна — расписание повторяло бы её вечно. Нужен полный обход.
+  if printf '%s' "$text" | grep -qE 'Already reviewed|Action not completed'; then
+    echo "PR №$pr считается разобранным, но замечаний нет — прошу полный обход…"
+    gh pr comment "$pr" --repo "$repo" --body '@coderabbitai full review' >/dev/null || {
+      echo "Не удалось попросить полный обход у PR №$pr." >&2
+      exit 1
+    }
+    echo "Запрошено. Следующий кусок — в следующий раз, когда отпустит лимит."
+    exit 0
+  fi
+
   if printf '%s' "$text" | grep -qE 'Review triggered|Currently processing'; then
     age=$(( ( $(date -u +%s) - $(date -u -d "$when" +%s 2>/dev/null || echo 0) ) / 60 ))
     # Полчаса на девяносто файлов хватает; если завис — попробуем снова.
