@@ -341,8 +341,14 @@ describe('повторение', () => {
 
   it('не повторяет бесконечно', () => {
     // «Сто раз» по ошибке распознавания — это сто нажатий в чужом документе.
+    //
+    // Форма утверждается ЯВНО: прежнее `command?.kind === 'repeat' && …`
+    // давало `false` при `null`, а `expect(false).toBeLessThanOrEqual(20)`
+    // проходит — предел не проверялся вовсе.
     const command = parseDirectCommand('вниз сто раз');
-    expect(command?.kind === 'repeat' && command.times).toBeLessThanOrEqual(20);
+    expect(command?.kind).toBe('repeat');
+    const times = command?.kind === 'repeat' ? command.times : Number.POSITIVE_INFINITY;
+    expect(times).toBeLessThanOrEqual(20);
   });
 
   it('без числа остаётся обычной командой', () => {

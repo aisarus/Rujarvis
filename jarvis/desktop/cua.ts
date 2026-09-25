@@ -99,6 +99,19 @@ export class CuaDriver {
       const child = spawn(exe, ['mcp'], { stdio: ['pipe', 'pipe', 'ignore'] });
       this.child = child;
 
+      // Без слушателя `error` не запустившийся драйвер (нет прав, антивирус)
+      // ронял весь процесс MCP-сервера.
+      child.on('error', (беда: Error) => {
+        this.child = null;
+        this.ready = null;
+        for (const [id, seat] of this.waiting) {
+          clearTimeout(seat.timer);
+          seat.reject(new Error(`Драйвер не запустился: ${беда.message}`));
+          this.waiting.delete(id);
+        }
+      });
+      child.stdin?.on('error', () => undefined);
+
       child.stdout?.on('data', (chunk: Buffer) => this.take(chunk.toString('utf8')));
       child.on('exit', () => {
         this.child = null;
@@ -110,11 +123,28 @@ export class CuaDriver {
         }
       });
 
-      await this.ask('initialize', {
-        protocolVersion: '2024-11-05',
-        capabilities: {},
-        clientInfo: { name: 'jarvis', version: '1' },
-      });
+      try {
+        await this.ask('initialize', {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: { name: 'jarvis', version: '1' },
+        });
+      } catch (беда) {
+        // Отклонённое обещание оставалось в `ready` НАВСЕГДА: один неудачный
+        // запуск (драйвера нет, `initialize` не ответил за тридцать секунд на
+        // холодном старте) ломал компьютер-юз до перезапуска приложения. Это
+        // ровно та «смерть глаз и рук», о которой предупреждает комментарий к
+        // `call`. Заодно гасим повисший процесс.
+        this.ready = null;
+        const ушедший = this.child;
+        this.child = null;
+        try {
+          ушедший?.kill();
+        } catch {
+          // Уже мёртв — и хорошо.
+        }
+        throw беда;
+      }
       this.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
     })();
 

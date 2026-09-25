@@ -5,11 +5,20 @@ import { describe, expect, it } from 'vitest';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
+import { driverScriptPath } from './driver';
+
 describe('драйвер рабочего стола', () => {
   it('находит свой PowerShell-скрипт', () => {
-    // Путь вычисляется в самом модуле; если он перестанет находиться, клики и
-    // нажатия молча перестанут работать.
-    expect(existsSync(path.join(here, 'win32-driver.ps1'))).toBe(true);
+    // Спрашиваем САМ МОДУЛЬ, а не файловую систему.
+    //
+    // Раньше проверялось только то, что файл лежит рядом с проверкой: сломай
+    // список кандидатов в `findDriverScript`, и она осталась бы зелёной, а
+    // клики и нажатия молча перестали бы работать.
+    const найденный = driverScriptPath();
+    expect(existsSync(найденный), `модуль указал на ${найденный}`).toBe(true);
+    expect(path.basename(найденный)).toBe('win32-driver.ps1');
+    // И это правда наш файл, а не одноимённый чужой.
+    expect(path.resolve(найденный)).toBe(path.resolve(path.join(here, 'win32-driver.ps1')));
   });
 
   it('не зависит от import.meta — он попадает в CJS-сборку приложения', () => {

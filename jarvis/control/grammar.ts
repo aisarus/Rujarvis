@@ -109,6 +109,15 @@ function walkInner(tokens: Token[], words: string[], stems: string[]): Slots | n
         }
         return null;
       }
+      // Необязательный СЛОТ вида `[{куда}]`.
+      //
+      // Раньше эта ветка молча отдавала `null`: такой шаблон не совпал бы ни
+      // разу, и никто бы не узнал — правило просто перестало бы работать.
+      // Слот берёт ровно одно слово, как и обязательный.
+      if (inner.kind === 'slot' && wi < words.length) {
+        const слово = words[wi] as string;
+        return go(ti + 1, wi + 1, { ...slots, [inner.name]: слово });
+      }
       return null;
     }
 

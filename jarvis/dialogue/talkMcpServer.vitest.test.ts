@@ -171,7 +171,8 @@ describe('add_step', () => {
     const ответ = await client.callTool({ name: 'add_step', arguments: { text: 'добавить подвал' } });
 
     expect(store.read()?.steps.map((step) => step.text)).toEqual(['найти данные', 'добавить подвал']);
-    expect(текстОтвета(ответ)).toContain('2');
+    // Точная строка, а не цифра: «2» могла прийти из любого места ответа.
+    expect(текстОтвета(ответ)).toContain('Дописал шагом 2.');
     await client.close();
   });
 

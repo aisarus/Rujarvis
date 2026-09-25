@@ -41,25 +41,6 @@ function permissionLines(request: BackendRequest): string[] {
 }
 
 /**
- * How to work on someone's screen without wrecking it.
- *
- * Written from what went wrong in practice: a model that clicks from memory
- * instead of from a fresh screenshot misses moved buttons, and one that never
- * writes anything down rediscovers the same layout on every single run while
- * the person waits.
- */
-/**
- * Пульс: заглядывать, не сказал ли человек чего-нибудь, пока ты работаешь.
- *
- * Работа по одной команде идёт десятки минут, и всё это время человек рядом.
- * Без этой привычки его «крышу сделай синей» доходит до агента только через
- * полчаса — вместе с готовой крышей не того цвета.
- *
- * Пороги названы числами нарочно. «Иногда проверяй» модель выполняет как
- * «почти никогда»; «перед каждым крупным шагом и не реже, чем раз в пару
- * минут» — как указание.
- */
-/**
  * Длинная работа по одной команде.
  *
  * То, ради чего всё это затевалось. Человек описал так: «джарвис получил
@@ -87,6 +68,17 @@ const LONG_WORK_GUIDANCE = [
   '  на результат — тогда готово. Не проверял — так и скажи.',
 ].join('\n');
 
+/**
+ * Пульс: заглядывать, не сказал ли человек чего-нибудь, пока ты работаешь.
+ *
+ * Работа по одной команде идёт десятки минут, и всё это время человек рядом.
+ * Без этой привычки его «крышу сделай синей» доходит до агента только через
+ * полчаса — вместе с готовой крышей не того цвета.
+ *
+ * Пороги названы числами нарочно. «Иногда проверяй» модель выполняет как
+ * «почти никогда»; «перед каждым крупным шагом и не реже, чем раз в пару
+ * минут» — как указание.
+ */
 const HEARTBEAT_GUIDANCE = [
   'ПОКА ТЫ РАБОТАЕШЬ, ЧЕЛОВЕК РЯДОМ:',
   '- Если работа длиннее пары минут, вызывай check_notes перед каждым крупным шагом',
@@ -154,6 +146,14 @@ const QUIET_MODE = [
   '  когда освободится.',
 ].join('\n');
 
+/**
+ * How to work on someone's screen without wrecking it.
+ *
+ * Written from what went wrong in practice: a model that clicks from memory
+ * instead of from a fresh screenshot misses moved buttons, and one that never
+ * writes anything down rediscovers the same layout on every single run while
+ * the person waits.
+ */
 const COMPUTER_USE_GUIDANCE = [
   'WORKING ON THE SCREEN:',
   '- Start with recall: you may already know where things are from a previous run.',

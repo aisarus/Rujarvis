@@ -130,12 +130,26 @@ function openJournal(): JournalStore {
  * Отсутствие окна — обычный ответ, а не ошибка: бывает, что Blender не успел
  * или не смог открыть файл.
  */
-async function blenderWindowAppeared(attempts = 6, everyMs = 1_500): Promise<boolean> {
+async function blenderWindowAppeared(attempts = 6, everyMs = 1_500, файл?: string): Promise<boolean> {
   for (let index = 0; index < attempts; index += 1) {
     await new Promise((resolve) => setTimeout(resolve, everyMs));
     try {
       const windows = await driver.windows();
-      if (windows.some((item) => /blender/iu.test(item.title))) return true;
+      // Ищем ИМЕННО ЭТОТ файл, а не «хоть какой-нибудь Blender».
+      //
+      // Blender пишет имя файла в заголовок. Без этой проверки уже открытое
+      // окно — живой Blender или другая сцена — засчитывалось сразу, и
+      // инструмент отвечал «Открыл в окне Blender: …», хотя новый процесс не
+      // поднялся. Ровно ту ложь проверка и заведена ловить.
+      const имя = файл ? path.basename(файл).toLowerCase() : '';
+      if (
+        windows.some(
+          (item) =>
+            /blender/iu.test(item.title) && (!имя || item.title.toLowerCase().includes(имя)),
+        )
+      ) {
+        return true;
+      }
     } catch {
       // Драйвер мог быть занят — просто пробуем ещё раз.
     }
@@ -710,7 +724,7 @@ export function createDesktopMcpServer(): McpServer {
         let shown = '';
         if (show) {
           blender.openInBlender(show);
-          shown = (await blenderWindowAppeared())
+          shown = (await blenderWindowAppeared(6, 1_500, show))
             ? `\nОткрыл в окне Blender: ${show}`
             : '\nОкно Blender не появилось — скажи об этом человеку, не утверждай обратное.';
         }
