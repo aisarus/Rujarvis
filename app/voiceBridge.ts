@@ -42,7 +42,12 @@ import type { EventKind } from '../jarvis/memory/journal';
 import { matchVoiceControl } from '../jarvis/voice/interrupts';
 import { fixMishearings } from '../jarvis/voice/mishearing';
 import { isSilenceRequest, looksLikeChatter, meaningfulSpeech } from '../jarvis/voice/noise';
-import { endsDictation, parseDirectCommand, type DirectCommand } from '../jarvis/control/commands';
+import {
+  endsDictation,
+  parseDirectCommand,
+  type DirectCommand,
+  type НастройкаГолосом,
+} from '../jarvis/control/commands';
 import { reapAll } from '../jarvis/tasks/reaper';
 import { parseDictationEdit, type DictationEdit } from '../jarvis/control/dictationEdits';
 import { chooseElement } from '../jarvis/control/elements';
@@ -62,7 +67,13 @@ import { setLocalModel } from '../jarvis/backends/localModel';
 import { setLanguage, tr } from '../jarvis/locale/language';
 import type { BackendFileChange } from '../jarvis/backends/types';
 import { jarvisOutputDir, jarvisPaths } from '../jarvis/setup/paths';
-import { DEFAULT_SETTINGS, type AppSettings, type SettingsStore } from '../jarvis/setup/settings';
+import {
+  DEFAULT_SETTINGS,
+  SPEECH_SPEED_RANGE,
+  SPEECH_VOLUME_RANGE,
+  type AppSettings,
+  type SettingsStore,
+} from '../jarvis/setup/settings';
 import { installVoice, isVoiceInstalled, Speaker } from '../jarvis/voice/tts';
 import { AUDIO_BRIDGE_CHANNELS, buildAudioBridgeHtml } from './audioBridgePage';
 import { createElevenLabsTranscriber } from './cloudTranscriber';
@@ -365,6 +376,10 @@ export async function runDirectCommand(
         console.log(`[jarvis] переключился на «${found.title}»`);
         break;
       }
+      case 'setting': {
+        await применитьНастройку(command.what, command.direction, session);
+        break;
+      }
       case 'clickNamed': {
         // Не нашли — не кликаем. Промах мимо названной кнопки хуже отказа:
         // он срабатывает, человек его не ждал, и заметит не сразу.
@@ -490,6 +505,75 @@ export async function runDirectCommand(
   return passed();
 }
 
+/**
+ * Поменять настройку голосом и сказать, что получилось.
+ *
+ * Сказать обязательно: человек не видит ни ползунка, ни галочки, и без ответа
+ * не поймёт, услышали его или нет. Отвечаем НОВЫМ значением — «громкость
+ * восемьдесят процентов», — а не «сделано»: иначе непонятно, куда пришли.
+ *
+ * На краю диапазона говорим прямо, что дальше некуда. Молчаливое упирание в
+ * предел выглядит как сломанная команда, и человек повторяет её ещё трижды.
+ */
+async function применитьНастройку(
+  what: НастройкаГолосом,
+  direction: 'up' | 'down' | 'on' | 'off',
+  session: ГоворящаяСессия,
+): Promise<void> {
+  const store = settingsRef;
+  if (!store) throw new Error('настройки ещё не готовы');
+  const было = store.get();
+
+  if (what === 'mic') {
+    // Включить голосом нельзя: выключенный микрофон не слышит. Зато он
+    // включится сам через пять минут — тупика не будет.
+    active?.toggleMute();
+    return;
+  }
+
+  if (what === 'bigMode' || what === 'wakeAck') {
+    const значение = direction === 'on';
+    store.update({ [what]: значение } as Partial<AppSettings>);
+    const фразы: Record<'bigMode' | 'wakeAck', [string, string]> = {
+      bigMode: [tr('Сделал крупнее.', 'Text is larger now.'), tr('Вернул обычный размер.', 'Back to normal size.')],
+      wakeAck: [tr('Буду отзываться.', 'I will answer.'), tr('Не буду отзываться.', 'I will stay quiet.')],
+    };
+    await session.speak(фразы[what][значение ? 0 : 1]);
+    return;
+  }
+
+  // Остались только числовые настройки. Сужаем явно: через три ранних
+  // возврата TypeScript этого не выводит.
+  const ключ: 'speechSpeed' | 'speechVolume' = what === 'speechSpeed' ? 'speechSpeed' : 'speechVolume';
+  const предел = ключ === 'speechSpeed' ? SPEECH_SPEED_RANGE : SPEECH_VOLUME_RANGE;
+  const шаг = direction === 'up' ? предел.step : -предел.step;
+  const хотели = Math.round((было[ключ] + шаг) * 100) / 100;
+  const стало = Math.min(предел.max, Math.max(предел.min, хотели));
+
+  if (стало === было[ключ]) {
+    await session.speak(
+      what === 'speechSpeed'
+        ? direction === 'up'
+          ? tr('Быстрее уже не могу.', 'That is as fast as I go.')
+          : tr('Медленнее уже не могу.', 'That is as slow as I go.')
+        : direction === 'up'
+          ? tr('Громче уже не могу.', 'That is as loud as I go.')
+          : tr('Тише уже не могу.', 'That is as quiet as I go.'),
+    );
+    return;
+  }
+
+  store.update({ [ключ]: стало } as Partial<AppSettings>);
+
+  if (what === 'speechSpeed') {
+    const процент = Math.round(стало * 100);
+    await session.speak(tr(`Скорость ${процент} процентов.`, `Speed ${процент} percent.`));
+    return;
+  }
+  const процент = Math.round(стало * 100);
+  await session.speak(tr(`Громкость ${процент} процентов.`, `Volume ${процент} percent.`));
+}
+
 /** Ищет названный элемент в активном окне. */
 async function findNamedElement(query: string) {
   const window = await desktop.elements();
@@ -540,6 +624,17 @@ async function applyDictationEdit(edit: DictationEdit): Promise<void> {
 
 function describeDirect(command: DirectCommand): string {
   switch (command.kind) {
+    case 'setting': {
+      const что: Record<НастройкаГолосом, string> = {
+        speechVolume: 'громкость речи',
+        speechSpeed: 'скорость речи',
+        bigMode: 'крупный режим',
+        wakeAck: 'отклик на имя',
+        mic: 'микрофон',
+      };
+      const куда = { up: 'больше', down: 'меньше', on: 'включил', off: 'выключил' }[command.direction];
+      return `${что[command.what]}: ${куда}`;
+    }
     case 'key':
       return `нажал ${command.keys}`;
     case 'scroll':
@@ -933,6 +1028,7 @@ async function поднятьМост(options: {
     // without repeating it, short enough that a mention on a video call does
     // not leave the microphone armed indefinitely.
     wakeWord: { awakeWindowMs: AWAKE_WINDOW_MS },
+    acknowledgeWake: () => settings().wakeAck,
     onStatus: (status) => {
       console.log(`[jarvis] ${status.label}`);
       overlay.update(status);
@@ -2305,7 +2401,9 @@ function createPlayback(audioWindow: BrowserWindow): SpeechPlayback & { dispose(
     // Запоминается до синтеза: эхо возвращается, пока фраза ещё звучит.
     echoGuard.spoke(text);
     try {
-      const result = await currentSpeaker().say(text);
+      // Скорость — из настроек: её меняют голосом на ходу, поэтому читаем
+      // при каждой фразе, а не запоминаем при запуске.
+      const result = await currentSpeaker().say(text, settings().speechSpeed);
       if (audioWindow.isDestroyed()) return;
 
       token += 1;
@@ -2324,6 +2422,8 @@ function createPlayback(audioWindow: BrowserWindow): SpeechPlayback & { dispose(
         audioWindow.webContents.send(AUDIO_BRIDGE_CHANNELS.speak, {
           token: mine,
           data: result.wav.toString('base64'),
+          // Громкость едет вместе со звуком: её меняют голосом на ходу.
+          volume: settings().speechVolume,
         });
       });
     } catch (error) {

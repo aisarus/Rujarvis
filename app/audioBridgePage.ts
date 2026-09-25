@@ -330,6 +330,10 @@ ipcRenderer.on(CH.speak, (_event, payload) => {
     if (player) { player.pause(); player = null; }
     if (playerDone) playerDone();
     var audio = new Audio('data:audio/wav;base64,' + (payload && payload.data));
+    // Громкость приходит с каждой фразой: её меняют голосом на ходу.
+    // Нулевую не ставим никогда — молчащий помощник выглядит сломанным.
+    var вслух = payload && typeof payload.volume === 'number' ? payload.volume : 1;
+    audio.volume = Math.min(1, Math.max(0.05, вслух));
     player = audio;
     playerToken = token;
     // О конце фразы обязан узнать тот, кто выстраивает речь в очередь. Иначе

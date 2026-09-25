@@ -42,7 +42,74 @@ export type DirectCommand =
   | { kind: 'selfDestruct' }
   | { kind: 'forgetTalk' }
   | { kind: 'longSpeech' }
+  | { kind: 'setting'; what: НастройкаГолосом; direction: 'up' | 'down' | 'on' | 'off' }
   | { kind: 'repeat'; times: number; command: RepeatableCommand };
+
+/** Что настраивается голосом, коротким словом. */
+export type НастройкаГолосом = 'speechVolume' | 'speechSpeed' | 'bigMode' | 'wakeAck' | 'mic';
+
+/**
+ * Настройки, которые меняются одним словом.
+ *
+ * Зачем они есть. Настройки живут в окне, окно открывается мышью, а человек,
+ * ради которого это делается, мышью может не владеть. Всё, что ему нужно
+ * поправить в первый час — громкость, скорость речи, размер плашки, —
+ * должно меняться голосом и без единого клика.
+ *
+ * Почему не «громче». Это слово уже занято системной громкостью, и отнимать
+ * его нельзя: человек имеет в виду звук вообще, а не речь Джарвиса. Поэтому
+ * для речи фразы однозначные — «говори громче».
+ *
+ * Микрофон выключается голосом, а включается сам через пять минут: включить
+ * его голосом нельзя по определению, выключенный микрофон не слышит.
+ */
+const НАСТРОЙКИ_ГОЛОСОМ: Record<string, { what: НастройкаГолосом; direction: 'up' | 'down' | 'on' | 'off' }> = {
+  'говори громче': { what: 'speechVolume', direction: 'up' },
+  'говори погромче': { what: 'speechVolume', direction: 'up' },
+  'погромче говори': { what: 'speechVolume', direction: 'up' },
+  'speak louder': { what: 'speechVolume', direction: 'up' },
+  'louder please': { what: 'speechVolume', direction: 'up' },
+
+  'говори тише': { what: 'speechVolume', direction: 'down' },
+  'говори потише': { what: 'speechVolume', direction: 'down' },
+  'потише говори': { what: 'speechVolume', direction: 'down' },
+  'speak quieter': { what: 'speechVolume', direction: 'down' },
+  'speak softer': { what: 'speechVolume', direction: 'down' },
+
+  'говори быстрее': { what: 'speechSpeed', direction: 'up' },
+  'быстрее говори': { what: 'speechSpeed', direction: 'up' },
+  'speak faster': { what: 'speechSpeed', direction: 'up' },
+
+  'говори медленнее': { what: 'speechSpeed', direction: 'down' },
+  'помедленнее': { what: 'speechSpeed', direction: 'down' },
+  'говори помедленнее': { what: 'speechSpeed', direction: 'down' },
+  'speak slower': { what: 'speechSpeed', direction: 'down' },
+
+  'крупнее': { what: 'bigMode', direction: 'on' },
+  'сделай крупнее': { what: 'bigMode', direction: 'on' },
+  'крупный шрифт': { what: 'bigMode', direction: 'on' },
+  'плохо вижу': { what: 'bigMode', direction: 'on' },
+  'bigger text': { what: 'bigMode', direction: 'on' },
+  'large text': { what: 'bigMode', direction: 'on' },
+
+  'мельче': { what: 'bigMode', direction: 'off' },
+  'обычный шрифт': { what: 'bigMode', direction: 'off' },
+  'smaller text': { what: 'bigMode', direction: 'off' },
+  'normal text': { what: 'bigMode', direction: 'off' },
+
+  'не отзывайся': { what: 'wakeAck', direction: 'off' },
+  'не говори да': { what: 'wakeAck', direction: 'off' },
+  'stop answering me': { what: 'wakeAck', direction: 'off' },
+
+  'отзывайся': { what: 'wakeAck', direction: 'on' },
+  'answer me': { what: 'wakeAck', direction: 'on' },
+
+  'выключи микрофон': { what: 'mic', direction: 'off' },
+  'не слушай': { what: 'mic', direction: 'off' },
+  'не слушай меня': { what: 'mic', direction: 'off' },
+  'microphone off': { what: 'mic', direction: 'off' },
+  'stop listening': { what: 'mic', direction: 'off' },
+};
 
 /**
  * Что имеет смысл повторять.
@@ -629,6 +696,14 @@ function readDirect(phrase: string): DirectCommand | null {
   // поймала это первой же строкой.
   if (DICTATION_ON.includes(phrase)) return { kind: 'dictation', on: true };
   if (DICTATION_OFF.includes(phrase)) return { kind: 'dictation', on: false };
+
+  // Настройки — до таблицы клавиш.
+  //
+  // «Громче» в той таблице означает системную громкость, и это правильно.
+  // Наши фразы длиннее и однозначнее, но проверить их надо раньше, чтобы
+  // разбор не откусил от них знакомое слово.
+  const настройка = НАСТРОЙКИ_ГОЛОСОМ[phrase];
+  if (настройка) return { kind: 'setting', ...настройка };
 
   // Диктовка проверяется до таблиц: у неё есть хвост, и точное совпадение
   // здесь неприменимо.

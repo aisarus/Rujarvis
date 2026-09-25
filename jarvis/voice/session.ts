@@ -94,6 +94,14 @@ export interface VoiceSessionOptions {
   playback?: SpeechPlayback;
   mode?: VoiceMode;
   wakeWord?: WakeWordListenerOptions;
+  /**
+   * Отзываться ли голосом на одно имя без команды.
+   *
+   * Функцией, а не значением: настройку человек меняет на ходу, в том числе
+   * голосом («не отзывайся»), и сессия должна видеть свежее, а не то, что
+   * было при запуске.
+   */
+  acknowledgeWake?: () => boolean;
   onStatus?(status: VoiceStatus): void;
   /** Surfaces a transcript to the UI as soon as it exists. */
   onTranscript?(text: string): void;
@@ -257,6 +265,8 @@ export class VoiceSession {
       // «слушаю»: `speak` честно переводит индикатор в «отвечаю», и человек
       // вместо «я тебя слышу» увидел бы «я занят». Поэтому сначала состояние,
       // а голос — следующим тиком, и после него состояние возвращается.
+      if (this.options.acknowledgeWake?.() === false) return null;
+
       setTimeout(() => {
         void (async () => {
           await this.speak(tr('Да?', 'Yes?'));

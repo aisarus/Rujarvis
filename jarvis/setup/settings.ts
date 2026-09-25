@@ -46,6 +46,27 @@ export interface AppSettings {
   localModelName: string;
   /** Пройден ли первый запуск. */
   onboarded: boolean;
+
+  /**
+   * Отзываться ли голосом, когда позвали по имени без команды.
+   *
+   * Тому, кто не видит плашку, отклик необходим: иначе он не знает, услышали
+   * его или нет, а ответа на саму задачу ждать до десяти секунд. Тому, кто
+   * зовёт Джарвиса полсотни раз за день, лишнее «да?» мешает. Поэтому
+   * настройка, а не выбор за всех.
+   */
+  wakeAck: boolean;
+  /** Скорость речи: 0,5 — вдвое медленнее, 2 — вдвое быстрее. */
+  speechSpeed: number;
+  /** Громкость речи, от 0 до 1. */
+  speechVolume: number;
+  /**
+   * Крупный режим: плашка вдвое больше, шрифт крупнее, контраст выше.
+   *
+   * Плашка 320×84 со шрифтом 15 пикселей — единственный способ увидеть
+   * состояние, и для слабого зрения он не работает.
+   */
+  bigMode: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -59,9 +80,30 @@ export const DEFAULT_SETTINGS: AppSettings = {
   localModelUrl: '',
   localModelName: '',
   onboarded: false,
+  wakeAck: true,
+  speechSpeed: 1,
+  speechVolume: 1,
+  bigMode: false,
 };
 
+/** Пределы, за которые голосовая настройка не уводит. */
+export const SPEECH_SPEED_RANGE = { min: 0.5, max: 2, step: 0.15 } as const;
+export const SPEECH_VOLUME_RANGE = { min: 0.2, max: 1, step: 0.15 } as const;
+
 /** Привести что угодно к корректным настройкам. */
+/**
+ * Число в границах — или значение по умолчанию.
+ *
+ * Голосом эти числа и меняются («громче», «медленнее»), поэтому за границы
+ * они уходить не должны: нулевая громкость — это молчащий помощник, который
+ * выглядит сломанным, а скорость 0,1 превращает речь в нечитаемое.
+ */
+function вЧисло(raw: unknown, fallback: number, range: { min: number; max: number }): number {
+  const value = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(range.max, Math.max(range.min, value));
+}
+
 export function normaliseSettings(raw: unknown): AppSettings {
   const input = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
   const text = (key: string, fallback: string): string =>
@@ -92,6 +134,12 @@ export function normaliseSettings(raw: unknown): AppSettings {
       : '',
     localModelName: text('localModelName', ''),
     onboarded: input.onboarded === true,
+    // Отклик на имя по умолчанию включён: без него тот, кто не видит плашку,
+    // остаётся в тишине и не знает, услышали его.
+    wakeAck: input.wakeAck !== false,
+    speechSpeed: вЧисло(input.speechSpeed, DEFAULT_SETTINGS.speechSpeed, SPEECH_SPEED_RANGE),
+    speechVolume: вЧисло(input.speechVolume, DEFAULT_SETTINGS.speechVolume, SPEECH_VOLUME_RANGE),
+    bigMode: input.bigMode === true,
   };
 }
 
