@@ -1,0 +1,846 @@
+/**
+ * Прямые команды — то, что делается мгновенно, минуя агента.
+ *
+ * Это и есть разница между «управлением компьютером через голос» и голосовым
+ * пультом с задержкой. Задача, отданная агенту, идёт полминуты: он читает
+ * запрос, думает, зовёт инструменты, отвечает. Для «прокрути вниз» или «нажми
+ * Enter» это непригодно — к моменту ответа человек давно сделал бы сам.
+ *
+ * Здесь список того, что не требует размышления. Фраза сопоставляется с
+ * таблицей и превращается в нажатие клавиш, движение колеса или клик. Всё
+ * остальное уходит агенту, как и раньше.
+ *
+ * ## Правило, ради которого всё это безопасно
+ *
+ * **Совпадение должно быть точным.** «Найди» — это Ctrl+F, а «найди отчёт за
+ * март» — работа для агента. Если в фразе есть хоть что-то сверх команды,
+ * значит человек имел в виду не сочетание клавиш. Ошибка в эту сторону стоит
+ * секунды ожидания; в обратную — нажатого невпопад Ctrl+F посреди работы.
+ */
+
+import { stripFiller } from '../voice/filler';
+import { WAKE_WORD_VARIANTS } from '../voice/wakeWord';
+import { firstMatch, type Rule } from './grammar';
+import { GRID_CELLS, parseSpokenNumber } from './grid';
+
+export type DirectCommand =
+  | { kind: 'key'; keys: string }
+  | { kind: 'scroll'; amount: number }
+  | { kind: 'click'; button: 'left' | 'right' | 'middle'; double?: boolean }
+  | { kind: 'type'; text: string }
+  | { kind: 'focus'; title: string }
+  | { kind: 'dictation'; on: boolean }
+  | { kind: 'clickNamed'; query: string }
+  | { kind: 'grid'; on: boolean }
+  | { kind: 'gridClick'; cell: number }
+  | { kind: 'gridRefine'; sub: number }
+  | { kind: 'help'; on: boolean }
+  | { kind: 'log'; on: boolean }
+  | { kind: 'where' }
+  | { kind: 'mode'; show: boolean }
+  | { kind: 'dotaOverlay'; mode: 'full' | 'silent' | 'off' }
+  | { kind: 'selfDestruct' }
+  | { kind: 'forgetTalk' }
+  | { kind: 'longSpeech' }
+  | { kind: 'repeat'; times: number; command: RepeatableCommand };
+
+/**
+ * Что имеет смысл повторять.
+ *
+ * Прокрутка и нажатия — да: крутить по одному щелчку голосом невыносимо.
+ * Диктовка, сетка и список команд — нет: это режимы, а не действия, и
+ * «включить диктовку пять раз» не значит ничего.
+ */
+export type RepeatableCommand =
+  | { kind: 'key'; keys: string }
+  | { kind: 'scroll'; amount: number }
+  | { kind: 'click'; button: 'left' | 'right' | 'middle'; double?: boolean };
+
+/** Больше этого — почти наверняка ослышка, а не просьба. */
+const MAX_REPEAT = 20;
+
+/** Список команд: показать и убрать. */
+const HELP_ON = [
+  'что ты умеешь', 'помощь', 'какие команды', 'справка', 'что можно сказать',
+  'что умеешь', 'какие есть команды',
+  // Английские фразы живут в тех же таблицах: русский режим их тоже
+  // понимает, а английскому не нужна вторая копия логики.
+  'what can you do', 'help', 'show commands', 'which commands', 'what can i say',
+];
+const HELP_OFF = [
+  'убери список', 'закрой список', 'спрячь список', 'убери помощь',
+  'hide commands', 'close the list', 'hide the list', 'hide help',
+];
+
+/**
+ * Окно с рассказом о работе: показать и убрать.
+ *
+ * «Что ты делаешь» разбирается здесь, а не уходит агенту, и это осознанно.
+ * Спросить голосом и ждать полминуты, пока агент опишет сам себя, — худший
+ * способ ответить на вопрос, ответ на который уже написан в окне.
+ */
+const LOG_ON = [
+  'что ты делаешь', 'покажи лог', 'открой лог', 'покажи что делаешь',
+  'покажи работу', 'чем занят', 'что происходит', 'чем занимаешься',
+  'что делаешь', 'покажи окно', 'открой окно', 'покажи чем занят',
+  // Спрашивают со словом «ты» — и без него почти не спрашивают. Убрать «ты»
+  // из речи целиком нельзя: тогда «где ты» превратится в «где».
+  'чем ты занят', 'чем ты занимаешься', 'покажи что ты делаешь',
+  'what are you doing', 'show log', 'show the log', 'open log', 'open the log',
+  'show events', 'what is happening', 'what s happening', 'show your work',
+];
+const LOG_OFF = [
+  'закрой лог', 'убери лог', 'спрячь лог', 'закрой окно лога', 'убери окно',
+  'закрой окно работы',
+  'close log', 'close the log', 'hide log', 'hide the log', 'hide events',
+];
+
+/**
+ * «Где ты» — на каком шаге плана.
+ *
+ * Отвечает одной строкой и мгновенно. Тот же вопрос, отданный агенту, стоил бы
+ * полминуты и запуска целой задачи ради того, что уже записано в файле.
+ */
+const WHERE = [
+  'где ты', 'на каком шаге', 'какой план', 'покажи план', 'сколько осталось',
+  // «Ё» здесь мертва: разбор приводит её к «е» раньше сравнения, и запись с
+  // «ё» не совпадёт никогда. «Далеко ещё» пролежало так и не работало.
+  'далеко еще', 'на каком ты шаге',
+  'where are you', 'which step', 'what step', 'show plan', 'show the plan',
+  'how much is left', 'what is the plan',
+];
+
+/**
+ * Режим работы: на виду или в фоне.
+ *
+ * «На виду» — блендер открыт, файлы показываются, человек видит каждый шаг.
+ * «В фоне» — та же работа, но молча и не лезя на экран: человек занят своим и
+ * не хочет, чтобы у него под руками открывались окна.
+ */
+const MODE_SHOW = [
+  'показывай все', 'работай на виду', 'работай при мне',
+  'открывай окна', 'на виду',
+  'show everything', 'work visibly', 'work in front of me', 'open windows',
+];
+const MODE_QUIET = [
+  'работай в фоне', 'работай тихо', 'в фоне', 'фоновый режим', 'не показывай',
+  'не открывай окна', 'работай молча', 'не показывай окна',
+  'work in the background', 'work in background', 'background mode', 'work silently',
+  'don t show', 'dont show windows', 'don t open windows',
+];
+
+/**
+ * Оверлей в игре: три состояния, а не два.
+ *
+ * Среднее — то, что понадобится в важной игре: смотреть можно, а в ухо не
+ * лезь. Без него человек будет выключать помощника целиком там, где хотел
+ * приглушить только голос.
+ *
+ * ## Чего здесь нет и не будет
+ *
+ * Слов «молчи», «тишина», «тихо», «без голоса». Они принадлежат заглушению —
+ * `jarvis/voice/interrupts.ts`, — а оно разбирается **раньше** этой таблицы
+ * (см. `handleUtterance`, шаг первый). Фраза, совпавшая с заглушением, до
+ * оверлея просто не доедет, а хуже того — отнимет у человека красную линию
+ * «стоп и тишина», которая и без нас хрупкая: замер 20.09.2026 показал, что
+ * из 36 обёрнутых форм не доходили 24.
+ *
+ * «Без голоса» я чуть не взял сюда именно так. Сторож в
+ * `jarvis/voice/redLines.vitest.test.ts` гоняет каждую фразу отсюда через
+ * разбор заглушения и требует, чтобы та не совпала.
+ */
+const DOTA_FULL = [
+  'оверлей', 'включи оверлей', 'покажи оверлей', 'подсказки', 'включи подсказки',
+  'подсказки в игре', 'включи подсказки в игре',
+  'overlay', 'show overlay', 'turn on overlay', 'hints', 'show hints', 'game hints',
+];
+const DOTA_SILENT = [
+  'только показывай', 'только картинку', 'только на экране', 'подсказки на экран',
+  'показывай но не подсказывай',
+  'only show', 'screen only', 'hints on screen only', 'show but don t talk',
+];
+const DOTA_OFF = [
+  'выключи оверлей', 'убери оверлей', 'закрой оверлей', 'спрячь оверлей',
+  'выключи подсказки', 'убери подсказки', 'без подсказок',
+  'hide overlay', 'turn off overlay', 'close overlay', 'hide hints', 'turn off hints',
+];
+
+/** Всё, что относится к оверлею, — одним списком для сторожа красных линий. */
+export const DOTA_OVERLAY_PHRASES: readonly string[] = [
+  ...DOTA_FULL, ...DOTA_SILENT, ...DOTA_OFF,
+];
+
+/**
+ * Аварийный выключатель: убить всё, что Джарвис запустил.
+ *
+ * ## Чем это отличается от «стоп»
+ *
+ * «Стоп» — вежливая просьба, и задача её слышит. Но если агент завис, ушёл в
+ * бесконечный круг или перестал читать свой вход, вежливая просьба не доходит.
+ * Тогда нужен выключатель, который не спрашивает.
+ *
+ * Убивает только своих детей — тех, чьи pid Джарвис отметил при запуске. Голос
+ * при этом остаётся: человеку нужно прибить агента, а не остаться без
+ * управления. Соблазн написать `taskkill /F /IM node.exe` велик и снёс бы
+ * MCP-серверы, чужие сборки и редактор заодно.
+ */
+const KILL_ALL = [
+  'убейся', 'умри', 'сдохни', 'убей агента', 'убей все процессы',
+  'аварийная остановка', 'руби всё', 'руби все',
+  'emergency stop', 'kill everything', 'kill all processes', 'kill the agent', 'kill switch',
+];
+
+/** Для сторожа красных линий: аварийные слова тоже не должны красть заглушение. */
+export const KILL_PHRASES: readonly string[] = KILL_ALL;
+
+/**
+ * Начать разговор заново.
+ *
+ * Нить разговора держит живая сессия, и обычно это благо: «а почему?» есть о
+ * чём спросить. Но когда человек переходит к другому делу, старая нить тянет
+ * за собой чужой замысел и чужие предположения.
+ *
+ * Проверяется здесь, среди прямых команд, а не внутри самого разговора:
+ * просьба закрыть сессию не должна зависеть от той сессии, которую закрывают.
+ */
+const FORGET_TALK = [
+  'забудь разговор', 'забудь наш разговор', 'забудь о чём говорили',
+  'забудь о чем говорили', 'начнём разговор заново', 'начнем разговор заново',
+  'новый разговор',
+  'forget the conversation', 'forget our conversation', 'new conversation',
+  'start a new conversation', 'start the conversation over',
+];
+
+/** Для сторожа красных линий. */
+export const FORGET_TALK_PHRASES: readonly string[] = FORGET_TALK;
+
+/** Сетка с номерами: показать и убрать. */
+const GRID_ON = ['сетка', 'покажи сетку', 'включи сетку', 'номера', 'grid', 'show grid', 'show the grid', 'numbers'];
+const GRID_OFF = [
+  'убери сетку', 'спрячь сетку', 'выключи сетку', 'без сетки',
+  'hide grid', 'hide the grid', 'close the grid', 'no grid',
+];
+
+/**
+ * Уточнение — отдельной фразой, а не хвостом к клику.
+ *
+ * «Клик сорок пять пять» на слух складывается в пятьдесят: составные
+ * числительные не дают отличить номер клетки от номера доли. Два шага
+ * однозначны и в цифрах, и в словах.
+ */
+const REFINE_PREFIXES = ['точнее', 'уточни', 'внутри', 'подклетка', 'refine', 'inside', 'zoom'];
+
+/**
+ * Начала фраз «кликни по чему-то».
+ *
+ * Названное вслух ищется в дереве доступности окна — том же, которым
+ * пользуются экранные читалки, — и клик идёт в центр найденного. Не нашли —
+ * задача уходит агенту, который посмотрит на экран.
+ */
+const CLICK_PREFIXES = ['кликни', 'клик', 'нажми', 'щелкни', 'нажми на', 'click', 'press', 'tap'];
+
+/** Слова между глаголом и названием: «кликни по кнопке Войти». */
+const CLICK_GLUE = [
+  'по', 'на', 'в', 'кнопке', 'кнопку', 'кнопка', 'ссылке', 'ссылку', 'пункт', 'пункте', 'вкладку', 'вкладке', 'поле',
+  'on', 'the', 'button', 'link', 'tab', 'field', 'item',
+];
+
+/**
+ * Начала фраз переключения между окнами.
+ *
+ * Отдельно от запуска: «открой хром» — запустить программу, «переключись на
+ * хром» — показать уже открытое окно. Разница ощутимая, когда Chrome уже
+ * работает и запускать второй незачем.
+ */
+const FOCUS_PREFIXES = [
+  'переключись на', 'переключись в', 'перейди в', 'перейди на',
+  'покажи окно', 'вернись в', 'вернись на', 'сделай активным',
+  // С названием впереди — это переход в программу, а не Ctrl+Tab внутри неё.
+  //
+  // Живой случай: «переключи вкладку на Edge» ушло агенту, и он 75 секунд
+  // писал на C# код подъёма окна вместо одного мгновенного действия. Голое
+  // «переключи вкладку» без названия остаётся Ctrl+Tab и разбирается раньше.
+  'переключи вкладку на', 'переключись на вкладку', 'переключи на',
+  'открой вкладку с', 'переключи окно на',
+  'switch to', 'go to', 'bring up', 'show window', 'focus on', 'switch window to',
+];
+
+/** Включение и выключение диктовки. */
+/**
+ * Печать в активное окно.
+ *
+ * «Диктую» отсюда убрано и отдано длинной мысли: человек попросил именно этим
+ * словом предупреждать, что будет говорить долго. Печать осталась на фразах,
+ * которые ни с чем не спутать.
+ */
+const DICTATION_ON = [
+  'печатай', 'режим диктовки', 'включи диктовку', 'записывай за мной',
+  'печатай за мной', 'пиши за мной',
+  'start dictation', 'dictation mode', 'dictation on', 'type after me', 'type what i say',
+];
+
+/**
+ * Длинная мысль: человек предупреждает, что будет говорить с паузами.
+ *
+ * Слушатель ждёт пять секунд между кусками вместо двух с половиной и не
+ * отдаёт мысль на глаголе просьбы посреди фразы. Держится до конца одного
+ * сообщения.
+ */
+const LONG_SPEECH = [
+  'диктую', 'я диктую', 'слушай длинно', 'длинное сообщение', 'длинная мысль',
+  'сейчас длинно', 'буду говорить долго',
+  'long message', 'long thought', 'i will talk for a while', 'listen long',
+];
+const DICTATION_OFF = [
+  'конец диктовки', 'стоп диктовка', 'хватит диктовать', 'выключи диктовку',
+  'end dictation', 'stop dictation', 'dictation off',
+];
+
+/**
+ * Конец диктовки распознаётся отдельно от остальных команд.
+ *
+ * Пока идёт диктовка, всё услышанное печатается буква в букву, и разбирать
+ * это как команды нельзя — иначе продиктованное слово «вниз» прокрутит
+ * страницу вместо того, чтобы попасть в текст. Единственное исключение —
+ * фраза выхода, и потому она проверяется сама по себе.
+ */
+export function endsDictation(utterance: string): boolean {
+  return DICTATION_OFF.includes(normalise(utterance));
+}
+
+/**
+ * Слова вежливости и заполнители, которые ничего не меняют.
+ *
+ * Список пополнен после живого случая: человек сказал «что ты СЕЙЧАС делаешь»,
+ * и окно не открылось. Слово «сейчас» в списке было, но убиралось только по
+ * краям фразы — а здесь оно стояло в середине. С тех пор `normalise` выбрасывает
+ * заполнители отовсюду, и записывать их в таблицы не нужно: строка с «сейчас»
+ * или «пожалуйста» внутри не совпадёт никогда.
+ */
+/**
+ * Заполнители — общие для всех слоёв.
+ *
+ * Список жил здесь, а прерывания и просьба замолчать имели свои. Замер
+ * 20.09.2026: из 36 обёрнутых форм «стоп» и «тишины» не доходили 24, потому
+ * что там ни «быстро», ни «а теперь» не знали. Теперь список один, в
+ * `voice/filler.ts`, и добавка у слоя — его собственное дело.
+ *
+ * Своей добавки здесь нет: всё, что снималось раньше, вошло в общий список.
+ */
+
+/** Та же фраза без заполнителей где угодно, а не только по краям. */
+function dropFiller(phrase: string): string {
+  return stripFiller(phrase.split(' ')).join(' ');
+}
+
+/** Глаголы нажатия перед самой клавишей: «нажми enter» — это «enter». */
+const PRESS_VERBS = ['нажми', 'нажмите', 'жми', 'нажать', 'press', 'hit'];
+
+/**
+ * Начала диктовки.
+ *
+ * «Напечатай», «введи», «печатай» однозначны: человек просит набрать текст.
+ *
+ * «Напиши» отсюда убрано, и это исправление живой беды. Человек сказал «напиши
+ * скиллы для поиска ассетов и звуков и положи в нужную папку» — и Джарвис
+ * НАПЕЧАТАЛ эти слова в активное окно вместо того, чтобы сделать работу. В
+ * журнале это выглядит как «перестал отвечать»: задача не заводилась вовсе.
+ *
+ * Защита была: список вещей, которые «пишут» (письмо, отчёт, код). Но он
+ * перечисляет то, о чём успели подумать, а человек говорит о чём угодно —
+ * «напиши скиллы», «напиши правило», «напиши разбор». Белый список здесь
+ * защищает не ту сторону: цена ошибки — текст, набранный в чужое окно, и это
+ * та самая необратимость, которой в голосовом помощнике быть не должно.
+ *
+ * Буквальный набор по-прежнему доступен: «напечатай …» и режим диктовки.
+ */
+const DICTATION_PREFIXES = ['напечатай', 'введи', 'печатай', 'type'];
+
+/**
+ * После этих слов «напиши» означает работу, а не диктовку.
+ *
+ * Разница принципиальная: продиктованное попадает в окно буква в букву, а
+ * заказанное — проходит через агента, который это сочиняет.
+ */
+const WRITTEN_THINGS = [
+  'письмо', 'письма', 'документ', 'отчет', 'код', 'программу', 'скрипт',
+  'статью', 'текст', 'сообщение', 'план', 'заметку', 'функцию', 'тест',
+  'a', 'an', 'letter', 'email', 'document', 'report', 'code', 'script', 'article',
+  'message', 'note', 'function', 'test', 'program',
+];
+
+const KEYS: Record<string, string> = {
+  // Одиночные клавиши.
+  'enter': 'enter', 'ввод': 'enter', 'ентер': 'enter', 'интер': 'enter',
+  'escape': 'escape', 'эскейп': 'escape', 'отмена': 'escape', 'закрой это': 'escape',
+  'таб': 'tab', 'tab': 'tab',
+  'пробел': 'space',
+  'удали': 'backspace', 'стереть': 'backspace', 'бекспейс': 'backspace',
+  'делит': 'delete', 'delete': 'delete',
+  'вниз': 'down', 'вверх': 'up', 'влево': 'left', 'вправо': 'right',
+  // «Нажми стрелку вниз» — так и говорят, когда клавиша названа вслух. Без
+  // этих строк фраза уходила искать кнопку с названием «стрелку вниз».
+  'стрелка вниз': 'down', 'стрелку вниз': 'down',
+  'стрелка вверх': 'up', 'стрелку вверх': 'up',
+  'стрелка влево': 'left', 'стрелку влево': 'left',
+  'стрелка вправо': 'right', 'стрелку вправо': 'right',
+  'страница вниз': 'pagedown', 'страница вверх': 'pageup',
+  'страницу вниз': 'pagedown', 'страницу вверх': 'pageup',
+  'в самый низ': 'ctrl+end', 'в самый верх': 'ctrl+home',
+  'в начало строки': 'home', 'в конец строки': 'end',
+
+  // Правка текста.
+  'скопируй': 'ctrl+c', 'копировать': 'ctrl+c', 'копируй': 'ctrl+c',
+  'скопируй это': 'ctrl+c',
+  'вставь': 'ctrl+v', 'вставить': 'ctrl+v',
+  'вставь сюда': 'ctrl+v',
+  'вырежи': 'ctrl+x', 'вырезать': 'ctrl+x',
+  'отмени действие': 'ctrl+z', 'отмени последнее': 'ctrl+z', 'верни как было': 'ctrl+z',
+  'отмени последнее действие': 'ctrl+z',
+  'повтори действие': 'ctrl+y',
+  'выдели все': 'ctrl+a', 'выделить все': 'ctrl+a',
+  'сохрани': 'ctrl+s', 'сохранить': 'ctrl+s',
+  'найди': 'ctrl+f', 'поиск': 'ctrl+f',
+  'печать': 'ctrl+p',
+
+  // Вкладки и окна.
+  //
+  // Здесь важно опередить слои запуска и закрытия, а не только агента.
+  // «Открой новую вкладку» доходило до запуска, и Джарвис искал в меню «Пуск»
+  // программу с названием «новую вкладку»; «закрой эту вкладку» — до закрытия
+  // программ. Прямые команды разбираются раньше обоих, поэтому лечится здесь.
+  'новая вкладка': 'ctrl+t',
+  'открой новую вкладку': 'ctrl+t',
+  'закрой вкладку': 'ctrl+w',
+  'закрой эту вкладку': 'ctrl+w',
+  'верни вкладку': 'ctrl+shift+t',
+  'следующая вкладка': 'ctrl+tab',
+  // Одно и то же люди просят по-разному, и каждая несовпавшая формулировка
+  // стоит тридцати секунд через агента вместо трёхсот миллисекунд.
+  'переключи вкладку': 'ctrl+tab',
+  'переключись на следующую вкладку': 'ctrl+tab',
+  'следующую вкладку': 'ctrl+tab',
+  'дальше вкладка': 'ctrl+tab',
+  'предыдущая вкладка': 'ctrl+shift+tab',
+  'предыдущую вкладку': 'ctrl+shift+tab',
+  'переключись на предыдущую вкладку': 'ctrl+shift+tab',
+  // «Вернись на предыдущую вкладку» разбиралось как переход в ОКНО с таким
+  // названием: «вернись на» — начало фразы переключения окон, а окна
+  // «предыдущую вкладку» не существует. Точное совпадение идёт раньше.
+  'вернись на предыдущую вкладку': 'ctrl+shift+tab',
+  'вернись к предыдущей вкладке': 'ctrl+shift+tab',
+  'переключись': 'alt+tab', 'переключи окно': 'alt+tab',
+  'обнови': 'f5', 'обновить': 'f5', 'перезагрузи страницу': 'f5',
+  'обнови страницу': 'f5',
+  'закрой окно': 'alt+f4',
+  'закрой это окно': 'alt+f4',
+  // «Сверни окно» доходило до слоя закрытия и ЗАКРЫВАЛО окно: просили свернуть,
+  // а теряли работу. Необратимое вместо обратимого — худший вид промаха, и
+  // стоил он одного недостающего слова в таблице.
+  'разверни': 'win+up', 'развернуть': 'win+up', 'на весь экран': 'f11',
+  'разверни окно': 'win+up', 'разверни это окно': 'win+up',
+  'сверни': 'win+down', 'свернуть': 'win+down',
+  'сверни окно': 'win+down', 'сверни это окно': 'win+down',
+  'сверни все': 'win+d', 'покажи рабочий стол': 'win+d',
+
+  // Звук и медиа.
+  'громче': 'volumeup', 'сделай громче': 'volumeup',
+  'тише звук': 'volumedown', 'сделай тише': 'volumedown',
+  'выключи звук': 'volumemute', 'без звука': 'volumemute',
+  // «Поставь на паузу» сюда намеренно не добавлено. Слова остановки
+  // разбираются раньше таблицы, и «пауза», «на паузу» там уже есть: это
+  // просьба отложить РАБОТУ, а не нажать клавишу плеера. Забрать её сюда
+  // значило бы на просьбу подождать переключить музыку.
+  'пауза': 'playpause', 'играй': 'playpause', 'продолжи музыку': 'playpause',
+  'следующий трек': 'nexttrack', 'предыдущий трек': 'prevtrack',
+
+  // По-английски. «Pause», «stop», «mute» здесь нет нарочно: это слова
+  // остановки и заглушения, и они разбираются раньше таблицы.
+  'arrow down': 'down', 'arrow up': 'up', 'arrow left': 'left', 'arrow right': 'right',
+  'down arrow': 'down', 'up arrow': 'up', 'left arrow': 'left', 'right arrow': 'right',
+  'space': 'space', 'backspace': 'backspace', 'page down': 'pagedown', 'page up': 'pageup',
+  'go to the bottom': 'ctrl+end', 'go to the top': 'ctrl+home',
+  'copy': 'ctrl+c', 'copy that': 'ctrl+c', 'paste': 'ctrl+v', 'paste it': 'ctrl+v', 'cut': 'ctrl+x',
+  'undo': 'ctrl+z', 'undo that': 'ctrl+z', 'redo': 'ctrl+y',
+  'select all': 'ctrl+a', 'save': 'ctrl+s', 'save it': 'ctrl+s', 'find': 'ctrl+f', 'print': 'ctrl+p',
+  'new tab': 'ctrl+t', 'open a new tab': 'ctrl+t', 'open new tab': 'ctrl+t',
+  'close tab': 'ctrl+w', 'close this tab': 'ctrl+w', 'close the tab': 'ctrl+w',
+  'reopen tab': 'ctrl+shift+t', 'next tab': 'ctrl+tab', 'previous tab': 'ctrl+shift+tab',
+  'switch tab': 'ctrl+tab', 'switch window': 'alt+tab', 'switch windows': 'alt+tab',
+  'refresh': 'f5', 'reload': 'f5', 'refresh the page': 'f5', 'reload the page': 'f5',
+  'close window': 'alt+f4', 'close this window': 'alt+f4', 'close the window': 'alt+f4',
+  'maximize': 'win+up', 'maximize window': 'win+up', 'maximize the window': 'win+up',
+  'minimize': 'win+down', 'minimize window': 'win+down', 'minimize the window': 'win+down',
+  'full screen': 'f11', 'fullscreen': 'f11', 'show desktop': 'win+d', 'minimize all': 'win+d',
+  'louder': 'volumeup', 'volume up': 'volumeup', 'turn it up': 'volumeup',
+  'volume down': 'volumedown', 'turn it down': 'volumedown', 'mute sound': 'volumemute',
+  'play music': 'playpause', 'resume music': 'playpause', 'next track': 'nexttrack',
+  'previous track': 'prevtrack', 'next song': 'nexttrack', 'previous song': 'prevtrack',
+};
+
+const SCROLLS: Record<string, number> = {
+  'прокрути вниз': -3, 'промотай вниз': -3, 'ниже': -3, 'листай вниз': -3,
+  'прокрути вверх': 3, 'промотай вверх': 3, 'выше': 3, 'листай вверх': 3,
+  // «Прокрути страницу вниз» — то же самое, только названо полностью.
+  'прокрути страницу вниз': -3, 'пролистай вниз': -3,
+  'прокрути страницу вверх': 3, 'пролистай вверх': 3,
+  'scroll down': -3, 'scroll up': 3, 'scroll the page down': -3, 'scroll the page up': 3,
+  'lower': -3, 'higher': 3,
+};
+
+const CLICKS: Record<string, { button: 'left' | 'right' | 'middle'; double?: boolean }> = {
+  'кликни': { button: 'left' },
+  'клик': { button: 'left' },
+  'щелкни': { button: 'left' },
+  'правый клик': { button: 'right' },
+  'правой кнопкой': { button: 'right' },
+  // Названная целиком, фраза уходила искать кнопку с надписью «правой кнопкой»:
+  // разбор клика по названию стоит ниже и подбирал всё, что осталось.
+  'кликни правой кнопкой': { button: 'right' },
+  'нажми правой кнопкой': { button: 'right' },
+  'щелкни правой кнопкой': { button: 'right' },
+  'правой кнопкой мыши': { button: 'right' },
+  'двойной клик': { button: 'left', double: true },
+  'кликни дважды': { button: 'left', double: true },
+  'двойной щелчок': { button: 'left', double: true },
+  'щелкни дважды': { button: 'left', double: true },
+  'click': { button: 'left' },
+  'left click': { button: 'left' },
+  'right click': { button: 'right' },
+  'double click': { button: 'left', double: true },
+  'middle click': { button: 'middle' },
+};
+
+export function parseDirectCommand(utterance: string): DirectCommand | null {
+  const exact = normalise(utterance);
+  if (!exact) return null;
+
+  // Сперва как сказано, потом без слов-вставок. Порядок важен: «стоп» и «назад»
+  // должны находиться сразу, а очистка нужна только тем фразам, которые её
+  // переживают без потери смысла.
+  return readDirect(exact) ?? readDirect(dropFiller(exact));
+}
+
+/**
+ * Грамматика поверх таблицы: форма просьбы вместо точной строки.
+ *
+ * Стоит ПЕРЕД таблицами и покрывает те семейства, которые ломались чаще
+ * всего: окна, вкладки, прокрутка. Слова сверяются по основе, поэтому
+ * «сверни», «свернуть» и «сворачивай» совпадают сами.
+ *
+ * Порядок значим: частное раньше общего. «Переключи вкладку на хром» должно
+ * попасть в переход к программе, а не в Ctrl+Tab.
+ */
+const ПРАВИЛА: Array<Rule<DirectCommand>> = [
+  // ВКЛАДКИ БЕЗ НАЗВАНИЯ — раньше всего про переключение, иначе общее правило
+  // перехода к программе съедает «переключись на следующую вкладку».
+  {
+    pattern: '[переключи|переключись|перейди|вернись] [на] (следующую|следующая|дальше) вкладку',
+    make: () => ({ kind: 'key', keys: 'ctrl+tab' }),
+  },
+  {
+    pattern: '[переключи|переключись|перейди|вернись] [на] (предыдущую|предыдущая) вкладку',
+    make: () => ({ kind: 'key', keys: 'ctrl+shift+tab' }),
+  },
+  { pattern: '(переключи|смени) вкладку', make: () => ({ kind: 'key', keys: 'ctrl+tab' }) },
+  { pattern: '[открой] новую вкладку', make: () => ({ kind: 'key', keys: 'ctrl+t' }) },
+  { pattern: 'закрой [эту|это] вкладку', make: () => ({ kind: 'key', keys: 'ctrl+w' }) },
+  { pattern: 'верни вкладку', make: () => ({ kind: 'key', keys: 'ctrl+shift+t' }) },
+
+  // ВКЛАДКА С НАЗВАНИЕМ — это переход к программе.
+  {
+    pattern: '(переключи|переключись|перейди) [на] вкладку {куда}',
+    make: (s) => ({ kind: 'focus', title: s.куда as string }),
+  },
+  {
+    pattern: '(переключи|переключись) вкладку на {куда}',
+    make: (s) => ({ kind: 'focus', title: s.куда as string }),
+  },
+
+  // ОКНО ЦЕЛИКОМ.
+  {
+    pattern: '[пожалуйста] (сверни|убери) [это|эту] [окно]',
+    make: () => ({ kind: 'key', keys: 'win+down' }),
+  },
+  {
+    pattern: '[пожалуйста] (разверни|раскрой) [это|эту] [окно]',
+    make: () => ({ kind: 'key', keys: 'win+up' }),
+  },
+  { pattern: 'закрой [это] окно', make: () => ({ kind: 'key', keys: 'alt+f4' }) },
+
+  // ПРОКРУТКА: направление словом, а не таблицей форм.
+  {
+    pattern: '(прокрути|пролистай|промотай) [страницу] вниз',
+    make: () => ({ kind: 'scroll', amount: -3 }),
+  },
+  {
+    pattern: '(прокрути|пролистай|промотай) [страницу] вверх',
+    make: () => ({ kind: 'scroll', amount: 3 }),
+  },
+
+  // ПО-АНГЛИЙСКИ. Те же семейства; слова английские совпадают как написаны.
+  { pattern: '[switch|go] [to] [the] next tab', make: () => ({ kind: 'key', keys: 'ctrl+tab' }) },
+  { pattern: '[switch|go] [to] [the] (previous|last) tab', make: () => ({ kind: 'key', keys: 'ctrl+shift+tab' }) },
+  { pattern: '(open|new) [a] [new] tab', make: () => ({ kind: 'key', keys: 'ctrl+t' }) },
+  { pattern: 'close [this|the] tab', make: () => ({ kind: 'key', keys: 'ctrl+w' }) },
+  {
+    pattern: '(switch|go) [to] [the] tab {where}',
+    make: (s) => ({ kind: 'focus', title: s.where as string }),
+  },
+  { pattern: '(minimize|hide) [this|the] [window]', make: () => ({ kind: 'key', keys: 'win+down' }) },
+  { pattern: '(maximize|expand) [this|the] [window]', make: () => ({ kind: 'key', keys: 'win+up' }) },
+  { pattern: 'close [this|the] window', make: () => ({ kind: 'key', keys: 'alt+f4' }) },
+  { pattern: 'scroll [the] [page] down', make: () => ({ kind: 'scroll', amount: -3 }) },
+  { pattern: 'scroll [the] [page] up', make: () => ({ kind: 'scroll', amount: 3 }) },
+  {
+    pattern: '(switch|go|jump) (to|back) [to] [the] {where}',
+    make: (s) => ({ kind: 'focus', title: s.where as string }),
+  },
+  {
+    pattern: '(show|focus) [the] window {where}',
+    make: (s) => ({ kind: 'focus', title: s.where as string }),
+  },
+
+  // ПЕРЕХОД К ПРОГРАММЕ — последним: самое общее правило.
+  {
+    pattern: '(переключись|переключи|перейди|вернись) (на|в) {куда}',
+    make: (s) => ({ kind: 'focus', title: s.куда as string }),
+  },
+  { pattern: 'покажи окно {куда}', make: (s) => ({ kind: 'focus', title: s.куда as string }) },
+];
+
+function readDirect(phrase: string): DirectCommand | null {
+  if (!phrase) return null;
+
+  const repeated = readRepeat(phrase);
+  if (repeated) return repeated;
+
+  // Грамматика раньше таблиц: она покрывает формы, которых в таблице нет.
+  const поГрамматике = firstMatch(ПРАВИЛА, phrase);
+  if (поГрамматике) return поГрамматике;
+
+  const encore = readEncore(phrase);
+  if (encore) return encore;
+
+  // Включение режима — РАНЬШЕ разбора диктуемого текста.
+  //
+  // «Печатай за мной» это просьба включить диктовку, а не напечатать слова «за
+  // мной». Разбор текста стоял первым и съедал команду: сквозная проверка
+  // поймала это первой же строкой.
+  if (DICTATION_ON.includes(phrase)) return { kind: 'dictation', on: true };
+  if (DICTATION_OFF.includes(phrase)) return { kind: 'dictation', on: false };
+
+  // Диктовка проверяется до таблиц: у неё есть хвост, и точное совпадение
+  // здесь неприменимо.
+  const dictated = readDictation(phrase);
+  if (dictated) return dictated;
+
+  const key = KEYS[stripPressVerb(phrase)] ?? KEYS[phrase];
+  if (key) return { kind: 'key', keys: key };
+
+  const amount = SCROLLS[phrase];
+  if (amount !== undefined) return { kind: 'scroll', amount };
+
+  const click = CLICKS[phrase];
+  if (click) return { kind: 'click', ...click };
+
+  if (LONG_SPEECH.includes(phrase)) return { kind: 'longSpeech' };
+
+  const focus = readFocus(phrase);
+  if (focus) return focus;
+
+  if (HELP_ON.includes(phrase)) return { kind: 'help', on: true };
+  if (HELP_OFF.includes(phrase)) return { kind: 'help', on: false };
+
+  if (LOG_ON.includes(phrase)) return { kind: 'log', on: true };
+  if (LOG_OFF.includes(phrase)) return { kind: 'log', on: false };
+
+  if (WHERE.includes(phrase)) return { kind: 'where' };
+
+  if (MODE_SHOW.includes(phrase)) return { kind: 'mode', show: true };
+  if (MODE_QUIET.includes(phrase)) return { kind: 'mode', show: false };
+
+  if (GRID_ON.includes(phrase)) return { kind: 'grid', on: true };
+  if (GRID_OFF.includes(phrase)) return { kind: 'grid', on: false };
+
+  // Аварийный выключатель проверяется раньше остальных: если он когда-нибудь
+  // столкнётся с чужой фразой, выиграть должен он.
+  if (KILL_ALL.includes(phrase)) return { kind: 'selfDestruct' };
+
+  if (FORGET_TALK.includes(phrase)) return { kind: 'forgetTalk' };
+
+  if (DOTA_FULL.includes(phrase)) return { kind: 'dotaOverlay', mode: 'full' };
+  if (DOTA_SILENT.includes(phrase)) return { kind: 'dotaOverlay', mode: 'silent' };
+  if (DOTA_OFF.includes(phrase)) return { kind: 'dotaOverlay', mode: 'off' };
+
+  const refine = readRefine(phrase);
+  if (refine) return refine;
+
+  const named = readClickNamed(phrase);
+  if (named) return named;
+
+  return null;
+}
+
+/**
+ * «Прокрути вниз три раза» — та же команда, выполненная несколько раз.
+ *
+ * Хвост «N раз» отрезается, а остаток разбирается обычным путём. Диктовка
+ * проверяется раньше, поэтому «напечатай три раза» остаётся диктовкой.
+ */
+function readRepeat(phrase: string): DirectCommand | null {
+  const match =
+    new RegExp('^(.+?)\\s+раз(?:а|ов)?$', 'u').exec(phrase) ??
+    new RegExp('^(.+?)\\s+times$', 'u').exec(phrase) ??
+    (phrase.endsWith(' twice') ? [phrase, `${phrase.slice(0, -' twice'.length)} two`] : null);
+  if (!match) return null;
+
+  const words = (match[1] as string).split(' ');
+
+  // Число стоит в конце и может быть составным: «двадцать три раза». Сначала
+  // пробуем два слова, потом одно — и берём тот разбор, при котором остаток
+  // оказывается настоящей командой.
+  for (const take of [2, 1]) {
+    if (words.length <= take) continue;
+
+    const times = parseSpokenNumber(words.slice(-take).join(' '));
+    if (times === null || times < 2) continue;
+
+    const inner = parseDirectCommand(words.slice(0, -take).join(' '));
+    if (!inner) continue;
+    if (inner.kind !== 'key' && inner.kind !== 'scroll' && inner.kind !== 'click') return null;
+
+    return { kind: 'repeat', times: Math.min(times, MAX_REPEAT), command: inner };
+  }
+
+  return null;
+}
+
+/**
+ * «Ещё раз» — то же самое ещё один раз.
+ *
+ * Счётчик повторов выше требует числа, и «прокрути вниз ещё раз» не разбиралось
+ * вовсе — при том что при чтении страницы это самая частая фраза, какая есть.
+ * Тридцать секунд через агента за один щелчок колеса.
+ *
+ * Повторяется только то, что вообще имеет смысл повторять. Для диктовки разбор
+ * отступает: «напечатай привет ещё раз» — это слова, и терять их нельзя.
+ */
+function readEncore(phrase: string): DirectCommand | null {
+  const words = phrase.split(' ');
+  const last = words[words.length - 1];
+
+  let tail = 0;
+  if (last === 'раз' && words[words.length - 2] === 'еще') tail = 2;
+  else if (last === 'еще') tail = 1;
+  else if (last === 'again') tail = 1;
+  else if (words.slice(-3).join(' ') === 'one more time') tail = 3;
+  if (tail === 0) return null;
+
+  const inner = parseDirectCommand(words.slice(0, -tail).join(' '));
+  if (!inner) return null;
+  if (inner.kind !== 'key' && inner.kind !== 'scroll' && inner.kind !== 'click') return null;
+  return inner;
+}
+
+function readRefine(phrase: string): DirectCommand | null {
+  const words = phrase.split(' ');
+  if (!REFINE_PREFIXES.includes(words[0] ?? '')) return null;
+
+  const sub = parseSpokenNumber(words.slice(1).join(' '));
+  if (sub === null || sub < 1 || sub > 9) return null;
+  return { kind: 'gridRefine', sub };
+}
+
+function readClickNamed(phrase: string): DirectCommand | null {
+  const words = phrase.split(' ');
+  const verb = words[0] ?? '';
+  if (!CLICK_PREFIXES.includes(verb)) return null;
+
+  const rest = words.slice(1).filter((word) => !CLICK_GLUE.includes(word));
+  if (rest.length === 0) return null;
+
+  // Длинный хвост — это описание работы, а не название кнопки: «кликни туда,
+  // где написано, что доставка бесплатная» разбирать здесь нечем.
+  if (rest.length > 4) return null;
+
+  // Число — это номер клетки сетки, а не название кнопки.
+  const cell = parseSpokenNumber(rest.join(' '));
+  if (cell !== null && cell >= 1 && cell <= GRID_CELLS) return { kind: 'gridClick', cell };
+
+  return { kind: 'clickNamed', query: rest.join(' ') };
+}
+
+function readFocus(phrase: string): DirectCommand | null {
+  for (const prefix of FOCUS_PREFIXES) {
+    if (!phrase.startsWith(`${prefix} `)) continue;
+
+    const title = phrase.slice(prefix.length + 1).trim();
+    // Длинный хвост — это описание работы, а не имя окна.
+    if (!title || title.split(' ').length > 3) return null;
+    return { kind: 'focus', title };
+  }
+  return null;
+}
+
+
+function readDictation(phrase: string): DirectCommand | null {
+  for (const prefix of DICTATION_PREFIXES) {
+    if (!phrase.startsWith(`${prefix} `)) continue;
+
+    const text = phrase.slice(prefix.length + 1).trim();
+    if (!text) return null;
+
+    // «Напиши письмо» — это заказ, а не диктовка. Такое уходит агенту.
+    const first = text.split(' ')[0] ?? '';
+    if (WRITTEN_THINGS.includes(first)) return null;
+
+    return { kind: 'type', text };
+  }
+  return null;
+}
+
+function stripPressVerb(phrase: string): string {
+  const space = phrase.indexOf(' ');
+  if (space === -1) return phrase;
+  const first = phrase.slice(0, space);
+  return PRESS_VERBS.includes(first) ? phrase.slice(space + 1) : phrase;
+}
+
+/**
+ * Приводит услышанное к виду, в котором его можно сравнивать.
+ *
+ * Знаки препинания распознаватель расставляет как хочет, «ё» пишет то так, то
+ * эдак, и вежливость вставляет человек. На смысл команды ничто из этого не
+ * влияет.
+ */
+function normalise(utterance: string): string {
+  let words = utterance
+    .toLowerCase()
+    .replace(/ё/gu, 'е')
+    .replace(/[^\p{L}\p{N}\s+]/gu, ' ')
+    .split(/\s+/u)
+    .filter(Boolean);
+
+  // Имя в начале — обращение, а не часть команды.
+  //
+  // Живой случай 20.09.2026: окно бодрствования уже открыто, человек всё
+  // равно говорит «Джарвис, переключись на Riot Client» — так естественнее.
+  // Имя оставалось в тексте, ни одна прямая команда не совпадала, и всё
+  // уходило агенту: тридцать секунд вместо трёхсот миллисекунд. В журнале
+  // это выглядело как «не переключает вкладки, не работает ничего».
+  //
+  // Режем только в начале: «напечатай джарвис молодец» — это содержание,
+  // и трогать его нельзя.
+  while (words.length > 1 && WAKE_WORD_VARIANTS.includes(words[0] as string)) {
+    words = words.slice(1);
+  }
+
+  // Диктовка сохраняет слова как есть: в продиктованном тексте «пожалуйста»
+  // может быть частью фразы.
+  if (words.length > 0 && DICTATION_PREFIXES.includes(words[0] as string)) {
+    return words.join(' ');
+  }
+
+  return stripFiller(words).join(' ');
+}
