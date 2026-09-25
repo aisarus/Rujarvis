@@ -625,8 +625,18 @@ const ПРАВИЛА: Array<Rule<DirectCommand>> = [
   },
 
   // ОКНО ЦЕЛИКОМ.
+  // «Сверни» само по себе — про окно; «убери» — нет.
+  //
+  // В прежнем правиле всё после глагола было необязательным, и голое «убери»
+  // или «убери это» сворачивало окно. В режиме диктовки человек сказал «убери
+  // это», ожидая отмены, — и окно исчезло. У «сверни» другого смысла нет, а
+  // «убери» требует слова «окно».
   {
-    pattern: '[пожалуйста] (сверни|убери) [это|эту] [окно]',
+    pattern: '[пожалуйста] сверни [это|эту] [окно]',
+    make: () => ({ kind: 'key', keys: 'win+down' }),
+  },
+  {
+    pattern: '[пожалуйста] убери [это|эту] окно',
     make: () => ({ kind: 'key', keys: 'win+down' }),
   },
   {
@@ -654,7 +664,11 @@ const ПРАВИЛА: Array<Rule<DirectCommand>> = [
     pattern: '(switch|go) [to] [the] tab {where}',
     make: (s) => ({ kind: 'focus', title: s.where as string }),
   },
-  { pattern: '(minimize|hide) [this|the] [window]', make: () => ({ kind: 'key', keys: 'win+down' }) },
+  // `minimize` само по себе про окно, `hide` — нет: в английском справочнике
+  // «hide it» это команда Блендера, и одинокое «hide» от распознавателя
+  // сворачивало окно.
+  { pattern: 'minimize [this|the] [window]', make: () => ({ kind: 'key', keys: 'win+down' }) },
+  { pattern: 'hide [this|the] window', make: () => ({ kind: 'key', keys: 'win+down' }) },
   { pattern: '(maximize|expand) [this|the] [window]', make: () => ({ kind: 'key', keys: 'win+up' }) },
   { pattern: 'close [this|the] window', make: () => ({ kind: 'key', keys: 'alt+f4' }) },
   { pattern: 'scroll [the] [page] down', make: () => ({ kind: 'scroll', amount: -3 }) },

@@ -325,13 +325,25 @@ export function parseJsonLine(line: string): Record<string, unknown> | null {
   return null;
 }
 
+/**
+ * Признаки того, что подписка кончилась.
+ *
+ * Привязаны к КОНТЕКСТУ, а не к голому числу и слову.
+ *
+ * `/429/` совпадало со строкой «line 429», номером порта и именем файла, а
+ * `/quota/i` — с любым упоминанием квоты в выводе задачи. Менеджер по такому
+ * признаку сразу переносит работу на следующий помощник, и уже сделанное
+ * делается второй раз.
+ */
 const USAGE_LIMIT_PATTERNS = [
   /usage limit/i,
   /rate limit/i,
-  /quota/i,
+  /quota (?:exceeded|exhausted|reached)/i,
+  /out of quota/i,
   /limit reached/i,
   /too many requests/i,
-  /429/,
+  /(?:status|http|code|error)[^0-9a-z]{0,4}429\b/i,
+  /\b429\b[^0-9]{0,3}(?:too many|rate)/i,
   /insufficient[_ ]quota/i,
   /upgrade to (?:pro|max|plus)/i,
 ];

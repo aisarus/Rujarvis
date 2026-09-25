@@ -26,7 +26,7 @@ import {
 } from './codex';
 import { createStreamState } from './cliRunner';
 import { BackendManager, isBackendLevelFailure } from './manager';
-import { buildBackendPrompt } from './prompt';
+import { buildBackendPrompt, buildFollowUpPrompt } from './prompt';
 import { describeLessons, lessonsFrom } from '../memory/lessons';
 import { DEFAULT_PERMISSIONS, READ_ONLY_PERMISSIONS } from '../types';
 import type {
@@ -1218,5 +1218,26 @@ describe('свои постоянные указания', () => {
 
   it('не ломается на пробельных указаниях', () => {
     expect(buildBackendPrompt(request({ instructions: '   ' }))).not.toContain('ПОСТОЯННЫЕ УКАЗАНИЯ');
+  });
+});
+
+describe('продолжение сессии несёт утверждённый план', () => {
+  /**
+   * Замечание CodeRabbit (кусок 2, PR №41). `context` доезжал только в первом
+   * ходе; в уже заговорившей сессии агент начинал работу, не видя замысла, на
+   * который человек сказал «погнали». Прежняя проверка смотрела на поле
+   * запроса, а не на текст, который уходит в ввод процесса.
+   */
+  it('план из контекста попадает в текст продолжения', () => {
+    const текст = buildFollowUpPrompt({
+      utterance: 'погнали',
+      capabilities: [],
+      risk: 'normal',
+      permissions: DEFAULT_PERMISSIONS,
+      context: ['ПЛАН: 1) собрать фон 2) поставить персонажа'],
+      language: 'ru',
+    });
+
+    expect(текст).toContain('собрать фон');
   });
 });

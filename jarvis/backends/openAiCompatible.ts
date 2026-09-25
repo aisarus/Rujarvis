@@ -38,6 +38,14 @@ export interface ChatCompletionRequest {
   temperature?: number;
   maxTokens?: number;
   signal?: AbortSignal;
+  /**
+   * Сколько ждать ответа. Без него запрос висит вечно.
+   *
+   * `core.ts` честно передаёт срок в задаче, но до этого клиента он не
+   * доходил: сервер, принявший соединение и замолчавший, вешал ход навсегда —
+   * человек не получал ответа и отката на следующий помощник тоже не было.
+   */
+  timeoutMs?: number;
 }
 
 /** Minimal transport so tests do not need a live endpoint. */
@@ -117,6 +125,7 @@ export class OpenAiCompatibleBackend implements AgentBackend {
         try {
           const text = await this.options.client.complete({
             model: this.options.model,
+            ...(request.timeoutMs ? { timeoutMs: request.timeoutMs } : {}),
             messages: [
               {
                 role: 'system',
@@ -127,9 +136,17 @@ export class OpenAiCompatibleBackend implements AgentBackend {
             ],
             signal: controller.signal,
           });
-          if (text.trim()) {
-            emit({ type: 'assistant-text', backend: this.id, text });
+          // Пустой ответ — это отказ, а не результат.
+          //
+          // Сервер умеет ответить кодом 200 с телом `{ "error": … }`: `choices`
+          // там нет, клиент отдаёт пустую строку, а задача закрывалась
+          // успешной и без результата — отката на следующий помощник не было.
+          if (!text.trim()) {
+            const беда = 'модель ответила пустотой';
+            emit({ type: 'error', backend: this.id, message: беда, retryable: true });
+            return { ok: false, text: '', error: беда };
           }
+          emit({ type: 'assistant-text', backend: this.id, text });
           return { ok: true, text };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -154,6 +171,15 @@ export interface HttpChatClientOptions {
 }
 
 /** `fetch`-based client for any `/v1/chat/completions` endpoint. */
+/** Один сигнал из двух: внешней отмены и собственного срока. */
+function соединить(signal: AbortSignal | undefined, timeoutMs: number | undefined): AbortSignal | undefined {
+  if (!timeoutMs || timeoutMs <= 0) return signal;
+  const свой = AbortSignal.timeout(timeoutMs);
+  if (!signal) return свой;
+  // `AbortSignal.any` есть в Node 20+; проекту нужен 22.
+  return AbortSignal.any([signal, свой]);
+}
+
 export function createHttpChatClient(options: HttpChatClientOptions): ChatCompletionClient {
   const fetchImpl = options.fetchImpl ?? fetch;
   const base = options.baseUrl.replace(/\/+$/, '');
@@ -180,10 +206,13 @@ export function createHttpChatClient(options: HttpChatClientOptions): ChatComple
     },
 
     async complete(request) {
+      // Свой срок и внешняя отмена вместе: что случится раньше, то и оборвёт.
+      const срок = request.timeoutMs ?? options.timeoutMs;
+      const сигнал = соединить(request.signal, срок);
       const response = await fetchImpl(`${base}/chat/completions`, {
         method: 'POST',
         headers: headers(),
-        signal: request.signal,
+        signal: сигнал,
         body: JSON.stringify({
           model: request.model,
           messages: request.messages,
