@@ -41,25 +41,6 @@ function permissionLines(request: BackendRequest): string[] {
 }
 
 /**
- * How to work on someone's screen without wrecking it.
- *
- * Written from what went wrong in practice: a model that clicks from memory
- * instead of from a fresh screenshot misses moved buttons, and one that never
- * writes anything down rediscovers the same layout on every single run while
- * the person waits.
- */
-/**
- * Пульс: заглядывать, не сказал ли человек чего-нибудь, пока ты работаешь.
- *
- * Работа по одной команде идёт десятки минут, и всё это время человек рядом.
- * Без этой привычки его «крышу сделай синей» доходит до агента только через
- * полчаса — вместе с готовой крышей не того цвета.
- *
- * Пороги названы числами нарочно. «Иногда проверяй» модель выполняет как
- * «почти никогда»; «перед каждым крупным шагом и не реже, чем раз в пару
- * минут» — как указание.
- */
-/**
  * Длинная работа по одной команде.
  *
  * То, ради чего всё это затевалось. Человек описал так: «джарвис получил
@@ -87,6 +68,17 @@ const LONG_WORK_GUIDANCE = [
   '  на результат — тогда готово. Не проверял — так и скажи.',
 ].join('\n');
 
+/**
+ * Пульс: заглядывать, не сказал ли человек чего-нибудь, пока ты работаешь.
+ *
+ * Работа по одной команде идёт десятки минут, и всё это время человек рядом.
+ * Без этой привычки его «крышу сделай синей» доходит до агента только через
+ * полчаса — вместе с готовой крышей не того цвета.
+ *
+ * Пороги названы числами нарочно. «Иногда проверяй» модель выполняет как
+ * «почти никогда»; «перед каждым крупным шагом и не реже, чем раз в пару
+ * минут» — как указание.
+ */
 const HEARTBEAT_GUIDANCE = [
   'ПОКА ТЫ РАБОТАЕШЬ, ЧЕЛОВЕК РЯДОМ:',
   '- Если работа длиннее пары минут, вызывай check_notes перед каждым крупным шагом',
@@ -154,6 +146,14 @@ const QUIET_MODE = [
   '  когда освободится.',
 ].join('\n');
 
+/**
+ * How to work on someone's screen without wrecking it.
+ *
+ * Written from what went wrong in practice: a model that clicks from memory
+ * instead of from a fresh screenshot misses moved buttons, and one that never
+ * writes anything down rediscovers the same layout on every single run while
+ * the person waits.
+ */
 const COMPUTER_USE_GUIDANCE = [
   'WORKING ON THE SCREEN:',
   '- Start with recall: you may already know where things are from a previous run.',
@@ -366,6 +366,18 @@ export function buildFollowUpPrompt(request: BackendRequest): string {
   }
   if (request.showWork === false) {
     parts.push('Работай в фоне: не открывай окна и не переключай фокус.');
+  }
+
+  // Утверждённый план обязан доехать и в продолжение сессии.
+  //
+  // `context` собирается ядром и несёт, среди прочего, замысел, на который
+  // человек сказал «погнали». В первом ходе он был, а в продолжении — нет:
+  // агент в уже заговорившей сессии начинал работу, не видя утверждённого
+  // плана. Проверка этого не ловила: она смотрела на поле запроса, а не на
+  // текст, который уходит в ввод процесса.
+  const контекст = (request.context ?? []).map((line) => line.trim()).filter(Boolean);
+  if (контекст.length > 0) {
+    parts.push(`ЧТО ВОКРУГ:${NEWLINE}${контекст.join(NEWLINE)}`);
   }
 
   // Краткость приходится напоминать. Без этой строки на «сколько окон» агент

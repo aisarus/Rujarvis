@@ -162,6 +162,18 @@ function renderEndCard(format) {
   return out;
 }
 
+/**
+ * Длительности, заявленные в сценарии (docs/launch/demo-video.md).
+ *
+ * Ролик, который вдвое длиннее обещанного, — это не «почти получилось»:
+ * вертикальные площадки режут его сами, и обрывается он на середине фразы.
+ * Поэтому длина сверяется числом, а не на глаз.
+ */
+const ЗАЯВЛЕНО = {
+  wide: { от: 75, до: 95 },
+  tall: { от: 20, до: 30 },
+};
+
 function build(format, clips, output) {
   if (!output || clips.length === 0) return;
   const parts = clips.map((clip, index) => renderClip(clip, index, format));
@@ -170,14 +182,33 @@ function build(format, clips, output) {
   const list = path.join(work, `${format}-list.txt`);
   writeFileSync(list, parts.map((p) => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n'), 'utf8');
   const target = path.resolve(base, output);
+  // Каталог out/ не лежит в git, и при первом запуске его нет: ffmpeg не
+  // может открыть файл на запись и валится вместо того, чтобы собрать ролик.
+  mkdirSync(path.dirname(target), { recursive: true });
   run(['-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-movflags', '+faststart', target]);
   const total = clips.reduce((sum, c) => sum + (seconds(c.to) - seconds(c.from ?? 0)) / (c.speed ?? 1), 0) + (cuts.end?.seconds ?? 0);
   console.log(`Готово: ${target} (${total.toFixed(1)} с)`);
+  const норма = ЗАЯВЛЕНО[format];
+  if (норма && (total < норма.от || total > норма.до)) {
+    console.log(
+      `  ВНИМАНИЕ: сценарий обещает ${норма.от}–${норма.до} с, а вышло ${total.toFixed(1)} с. ` +
+      'Правьте cuts.json или сценарий — врать должен кто-то один.',
+    );
+  }
 }
 
 try {
   build('wide', cuts.clips ?? [], cuts.output);
-  build('tall', (cuts.clips ?? []).filter((c) => c.vertical), cuts.vertical);
+  // Вертикальная версия — не те же куски, а свои: «vertical» может быть не
+  // просто «да», а своими границами и скоростью. С общими границами она
+  // выходила 49 с против обещанных 20–30.
+  build(
+    'tall',
+    (cuts.clips ?? [])
+      .filter((c) => c.vertical)
+      .map((c) => (typeof c.vertical === 'object' ? { ...c, ...c.vertical } : c)),
+    cuts.vertical,
+  );
 } finally {
   rmSync(work, { recursive: true, force: true });
 }

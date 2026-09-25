@@ -180,23 +180,46 @@ function mergeKey(key: string, byKey: Map<string, unknown>): string {
 }
 
 export function lessonsFrom(sources: LessonSources): Lesson[] {
-  const byKey = new Map<string, { said: string; hits: number; occasions: Set<number> }>();
+  // Времена неудач, а не номера корзин.
+  //
+  // `Math.floor(at / OCCASION_MS)` делит сутки на жёсткие десятиминутки, и две
+  // неудачи в 10:09:30 и 10:10:30 попадали в РАЗНЫЕ — выходило два подхода
+  // вместо одного, и разовая стена лезла в промпт «на чём ты уже спотыкался».
+  // Ровно тот шум, против которого модуль и написан.
+  const byKey = new Map<string, { said: string; hits: number; times: number[] }>();
 
   for (const { said, at } of wallsIn(sources)) {
     // Одна стена, названная коротко и подробно, — всё ещё одна стена. Ключ,
     // оказавшийся началом уже виденного (или наоборот), к нему и приписывается.
     const key = mergeKey(keyFor(said), byKey);
-    const row = byKey.get(key) ?? { said, hits: 0, occasions: new Set<number>() };
+    const row = byKey.get(key) ?? { said, hits: 0, times: [] };
     row.hits += 1;
-    if (Number.isFinite(at) && at > 0) row.occasions.add(Math.floor(at / OCCASION_MS));
+    if (Number.isFinite(at) && at > 0) row.times.push(at);
     // Держим самый длинный вариант текста: он подробнее объясняет.
     if (said.length > row.said.length) row.said = said;
     byKey.set(key, row);
   }
 
   return [...byKey.values()]
-    .map((row) => ({ said: row.said, hits: row.hits, occasions: row.occasions.size }))
+    .map((row) => ({ said: row.said, hits: row.hits, occasions: подходов(row.times) }))
     .sort((left, right) => right.occasions - left.occasions || right.hits - left.hits);
+}
+
+/**
+ * Сколько отдельных подходов к одной стене.
+ *
+ * Отдельными считаются те, между которыми прошло больше `OCCASION_MS`, — как и
+ * обещает шапка файла. Это промежуток МЕЖДУ неудачами, а не попадание в разные
+ * десятиминутки по часам.
+ */
+function подходов(times: readonly number[]): number {
+  if (times.length === 0) return 0;
+  const по_порядку = [...times].sort((a, b) => a - b);
+  let счёт = 1;
+  for (let i = 1; i < по_порядку.length; i += 1) {
+    if ((по_порядку[i] as number) - (по_порядку[i - 1] as number) > OCCASION_MS) счёт += 1;
+  }
+  return счёт;
 }
 
 /**

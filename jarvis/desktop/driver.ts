@@ -111,6 +111,16 @@ function findDriverScript(): string {
 const DRIVER_SCRIPT = findDriverScript();
 
 /**
+ * Куда модуль сам показывает. Нужен проверкам.
+ *
+ * Без него проверка «находит свой скрипт» смотрела на файловую систему рядом
+ * с собой и оставалась зелёной на сломанном списке кандидатов.
+ */
+export function driverScriptPath(): string {
+  return DRIVER_SCRIPT;
+}
+
+/**
  * Какой драйвер взят и какой он версии.
  *
  * Скрипт ищется среди нескольких мест: приложение берёт исходник, MCP-сервер —
@@ -149,6 +159,22 @@ export class DesktopDriver {
         { windowsHide: true },
       );
       this.child = child;
+
+      // Не запустился — отказываем, а не падаем.
+      //
+      // Без слушателя `error` отсутствующий или незапускаемый powershell
+      // ронял весь процесс: вместе с драйвером уходил MCP-сервер или
+      // голосовой слой. А `platform.ts` обещает, что на чужой системе драйвер
+      // «честно падает при первой операции» — то есть отказывает, а не
+      // уносит всё с собой. И `exit` при таком сбое может не прийти вовсе,
+      // так что ждущий `ready` висел бы вечно.
+      child.on('error', (error: Error) => {
+        this.child = null;
+        reject(new Error(`драйвер рабочего стола не запустился: ${error.message}`));
+      });
+      child.stdin?.on('error', (error: Error) => {
+        console.error(`[jarvis:desktop] не записалось в драйвер: ${error.message}`);
+      });
 
       child.stdout.setEncoding('utf8');
       child.stderr.setEncoding('utf8');

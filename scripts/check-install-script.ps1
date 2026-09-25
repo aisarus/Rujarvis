@@ -1,4 +1,4 @@
-<#
+﻿<#
     Проверка install.ps1: разбор синтаксиса и тесты чистых функций.
 
     Запуск:  pwsh -NoProfile -File scripts/check-install-script.ps1
@@ -29,6 +29,8 @@ $functions = $ast.FindAll(
 Invoke-Expression (($functions | ForEach-Object { $_.Extent.Text }) -join "`n")
 
 $failures = 0
+# Пропущенное считается отдельно: «нечем мерить» — не «прошло».
+$skipped = 0
 function Assert-That {
     param([string] $Name, [bool] $Condition)
     if ($Condition) {
@@ -39,10 +41,20 @@ function Assert-That {
     }
 }
 
-$shell = if ($IsWindows) { "$env:SystemRoot\System32\cmd.exe" } else { '/bin/sh' }
-$failArgs = if ($IsWindows) { @('/c', 'exit 3') } else { @('-c', 'exit 3') }
-$okArgs = if ($IsWindows) { @('/c', 'exit 0') } else { @('-c', 'exit 0') }
-$presentCommand = if ($IsWindows) { 'cmd' } else { 'ls' }
+# Windows определяем по $env:OS, а не по той переменной, которой нет в 5.1.
+#
+# Ровно из-за неё падал сам install.ps1 — и вот она же сидела в стороже,
+# который это и должен ловить. Строгого режима здесь нет, поэтому ничего
+# не падало: читалось как $null, скрипт молча уходил в ветку /bin/sh, и
+# две проверки Invoke-Checked проваливались. Увидеть это можно было только
+# запустив сторожа пятёркой, а CI зовёт его семёркой, где переменная есть.
+# Замер 25.09.2026: под 5.1 «Провалено проверок: 2», под 7 — ноль.
+$onWindows = $env:OS -eq 'Windows_NT'
+
+$shell = if ($onWindows) { "$env:SystemRoot\System32\cmd.exe" } else { '/bin/sh' }
+$failArgs = if ($onWindows) { @('/c', 'exit 3') } else { @('-c', 'exit 3') }
+$okArgs = if ($onWindows) { @('/c', 'exit 0') } else { @('-c', 'exit 0') }
+$presentCommand = if ($onWindows) { 'cmd' } else { 'ls' }
 
 Assert-That 'Test-Command находит существующую команду' (Test-Command $presentCommand)
 Assert-That 'Test-Command не находит несуществующую' (-not (Test-Command 'no-such-command-xyz'))
@@ -65,6 +77,69 @@ try {
     $passed = $false
 }
 Assert-That 'Invoke-Checked пропускает нулевой код выхода' $passed
+# Болтовня в stderr — не отказ.
+#
+# В 5.1 при $ErrorActionPreference = 'Stop' строка stderr внешней программы
+# становится NativeCommandError и бросается, а код возврата никто не смотрит.
+# `git clone` пишет «Cloning into ...» в stderr ВСЕГДА, даже на успехе, — и
+# установка падала на шаге «Получаю исходники» при успешном клоне. Нашёл
+# первый живой прогон установки на Windows 25.09.2026.
+#
+# Проверяется это ДОЧЕРНЕЙ оболочкой со слитыми потоками, а не вызовом прямо
+# здесь. Первая попытка звала Invoke-Checked в этом же процессе и оставалась
+# зелёной на заведомо сломанном коде: NativeCommandError рождается только
+# тогда, когда stderr внешней программы куда-то перенаправлен — а GitHub
+# запускает шаг именно так, `powershell -command ". 'файл'"`. Проверка, не
+# воспроизводящая условие, проверяет не то.
+$noiseProbe = @'
+$ErrorActionPreference = 'Stop'
+__FUNCTION__
+# Потоки СЛИВАЮТСЯ: без этого ловушка не срабатывает вовсе.
+#
+# Замер 25.09.2026: прямой вызов проходит, а `... *>&1 | Out-Null` роняет
+# NativeCommandError. Первая версия этой пробы звала функцию прямо и потому
+# зеленела на заведомо сломанном коде. Сливает потоки всякий, кто пишет
+# установку в журнал, - и шаг CI, и человек, собирающий отчёт об ошибке.
+$ok = $true
+try {
+    Invoke-Checked -FilePath $env:ComSpec -Arguments @('/c', 'echo Cloning into repo 1>&2 & exit 0') -What 'klon' *>&1 | Out-Null
+} catch {
+    $ok = $false
+}
+$seen = $false
+try {
+    Invoke-Checked -FilePath $env:ComSpec -Arguments @('/c', 'echo beda 1>&2 & exit 7') -What 'klon' *>&1 | Out-Null
+} catch {
+    $seen = $_.Exception.Message -match '7'
+}
+"ITOG noise=$ok fail=$seen"
+'@
+
+if ($onWindows) {
+    $checkedText = ($functions | Where-Object { $_.Name -eq 'Invoke-Checked' } | Select-Object -First 1).Extent.Text
+    $probeFile = Join-Path ([IO.Path]::GetTempPath()) 'rujarvis-noise-probe.ps1'
+    # С BOM: 5.1 читает UTF-8 без него как ANSI и не разбирает кириллицу.
+    [IO.File]::WriteAllText($probeFile, $noiseProbe.Replace('__FUNCTION__', $checkedText), [Text.UTF8Encoding]::new($true))
+    # Ослабляем предпочтение и здесь: проба НАРОЧНО шумит в stderr, и с
+    # 'Stop' эта строка роняла бы самого сторожа вместо честного FAIL.
+    # Поймано на себе же, 25.09.2026.
+    $prevPref = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $answer = & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command ". '$probeFile'" 2>&1 | Out-String
+    }
+    finally {
+        $ErrorActionPreference = $prevPref
+    }
+    Remove-Item $probeFile -Force -ErrorAction SilentlyContinue
+    Assert-That 'Invoke-Checked не считает stderr отказом при нулевом коде' ($answer -match 'noise=True')
+    Assert-That 'Invoke-Checked всё ещё падает на настоящем отказе с болтовнёй' ($answer -match 'fail=True')
+}
+else {
+    Write-Host 'пропуск: ловушка stderr есть только в Windows PowerShell' -ForegroundColor Yellow
+    $skipped += 2
+}
+
 
 
 # --- Проверка версии Node ---------------------------------------------------
@@ -217,7 +292,7 @@ finally {
 # Замена отняла бы пути, которые есть в процессе, но не в реестре: так собран
 # PATH в CI и у менеджеров версий.
 
-if ($IsWindows) {
+if ($onWindows) {
     $ownPath = Join-Path ([System.IO.Path]::GetTempPath()) 'rujarvis-path-probe'
     $before = $env:Path
     try {
@@ -230,6 +305,15 @@ if ($IsWindows) {
     finally {
         $env:Path = $before
     }
+}
+else {
+    # «Нечем мерить» обязано отличаться от «прошло».
+    #
+    # Блок выше не выполнялся вне Windows и не печатал ничего, а в конце
+    # выводилось «проверки функций пройдены». Человек на macOS видел зелёный
+    # итог, хотя Update-SessionPath никто не трогал.
+    Write-Host 'пропуск: PATH проверяется только на Windows' -ForegroundColor Yellow
+    $skipped += 1
 }
 
 # --- Драйвер окон ------------------------------------------------------------
@@ -246,4 +330,19 @@ if ($failures -gt 0) {
     Write-Host "Провалено проверок: $failures" -ForegroundColor Red
     exit 1
 }
-Write-Host 'install.ps1: проверки функций пройдены' -ForegroundColor Green
+if ($skipped -gt 0) {
+    Write-Host "install.ps1: проверки функций пройдены, пропущено: $skipped" -ForegroundColor Yellow
+}
+else {
+    Write-Host 'install.ps1: проверки функций пройдены' -ForegroundColor Green
+}
+
+# Итог проверки — её код возврата, а не то, что осталось от чужой команды.
+#
+# Без этой строки скрипт печатал «проверки пройдены» и возвращал единицу:
+# $LASTEXITCODE держал код последней НАТИВНОЙ команды, отработавшей где-то
+# внутри. `ci.yml` этого не видел, потому что зовёт скрипт отдельным процессом
+# (`pwsh -File`), где код берётся заново. А обход установки Windows зовёт его
+# через `shell: pwsh`, то есть точкой, и чужая единица утекала наружу: шаг
+# падал на зелёной проверке. Поймано первым же живым прогоном 25.09.2026.
+exit 0

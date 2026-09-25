@@ -12,6 +12,10 @@ const ru = {
   trayNotListening: 'не слушаю — пройдите настройку',
   trayVoiceFailed: 'голос не запустился',
   trayEvents: 'Окно событий',
+  firstWords:
+    'Готово, я слушаю. Позовите меня по имени — Джарвис. Скажите «стоп», чтобы я остановился. А чтобы узнать, что я умею, спросите: что ты умеешь.',
+  trayMicOff: 'Выключить микрофон',
+  trayMicOn: 'Включить микрофон',
   traySettings: 'Настройки…',
   trayRunSetup: 'Пройти настройку заново…',
   trayOpenLog: 'Открыть лог',
@@ -121,6 +125,10 @@ const en: UiStrings = {
   trayNotListening: 'not listening — finish setup',
   trayVoiceFailed: 'voice failed to start',
   trayEvents: 'Events window',
+  firstWords:
+    'All set, I am listening. Call me by name — Jarvis. Say stop to stop me. And to learn what I can do, ask: what can you do.',
+  trayMicOff: 'Turn microphone off',
+  trayMicOn: 'Turn microphone on',
   traySettings: 'Settings…',
   trayRunSetup: 'Run setup again…',
   trayOpenLog: 'Open log',

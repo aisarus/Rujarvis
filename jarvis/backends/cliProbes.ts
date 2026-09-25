@@ -17,6 +17,7 @@ import { hasClaudeEnvironmentAuth, hasCodexEnvironmentAuth, resolveAuthState } f
 import type { ClaudeCliProbe } from './claudeCode';
 import type { CodexCliProbe } from './codex';
 import { localModel } from './localModel';
+import { agentEnv } from './subscriptionEnv';
 
 const run = promisify(execFile);
 
@@ -89,13 +90,21 @@ export function resolveCli(
 }
 
 async function version(file: string): Promise<string | null> {
+  const черезОболочку = /\.(cmd|bat)$/iu.test(file);
   try {
-    // .cmd на Windows запускается только через оболочку.
-    const { stdout } = await run(file, ['--version'], {
+    // `.cmd` на Windows запускается только через оболочку — И ТОЛЬКО В
+    // КАВЫЧКАХ.
+    //
+    // При `shell: true` Node склеивает путь и аргументы в одну строку, ничего
+    // не экранируя: путь вида `C:\Users\Иван Петров\...\claude.cmd` доходил до
+    // cmd.exe как команда `C:\Users\Иван`. Версия не читалась, и человек
+    // получал «не установлен» на установленном CLI. Пути с пробелами здесь
+    // обычное дело.
+    const { stdout } = await run(черезОболочку ? `"${file}"` : file, ['--version'], {
       timeout: 10_000,
       encoding: 'utf8',
       windowsHide: true,
-      shell: /\.(cmd|bat)$/iu.test(file),
+      shell: черезОболочку,
     });
     return stdout.trim();
   } catch {
@@ -129,6 +138,14 @@ function hasCredentials(cli: Cli): boolean {
   }
 }
 
+/**
+ * Проба смотрит на то окружение, которое получит сам CLI.
+ *
+ * Иначе она ручалась за то, чего не будет: ANTHROPIC_API_KEY в системе
+ * означал «вход выполнен», а `agentEnv()` этот ключ снимает НАРОЧНО — Джарвис
+ * живёт на подписке и чужими ключами не платит. Получалось «готов» и отказ
+ * авторизации на первой же задаче.
+ */
 export function createClaudeProbe(env: NodeJS.ProcessEnv = process.env): ClaudeCliProbe {
   return {
     async status() {
@@ -136,7 +153,8 @@ export function createClaudeProbe(env: NodeJS.ProcessEnv = process.env): ClaudeC
       // Со своей моделью вход в аккаунт Anthropic не нужен: CLI идёт на сервер
       // человека. Нужен только сам установленный Claude Code.
       if (localModel()) return { ...status, loggedIn: status.installed };
-      return { ...status, loggedIn: resolveAuthState(status.loggedIn, hasClaudeEnvironmentAuth(env)) };
+      const какУCli = agentEnv(env);
+      return { ...status, loggedIn: resolveAuthState(status.loggedIn, hasClaudeEnvironmentAuth(какУCli)) };
     },
   };
 }
@@ -145,7 +163,8 @@ export function createCodexProbe(env: NodeJS.ProcessEnv = process.env): CodexCli
   return {
     async status() {
       const status = await cliStatus('codex', env);
-      return { ...status, loggedIn: resolveAuthState(status.loggedIn, hasCodexEnvironmentAuth(env)) };
+      const какУCli = agentEnv(env);
+      return { ...status, loggedIn: resolveAuthState(status.loggedIn, hasCodexEnvironmentAuth(какУCli)) };
     },
   };
 }

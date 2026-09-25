@@ -218,6 +218,13 @@ describe('когда всё ломается', () => {
       const итог = await ход.result();
       expect(итог.ok).toBe(false);
       expect(s.isAlive()).toBe(false);
+      // Закрыть сессию мало: процесс надо убить.
+      //
+      // `die()` обнулял ссылку, а `kill()` жил только в `dispose()` —
+      // зависший claude вместе со своим MCP-сервером и PowerShell оставался
+      // жить, и каждый таймаут оставлял ещё один. Проверка смотрела только
+      // на `isAlive()` и утечку пропускала.
+      expect(п.child.exitCode).not.toBeNull();
     } finally {
       vi.useRealTimers();
     }

@@ -136,7 +136,14 @@ function modelRow(kind, model, selectedId, onSelect) {
       progress.set(key, { stage: 'downloading', ratio: 0 });
       onSelect(model.id);
       render();
-      await api.install(kind, model.id);
+      const итог = await api.install(kind, model.id);
+      // Отказ виден и тогда, когда событие progress не доехало: окно могли
+      // закрыть и открыть заново, и тогда «качаю» висело бы вечно.
+      if (итог && итог.ok === false) {
+        progress.set(key, { stage: 'error', message: итог.message });
+        render();
+        return;
+      }
       await refresh();
     };
   }
@@ -264,8 +271,17 @@ function localModelCard() {
     result.textContent = s.localModelChecking;
     const url = node.querySelector('[data-f=url]').value;
     const model = node.querySelector('[data-f=model]').value;
-    const answer = await api.checkLocal(url, model);
-    event.target.disabled = false;
+    // try/finally: без него отклонённый вызов оставлял кнопку серой, а
+    // надпись — на «Проверяю…», и причину человек не видел вовсе.
+    let answer;
+    try {
+      answer = await api.checkLocal(url, model);
+    } catch (беда) {
+      result.textContent = String((беда && беда.message) || беда);
+      return;
+    } finally {
+      event.target.disabled = false;
+    }
     if (!answer.ok) { result.textContent = answer.reason; return; }
     if (!answer.tools) { result.textContent = s.localModelNoTools; return; }
     toast(s.localModelOk);

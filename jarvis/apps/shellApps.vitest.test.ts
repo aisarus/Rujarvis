@@ -2,6 +2,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 
+import { START_APPS_COMMAND } from './installed';
+
 const run = promisify(execFile);
 const onWindows = process.platform === 'win32';
 
@@ -15,9 +17,10 @@ const onWindows = process.platform === 'win32';
  * Стоила она дорого и тихо: «Архиватор Windows» приезжал как «��娢��� Windows»,
  * и ни одна программа с русским именем не находилась голосом.
  */
-const COMMAND =
-  '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ' +
-  'Get-StartApps | ConvertTo-Json -Compress';
+// Строка берётся из самого кода, а не переписывается сюда. Со своей копией
+// проверка оставалась зелёной после удаления `[Console]::OutputEncoding` из
+// `installed.ts` — то есть защищала свой текст, а не работу программы.
+const COMMAND = START_APPS_COMMAND;
 
 describe.runIf(onWindows)('список установленных программ', () => {
   it(

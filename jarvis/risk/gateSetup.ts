@@ -13,7 +13,6 @@
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { desktopMcpBundle } from '../desktop/launch';
@@ -29,6 +28,17 @@ export interface GateSetupOptions {
   language?: Language;
   exists?: (file: string) => boolean;
   nodeAvailable?: () => boolean;
+  /**
+   * Куда класть настройки хука. По умолчанию — внутрь папки данных Джарвиса.
+   *
+   * Раньше это был `%TEMP%`, и это была дыра: временная папка входит в
+   * рабочие корни и НЕ входит в защищённые, поэтому запись в `gate.json`
+   * проходила как обычная работа, без единого вопроса. А `gate.json`
+   * перечитывается перед КАЖДЫМ вызовом инструмента — достаточно было
+   * переписать в нём `homeDir` и `outputDir`, и защита папки Джарвиса с
+   * документами человека переставала существовать. Подменять путь теперь
+   * можно только в проверках.
+   */
   tempRoot?: string;
 }
 
@@ -43,7 +53,10 @@ export function prepareGate(options: GateSetupOptions): GateSetup {
   const bridgeDir = path.join(options.dataDir, 'gate');
   mkdirSync(bridgeDir, { recursive: true });
 
-  const dir = mkdtempSync(path.join(options.tempRoot ?? os.tmpdir(), 'jarvis-gate-'));
+  // Настройки хука живут В ЗАЩИЩЁННОЙ папке, а не во временной.
+  const hooksRoot = options.tempRoot ?? path.join(options.dataDir, 'hooks');
+  mkdirSync(hooksRoot, { recursive: true });
+  const dir = mkdtempSync(path.join(hooksRoot, 'jarvis-gate-'));
   const configFile = path.join(dir, 'gate.json');
   const config: GateConfig = {
     bridgeDir,

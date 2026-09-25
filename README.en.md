@@ -45,8 +45,16 @@ curl -fsSL https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.sh | 
 Same order: Homebrew, Git and Node.js are installed if missing, the app is
 built, the speech models are downloaded, **Rujarvis** lands in `~/Applications`.
 Voice, the conversation and Claude Code work the same as on Windows. Driving
-other windows — focus, keys, screenshots — is Windows-only for now: that driver
-is written against the Windows API.
+other windows — focus, keys, screenshots, reading elements — works on macOS
+too, through System Events and CoreGraphics instead of the Windows API.
+Measured on a real Mac on 2026-09-24: of sixteen acceptance scenarios thirteen
+passed, two had nothing to measure (they are about the Windows registry), and
+one failed — the click grid does not cover the menu bar and the dock.
+
+macOS asks for two separate permissions: Accessibility (windows, mouse, keys)
+and Screen Recording (screenshots). Without the first, CGEvent does not fail —
+it **silently does nothing** — so Jarvis asks for the permission up front
+rather than discovering it from a no-op.
 
 On first start a short setup walks you through the language, signing in to
 Claude Code, the speech models and a microphone check. Everything can be
@@ -100,7 +108,9 @@ it into things you never asked for.
 
 What the hook cannot see: a click by screen coordinates or by element number
 does not say what is being pressed. Codex runs in its own sandbox
-(`workspace-write`, no network) and gets no desktop tools. Details:
+(`workspace-write`: writes only inside the working folder) and gets no desktop
+tools; whether that sandbox has network access is set by Codex's own
+configuration, not by Jarvis — check it if that matters to you. Details:
 [docs/jarvis/architecture.md](docs/jarvis/architecture.md).
 
 ## Where things are
@@ -128,8 +138,10 @@ Folders and log**, which helps when it mishears.
 
 Speech is recognised and synthesised locally. The only things that leave your
 machine are what you send to the Claude Code or Codex CLI you signed in to —
-the same as using them directly — and your audio, only if you opt into cloud
-recognition by setting `ELEVENLABS_API_KEY`. There is no telemetry.
+the same as using them directly — and your audio, only if you opt into
+recognition off this machine: the cloud (`ELEVENLABS_API_KEY`) or your own
+whisper.cpp server over the network (`JARVIS_GPU_STT` pointing somewhere other
+than `localhost`). There is no telemetry.
 
 ## Honest status
 

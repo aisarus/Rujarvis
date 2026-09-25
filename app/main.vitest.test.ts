@@ -20,10 +20,20 @@ const стенд = vi.hoisted(() => ({
   лок: true,
   трееПоявилось: 0,
   голосЗапущен: 0,
+  микрофонПереключен: 0,
   готово: null as null | (() => void),
   подсказка: '',
   настройкиОкна: null as null | { settings: { update(patch: { language: 'ru' | 'en' }): unknown } },
 }));
+
+/**
+ * Чтение в обход сужения типов.
+ *
+ * Поля стенда заполняет уже загруженный `main`, а вывод типов этого не видит:
+ * после `стенд.готово = null` он считает поле навсегда пустым и отказывается
+ * вызывать его даже через `?.()`. Функция возвращает объявленный тип.
+ */
+const взять = <K extends keyof typeof стенд>(ключ: K): (typeof стенд)[K] => стенд[ключ];
 
 vi.mock('electron', () => {
   class Tray {
@@ -61,7 +71,20 @@ vi.mock('electron', () => {
 vi.mock('./voiceBridge', () => ({
   startJarvisVoiceBridge: async () => {
     стенд.голосЗапущен += 1;
-    return { showEvents: () => {}, dispose: () => {} };
+    // Подделка обязана уметь всё, чем пользуется `main`.
+    //
+    // Неполная роняла построение меню значка необработанной ошибкой
+    // «bridge?.muteState is not a function». Набор при этом оставался
+    // зелёным, но vitest предупреждал прямо: такая ошибка может дать ложно
+    // пройденные проверки — их и стало на восемьдесят меньше.
+    return {
+      showEvents: () => {},
+      dispose: () => {},
+      toggleMute: () => {
+        стенд.микрофонПереключен += 1;
+      },
+      muteState: () => ({ muted: false, secondsLeft: 0 }),
+    };
   },
 }));
 
@@ -88,7 +111,7 @@ async function запустить(лок: boolean): Promise<void> {
   vi.resetModules();
   process.env.JARVIS_HOME = домДляПроверки();
   await import('./main');
-  стенд.готово?.();
+  взять('готово')?.();
   // Дать цепочке промисов `whenReady().then(...)` доработать.
   for (let i = 0; i < 20; i += 1) await Promise.resolve();
   await new Promise((r) => setTimeout(r, 10));
@@ -145,14 +168,14 @@ describe('язык главного процесса', () => {
     vi.resetModules();
     process.env.JARVIS_HOME = домДляПроверки('ru', false);
     await import('./main');
-    стенд.готово?.();
+    взять('готово')?.();
     for (let i = 0; i < 20; i += 1) await Promise.resolve();
 
     const { currentLanguage } = await import('../jarvis/locale/language');
     expect(currentLanguage()).toBe('ru');
 
     // Мастер меняет язык через то же хранилище, что держит главный процесс.
-    const хранилище = стенд.настройкиОкна?.settings;
+    const хранилище = взять('настройкиОкна')?.settings;
     expect(хранилище).toBeTruthy();
     хранилище?.update({ language: 'en' });
     expect(currentLanguage()).toBe('en');

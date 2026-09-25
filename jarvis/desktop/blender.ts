@@ -11,7 +11,7 @@
  */
 
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -67,7 +67,19 @@ export async function runPython(code: string, blendFile?: string): Promise<Blend
     return { ok: false, output: 'Blender не найден. Укажите путь в JARVIS_BLENDER.' };
   }
 
+  // Папку за собой убираем.
+  //
+  // `mkdtempSync` создаёт новую на КАЖДЫЙ вызов, а агент зовёт этот
+  // инструмент десятки раз за работу над сценой. Тот же класс утечки, что
+  // однажды дал сто пятьдесят две папки за день.
   const dir = mkdtempSync(path.join(os.tmpdir(), 'jarvis-blender-'));
+  const убрать = (): void => {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Blender мог ещё держать файл — не беда, уберёт система.
+    }
+  };
   const script = path.join(dir, 'task.py');
   writeFileSync(script, code, 'utf8');
 
@@ -88,6 +100,8 @@ export async function runPython(code: string, blendFile?: string): Promise<Blend
       ok: false,
       output: trimNoise(`${detail.stdout ?? ''}${detail.stderr ?? ''}` || detail.message || 'Неизвестная ошибка'),
     };
+  } finally {
+    убрать();
   }
 }
 

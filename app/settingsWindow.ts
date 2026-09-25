@@ -40,7 +40,15 @@ let current: SettingsWindowOptions | null = null;
 let registered = false;
 /** Для кнопки «Послушать» — отдельный синтезатор, чтобы не мешать мосту. */
 let preview: Speaker | null = null;
-const installs = new Map<string, Promise<void>>();
+// Итог загрузки: `ok: false` и причина, а не `undefined` на любой исход.
+//
+// Раньше отказ превращался в `undefined` сразу после отправки события
+// `progress`. Если событие не дошло — окно закрыли и открыли заново, — вызов
+// `api.install` в странице завершался как успешный, и человек смотрел на
+// «готово» при пустой папке моделей.
+type InstallOutcome = { ok: true } | { ok: false; message: string };
+
+const installs = new Map<string, Promise<InstallOutcome>>();
 
 /**
  * Что показать: мастер или вкладки.
@@ -164,7 +172,6 @@ async function state() {
   };
 }
 
-/** Сохранить и сказать приложению, что поменялось: от этого зависит перезапуск моста. */
 /**
  * Сменили язык — меняем и голос.
  *
@@ -236,9 +243,11 @@ function registerHandlers(): void {
         ? installWhisperModel({ installRoot: paths.whisperModels, modelId: id as WhisperModelId, onProgress: progress })
         : installVoice(paths.voiceModels, id, progress)
     )
-      .then(() => undefined)
-      .catch((error: unknown) => {
-        send('progress', { kind, id, stage: 'error', message: error instanceof Error ? error.message : String(error) });
+      .then((): InstallOutcome => ({ ok: true }))
+      .catch((error: unknown): InstallOutcome => {
+        const message = error instanceof Error ? error.message : String(error);
+        send('progress', { kind, id, stage: 'error', message });
+        return { ok: false, message };
       })
       .finally(() => installs.delete(key));
     installs.set(key, job);

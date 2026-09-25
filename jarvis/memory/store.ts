@@ -69,6 +69,8 @@ function sameName(a: string, b: string): boolean {
 export class JarvisMemory {
   private snapshot: MemorySnapshot = { ...EMPTY_SNAPSHOT };
   private loaded = false;
+  /** Почему не прочиталась прошлая память. Пусто — прочиталась. */
+  private загрузкаНеУдалась = '';
   private readonly now: () => number;
 
   constructor(private readonly options: JarvisMemoryOptions = {}) {
@@ -89,17 +91,39 @@ export class JarvisMemory {
           preferences: loaded.preferences ?? {},
         };
       }
-    } catch {
-      // A corrupt or unreadable memory file must not stop Jarvis from starting.
+    } catch (error) {
+      // Нечитаемая память не должна мешать Джарвису запуститься — но и писать
+      // поверх неё пустой снимок нельзя.
+      //
+      // Раньше отказ чтения давал пустую память, и первая же запись сохраняла
+      // её поверх файла: проекты, псевдонимы и предпочтения человека
+      // пропадали молча. Файл мог всего лишь оказаться занят.
+      this.загрузкаНеУдалась = error instanceof Error ? error.message : String(error);
+      console.error(`[jarvis] память не прочиталась: ${this.загрузкаНеУдалась}`);
     }
   }
 
-  private async persist(): Promise<void> {
-    if (!this.options.storage) return;
+  /**
+   * Сохранить. Возвращает, дошло ли до диска.
+   *
+   * Раньше отказ записи глотался, и `rememberProject` отвечал обычным
+   * успехом: Джарвис говорил «запомнил», а после перезапуска псевдонима не
+   * было. Человек узнавал об этом, когда «аегис» переставал пониматься.
+   */
+  private async persist(): Promise<boolean> {
+    if (!this.options.storage) return true;
+    if (this.загрузкаНеУдалась) {
+      // Пока не знаем, что было в файле, писать туда нечего: это стёрло бы
+      // всё, чего мы не прочитали.
+      console.error('[jarvis] память не сохранена: прошлое содержимое не прочиталось');
+      return false;
+    }
     try {
       await this.options.storage.save(this.snapshot);
-    } catch {
-      // Losing a write costs the user one alias, not the session.
+      return true;
+    } catch (error) {
+      console.error(`[jarvis] память не сохранена: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
     }
   }
 

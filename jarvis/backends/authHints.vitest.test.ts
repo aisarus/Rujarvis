@@ -5,6 +5,7 @@ import {
   isUsable,
   resolveAuthState,
 } from './authHints';
+import { agentEnv } from './subscriptionEnv';
 
 describe('environment auth detection', () => {
   it('sees an API key or OAuth token supplied through the environment', () => {
@@ -29,6 +30,27 @@ describe('environment auth detection', () => {
     expect(hasCodexEnvironmentAuth({ OPENAI_API_KEY: 'sk-test' })).toBe(true);
     expect(hasCodexEnvironmentAuth({ OPENAI_BASE_URL: 'https://gateway' })).toBe(true);
     expect(hasCodexEnvironmentAuth({})).toBe(false);
+  });
+
+  /**
+   * Проба обязана смотреть на то окружение, которое получит сам CLI.
+   *
+   * Ключ в системе означал «вход выполнен», но `agentEnv()` его снимает
+   * нарочно: Джарвис живёт на подписке и чужими ключами не платит. Выходило
+   * «готов» — и отказ авторизации на первой же задаче.
+   */
+  it('чужой ключ не считается входом: CLI его не получит', () => {
+    const вСистеме = { ANTHROPIC_API_KEY: 'sk-test', OPENAI_API_KEY: 'sk-test' };
+    expect(hasClaudeEnvironmentAuth(вСистеме)).toBe(true);
+    expect(hasClaudeEnvironmentAuth(agentEnv(вСистеме))).toBe(false);
+    expect(hasCodexEnvironmentAuth(agentEnv(вСистеме))).toBe(false);
+  });
+
+  it('размещение у хозяина машины входом остаётся: его не снимают', () => {
+    // Bedrock и Vertex — не ключ и не трата денег из кармана человека, их
+    // agentEnv не трогает, и проба про них не должна врать в другую сторону.
+    const хозяйский = { CLAUDE_CODE_USE_BEDROCK: '1' };
+    expect(hasClaudeEnvironmentAuth(agentEnv(хозяйский))).toBe(true);
   });
 
   it('does not confuse the two vendors', () => {

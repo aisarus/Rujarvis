@@ -29,11 +29,13 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
+
+import { cliLaunch } from './spawnCli';
 import { randomUUID } from 'node:crypto';
 
-import { EventChannel } from './process';
+import { EventChannel, looksUsageLimited } from './process';
 import { forgetChild, trackChild } from '../tasks/reaper';
-import type { BackendEvent, BackendResult, BackendRun } from './types';
+import type { BackendEvent, BackendFileChange, BackendResult, BackendRun } from './types';
 
 const BACKEND_ID = 'claude-code' as const;
 const NL = String.fromCharCode(10);
@@ -136,6 +138,11 @@ interface Turn {
   startedAt: number;
   text: string;
   sessionId?: string;
+  /** Что тронул этот ход. Живой путь раньше терял это целиком. */
+  files: BackendFileChange[];
+  commands: string[];
+  /** Подписка кончилась — менеджеру это нужно, чтобы взять другой помощник. */
+  usageLimited?: boolean;
   /** Счётчик молчания. Перевзводится на каждом признаке жизни. */
   timer: NodeJS.Timeout;
   /**
@@ -197,9 +204,13 @@ export class LiveSession {
   warm(): void {
     if (this.child) return;
     const spawnIt = this.options.spawnProcess ?? spawn;
-    const child = spawnIt(this.options.command, buildLiveArgs(this.options.key, this.options.extraArgs), {
+    // Та же беда, что у разовых прогонов: `claude.cmd` без оболочки не
+    // запускается вовсе, а с оболочкой разваливается на пробеле в пути.
+    const запуск = cliLaunch(this.options.command, buildLiveArgs(this.options.key, this.options.extraArgs));
+    const child = spawnIt(запуск.command, запуск.args, {
       cwd: this.options.key.cwd,
       env: this.options.env,
+      shell: запуск.shell,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -226,11 +237,32 @@ export class LiveSession {
    * Молча оставить вызывающего ждать хуже, чем сказать «не вышло»: задача
    * повиснет навсегда, и человек будет смотреть на пустой экран.
    */
-  private die(why: string): void {
+  /**
+   * Закрыть сессию, отметив ход отменённым.
+   *
+   * `отменён` — это признак результата, а не слово в тексте ошибки. Читать
+   * причину строкой значит либо спрятать настоящую беду со словом «отмена»
+   * внутри, либо извиниться за исполненную просьбу человека, если формулировка
+   * оказалась другой.
+   */
+  private die(why: string, отменён = false): void {
     this.dead = true;
     const turn = this.turn;
     this.turn = null;
+    // Процесс ГАСИМ, а не просто забываем.
+    //
+    // Раньше `kill` был только в `dispose`, а по сроку молчания и по потолку
+    // звался этот метод: зависший `claude` вместе со своим MCP-сервером и
+    // PowerShell оставался жить. `forgetChild` ждёт события выхода, а его не
+    // будет. Каждый срок оставлял ещё один процесс — та самая утечка на 956
+    // МБ, о которой сказано выше.
+    const ушедший = this.child;
     this.child = null;
+    try {
+      ушедший?.kill();
+    } catch {
+      // Уже мёртв — и хорошо.
+    }
     if (turn) {
       clearTimeout(turn.timer);
       clearTimeout(turn.ceiling);
@@ -241,6 +273,7 @@ export class LiveSession {
         durationMs: this.now() - turn.startedAt,
         filesChanged: [],
         commands: [],
+        cancelled: отменён,
         error: why,
       };
       turn.channel.push({ type: 'completed', backend: BACKEND_ID, result });
@@ -296,6 +329,15 @@ export class LiveSession {
     this.options.consumeLine(raw, (event) => {
       if (event.type === 'started' && event.sessionId) turn.sessionId = event.sessionId;
       if (event.type === 'assistant-text') turn.text += event.text;
+      // Копим то, что потом уходит в итог.
+      //
+      // Живой путь собирал результат сам и всегда отдавал пустые списки: мост
+      // сообщал «файлы не менялись» после правок, а исчерпанную подписку
+      // менеджер не видел и не переключался на запасной помощник — человек
+      // получал отказ вместо работы.
+      if (event.type === 'file-changed') turn.files.push(event.change);
+      if (event.type === 'command') turn.commands.push(event.command);
+      if (event.type === 'error' && looksUsageLimited(event.message)) turn.usageLimited = true;
       turn.channel.push(event);
     });
 
@@ -313,9 +355,16 @@ export class LiveSession {
       text: typeof raw.result === 'string' && raw.result ? raw.result : turn.text,
       sessionId: turn.sessionId,
       durationMs: this.now() - turn.startedAt,
-      filesChanged: [],
-      commands: [],
-      error: failed ? String(raw.subtype ?? 'не вышло') : undefined,
+      filesChanged: turn.files,
+      commands: turn.commands,
+      // Причина — из самого ответа, а не из его вида: «error_during_execution»
+      // человеку ничего не говорит, а текст говорит.
+      ...(turn.usageLimited || (failed && typeof raw.result === 'string' && looksUsageLimited(raw.result))
+        ? { usageLimited: true }
+        : {}),
+      error: failed
+        ? (typeof raw.result === 'string' && raw.result ? raw.result : String(raw.subtype ?? 'не вышло'))
+        : undefined,
     };
     turn.channel.push({ type: 'completed', backend: BACKEND_ID, result });
     turn.channel.close();
@@ -363,7 +412,7 @@ export class LiveSession {
         : undefined;
       ceiling?.unref?.();
 
-      this.turn = { channel, settle, startedAt: this.now(), text: '', timer, ceiling };
+      this.turn = { channel, settle, startedAt: this.now(), text: '', files: [], commands: [], timer, ceiling };
       this.spoken = true;
       channel.push({ type: 'started', backend: BACKEND_ID });
       this.child?.stdin?.write(userMessage(prompt));
@@ -379,15 +428,18 @@ export class LiveSession {
       // Прервать ход нечем: у CLI нет отмены посреди хода. Значит закрываем
       // сессию целиком — «стоп» обязан срабатывать, а лишний холодный старт
       // потом дешевле невыполненной команды остановки.
-      cancel: () => this.dispose('Отменено'),
+      cancel: () => this.dispose('Отменено', true),
       result: () => done,
     };
   }
 
   /** Закрыть сессию. Незавершённый ход получит ответ, а не повиснет. */
-  dispose(why = 'Сессия закрыта'): void {
+  dispose(why = 'Сессия закрыта', отменён = true): void {
+    // Закрытие сессии — всегда отмена для идущего хода: человек сказал
+    // «забудь», «стоп» или закрыл Джарвиса. Это исполненная просьба, а не
+    // неудача, и извиняться за неё не за что.
     const child = this.child;
-    this.die(why);
+    this.die(why, отменён);
     child?.kill();
   }
 }

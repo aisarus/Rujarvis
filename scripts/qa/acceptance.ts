@@ -24,7 +24,11 @@ import path from 'node:path';
 
 import { app, BrowserWindow, screen } from 'electron';
 
-import { runDirectCommand, type ГоворящаяСессия } from '../../app/voiceBridge';
+import {
+  привязатьНастройкиДляПриёмки,
+  runDirectCommand,
+  type ГоворящаяСессия,
+} from '../../app/voiceBridge';
 import { parseDirectCommand } from '../../jarvis/control/commands';
 import { cannotMeasure, failed, passed, type Gate } from '../../jarvis/measure/gate';
 import { командаПоказа, openPath, tidyRoot } from '../../jarvis/desktop/files';
@@ -33,9 +37,10 @@ import { createWindowTools } from '../../jarvis/desktop/windowTools';
 import { createHelpOverlay } from '../../app/helpOverlay';
 import { createLogWindow } from '../../app/logWindow';
 import { createStatusOverlay } from '../../app/statusOverlay';
+import { DEFAULT_VOICE, Speaker } from '../../jarvis/voice/tts';
 import { openSettingsWindow } from '../../app/settingsWindow';
 import { jarvisPaths } from '../../jarvis/setup/paths';
-import { SettingsStore } from '../../jarvis/setup/settings';
+import { SPEECH_VOLUME_RANGE, SettingsStore } from '../../jarvis/setup/settings';
 
 const ждать = (мс: number): Promise<void> => new Promise((r) => setTimeout(r, мс));
 
@@ -116,6 +121,15 @@ const окна: Случай[] = [
     имя: 'окно: свёрнутое окно поднимается по фразе',
     async проверка(): Promise<Gate> {
       if (!ЕСТЬ_ДРАЙВЕР_ОКОН) return cannotMeasure(`драйвера окон для ${process.platform} нет`);
+      // Единственный случай, который отнимает у человека передний план.
+      //
+      // Пока он за компьютером, это не проверка, а помеха: он сказал прямо —
+      // «делай, только окно мне не сворачивай». С `JARVIS_QA_NO_FOCUS=1`
+      // прогон честно говорит, что этот случай не мерил, вместо того чтобы
+      // отчитаться за него успехом.
+      if (process.env.JARVIS_QA_NO_FOCUS === '1') {
+        return cannotMeasure('пропущено: просили не отнимать передний план');
+      }
 
       const окно = new BrowserWindow({
         title: ИМЯ_ОКНА,
@@ -139,7 +153,20 @@ const окна: Случай[] = [
         const исход = await runDirectCommand(команда, тихаяСессия());
         await ждать(700);
 
-        if (исход.passed === false) return failed(`команда отказала: ${исход.why}`);
+        if (исход.passed === false) {
+          // Полноэкранная игра впереди — это не поломка Джарвиса.
+          //
+          // Windows не отдаёт передний план, пока впереди исключительный
+          // полноэкранный режим: драйвер честно находит окно и честно не может
+          // его поднять, называя помеху («Vperedi: Dota 2»). Считать это
+          // провалом — ложный провал, а он дороже ложного успеха: чинить
+          // побежали бы рабочий код. Меряем только то, что зависит от нас.
+          const помеха = /Vperedi:\s*(.+?)\s*$/u.exec(исход.why ?? '')?.[1];
+          if (помеха && !помеха.toLowerCase().includes(ИМЯ_ОКНА.toLowerCase())) {
+            return cannotMeasure(`впереди «${помеха}» — Windows не отдаёт передний план`);
+          }
+          return failed(`команда отказала: ${исход.why}`);
+        }
         return окно.isMinimized() ? failed('окно осталось свёрнутым') : passed('свёрнутое окно поднялось');
       } finally {
         if (!окно.isDestroyed()) окно.destroy();
@@ -155,7 +182,11 @@ const окна: Случай[] = [
       if (!команда) return cannotMeasure('фраза не разобралась — проверять нечего');
 
       const исход = await runDirectCommand(команда, тихаяСессия());
-      if (исход.passed !== false) return failed('несуществующее окно «нашлось»');
+      // Три ответа, а не два: `passed !== false` истинно и для `null`, и тогда
+      // «драйвер не смог ответить» превращалось в «несуществующее окно
+      // нашлось» — ложный диагноз, по которому чинят не то.
+      if (исход.passed === null) return cannotMeasure(`драйвер не ответил: ${исход.why}`);
+      if (исход.passed === true) return failed('несуществующее окно «нашлось»');
 
       // «Не получилось» без единой подсказки — это и была беда.
       //
@@ -193,6 +224,174 @@ function временныйДом(): { paths: ReturnType<typeof jarvisPaths>; se
 }
 
 const интерфейс: Случай[] = [
+  {
+    имя: 'крупный режим: плашка правда крупнее, а не просто помечена',
+    async проверка(): Promise<Gate> {
+      // Настройка без отрисовки — обман. Меряем саму страницу: шрифт и ширину
+      // окна, а не наличие галочки.
+      const былиДо = снимокОкон();
+      const плашка = createStatusOverlay();
+      const состояние = { indicator: 'listening', listening: true, awake: true, muted: false } as never;
+      try {
+        плашка.note(состояние, 'Слушаю');
+        await ждать(700);
+
+        const окно = новоеОкно(былиДо);
+        if (!окно) return cannotMeasure('окно плашки не нашлось');
+
+        const шрифт = async (): Promise<number> =>
+          Number(
+            await окно.webContents.executeJavaScript(
+              "parseFloat(getComputedStyle(document.getElementById('label')).fontSize)",
+            ),
+          );
+
+        const обычный = await шрифт();
+        const узкое = окно.getBounds().width;
+
+        плашка.setBig(true);
+        плашка.note(состояние, 'Слушаю');
+        await ждать(600);
+
+        const крупный = await шрифт();
+        const широкое = окно.getBounds().width;
+
+        if (!(крупный > обычный)) return failed(`шрифт не вырос: ${обычный} → ${крупный}`);
+        if (!(широкое > узкое)) return failed(`окно не выросло: ${узкое} → ${широкое}`);
+        // Человеку со слабым зрением 20 пикселей мало.
+        if (крупный < 24) return failed(`крупный шрифт всего ${крупный} точек`);
+        return passed(`шрифт ${обычный} → ${крупный}, окно ${узкое} → ${широкое}`);
+      } finally {
+        плашка.dispose();
+      }
+    },
+  },
+  {
+    имя: 'настройки голосом: фраза меняет значение, а не только отвечает',
+    async проверка(): Promise<Gate> {
+      // Разбор фразы проверен отдельно. Здесь проверяется то, что за ним:
+      // дошло ли изменение до склада настроек, услышал ли человек новое
+      // значение и стало ли окно шире на самом деле.
+      const каталог = mkdtempSync(path.join(os.tmpdir(), 'jarvis-qa-settings-'));
+      const склад = new SettingsStore(path.join(каталог, 'settings.json'));
+      const былиДо = снимокОкон();
+      const плашка = createStatusOverlay();
+      const сказано: string[] = [];
+      const сессия: ГоворящаяСессия = {
+        speak(text) {
+          сказано.push(text);
+        },
+        status: { indicator: 'listening', listening: true, awake: true, muted: false } as never,
+      };
+
+      привязатьНастройкиДляПриёмки(склад, плашка);
+      try {
+        await ждать(600);
+        const окно = новоеОкно(былиДо);
+        if (!окно) return cannotMeasure('окно плашки не нашлось');
+
+        const выполнить = async (фраза: string): Promise<Gate> => {
+          const разбор = parseDirectCommand(фраза);
+          if (!разбор || разбор.kind !== 'setting') {
+            return failed(`«${фраза}» разобралась не как настройка: ${разбор?.kind ?? 'ничего'}`);
+          }
+          return runDirectCommand(разбор, сессия);
+        };
+
+        // Идём вниз, а не вверх: по умолчанию громкость уже на потолке, и
+        // «громче» там законно ничего не меняет.
+        const громкостьДо = склад.get().speechVolume;
+        const вниз = await выполнить('говори тише');
+        if (вниз.passed !== true) return вниз;
+        const громкостьПосле = склад.get().speechVolume;
+        if (!(громкостьПосле < громкостьДо)) {
+          return failed(`громкость не изменилась: ${громкостьДо} → ${громкостьПосле}`);
+        }
+        if (!сказано.at(-1)?.includes('Громкость')) {
+          return failed(`человек не услышал нового значения: «${сказано.at(-1) ?? ''}»`);
+        }
+
+        const вверх = await выполнить('говори громче');
+        if (вверх.passed !== true) return вверх;
+        if (!(склад.get().speechVolume > громкостьПосле)) {
+          return failed(`обратно вверх не пошло: осталось ${склад.get().speechVolume}`);
+        }
+
+        // Упираемся в оба предела: важно, что там честно говорят «не могу»,
+        // а не молчат и не уходят за край.
+        const доПредела = async (фраза: string): Promise<Gate | null> => {
+          for (let i = 0; i < 14; i += 1) {
+            const шаг = await выполнить(фраза);
+            if (шаг.passed !== true) return шаг;
+          }
+          return null;
+        };
+
+        const сорвалось = await доПредела('говори тише');
+        if (сорвалось) return сорвалось;
+        const дно = склад.get().speechVolume;
+        if (Math.abs(дно - SPEECH_VOLUME_RANGE.min) > 0.001) {
+          return failed(`громкость ушла мимо предела: ${дно} вместо ${SPEECH_VOLUME_RANGE.min}`);
+        }
+        if (!сказано.at(-1)?.includes('Тише уже не могу')) {
+          return failed(`на нижнем пределе сказано «${сказано.at(-1) ?? ''}»`);
+        }
+
+        const сорвалосьВверх = await доПредела('говори громче');
+        if (сорвалосьВверх) return сорвалосьВверх;
+        const потолок = склад.get().speechVolume;
+        if (Math.abs(потолок - SPEECH_VOLUME_RANGE.max) > 0.001) {
+          return failed(`громкость ушла выше предела: ${потолок} вместо ${SPEECH_VOLUME_RANGE.max}`);
+        }
+        if (!сказано.at(-1)?.includes('Громче уже не могу')) {
+          return failed(`на верхнем пределе сказано «${сказано.at(-1) ?? ''}»`);
+        }
+
+        const узкое = окно.getBounds().width;
+        const крупно = await выполнить('плохо вижу');
+        if (крупно.passed !== true) return крупно;
+        if (склад.get().bigMode !== true) return failed('крупный режим не записался в настройки');
+        await ждать(500);
+        const широкое = окно.getBounds().width;
+        if (!(широкое > узкое)) return failed(`окно не выросло: ${узкое} → ${широкое}`);
+
+        return passed(
+          `громкость ${громкостьДо} → ${дно} → ${потолок} (оба предела), окно ${узкое} → ${широкое}`,
+        );
+      } finally {
+        привязатьНастройкиДляПриёмки(null, null);
+        плашка.dispose();
+      }
+    },
+  },
+  {
+    имя: 'скорость речи: «медленнее» правда удлиняет фразу',
+    async проверка(): Promise<Gate> {
+      // Настройка есть, но синтез мог её игнорировать. Меряем длительность
+      // одного и того же текста на двух скоростях.
+      const пути = jarvisPaths();
+      const голос = new Speaker(пути.voiceModels, DEFAULT_VOICE.ru);
+      try {
+        const текст = 'Проверка скорости речи.';
+        const обычно = await голос.say(текст, 1);
+        const медленно = await голос.say(текст, 0.5);
+
+        const длина = (wav: Buffer): number => wav.length;
+        if (!(длина(медленно.wav) > длина(обычно.wav) * 1.2)) {
+          return failed(
+            `медленная речь не длиннее: ${длина(обычно.wav)} против ${длина(медленно.wav)} байт`,
+          );
+        }
+        return passed(
+          `обычно ${Math.round(длина(обычно.wav) / 1024)} КБ, медленно ${Math.round(длина(медленно.wav) / 1024)} КБ`,
+        );
+      } catch (error) {
+        return cannotMeasure(`синтез недоступен: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        голос.dispose();
+      }
+    },
+  },
   {
     имя: 'плашка: текст не срезается',
     async проверка(): Promise<Gate> {
@@ -290,8 +489,15 @@ const интерфейс: Случай[] = [
           return failed(`окно ${рамка.height} точек выше рабочей области ${рабочая.height}`);
         }
 
+        // Меряем ТОТ элемент, который прокручивается.
+        //
+        // Прокрутка у справки на `body` (`overflow-y: auto; height: 100%`), и
+        // `documentElement.scrollHeight` при длинном списке остаётся равен
+        // высоте окна: обрезанный список выглядел полностью видимым.
         const [нужно, дали, есть_подсказка] = (await окно.webContents.executeJavaScript(
-          "[document.documentElement.scrollHeight, window.innerHeight, /длиннее окна|longer than/iu.test(document.body.innerText)]",
+          '[Math.max(document.body.scrollHeight, document.documentElement.scrollHeight),' +
+            ' document.body.clientHeight,' +
+            ' /длиннее окна|longer than/iu.test(document.body.innerText)]',
         )) as [number, number, boolean];
 
         if (дали >= нужно) return passed(`список влез целиком: ${нужно} ≤ ${дали}`);
@@ -381,14 +587,25 @@ const интерфейс: Случай[] = [
         окно.show();
         await ждать(600);
 
+        // Ищем СВОЁ окно, а не «хоть какое-нибудь».
+        //
+        // Проверка смотрела только на длину списка, а обещала в комментарии
+        // доказательство своим окном. На машине с открытым браузером она
+        // проходила, даже когда окна приёмки в списке не было, — то есть
+        // ровно в том случае, который расследует `electron-window-check.ts`.
+        const своё = (список: readonly { title: string }[]): boolean =>
+          список.some((окно) => окно.title.toLowerCase().includes(ИМЯ_ОКНА.toLowerCase()));
+
         const окна = await драйвер.windows();
         if (окна.length === 0) return failed('список пуст, хотя на экране есть хотя бы своё окно');
+        if (!своё(окна)) {
+          return failed(`своего окна «${ИМЯ_ОКНА}» в списке из ${окна.length} нет`);
+        }
 
         // И второй раз, уже после того как драйвер мог закончить сессию.
         const снова = await драйвер.windows();
-        return снова.length > 0
-          ? passed(`${окна.length} окон, со второго раза ${снова.length}`)
-          : failed('со второго раза список опустел — сессия не поднялась');
+        if (!своё(снова)) return failed('со второго раза своё окно пропало — сессия не поднялась');
+        return passed(`${окна.length} окон, со второго раза ${снова.length}, своё на месте`);
       } catch (error) {
         return failed(error instanceof Error ? error.message : String(error));
       } finally {

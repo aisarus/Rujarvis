@@ -53,7 +53,13 @@ export function startLogFile(file: string, header: readonly string[] = []): stri
     console[method] = (...args: unknown[]): void => {
       original(...args);
       try {
-        if (written > MAX_BYTES) rotate(file, true);
+        // Не вышла ротация — не долбить её на каждой строке.
+        //
+        // `renameSync` падает, когда файл держит другой процесс, а `written`
+        // при этом остаётся выше потолка: дальше КАЖДАЯ строка журнала звала
+        // existsSync, rmSync и renameSync на главном процессе Electron, и все
+        // три падали снова. Считаем сверху заново и попробуем через 5 МБ.
+        if (written > MAX_BYTES && !rotate(file, true)) written = 0;
         append(file, `${stamp()} ${LEVEL[method]} ${format(args)}\n`);
       } catch {
         // Запись в файл не должна мешать работе: потеря строки лога дешевле
@@ -70,19 +76,33 @@ function append(file: string, text: string): void {
   written += Buffer.byteLength(text, 'utf8');
 }
 
-/** Текущий файл — в `jarvis.1.log`, если он велик (или `force`). */
-function rotate(file: string, force = false): void {
+/**
+ * Текущий файл — в `jarvis.1.log`, если он велик (или `force`).
+ *
+ * `false` — не переименовали; звать снова прямо сейчас бесполезно.
+ */
+function rotate(file: string, force = false): boolean {
   try {
-    if (!existsSync(file)) return;
-    if (!force && statSync(file).size <= MAX_BYTES) return;
+    if (!existsSync(file)) return true;
+    if (!force && statSync(file).size <= MAX_BYTES) return true;
     const previous = file.replace(/\.log$/u, '.1.log');
     rmSync(previous, { force: true });
     renameSync(file, previous);
     written = 0;
-  } catch {
-    // Не вышло переименовать (файл держит другой процесс) — пишем дальше.
+    return true;
+  } catch (error) {
+    // Файл держит другой процесс — пишем дальше, но один раз говорим об этом:
+    // молча растущий без предела журнал однажды займёт диск целиком.
+    if (!ротацияНеВышла) {
+      ротацияНеВышла = true;
+      console.error('[jarvis] ротация журнала не удалась:', error);
+    }
+    return false;
   }
 }
+
+// Жаловались ли уже на неудачную ротацию. Иначе жалоба сама станет журналом.
+let ротацияНеВышла = false;
 
 function stamp(): string {
   const now = new Date();

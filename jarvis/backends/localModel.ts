@@ -97,7 +97,14 @@ export function localModelEnv(model: LocalModel): Record<string, string> {
 }
 
 export type LocalModelCheck =
-  | { ok: true; tools: boolean; reply: string }
+  /**
+   * `tools: null` — «проверить не вышло», а не «инструментов нет».
+   *
+   * Срок и обрыв связи раньше сворачивались в `false`, и человеку сообщали,
+   * что модель не годится в агенты. На провал чинят работу, на «нечем
+   * мерить» чинят прибор — это разные дела.
+   */
+  | { ok: true; tools: boolean | null; reply: string; why?: string }
   | { ok: false; reason: string };
 
 type Fetch = (input: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
@@ -158,8 +165,17 @@ export async function checkLocalModel(
     });
     const content = Array.isArray(answer.content) ? (answer.content as Array<{ type?: string }>) : [];
     return { ok: true, tools: content.some((block) => block.type === 'tool_use'), reply };
-  } catch {
-    // Сервер, отвергающий сам запрос с инструментами, работать агентом не сможет.
+  } catch (беда) {
+    // «Не годится в агенты» и «не вышло спросить» — разные ответы.
+    //
+    // Сюда сваливалось всё: отказ сервера на запрос с инструментами (это
+    // действительно «нет»), но и срок, и обрыв связи, и неразобранный JSON.
+    // Человеку сообщали, что модель не годится, хотя проверку просто не
+    // удалось провести — а на провал чинят работу, на «нечем мерить» чинят
+    // прибор.
+    const текст = беда instanceof Error ? беда.message : String(беда);
+    const сорвалось = /abort|timeout|network|fetch failed|ECONN|socket/iu.test(текст);
+    if (сорвалось) return { ok: true, tools: null, reply, why: `проверить не вышло: ${текст}` };
     return { ok: true, tools: false, reply };
   }
 }

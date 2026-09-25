@@ -35,6 +35,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { jarvisDataRoot } from '../setup/paths';
 
 /** Сколько ждать ответа на одну команду. Рисование бывает долгим. */
 const ANSWER_TIMEOUT_MS = 120_000;
@@ -60,13 +61,8 @@ export interface LiveResult {
 
 /** Общая папка. Тот же путь вычисляет и надстройка внутри Криты. */
 function liveDir(): string {
-  const root =
-    process.env.JARVIS_DATA_ROOT?.trim() ||
-    path.join(
-      process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
-      'Rujarvis',
-      'data',
-    );
+  // Папка данных — из paths.ts, иначе она виндовая на любой машине.
+  const root = process.env.JARVIS_DATA_ROOT?.trim() || jarvisDataRoot();
   const place = path.join(root, 'krita-live');
   mkdirSync(place, { recursive: true });
   return place;
@@ -192,7 +188,10 @@ export async function sendLive(code: string): Promise<LiveResult> {
       printed: '',
       error: pluginInstalled()
         ? 'живой Криты нет: подними её через krita_live_start'
-        : 'надстройка-слушатель не установлена — вызови krita_live_start, он её положит',
+        // Прежний текст слал агента в `krita_live_start`, а тот надстройку не
+        // ставит и отвечает тем же отказом: агент ходил по кругу между двумя
+        // сообщениями. Говорим правду: это делает человек.
+        : 'надстройка-слушатель не установлена: её ставит человек через Настройки → Управление модулями Python в самой Крите. Скажи ему об этом и делай остальное.',
     };
   }
 

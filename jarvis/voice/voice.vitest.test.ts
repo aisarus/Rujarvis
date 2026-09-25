@@ -10,12 +10,7 @@ import {
   matchVoiceControl,
   type ControlTarget,
 } from './interrupts';
-import {
-  spokenFailure,
-  splitSentences,
-  stripUnspeakable,
-  toSpokenResponse,
-} from './spokenResponse';
+import { spokenFailure, stripUnspeakable, toSpokenResponse } from './spokenResponse';
 import { acknowledgementFor, clarificationFor } from './acknowledgement';
 import {
   DEFAULT_WHISPER_MODEL,
@@ -399,9 +394,14 @@ describe('archive extraction safety', () => {
     expect(resolveArchiveEntry(root, '/etc/passwd')).toBe(path.resolve(root, 'etc', 'passwd'));
   });
 
-  it('не выпускает наружу через обратные слеши', () => {
-    // На Windows разделителем работает и «\», и попытка выхода выглядит иначе.
-    const climb = ['..', '..', 'windows', 'system32'].join(path.sep);
+  it.runIf(process.platform === 'win32')('не выпускает наружу через обратные слеши', () => {
+    // Обратный слеш — разделитель ТОЛЬКО на Windows.
+    //
+    // Проверка склеивала путь через `path.sep`, а на POSIX это «/» — то есть
+    // ровно та же строка, что в проверке выше, и второй случай не проверял
+    // ничего. С явным обратным слешем на POSIX `path.normalize` не считает
+    // его разделителем, поэтому случай пропускается честно.
+    const climb = String.raw`..\..\windows\system32`;
     expect(() => resolveArchiveEntry(root, climb)).toThrow(/escapes/);
   });
 });
@@ -440,5 +440,34 @@ describe('resampleTo16k filters what it cannot represent', () => {
   it('removes tones above 8 kHz instead of folding them into the speech band', () => {
     // Линейная интерполяция оставляла тут почти всю громкость — на 6 кГц.
     expect(rms(resampleTo16k(tone(10_000, 44_100), 44_100))).toBeLessThan(0.1);
+  });
+});
+
+describe('отклик не обещает сделанного и не переспрашивает про вопрос', () => {
+  /**
+   * Замечания CodeRabbit (кусок 3, PR №42).
+   */
+  it('ни один отклик не говорит «Готово»', () => {
+    // Отклик звучит ДО работы: обещать сделанное в этот момент нечем.
+    const все: string[] = [];
+    for (const intent of [
+      'open_app', 'make', 'control_window', 'modify_project', 'inspect_project',
+      'query_screen', 'browse', 'file_task', 'communicate', 'system', 'continue', 'chat',
+    ] as const) {
+      for (let i = 0; i < 12; i += 1) {
+        все.push(acknowledgementFor({ intent, confidence: 0.9, asks: false } as never) ?? '');
+      }
+    }
+    expect(все.filter((фраза) => /готово|done/iu.test(фраза))).toEqual([]);
+  });
+
+  it('на вопрос не отвечают «не понял, что именно сделать»', () => {
+    // Человек ничего не поручал: уточнять в вопросе нечего.
+    const вопрос = { intent: 'query_screen', confidence: 0.2, asks: true } as never;
+    expect(clarificationFor(вопрос)).toBeNull();
+
+    // А неуверенное ПОРУЧЕНИЕ по-прежнему уточняется.
+    const поручение = { intent: 'make', confidence: 0.2, asks: false } as never;
+    expect(clarificationFor(поручение)).not.toBeNull();
   });
 });

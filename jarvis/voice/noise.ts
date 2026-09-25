@@ -48,6 +48,16 @@ const MIN_MEANINGFUL_LENGTH = 2;
  * Поэтому здесь фразы целиком и сверка по вхождению. Каждая из них — та, что
  * человек не скажет своему помощнику ни при каких обстоятельствах.
  */
+/**
+ * Выдумки, которые сами по себе — обычные слова.
+ *
+ * Их нельзя ловить вхождением: «корректор» в середине фразы встречается в
+ * «открой корректор» и «позови корректора», и такая речь молча пропадала —
+ * человек видел, что команда не выполнена, и причины не узнавал. Выдумка
+ * Whisper имеет вид «Корректор А. Егорова», то есть стоит первой.
+ */
+const HALLUCINATIONS_AT_START = ['корректор'];
+
 const HALLUCINATIONS = [
   'продолжение следует',
   // Без хвоста нарочно.
@@ -66,7 +76,6 @@ const HALLUCINATIONS = [
   'субтитры подогнал',
   'субтитры перевел',
   'редактор субтитров',
-  'корректор',
   'dimatorzok',
   'спасибо за просмотр',
   'спасибо за внимание',
@@ -109,6 +118,7 @@ export function meaningfulSpeech(transcript: string): string | null {
 
   const lowered = cleaned.toLowerCase();
   if (HALLUCINATIONS.some((phrase) => lowered.includes(phrase))) return null;
+  if (HALLUCINATIONS_AT_START.some((phrase) => lowered.startsWith(phrase))) return null;
   if (isSoundCaption(cleaned)) return null;
 
   return cleaned;

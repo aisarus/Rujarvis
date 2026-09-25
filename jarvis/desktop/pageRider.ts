@@ -61,14 +61,30 @@ export function findRider(axis: Axis, threshold = 40): string {
     }
     кандидаты.sort((a, b) => b[0] - a[0]);
     for (const [запас, el] of кандидаты) {
+      // Плавность на время толчка снимаем.
+      //
+      // При \`scroll-behavior: smooth\` — частая настройка лендингов —
+      // присвоение запускает анимацию, а чтение сразу после него возвращает
+      // СТАРОЕ значение: настоящий ездок объявлялся неподвижным и
+      // отбрасывался, съёмка уходила на колесо или снимала один экран.
+      const плавность = el.style ? el.style.scrollBehavior : '';
+      if (el.style) el.style.scrollBehavior = 'auto';
       const было = el.${offset};
       el.${offset} = было + 10;
       const поехал = el.${offset} !== было;
       el.${offset} = было;
-      if (поехал) { window.${slot} = el; return (el.${visible} || 0) + запас; }
+      if (el.style) el.style.scrollBehavior = плавность;
+      if (поехал) {
+        window.${slot} = el;
+        // Отдаём и полный проезд, и ВИДИМЫЙ размер ездока: шаг надо брать от
+        // него, а не от окна. Внутренний контейнер шириной 600 в окне 1200
+        // сдвигался на 1200 за кадр, и половина содержимого в кадры не
+        // попадала — а «доехали» всё равно отвечало «да».
+        return { полный: (el.${visible} || 0) + запас, видимый: el.${visible} || 0 };
+      }
     }
     window.${slot} = null;
-    return 0;
+    return { полный: 0, видимый: 0 };
   })()`;
 }
 
@@ -79,7 +95,16 @@ export function rideTo(axis: Axis, to: number): string {
   const fallback = sideways ? `window.scrollTo(${to}, 0)` : `window.scrollTo(0, ${to})`;
   const slot = riderSlot(axis);
 
-  return `(() => { const е = window.${slot}; if (е) { е.${offset} = ${to}; } else { ${fallback}; } })()`;
+  // Плавность снимаем и здесь: с ней кадр снимался посреди анимации, и 350 мс
+  // ожидания могло не хватить.
+  return (
+    `(() => { const е = window.${slot};` +
+    ` if (е) { const п = е.style ? е.style.scrollBehavior : ''; if (е.style) е.style.scrollBehavior = 'auto';` +
+    ` е.${offset} = ${to}; if (е.style) е.style.scrollBehavior = п; }` +
+    ` else { const к = document.scrollingElement || document.documentElement;` +
+    ` const п = к && к.style ? к.style.scrollBehavior : ''; if (к && к.style) к.style.scrollBehavior = 'auto';` +
+    ` ${fallback}; if (к && к.style) к.style.scrollBehavior = п; } })()`
+  );
 }
 
 /**

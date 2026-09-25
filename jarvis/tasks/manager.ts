@@ -166,12 +166,29 @@ export class TaskManager {
       const limit = this.options.eventLimit ?? 200;
       for await (const event of run.events) {
         if (event.type === 'completed') break;
+        // Id сессии приходит в событии начала — без него «продолжай» начнёт
+        // работу с нуля, а обещание паузы было другим.
+        if (event.type === 'started' && event.sessionId) task.sessionId = event.sessionId;
         task.events.push(event);
         if (task.events.length > limit) task.events.splice(0, task.events.length - limit);
         this.emit({ type: 'task-event', task, event });
       }
 
       const result = await run.result();
+
+      // Этот ли запуск сейчас текущий.
+      //
+      // Человек говорит «пауза», потом «продолжай» раньше, чем настоящий
+      // процесс успел закончиться. Старый цикл просыпался и выбрасывал из
+      // `runs` НОВЫЙ запуск, писал в задачу старый результат и ставил
+      // «Отменено». Человек видел «Отменено», агент при этом продолжал
+      // работать и писать файлы, а «стоп» его уже не доставал: записи в
+      // `runs` не было.
+      if (this.runs.get(task.id) !== run) {
+        this.emit({ type: 'task-state', task });
+        return;
+      }
+
       this.runs.delete(task.id);
       task.result = result;
       task.finishedAt = this.now();
@@ -187,8 +204,33 @@ export class TaskManager {
       if (this.foregroundId === task.id) this.foregroundId = null;
       this.emit({ type: 'task-state', task });
       this.emit({ type: 'task-finished', task });
-    })().catch(() => {
+    })().catch((error: unknown) => {
+      // Чужую беду на новый запуск не переносим.
+      if (this.runs.get(task.id) !== run) return;
       this.runs.delete(task.id);
+
+      // Причину не теряем: без неё человек слышит «не получилось» без единого
+      // слова о том, что случилось, и в журнал прогона тоже ничего не идёт.
+      const причина = error instanceof Error ? error.message : String(error);
+      task.result = {
+        ok: false,
+        backend: run.backend,
+        text: '',
+        durationMs: this.now() - (task.startedAt ?? this.now()),
+        filesChanged: [],
+        commands: [],
+        error: причина,
+      };
+      console.error(`[jarvis] задача «${task.title}» оборвалась: ${причина}`);
+
+      // И сам процесс агента гасим: иначе он остаётся работать, а остановить
+      // его уже нечем — записи в `runs` больше нет.
+      try {
+        run.cancel('user');
+      } catch {
+        // Гасить уже мёртвый запуск — не новость.
+      }
+
       task.state = 'failed';
       task.finishedAt = this.now();
       if (this.foregroundId === task.id) this.foregroundId = null;
@@ -201,7 +243,22 @@ export class TaskManager {
   cancel(id: string): boolean {
     const task = this.tasks.get(id);
     if (!task || TERMINAL_STATES.has(task.state)) return false;
-    this.runs.get(id)?.cancel('user');
+
+    const run = this.runs.get(id);
+    if (run) {
+      run.cancel('user');
+      return true;
+    }
+
+    // Запуска уже нет — так бывает у задачи на паузе: её цикл завершился и
+    // убрал запись. Раньше `cancel` в этом случае молча отвечал успехом, и
+    // задача навсегда оставалась на паузе: Джарвис говорил «остановил», а
+    // потом сам же предлагал её продолжить.
+    task.state = 'cancelled';
+    task.finishedAt = this.now();
+    if (this.foregroundId === task.id) this.foregroundId = null;
+    this.emit({ type: 'task-state', task });
+    this.emit({ type: 'task-finished', task });
     return true;
   }
 
@@ -229,6 +286,9 @@ export class TaskManager {
   pause(id: string): boolean {
     const task = this.tasks.get(id);
     if (!task || task.state !== 'running') return false;
+    // Без id сессии продолжить нельзя — только начать заново. Обещать паузу в
+    // этом случае значит потерять работу молча, о чём сказано прямо выше.
+    if (!task.sessionId && !task.request.sessionId) return false;
     task.state = 'paused';
     this.runs.get(id)?.cancel('pause');
     this.emit({ type: 'task-state', task });

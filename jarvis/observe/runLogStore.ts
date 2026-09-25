@@ -20,6 +20,8 @@ import { KEEP_RUNS, lineFor, runFileName, staleRuns, summarise, type RunHead } f
 const NEWLINE = String.fromCharCode(10);
 
 export class RunLogStore {
+  /** Оборвалась ли запись. Тогда файл неполон, и называть его разбором нельзя. */
+  private сломан = false;
   private file: string | null = null;
   private startedAt = 0;
 
@@ -41,6 +43,8 @@ export class RunLogStore {
    * Молча падать он тоже не вправе, поэтому о сбое сообщаем в консоль.
    */
   begin(head: Omit<RunHead, 'at'>): void {
+    // Новый прогон — новый счёт: поломка прошлого журнала на него не влияет.
+    this.сломан = false;
     try {
       if (!existsSync(this.dir)) mkdirSync(this.dir, { recursive: true });
       this.prune();
@@ -76,9 +80,22 @@ export class RunLogStore {
     const since = ((this.now() - this.startedAt) / 1000).toFixed(1).padStart(7);
     try {
       appendFileSync(this.file, `${since}s  ${text}${NEWLINE}`, 'utf8');
-    } catch {
-      // Диск мог кончиться или файл — оказаться занят. Работа важнее записи.
+    } catch (error) {
+      // Работа важнее записи — но обрезанный журнал нельзя потом выдавать за
+      // полный разбор прогона. По такому файлу человек решит, что агент
+      // просто перестал что-то делать.
+      if (!this.сломан) {
+        this.сломан = true;
+        console.error(
+          `[jarvis] разбор прогона обрывается: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
+  }
+
+  /** Дописался ли журнал до конца. `false` — файл неполон. */
+  isComplete(): boolean {
+    return !this.сломан;
   }
 
   /**
@@ -89,12 +106,23 @@ export class RunLogStore {
    * папок — повторять не будем.
    */
   private prune(): void {
+    let names: string[];
     try {
-      for (const name of staleRuns(readdirSync(this.dir), this.keep)) {
-        unlinkSync(path.join(this.dir, name));
-      }
+      names = readdirSync(this.dir);
     } catch {
-      // Не смогли прибраться — не повод не писать.
+      return; // Папки ещё нет — убирать нечего.
+    }
+    // Каждый файл отдельно: на Windows один открытый журнал бросал EBUSY и
+    // обрывал весь цикл, остальные старые файлы оставались, и так на каждом
+    // запуске. Тот же механизм уже дал однажды 1115 брошенных папок.
+    for (const name of staleRuns(names, this.keep)) {
+      try {
+        unlinkSync(path.join(this.dir, name));
+      } catch (error) {
+        console.error(
+          `[jarvis] не убрался старый журнал ${name}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
   }
 }

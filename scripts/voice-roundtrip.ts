@@ -98,10 +98,24 @@ async function main(): Promise<void> {
     process.exit(2);
   }
   // `--model turbo` — мерить конкретную; иначе самую точную из установленных.
-  const asked = process.argv[process.argv.indexOf('--model') + 1] as WhisperModelId | undefined;
+  //
+  // Просили конкретную и её нет — это «нечем мерить», а не повод взять
+  // другую. Раньше опечатка или неустановленная модель молча подменялась
+  // самой точной из имеющихся, и прогон отвечал «12 из 12» про модель, о
+  // которой никто не спрашивал. Имя тоже проверяем: приведение типа
+  // пропускало любую строку.
   let model: WhisperModelId | undefined;
-  if (process.argv.includes('--model') && asked && (await isWhisperModelInstalled(paths.whisperModels, asked))) {
-    model = asked;
+  if (process.argv.includes('--model')) {
+    const asked = process.argv[process.argv.indexOf('--model') + 1];
+    if (!asked || !(WHISPER_MODEL_IDS as readonly string[]).includes(asked)) {
+      console.log(`НЕЧЕМ МЕРИТЬ: нет такой модели — «${asked ?? ''}». Известные: ${WHISPER_MODEL_IDS.join(', ')}`);
+      process.exit(2);
+    }
+    if (!(await isWhisperModelInstalled(paths.whisperModels, asked as WhisperModelId))) {
+      console.log(`НЕЧЕМ МЕРИТЬ: модель ${asked} не установлена в ${paths.whisperModels}`);
+      process.exit(2);
+    }
+    model = asked as WhisperModelId;
   }
   for (const id of [...WHISPER_MODEL_IDS].reverse()) {
     if (model) break;

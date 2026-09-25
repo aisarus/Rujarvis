@@ -18,4 +18,27 @@ if (binary && existsSync(binary)) process.exit(0);
 
 console.log('[ensure-electron] бинарник Electron не найден — скачиваю');
 const result = spawnSync(process.execPath, [path.join(root, 'install.js')], { stdio: 'inherit' });
-process.exit(result.status ?? 1);
+
+if (result.error) {
+  // Раньше сбой запуска давал код 1 без единого слова о причине.
+  console.error('[ensure-electron] не удалось запустить установщик:', result.error.message);
+  process.exit(1);
+}
+if (result.status !== 0) process.exit(result.status ?? 1);
+
+// Нулевой код установщика — ещё не бинарник.
+//
+// При `ELECTRON_SKIP_BINARY_DOWNLOAD=1` или оборванной загрузке `install.js`
+// выходит с нулём, скрипт отчитывался успехом, а приложение падало с той же
+// невнятной «Electron failed to install correctly». Проверяем то же, что
+// проверяли до скачивания.
+const ставший = existsSync(pathFile) ? path.join(root, 'dist', readFileSync(pathFile, 'utf8').trim()) : '';
+if (!ставший || !existsSync(ставший)) {
+  console.error(
+    '[ensure-electron] установщик отработал, но бинарника нет: ' +
+      (ставший || `нет ${pathFile}`) +
+      '. Снят ли ELECTRON_SKIP_BINARY_DOWNLOAD?',
+  );
+  process.exit(1);
+}
+console.log('[ensure-electron] бинарник на месте');

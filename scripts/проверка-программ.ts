@@ -119,6 +119,12 @@ async function checkLaunchTable(installed: readonly InstalledProgram[]): Promise
     }
 
     const source = sources.get(expected) ?? null;
+    if (source === 'неизвестно') {
+      // Не «не установлено»: спросить не вышло. На это чинят проверку, а не
+      // машину, и сворачивать одно в другое правило запрещает прямо.
+      say({ нечем: `${expected}: спросить Windows не вышло` }, spoken, '');
+      continue;
+    }
     if (source) {
       say(null, spoken, `${expected} (${source})`);
       continue;
@@ -356,7 +362,12 @@ async function checkLiveFocus(driver: DesktopDriver): Promise<void> {
     try {
       reported = (await driver.focus(target)).title;
     } catch (error) {
-      say({ нечем: error instanceof Error ? error.message : String(error) }, target, '');
+      // Окно этой цели ТОЧНО на экране: она прошла отбор выше. Значит отказ
+      // переключения — это «не прошло», а не «нечем мерить», и ровно та
+      // поломка, ради которой всё заведено: «Переключись на Edge» отвечало
+      // «не получилось». Сворачивать её в «нечем» — прятать, и прогон выходил
+      // с нулём, сообщая «Всё прошло».
+      say(`драйвер отказался переключать: ${error instanceof Error ? error.message : String(error)}`, target, '');
       continue;
     }
     // Сразу, без своей задержки: драйвер внутри уже выждал четверть секунды и
@@ -398,8 +409,14 @@ function short(title: string): string {
 
 async function main(): Promise<void> {
   const driver = new DesktopDriver();
-  const installed = await listInstalledPrograms();
+  const список = await listInstalledPrograms();
+  const installed = список.programs;
   console.log(`Установлено программ: ${installed.length}${NL}`);
+  if (!список.полный) {
+    // Проверка по неполному списку проверяет не то: без записей магазина
+    // «дота» не находит Dota 2 и уходит искать среди остального.
+    console.log(`  ВНИМАНИЕ: список неполный — Windows не ответил про магазин.${NL}`);
+  }
 
   await checkLaunchTable(installed);
   checkOpeningWindowNames(installed);

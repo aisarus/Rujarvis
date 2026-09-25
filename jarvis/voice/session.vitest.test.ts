@@ -226,6 +226,37 @@ describe('always listening', () => {
     expect(h.transcripts).toEqual(['открой хром']);
   });
 
+  /**
+   * На имя отзываются голосом, а не только плашкой.
+   *
+   * Тот, ради кого это делается, может не видеть плашку вовсе. Без отклика он
+   * оставался в тишине и не знал, услышали его или нет, — а ответа на саму
+   * задачу ждать до десяти секунд (замерено: 8,9 / 10,4 / 11,4 / 11,8 с).
+   * Две секунды тишины человек терпит, двенадцать — считает поломкой.
+   */
+  it('отзывается голосом, когда позвали по имени', async () => {
+    const h = harness({ mode: 'always-listening' });
+    await h.session.acceptAmbientTranscript('Джарвис');
+
+    // Отклик отложен на тик нарочно: иначе он гасит «слушаю».
+    expect(h.session.status.indicator).toBe('listening');
+    expect(h.playback.spoken).toEqual([]);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(h.playback.spoken).toEqual(['Да?']);
+    // И после отклика состояние возвращается: человек ещё говорит.
+    expect(h.session.status.indicator).toBe('listening');
+  });
+
+  it('на имя с командой в одном вдохе отклика нет: сразу дело', async () => {
+    const h = harness({ mode: 'always-listening' });
+    await h.session.acceptAmbientTranscript('Джарвис, открой хром');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.playback.spoken).not.toContain('Да?');
+  });
+
   it('waits for the command when the wake word came alone', async () => {
     const h = harness({ mode: 'always-listening' });
 
@@ -401,5 +432,97 @@ describe('окно слушания и речь', () => {
     await h.session.speak('   ');
 
     expect(h.session.status.awake).toBe(false);
+  });
+});
+
+describe('клавиша отпущена не вовремя', () => {
+  // Замечания CodeRabbit по куску 4 (PR №43). Оба случая — про микрофон,
+  // который остаётся включённым, хотя человек ничего не держит.
+
+  it('отпускание во время подъёма захвата ждёт подъёма и не врёт про «Слушаю»', async () => {
+    const h = harness();
+
+    // Пустышка вместо `null`: подстановка идёт внутри замыкания, и вывод
+    // типов считает переменную навсегда пустой — `поднять?.()` тогда не
+    // вызвать вовсе.
+    let поднять: () => void = () => undefined;
+    let подняли = false;
+    h.capture.start = () =>
+      new Promise<void>((resolve) => {
+        поднять = () => {
+          подняли = true;
+          resolve();
+        };
+      });
+
+    let остановленПослеПодъёма: boolean | null = null;
+    h.capture.stop = async () => {
+      остановленПослеПодъёма = подняли;
+      h.capture.stopped += 1;
+      return { samples: new Float32Array(0), sampleRate: 16_000 };
+    };
+
+    const нажатие = h.session.pressPushToTalk();
+    const отпускание = h.session.releasePushToTalk();
+    поднять();
+    const [, итог] = await Promise.all([нажатие, отпускание]);
+
+    // Останавливать то, что ещё не поднялось, бессмысленно: захват оставался
+    // работать, а индикатор застревал на «Слушаю…» навсегда.
+    expect(остановленПослеПодъёма).toBe(true);
+    expect(h.session.status.indicator).not.toBe('listening');
+    expect(итог).toBeNull();
+  });
+
+  it('выключение голоса при зажатой клавише не отправляет запись в ядро', async () => {
+    const h = harness();
+
+    await h.session.pressPushToTalk();
+    expect(h.session.status.indicator).toBe('listening');
+
+    h.session.setMode('off');
+    const итог = await h.session.releasePushToTalk();
+
+    expect(итог).toBeNull();
+    // Ровно одна остановка — та, что сделало выключение. Вторая означала бы,
+    // что отпускание прошло дальше и отправило запись при выключенном голосе.
+    expect(h.capture.stopped).toBe(1);
+    expect(h.transcripts).toEqual([]);
+  });
+});
+
+describe('речь не должна терять состояние задачи', () => {
+  /**
+   * Замечание CodeRabbit (кусок 4, PR №43). Показ во время речи становится
+   * «Говорю», и состояние задачи по нему уже не восстановить.
+   */
+  it('после речи «Работаю» возвращается С ИМЕНЕМ задачи', async () => {
+    const h = harness();
+    await h.session.pressPushToTalk();
+    await h.session.releasePushToTalk();
+    expect(h.session.status.indicator).toBe('working');
+    const имя = h.session.status.activeTaskTitle;
+    expect(имя).toBeTruthy();
+
+    await h.session.speak('Работаю над этим.');
+
+    expect(h.session.status.indicator).toBe('working');
+    expect(h.session.status.activeTaskTitle).toBe(имя);
+    expect(h.session.status.label).toMatch(/^Работаю: .+/u);
+  });
+
+  it('задача, кончившаяся во время речи, не оставляет «Работаю» навсегда', async () => {
+    const h = harness();
+    await h.session.pressPushToTalk();
+    await h.session.releasePushToTalk();
+    expect(h.session.status.indicator).toBe('working');
+
+    // Задача заканчивается, пока Джарвис говорит: показ в этот момент
+    // «Говорю», и старый код молчал, а потом возвращал «Работаю».
+    const речь = h.session.speak('Готово.');
+    h.session.taskFinished();
+    await речь;
+
+    expect(h.session.status.indicator).toBe('idle');
   });
 });

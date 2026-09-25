@@ -70,12 +70,17 @@ export class SessionPool {
    */
   keep(session: LiveSession): void {
     this.forget();
-    if (this.sessions.length >= this.limit) {
+    // Закрываем свободные ПОКА не влезем, а не одну за вызов.
+    //
+    // После пика склад оставался раздутым навсегда: шесть параллельных задач
+    // при пределе в четыре давали шесть сессий, и каждый следующий `keep`
+    // закрывал одну и тут же клал новую. Шесть процессов CLI со своими
+    // серверами так и жили, хотя шапка обещает явный предел.
+    while (this.sessions.length >= this.limit) {
       const idle = this.sessions.findIndex((s) => !s.isBusy());
-      if (idle >= 0) {
-        this.sessions[idle]?.dispose('Место под новую сессию');
-        this.sessions.splice(idle, 1);
-      }
+      if (idle < 0) break; // Все заняты — отбирать не у кого.
+      this.sessions[idle]?.dispose('Место под новую сессию');
+      this.sessions.splice(idle, 1);
     }
     this.sessions.push(session);
   }

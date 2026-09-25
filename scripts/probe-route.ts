@@ -23,11 +23,21 @@ for (const phrase of phrases) {
       utterance: phrase,
       capabilities: decision.needs,
       risk: decision.risk,
-      permissions: DEFAULT_PERMISSIONS,
+      // Права берём ИЗ РЕШЕНИЯ, если оно их назвало: иначе проба показывала
+      // не тот запуск, который получится на самом деле.
+      permissions: decision.permissions ?? DEFAULT_PERMISSIONS,
       context: [],
       language: 'ru',
     },
-    { permissionMode: 'acceptEdits', desktopMcpConfig: 'C:/mcp.json' },
+    {
+      permissionMode: 'acceptEdits',
+      desktopMcpConfig: 'C:/mcp.json',
+      // Хук красных линий передаётся вместе с папкой Джарвиса. Без него
+      // `toolsFor` собирался как для запуска БЕЗ оболочки, и строки
+      // «инструменты» и «blender» описывали другой запуск, чем рабочий.
+      gateSettings: 'C:/jarvis/gate-settings.json',
+      homeDir: 'C:/jarvis',
+    },
   );
 
   const hasTools = args.includes('--mcp-config');

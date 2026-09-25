@@ -60,11 +60,17 @@ export function hasCodexEnvironmentAuth(env: NodeJS.ProcessEnv = process.env): b
 }
 
 /**
- * Folds an environment hint into the vendor's own login check.
+ * Сводит подсказку окружения с проверкой файла учётных данных.
  *
- * A positive file check is trusted. A negative one becomes `'unknown'` unless
- * nothing at all suggests credentials — the adapter then still runs, and the
- * CLI itself gets to say whether the user is signed in.
+ * Положительной проверке файла верим. Отрицательная становится `'unknown'`, и
+ * `false` отсюда не выходит НИКОГДА — это не упущение, а решение: ложное «не
+ * вошёл» запирает работающий бэкенд навсегда, а ложная попытка стоит одной
+ * быстрой ошибки CLI, которую Джарвис и так превращает в понятную фразу «зайди
+ * в аккаунт». Цена ошибок несимметрична, поэтому и ответ несимметричен.
+ *
+ * Значение `false` в типе `AuthState` оставлено для тех, кто знает точно:
+ * проба, у которой есть ответ самого CLI, а не догадка по файлу. Ветки
+ * `!status.loggedIn` в `claudeCode.ts` и `codex.ts` живут ради них.
  */
 export function resolveAuthState(fileCheckSaysLoggedIn: boolean, environmentAuth: boolean): AuthState {
   if (fileCheckSaysLoggedIn) return true;

@@ -92,6 +92,14 @@ export function readAnswer(answer: string): Aside {
   const separate = text.indexOf('отдельн');
   const correction = text.indexOf('правк');
 
+  // Отрицание перед словом переворачивает смысл.
+  //
+  // «Не отдельно, правка» разбиралось как задача: слово «отдельн» стояло
+  // раньше. Человек получал новую работу, о которой не просил, — а это, как
+  // сказано в шапке, самый дорогой исход здесь.
+  const отрицание = separate > 0 && /не\s+$/u.test(text.slice(Math.max(0, separate - 6), separate));
+  if (отрицание) return { kind: 'note' };
+
   if (separate < 0) return { kind: 'note' };
   if (correction < 0) return { kind: 'task' };
   return separate < correction ? { kind: 'task' } : { kind: 'note' };

@@ -92,7 +92,11 @@ export async function wheelTravel<Shot>(
     await tools.push({ delta, pushes: pushesPerScreen });
     const next = await tools.shoot();
     if (!next) {
-      arrived = true;
+      // Кадр не снялся — значит конца никто не видел.
+      //
+      // Раньше здесь ставилось «приехали», и проезд отвечал агенту «доехали
+      // до конца» на несделанном снимке: «нечем мерить» сворачивалось даже не
+      // в провал, а в успех.
       break;
     }
     // Картинка не изменилась — значит приехали.

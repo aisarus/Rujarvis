@@ -8,6 +8,8 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 
+import { cliLaunch } from './spawnCli';
+
 import { forgetChild, trackChild } from '../tasks/reaper';
 
 /**
@@ -159,9 +161,13 @@ export class CliProcess implements CliHandle {
 
       let child: ChildProcess;
       try {
-        child = spawn(this.options.command, this.options.args, {
+        // `.cmd` без оболочки Node запускать отказывается (EINVAL), а с
+        // оболочкой — не экранирует пробелы. Оба случая закрыты здесь.
+        const запуск = cliLaunch(this.options.command, this.options.args);
+        child = spawn(запуск.command, запуск.args, {
           cwd: this.options.cwd,
           env: this.options.env ?? process.env,
+          shell: запуск.shell,
           stdio: ['pipe', 'pipe', 'pipe'],
           // A detached group lets cancellation reach grandchildren (a build,
           // a test runner) instead of orphaning them.
@@ -182,7 +188,7 @@ export class CliProcess implements CliHandle {
 
       // Отмечаем своего: аварийное «убейся» бьёт только по этому списку, и
       // незарегистрированный агент пережил бы выключатель.
-      trackChild(child.pid);
+      trackChild(child.pid, process.platform !== 'win32');
       child.on('exit', () => forgetChild(child.pid));
 
       this.child = child;
@@ -235,6 +241,17 @@ export class CliProcess implements CliHandle {
           cancelled: this.cancelled,
           timedOut: this.timedOut,
         });
+      });
+
+      // Отказ записи в stdin — не повод ронять приложение.
+      //
+      // Если CLI кончился раньше, чем прочитал ввод (ошибка входа, неверный
+      // ключ, асинхронный ENOENT на Windows), поток отдаёт `error` — EPIPE
+      // или ERR_STREAM_DESTROYED. Слушателя не было, и Node выбрасывал это
+      // необработанным исключением: падал весь Электрон из-за процесса, исход
+      // которого и так придёт событиями `close` и `error`.
+      child.stdin?.on('error', (error: Error) => {
+        console.error(`[jarvis] не записалось в ввод процесса: ${error.message}`);
       });
 
       if (this.options.stdin !== undefined) {
@@ -314,13 +331,25 @@ export function parseJsonLine(line: string): Record<string, unknown> | null {
   return null;
 }
 
+/**
+ * Признаки того, что подписка кончилась.
+ *
+ * Привязаны к КОНТЕКСТУ, а не к голому числу и слову.
+ *
+ * `/429/` совпадало со строкой «line 429», номером порта и именем файла, а
+ * `/quota/i` — с любым упоминанием квоты в выводе задачи. Менеджер по такому
+ * признаку сразу переносит работу на следующий помощник, и уже сделанное
+ * делается второй раз.
+ */
 const USAGE_LIMIT_PATTERNS = [
   /usage limit/i,
   /rate limit/i,
-  /quota/i,
+  /quota (?:exceeded|exhausted|reached)/i,
+  /out of quota/i,
   /limit reached/i,
   /too many requests/i,
-  /429/,
+  /(?:status|http|code|error)[^0-9a-z]{0,4}429\b/i,
+  /\b429\b[^0-9]{0,3}(?:too many|rate)/i,
   /insufficient[_ ]quota/i,
   /upgrade to (?:pro|max|plus)/i,
 ];

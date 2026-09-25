@@ -95,7 +95,23 @@ export function candidateKeys(spoken: string): string[] {
     keys.add(transliterate(stemmed));
 
     for (const [russian, english] of Object.entries(MEANINGS)) {
-      if (stemmed.startsWith(russian) || russian.startsWith(stemmed)) keys.add(english);
+      // «Слово короче трёх букв не называет программу».
+      //
+      // Проверка `russian.startsWith(stemmed)` ловила служебные словечки:
+      // «и» давало ключи `ai` (от «ии») и `games` (от «игр»), «на» давало
+      // `settings` (от «настройк»). Такие ключи совпадают с именем программы
+      // буквально, scoreWord отдаёт 3, `exact` становится true — и защита от
+      // неоднозначности пропускает результат. Любая фраза с «и» или «на»
+      // могла открыть «Параметры» или «Игры».
+      //
+      // Обратное направление, `stemmed.startsWith(russian)`, остаётся без
+      // длины: там сказанное слово ДЛИННЕЕ записи, и короткой записи «ии»
+      // это не мешает — «ии» по-прежнему даёт `ai`.
+      if (stemmed.startsWith(russian)) {
+        keys.add(english);
+        continue;
+      }
+      if (stemmed.length >= 3 && russian.startsWith(stemmed)) keys.add(english);
     }
   }
   // Names said as several words are often written as one: «чат джпт» is
@@ -252,8 +268,12 @@ export function chooseShortcut<T>(
   if (keys.length === 0) return null;
 
   let best: { item: T; name: string; exact: boolean; total: number } | null = null;
-  let runnerUp = Number.NEGATIVE_INFINITY;
-  let runnerUpName = '';
+  // Имена, набравшие лучший счёт, — множеством, а не одним «вторым местом».
+  //
+  // Со «вторым местом» порядок [X, X, Y] при равном счёте прятал Y: второй X
+  // занимал место второго, а Y его уже не отбирал — счёт-то равный. Выходило
+  // «совпадение единственное» там, где их было два разных.
+  let лучшиеИмена = new Set<string>();
 
   for (const item of items) {
     const name = normalise(nameOf(item));
@@ -280,15 +300,11 @@ export function chooseShortcut<T>(
     // a longer name that merely contains the same word.
     const total = score - words.length * 0.1;
 
-    if (!best || total > best.total) {
-      if (best) {
-        runnerUp = best.total;
-        runnerUpName = best.name;
-      }
+    if (!best || total > best.total + 1e-9) {
       best = { item, name, exact, total };
-    } else if (total > runnerUp) {
-      runnerUp = total;
-      runnerUpName = name;
+      лучшиеИмена = new Set([name]);
+    } else if (Math.abs(total - best.total) < 1e-9) {
+      лучшиеИмена.add(name);
     }
   }
 
@@ -313,7 +329,7 @@ export function chooseShortcut<T>(
   // И одно имя дважды — это не выбор между программами. Discord лежит в меню
   // «Пуск» двумя одинаковыми ярлыками, и на «дискорд» отказ по неоднозначности
   // означал бы «не могу выбрать между Discord и Discord».
-  const ambiguous = best.total - runnerUp < 1e-9 && runnerUpName !== best.name;
+  const ambiguous = лучшиеИмена.size > 1;
   if (!best.exact && ambiguous) return null;
 
   return { item: best.item, score: best.total, exact: best.exact };

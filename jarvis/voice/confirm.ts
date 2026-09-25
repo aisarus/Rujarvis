@@ -1,14 +1,16 @@
 /**
- * Hearing «да» and «нет».
+ * Как слышится «да» и «нет».
  *
- * Sensitive work asks before it proceeds, and the whole point of this build is
- * that the person may have no hands free — so a dialog box with buttons is not
- * an answer, it is a dead end. The question is spoken and the answer is
- * listened for.
+ * Перед чувствительной работой Джарвис спрашивает, и весь смысл этой сборки в
+ * том, что у человека могут быть заняты руки: окно с кнопками — не ответ, а
+ * тупик. Вопрос произносится вслух, ответ выслушивается.
  *
- * Unrecognised is a third outcome on purpose. Treating «подожди, я сейчас
- * посмотрю» as consent because it was not a clear «нет» is exactly the mistake
- * that makes a confirmation worthless.
+ * ## Почему неясный ответ — это не согласие
+ *
+ * Третий исход здесь нарочно. Принять «подожди, я сейчас посмотрю» за
+ * согласие только потому, что это не было внятным «нет», — ровно та ошибка,
+ * после которой подтверждение не стоит ничего. Молчание и невнятность
+ * означают «не делай», а не «делай».
  */
 
 export type Confirmation = 'yes' | 'no' | 'unclear';
@@ -16,13 +18,31 @@ export type Confirmation = 'yes' | 'no' | 'unclear';
 // Оба языка сразу: ответ на вопрос о красной линии не должен зависеть от
 // выбранного режима. Человек, переключившийся на русский, всё равно скажет
 // «no», и это обязано быть отказом.
+/**
+ * Слова, которые означают согласие где угодно в ответе.
+ *
+ * Их нельзя перепутать ни с чем: «конечно» и «разрешаю» посреди фразы всё
+ * равно согласие.
+ */
 const YES = [
-  'да', 'ага', 'угу', 'давай', 'давайте', 'можно', 'конечно', 'разрешаю',
-  'подтверждаю', 'согласен', 'согласна', 'ок', 'окей', 'валяй', 'вперед',
-  'делай', 'сделай', 'йес',
-  'yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay', 'go', 'proceed', 'confirm',
+  'да', 'ага', 'угу', 'конечно', 'разрешаю',
+  'подтверждаю', 'согласен', 'согласна', 'ок', 'окей', 'валяй', 'вперед', 'йес',
+  'yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay', 'confirm',
   'confirmed', 'approve', 'approved', 'allow', 'affirmative', 'absolutely',
 ];
+
+/**
+ * Слова, которые согласие ТОЛЬКО сами по себе.
+ *
+ * «Можно» в ответе «можно сначала узнать подробнее?» — это просьба объяснить,
+ * а не разрешение; раньше она проходила как согласие, и чувствительная работа
+ * начиналась, пока человек ещё думал. То же с «давай» («давай сначала
+ * посмотрим») и «сделай» («сделай сначала копию»).
+ */
+const YES_ОТДЕЛЬНО = ['можно', 'давай', 'давайте', 'делай', 'сделай', 'go', 'proceed'];
+
+/** Насколько короткий ответ считается «сам по себе». */
+const КОРОТКИЙ_ОТВЕТ = 2;
 
 const NO = [
   'нет', 'не', 'неа', 'отмена', 'отставить', 'стоп', 'хватит', 'погоди',
@@ -43,21 +63,38 @@ function normalise(text: string): string {
 }
 
 /**
- * Reads an answer to a yes-or-no question.
+ * Читает ответ на вопрос «да или нет».
  *
- * A negation anywhere wins: «да не надо» is a refusal, and the safe reading of
- * a sentence containing both is the one that does nothing.
+ * Отказ где угодно побеждает: «да не надо» — это отказ, и безопасное чтение
+ * фразы, где есть и то и другое, — то, при котором ничего не происходит.
  */
 export function readConfirmation(transcript: string): Confirmation {
   const text = normalise(transcript);
   if (!text) return 'unclear';
 
   const words = text.split(' ');
-  const hasNo = NO.some((word) => text.startsWith(`${word} `) || text === word || words.includes(word));
+
+  // Отказ ищется ЦЕЛИКОМ и в любом месте ответа.
+  //
+  // Раньше многословные отказы («ни в коем случае», «не надо») проверялись
+  // только в начале фразы или одним словом из списка. «Да, ни в коем случае»
+  // не находило отказа, зато находило «да» — и Джарвис принимался за работу,
+  // которую человек только что запретил.
+  const hasNo = NO.some((фраза) => содержит(text, words, фраза));
   if (hasNo) return 'no';
 
-  const hasYes = YES.some((word) => words.includes(word));
-  if (hasYes) return 'yes';
+  if (YES.some((фраза) => содержит(text, words, фраза))) return 'yes';
+
+  // Слова, которые согласие только сами по себе.
+  if (words.length <= КОРОТКИЙ_ОТВЕТ && YES_ОТДЕЛЬНО.some((слово) => words.includes(слово))) {
+    return 'yes';
+  }
 
   return 'unclear';
+}
+
+/** Есть ли фраза (одно слово или несколько) в ответе целиком. */
+function содержит(text: string, words: readonly string[], фраза: string): boolean {
+  if (!фраза.includes(' ')) return words.includes(фраза);
+  return text === фраза || ` ${text} `.includes(` ${фраза} `);
 }

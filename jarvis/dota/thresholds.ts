@@ -70,7 +70,16 @@ export function judgeDanger(packet: DotaPacket, rule: DangerRule = DEFAULT_DANGE
   }
 
   const ближайший = расстояния[0];
-  if (ближайший !== undefined && ближайший < rule.closeRadius && свой.hp < rule.closeHp) {
+  // Здоровье неизвестно — тревожить нечем.
+  //
+  // С подстановкой нуля порог видел «здоровье 0%» и кричал «один вплотную»
+  // на пакете, где здоровье просто не пришло.
+  if (
+    ближайший !== undefined &&
+    ближайший < rule.closeRadius &&
+    свой.hp !== null &&
+    свой.hp < rule.closeHp
+  ) {
     return failed(`один вплотную при здоровье ${свой.hp}%`);
   }
 
@@ -104,6 +113,15 @@ export function judgeGold(state: DotaState, rule: GoldRule = DEFAULT_GOLD): Gate
   // вместо двух, и три из пяти приходились на респавн. Отсчёт при этом идёт
   // дальше, так что фраза прозвучит сразу после воскрешения — там она и к месту.
   if (state.latest.self && !state.latest.self.alive) return passed();
+
+  // Без своего героя мерить нечем.
+  //
+  // `applyPacket` на таком пакете не трогает `goldSince`, а время идёт: через
+  // сорок пять секунд порог объявлял, что золото лежит, и человек слышал
+  // «null золота лежит». Пакет без героя, но с часами бывает в конце матча и
+  // когда у героя нет координат.
+  if (!state.latest.self) return cannotMeasure('в пакете нет своего героя');
+  if (state.latest.gold === null) return cannotMeasure('золото в пакет не пришло');
 
   if (state.goldSince === null) return passed();
   const лежит = state.latest.at - state.goldSince;

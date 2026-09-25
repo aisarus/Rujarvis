@@ -117,12 +117,22 @@ export interface LiveEdit {
 }
 
 function words(utterance: string): string[] {
-  return utterance
-    .toLowerCase()
-    .replace(/ё/gu, 'е')
-    .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
-    .split(/\s+/u)
-    .filter((word) => word && !FILLER.includes(word));
+  return (
+    utterance
+      .toLowerCase()
+      .replace(/ё/gu, 'е')
+      // Десятичный разделитель сохраняем как точку.
+      //
+      // Без этого «подними на 0,5» превращалось в токены «0» и «5», число
+      // бралось первое — ноль, — Блендер ничего не двигал, а человек слышал
+      // «Сдвинул». Запятая между цифрами это дробь, а не знак препинания.
+      .replace(/(\p{N})\s*[.,]\s*(\p{N})/gu, '$1.$2')
+      .replace(/[^\p{L}\p{N}\s.-]/gu, ' ')
+      // Точка, не оказавшаяся дробной, остаётся знаком препинания.
+      .replace(/(^|\s)\.+|\.+(\s|$)/gu, ' ')
+      .split(/\s+/u)
+      .filter((word) => word && !FILLER.includes(word))
+  );
 }
 
 /**
@@ -134,7 +144,13 @@ function words(utterance: string): string[] {
 function numberIn(parts: readonly string[]): number | null {
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index];
-    if (/^\d+$/u.test(part)) return Number(part);
+    // Дробь тоже число: «на 0.5» после склейки разделителя приезжает одним
+    // токеном, и терять её нельзя — Блендер ничего не сдвинет, а человек
+    // услышит «Сдвинул».
+    if (/^\d+(?:\.\d+)?$/u.test(part)) {
+      const значение = Number(part);
+      return Number.isFinite(значение) ? значение : null;
+    }
     const named = NUMBERS[part];
     if (named === undefined) continue;
     const next = NUMBERS[parts[index + 1] ?? ''];
@@ -167,10 +183,24 @@ function targetCode(parts: readonly string[]): string {
   // Отрезаем одно окончание, не два. «Ракету» → «ракет» находит «Ракета» и
   // «Ракета_корпус»; «раке» нашло бы ещё и «ракушку».
   const stem = /^[a-z]+$/u.test(named) ? named : named.slice(0, Math.max(4, named.length - 1));
-  return `next((o for o in bpy.data.objects if ${JSON.stringify(stem)} in o.name.lower()), None)`;
+  // Одно совпадение или отказ.
+  //
+  // Раньше брался первый попавшийся: в сцене с «Ракета_корпус» и
+  // «Ракета_двигатель» команда «удали ракету» уносила того, кто оказался
+  // первым в коллекции, и человек не узнал бы, которого именно.
+  return (
+    `_один([o for o in bpy.data.objects if ${JSON.stringify(stem)} in o.name.lower()])`
+  );
 }
 
-const HEAD = 'import bpy\nfrom math import radians\n';
+const МНОГО = tr('под это имя подходит несколько: ', 'several objects match that name: ');
+
+const HEAD =
+  'import bpy\nfrom math import radians\n' +
+  'def _один(с):\n' +
+  '    if len(с) == 1: return с[0]\n' +
+  '    if not с: return None\n' +
+  `    raise RuntimeError(${JSON.stringify(МНОГО)} + ", ".join(o.name for o in с))\n`;
 
 function guard(): string {
   const message = tr('не нашёл, что править', 'nothing to edit found');
@@ -181,21 +211,51 @@ function onTarget(target: string, body: string): string {
   return `${HEAD}о = ${target}\n${guard()}${body}`;
 }
 
+/**
+ * Слова запрета. Отрицание отменяет правку целиком, а не смягчает её.
+ *
+ * «Don't rotate it» после очистки знаков превращается в «don t rotate it», и
+ * ветка поворота срабатывала вопреки прямому запрету. То же с «не крась это в
+ * синий».
+ */
+const ОТРИЦАНИЕ = /(?:^|\s)(?:не|нет|dont|don t|never)(?:\s|$)/u;
+
 export function parseLiveEdit(utterance: string): LiveEdit | null {
   const parts = words(utterance);
   if (parts.length === 0) return null;
   const joined = parts.join(' ');
 
+  // Запрет разбираем ДО выбора действия: непонятая просьба лучше сделанной
+  // наоборот.
+  if (ОТРИЦАНИЕ.test(` ${joined} `)) return null;
+
   // Анимация — раньше остального: «останови анимацию» не должно попасть в
   // таблицу движения. «Stop animation» по-английски не ловим: «stop» —
   // красное слово и перехватывается раньше любых разборов.
   if (/(играй|запусти|включи) анимаци|play (the )?animation|start (the )?animation/u.test(joined)) {
-    return { kind: 'python', code: `${HEAD}bpy.ops.screen.animation_play()`, said: tr('Играю.', 'Playing.') };
+    // Проверяем ИТОГ, а не факт вызова: `animation_play` умеет вернуть
+    // `{'CANCELLED'}` без всякого исключения, и «Играю» звучало бы зря.
+    return {
+      kind: 'python',
+      code:
+        `${HEAD}итог = bpy.ops.screen.animation_play()\n` +
+        'if "CANCELLED" in итог:\n' +
+        `    raise RuntimeError(${JSON.stringify(tr('не вышло запустить анимацию', 'could not start the animation'))})\n` +
+        'print("играю")',
+      said: tr('Играю.', 'Playing.'),
+    };
   }
   if (/(останови|стоп|выключи) анимаци|cancel (the )?animation|end (the )?animation/u.test(joined)) {
     return {
       kind: 'python',
-      code: `${HEAD}bpy.ops.screen.animation_cancel(restore_frame=False)`,
+      // `animation_cancel` отвечает `{'PASS_THROUGH'}` и когда останавливать
+      // было нечего, поэтому смотрим на состояние до и после.
+      code:
+        `${HEAD}играла = bpy.context.screen.is_animation_playing\n` +
+        'bpy.ops.screen.animation_cancel(restore_frame=False)\n' +
+        'if not играла:\n' +
+        `    raise RuntimeError(${JSON.stringify(tr('анимация и не шла', 'the animation was not running'))})\n` +
+        'print("остановил")',
       said: tr('Остановил.', 'Stopped.'),
     };
   }
@@ -216,9 +276,26 @@ export function parseLiveEdit(utterance: string): LiveEdit | null {
         target,
         'м = о.active_material or bpy.data.materials.new("Цвет")\n' +
           'if not о.data.materials: о.data.materials.append(м)\n' +
+          // Общий материал сначала отделяем: один материал может стоять на
+          // нескольких объектах, и «сделай ракету синей» перекрашивала заодно
+          // всё, что делит с ней материал.
+          'if м.users > 1:\n' +
+          '    м = м.copy()\n' +
+          '    о.data.materials[о.active_material_index] = м\n' +
           'м.use_nodes = True\n' +
-          'у = м.node_tree.nodes.get("Principled BSDF")\n' +
-          `if у: у.inputs[0].default_value = (${colour.rgb}, 1)\n` +
+          // Цветной вход ищем у узла, который ПРАВДА подключён к выходу.
+          //
+          // Раньше узел искался по имени «Principled BSDF»; у материала с
+          // другим шейдером его нет, узлы не трогались вовсе, а мост всё
+          // равно печатал «покрасил» — менялся один `diffuse_color`, на
+          // итоговый цвет такого материала не влияющий.
+          'выход = next((н for н in м.node_tree.nodes if н.type == "OUTPUT_MATERIAL"), None)\n' +
+          'связь = выход.inputs["Surface"].links if выход and выход.inputs["Surface"].links else None\n' +
+          'шейдер = связь[0].from_node if связь else м.node_tree.nodes.get("Principled BSDF")\n' +
+          'вход = next((в for в in шейдер.inputs if в.type == "RGBA"), None) if шейдер else None\n' +
+          'if вход is None:\n' +
+          `    raise RuntimeError(${JSON.stringify(tr('у этого материала нечего красить', 'this material has no colour input'))})\n` +
+          `вход.default_value = (${colour.rgb}, 1)\n` +
           `м.diffuse_color = (${colour.rgb}, 1)\n` +
           'print("покрасил", о.name)',
       ),

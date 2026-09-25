@@ -49,3 +49,25 @@ describe('что убрали', () => {
     expect(strippedKeys({ PATH: '/usr/bin' })).toEqual([]);
   });
 });
+
+describe('ключи убираются в любом регистре', () => {
+  /**
+   * Замечание CodeRabbit (кусок 2, PR №41). На Windows имена переменных
+   * регистронезависимы, а объект в JavaScript — нет: `anthropic_api_key`
+   * доезжал до дочернего процесса целым, и Claude Code мог войти по чужому
+   * ключу вместо подписки. То есть за деньги — ровно то, чего в этом проекте
+   * быть не должно. И в журнале всё выглядело чисто: `strippedKeys` такой
+   * ключ не показывал.
+   */
+  it('строчное имя ключа тоже убирается', () => {
+    const было = { anthropic_api_key: 'секрет', PATH: 'C:/', Openai_Api_Key: 'ещё' };
+    const стало = subscriptionEnv(было);
+    expect(стало.anthropic_api_key).toBeUndefined();
+    expect(стало.Openai_Api_Key).toBeUndefined();
+    expect(стало.PATH).toBe('C:/');
+  });
+
+  it('и попадает в список убранного', () => {
+    expect(strippedKeys({ anthropic_api_key: 'секрет' })).toEqual(['anthropic_api_key']);
+  });
+});

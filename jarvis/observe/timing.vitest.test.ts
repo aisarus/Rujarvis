@@ -31,12 +31,21 @@ describe('StartupTiming', () => {
     expect(report).toContain('Skill 1');
   });
 
-  it('молчит, пока дела не было', () => {
+  it('молчит, только когда мерить нечего', () => {
+    // Ничего не видели — нечего и рассказывать.
+    expect(new StartupTiming(0).report()).toBeNull();
+  });
+
+  it('оглядывания без единого дела не пропадают из отчёта', () => {
+    // Раньше здесь ждали `null`, и числа терялись ровно в том прогоне, где
+    // ориентация съела всё время: агент четыре раза огляделся, сорвался — и
+    // строки «разгон» человек не видел вовсе.
     const timing = new StartupTiming(0);
     timing.saw(tool('ToolSearch'), 1_000);
+    timing.saw(tool('ToolSearch'), 1_200);
 
     expect(timing.firstUsefulMs).toBeNull();
-    expect(timing.report()).toBeNull();
+    expect(timing.report()).toContain('ToolSearch 2');
   });
 
   it('считает первое дело один раз', () => {

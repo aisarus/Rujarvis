@@ -28,3 +28,26 @@ describe('ответ на вопрос «да или нет»', () => {
     expect(readConfirmation('давай нет, отмена')).toBe('no');
   });
 });
+
+describe('согласие не выдумывается из неясного ответа', () => {
+  /**
+   * Замечания CodeRabbit (кусок 3, PR №42). Оба случая кончались тем, что
+   * чувствительная работа начиналась, хотя человек её не разрешал.
+   */
+  it('многословный отказ находится не только в начале', () => {
+    expect(readConfirmation('да, ни в коем случае')).toBe('no');
+    expect(readConfirmation('ну да, не надо пока')).toBe('no');
+    expect(readConfirmation('sure, do not')).toBe('no');
+  });
+
+  it('вопрос со словом «можно» согласием не считается', () => {
+    expect(readConfirmation('можно сначала узнать подробнее?')).toBe('unclear');
+    expect(readConfirmation('давай сначала посмотрим что там')).toBe('unclear');
+    expect(readConfirmation('сделай сначала копию а потом спросим')).toBe('unclear');
+  });
+
+  it('но короткий ответ этими же словами — согласие', () => {
+    expect(readConfirmation('можно')).toBe('yes');
+    expect(readConfirmation('ну давай')).toBe('yes');
+  });
+});

@@ -32,7 +32,14 @@ import {
 import { APP_ROOT } from './root';
 import { failed, passed, type Gate } from '../jarvis/measure/gate';
 import { listInstalledPrograms } from '../jarvis/apps/installed';
-import { aliasTarget, matchAppLaunch, spokenCloseTarget, spokenTarget, windowAlias } from '../jarvis/apps/launch';
+import {
+  aliasTarget,
+  matchAppLaunch,
+  spokenCloseTarget,
+  spokenTarget,
+  windowAlias,
+  windowCandidates,
+} from '../jarvis/apps/launch';
 import { readConfirmation } from '../jarvis/voice/confirm';
 import { chooseShortcut } from '../jarvis/apps/startMenu';
 import { OUTPUT_SECTIONS, revealPath, sectionDir, tidyOutput } from '../jarvis/desktop/files';
@@ -42,7 +49,12 @@ import type { EventKind } from '../jarvis/memory/journal';
 import { matchVoiceControl } from '../jarvis/voice/interrupts';
 import { fixMishearings } from '../jarvis/voice/mishearing';
 import { isSilenceRequest, looksLikeChatter, meaningfulSpeech } from '../jarvis/voice/noise';
-import { endsDictation, parseDirectCommand, type DirectCommand } from '../jarvis/control/commands';
+import {
+  endsDictation,
+  parseDirectCommand,
+  type DirectCommand,
+  type НастройкаГолосом,
+} from '../jarvis/control/commands';
 import { reapAll } from '../jarvis/tasks/reaper';
 import { parseDictationEdit, type DictationEdit } from '../jarvis/control/dictationEdits';
 import { chooseElement } from '../jarvis/control/elements';
@@ -62,7 +74,13 @@ import { setLocalModel } from '../jarvis/backends/localModel';
 import { setLanguage, tr } from '../jarvis/locale/language';
 import type { BackendFileChange } from '../jarvis/backends/types';
 import { jarvisOutputDir, jarvisPaths } from '../jarvis/setup/paths';
-import { DEFAULT_SETTINGS, type AppSettings, type SettingsStore } from '../jarvis/setup/settings';
+import {
+  DEFAULT_SETTINGS,
+  SPEECH_SPEED_RANGE,
+  SPEECH_VOLUME_RANGE,
+  type AppSettings,
+  type SettingsStore,
+} from '../jarvis/setup/settings';
 import { installVoice, isVoiceInstalled, Speaker } from '../jarvis/voice/tts';
 import { AUDIO_BRIDGE_CHANNELS, buildAudioBridgeHtml } from './audioBridgePage';
 import { createElevenLabsTranscriber } from './cloudTranscriber';
@@ -136,8 +154,29 @@ export interface JarvisVoiceBridge {
   session: VoiceSession;
   /** Открыть окно событий: что Джарвис услышал, решил и сделал. */
   showEvents(): void;
+  /**
+   * Немой режим: выключить и включить микрофон не с клавиатуры.
+   *
+   * Нужно не для удобства. Раньше выключить и включить можно было ТОЛЬКО
+   * сочетанием Ctrl+M: в трее такого пункта не было, а голосом вернуть слух
+   * нельзя по определению — он не слушает. Человек, который не может нажать
+   * сочетание, оставался с глухим помощником до прихода того, кто может.
+   */
+  toggleMute(): boolean;
+  /** Выключен ли микрофон сейчас и сколько секунд до возврата. */
+  muteState(): { muted: boolean; secondsLeft: number };
   dispose(): void;
 }
+
+/**
+ * Насколько замолкает микрофон.
+ *
+ * Немота теперь временная, и это главное. Постоянная немота — тупик: вернуть
+ * слух можно было только клавиатурой, а человек с моторными нарушениями этого
+ * сделать не может. Пять минут — достаточно, чтобы поговорить по телефону, и
+ * мало, чтобы забыть.
+ */
+const MUTE_MINUTES = 5;
 
 let active: JarvisVoiceBridge | null = null;
 
@@ -230,6 +269,26 @@ let lastCell: number | null = null;
 let thoughtRef: UtteranceBuffer | null = null;
 let overlayRef: StatusOverlay | null = null;
 let talkRef: TalkSession | null = null;
+
+/**
+ * Шов для приёмки: подставить те же ссылки, что ставит запуск моста.
+ *
+ * Настройки голосом живут на ссылках уровня модуля, и заполняет их
+ * `startJarvisVoiceBridge` — а он требует микрофон, модели и звуковое окно.
+ * Без шва проверка упиралась в разбор фразы и обрывалась ровно там, где
+ * начинается работа: изменилось ли значение, что услышал человек, и стало ли
+ * окно шире. Именно в этом месте и нашлась потеря крупного режима.
+ *
+ * Приёмка возвращает `null` за собой, чтобы соседние случаи не наткнулись на
+ * чужой склад настроек.
+ */
+export function привязатьНастройкиДляПриёмки(
+  store: SettingsStore | null,
+  overlay: StatusOverlay | null,
+): void {
+  settingsRef = store;
+  overlayRef = overlay;
+}
 /** Как остановить мост разговора при выходе. */
 let stopTalkBridge: (() => void) | null = null;
 /**
@@ -317,7 +376,7 @@ export async function runDirectCommand(
         // заголовке окна не встречается, а "Chrome" встречается.
         // Оконное имя вперёд пускового: «блендер» как окно это Blender, а
         // запустить его надо ярлыком из меню «Пуск» — это разные строки.
-        const alias = windowAlias(command.title) ?? aliasTarget(command.title);
+        const варианты = windowCandidates(command.title);
         // Сначала по псевдониму, потом по сказанному вслух. Псевдоним знает
         // имя программы, но окно может называться иначе — «Riot Client» в
         // таблице нет, а сказать про него человек может.
@@ -329,8 +388,7 @@ export async function runDirectCommand(
         // Драйвер теперь перечисляет, что на экране, - и это должно дойти
         // до человека, а не осесть в пустых скобках.
         let почему = '';
-        for (const candidate of [alias, command.title]) {
-          if (!candidate) continue;
+        for (const candidate of варианты) {
           try {
             found = await desktop.focus(candidate);
             break;
@@ -342,6 +400,10 @@ export async function runDirectCommand(
           throw new Error(`не нашёл окно «${command.title}»${почему ? `: ${почему}` : ''}`);
         }
         console.log(`[jarvis] переключился на «${found.title}»`);
+        break;
+      }
+      case 'setting': {
+        await применитьНастройку(command.what, command.direction, session);
         break;
       }
       case 'clickNamed': {
@@ -469,6 +531,76 @@ export async function runDirectCommand(
   return passed();
 }
 
+/**
+ * Поменять настройку голосом и сказать, что получилось.
+ *
+ * Сказать обязательно: человек не видит ни ползунка, ни галочки, и без ответа
+ * не поймёт, услышали его или нет. Отвечаем НОВЫМ значением — «громкость
+ * восемьдесят процентов», — а не «сделано»: иначе непонятно, куда пришли.
+ *
+ * На краю диапазона говорим прямо, что дальше некуда. Молчаливое упирание в
+ * предел выглядит как сломанная команда, и человек повторяет её ещё трижды.
+ */
+async function применитьНастройку(
+  what: НастройкаГолосом,
+  direction: 'up' | 'down' | 'on' | 'off',
+  session: ГоворящаяСессия,
+): Promise<void> {
+  const store = settingsRef;
+  if (!store) throw new Error('настройки ещё не готовы');
+  const было = store.get();
+
+  if (what === 'mic') {
+    // Включить голосом нельзя: выключенный микрофон не слышит. Зато он
+    // включится сам через пять минут — тупика не будет.
+    active?.toggleMute();
+    return;
+  }
+
+  if (what === 'bigMode' || what === 'wakeAck') {
+    const значение = direction === 'on';
+    store.update({ [what]: значение } as Partial<AppSettings>);
+    if (what === 'bigMode') overlayRef?.setBig(значение);
+    const фразы: Record<'bigMode' | 'wakeAck', [string, string]> = {
+      bigMode: [tr('Сделал крупнее.', 'Text is larger now.'), tr('Вернул обычный размер.', 'Back to normal size.')],
+      wakeAck: [tr('Буду отзываться.', 'I will answer.'), tr('Не буду отзываться.', 'I will stay quiet.')],
+    };
+    await session.speak(фразы[what][значение ? 0 : 1]);
+    return;
+  }
+
+  // Остались только числовые настройки. Сужаем явно: через три ранних
+  // возврата TypeScript этого не выводит.
+  const ключ: 'speechSpeed' | 'speechVolume' = what === 'speechSpeed' ? 'speechSpeed' : 'speechVolume';
+  const предел = ключ === 'speechSpeed' ? SPEECH_SPEED_RANGE : SPEECH_VOLUME_RANGE;
+  const шаг = direction === 'up' ? предел.step : -предел.step;
+  const хотели = Math.round((было[ключ] + шаг) * 100) / 100;
+  const стало = Math.min(предел.max, Math.max(предел.min, хотели));
+
+  if (стало === было[ключ]) {
+    await session.speak(
+      what === 'speechSpeed'
+        ? direction === 'up'
+          ? tr('Быстрее уже не могу.', 'That is as fast as I go.')
+          : tr('Медленнее уже не могу.', 'That is as slow as I go.')
+        : direction === 'up'
+          ? tr('Громче уже не могу.', 'That is as loud as I go.')
+          : tr('Тише уже не могу.', 'That is as quiet as I go.'),
+    );
+    return;
+  }
+
+  store.update({ [ключ]: стало } as Partial<AppSettings>);
+
+  if (what === 'speechSpeed') {
+    const процент = Math.round(стало * 100);
+    await session.speak(tr(`Скорость ${процент} процентов.`, `Speed ${процент} percent.`));
+    return;
+  }
+  const процент = Math.round(стало * 100);
+  await session.speak(tr(`Громкость ${процент} процентов.`, `Volume ${процент} percent.`));
+}
+
 /** Ищет названный элемент в активном окне. */
 async function findNamedElement(query: string) {
   const window = await desktop.elements();
@@ -519,6 +651,17 @@ async function applyDictationEdit(edit: DictationEdit): Promise<void> {
 
 function describeDirect(command: DirectCommand): string {
   switch (command.kind) {
+    case 'setting': {
+      const что: Record<НастройкаГолосом, string> = {
+        speechVolume: 'громкость речи',
+        speechSpeed: 'скорость речи',
+        bigMode: 'крупный режим',
+        wakeAck: 'отклик на имя',
+        mic: 'микрофон',
+      };
+      const куда = { up: 'больше', down: 'меньше', on: 'включил', off: 'выключил' }[command.direction];
+      return `${что[command.what]}: ${куда}`;
+    }
     case 'key':
       return `нажал ${command.keys}`;
     case 'scroll':
@@ -850,7 +993,14 @@ async function поднятьМост(options: {
     // процесс, и в состоянии мира его нет.
     // Составленный план сразу ложится в файл, который читает окно: человек
     // должен увидеть замысел, а не только услышать сводку.
-    savePlan: (план) => { plans?.write(план); },
+    // Отказ записи не роняет работу: план уже лежит в памяти и по нему пойдут.
+    // Теряется только окно, и молчать об этом нельзя — человек смотрит именно
+    // туда и решит, что помощник плана не составил.
+    savePlan: (план) => {
+      if (plans && !plans.write(план)) {
+        console.error('[jarvis] план не попал в файл — окно покажет прежний');
+      }
+    },
     workNow: () => {
       const план = plans?.read();
       if (!план) return [];
@@ -897,6 +1047,9 @@ async function поднятьМост(options: {
   }
 
   const overlay = createStatusOverlay();
+  // Крупный режим — из настроек, и сразу: его могли включить голосом в прошлый
+  // раз, и при запуске плашка обязана быть такой, какой её оставили.
+  overlay.setBig(settings().bigMode);
   overlayRef = overlay;
   gridOverlay = createGridOverlay();
   helpOverlay = createHelpOverlay();
@@ -912,6 +1065,7 @@ async function поднятьМост(options: {
     // without repeating it, short enough that a mention on a video call does
     // not leave the microphone armed indefinitely.
     wakeWord: { awakeWindowMs: AWAKE_WINDOW_MS },
+    acknowledgeWake: () => settings().wakeAck,
     onStatus: (status) => {
       console.log(`[jarvis] ${status.label}`);
       overlay.update(status);
@@ -1345,7 +1499,17 @@ async function поднятьМост(options: {
             // costs minutes and, on this runtime, tends to report success for
             // something it never did.
             console.log(`[jarvis] «${wanted}» не нашёл среди установленных`);
-            await session.speak(tr(`Не нашёл ${wanted}.`, `Could not find ${wanted}.`));
+            // «Не нашёл» по неполному списку — это «не знаю», а не «не стоит».
+            // Записи магазина могли не приехать, а в них живут Dota 2 и всё
+            // остальное из Store: сказать «нет такой» значит соврать.
+            await session.speak(
+              списокБылПолон()
+                ? tr(`Не нашёл ${wanted}.`, `Could not find ${wanted}.`)
+                : tr(
+                    `Не нашёл ${wanted}, но список программ неполный — Windows не ответил про магазин.`,
+                    `Could not find ${wanted}, but the program list is incomplete: Windows did not answer about the store.`,
+                  ),
+            );
             session.keepAwake();
             return;
           }
@@ -1586,6 +1750,30 @@ async function поднятьМост(options: {
     }
     if (full) void session.speak(full);
 
+    // Куда лёг файл — вслух, а не только в проводник.
+    //
+    // Проводник открывается и выделяет файл, и для зрячего этого хватает. Тот,
+    // кто на экран не смотрит — или не видит его, — узнавал о результате
+    // ровно ничего: ответ агента говорит, ЧТО сделано, но не ГДЕ лежит.
+    //
+    // Называем папку, а не путь целиком: «C:\Users\…\Картинки» на слух
+    // невыносимо и бесполезно.
+    if (made?.paths?.length) {
+      const файл = made.paths[0] as string;
+      const раздел = path.basename(path.dirname(файл));
+      const сколько = made.paths.length;
+      const ещё =
+        сколько > 1
+          ? tr(` И ещё ${сколько - 1}, там же.`, ` And ${сколько - 1} more, in the same place.`)
+          : '';
+      void session.speak(
+        tr(
+          `Файл ${path.basename(файл)} лежит в папке ${раздел}.${ещё}`,
+          `File ${path.basename(файл)} is in the ${раздел} folder.${ещё}`,
+        ),
+      );
+    }
+
     // Правка, которую никто не забрал, — это не правка, а потерянная просьба.
     //
     // Живой случай: пока шла одна работа, человек сказал «сгенерируй картинку
@@ -1625,7 +1813,7 @@ async function поднятьМост(options: {
   audioWindow.webContents.send(AUDIO_BRIDGE_CHANNELS.startAmbient);
 
   registerPushToTalk(session);
-  registerSelfMute(session, audioWindow, overlay, (value) => {
+  const немой = registerSelfMute(session, audioWindow, overlay, (value) => {
     muted = value;
   });
 
@@ -1646,7 +1834,19 @@ async function поднятьМост(options: {
     // помощнике нет ничего — человек говорит в пустоту и думает, что его
     // игнорируют.
     if (muted) {
-      overlay.note(session.status, tr('Микрофон выключен — Ctrl+M', 'Microphone off — Ctrl+M'));
+      // Видно, что немота кончится, и когда.
+      //
+      // Подпись «Микрофон выключен — Ctrl+M» была подсказкой для того, кто
+      // может нажать сочетание. Для остальных она означала «всё, конец».
+      // Отсчёт говорит обратное: подожди, я вернусь сам.
+      const { secondsLeft } = немой.state();
+      const минут = Math.floor(secondsLeft / 60);
+      const секунд = secondsLeft % 60;
+      const сколько = минут > 0 ? `${минут}:${String(секунд).padStart(2, '0')}` : `${секунд} с`;
+      overlay.note(
+        session.status,
+        tr(`Микрофон выключен, включу через ${сколько}`, `Microphone off, back in ${сколько}`),
+      );
       return;
     }
     overlay.update(session.status);
@@ -1656,6 +1856,8 @@ async function поднятьМост(options: {
   active = {
     jarvis,
     session,
+    toggleMute: () => немой.toggle(),
+    muteState: () => немой.state(),
     showEvents: () => {
       logWindow?.open();
     },
@@ -1918,13 +2120,23 @@ interface Shortcut {
  * to the one path that is supposed to be instant.
  */
 let shortcutCache: Shortcut[] | null = null;
+// Полон ли список в кэше. Неполный не кэшируем: магазин мог не ответить
+// один раз, и запирать половину правды до перезапуска приложения незачем.
+let списокПолон = false;
 
 async function listStartMenuShortcuts(): Promise<Shortcut[]> {
   if (shortcutCache) return shortcutCache;
   // Один обход на всех: у моста была своя копия, и когда она расходилась
   // с той, по которой идёт проверка, проверка тихо проверяла не то.
-  shortcutCache = await listInstalledPrograms();
-  return shortcutCache;
+  const итог = await listInstalledPrograms();
+  списокПолон = итог.полный;
+  if (итог.полный) shortcutCache = итог.programs;
+  return итог.programs;
+}
+
+/** Был ли последний прочитанный список полным. */
+function списокБылПолон(): boolean {
+  return списокПолон;
 }
 
 /**
@@ -2261,6 +2473,16 @@ function createPlayback(audioWindow: BrowserWindow): SpeechPlayback & { dispose(
   };
   /** Чем закончить фразу, которая звучит прямо сейчас. */
   let finish: ((forToken: number) => void) | null = null;
+  /**
+   * Сколько раз просили замолчать.
+   *
+   * Синтез длится заметно дольше нажатия, а `finish` появляется только ПОСЛЕ
+   * него. Поэтому «стоп», сказанный во время синтеза, не отменял ничего:
+   * `cut()` звал `finish?.()`, которого ещё нет, синтез спокойно доходил до
+   * конца, и фраза звучала уже после просьбы замолчать. Остановка — красная
+   * линия, она не может опаздывать на секунду.
+   */
+  let обрывов = 0;
 
   ipcMain.on(AUDIO_BRIDGE_CHANNELS.spoken, (_event, forToken: number) => {
     finish?.(forToken);
@@ -2270,7 +2492,12 @@ function createPlayback(audioWindow: BrowserWindow): SpeechPlayback & { dispose(
     // Запоминается до синтеза: эхо возвращается, пока фраза ещё звучит.
     echoGuard.spoke(text);
     try {
-      const result = await currentSpeaker().say(text);
+      // Скорость — из настроек: её меняют голосом на ходу, поэтому читаем
+      // при каждой фразе, а не запоминаем при запуске.
+      const былоОбрывов = обрывов;
+      const result = await currentSpeaker().say(text, settings().speechSpeed);
+      // Пока синтезировали, могли попросить замолчать.
+      if (обрывов !== былоОбрывов) return;
       if (audioWindow.isDestroyed()) return;
 
       token += 1;
@@ -2289,6 +2516,8 @@ function createPlayback(audioWindow: BrowserWindow): SpeechPlayback & { dispose(
         audioWindow.webContents.send(AUDIO_BRIDGE_CHANNELS.speak, {
           token: mine,
           data: result.wav.toString('base64'),
+          // Громкость едет вместе со звуком: её меняют голосом на ходу.
+          volume: settings().speechVolume,
         });
       });
     } catch (error) {
@@ -2299,6 +2528,7 @@ function createPlayback(audioWindow: BrowserWindow): SpeechPlayback & { dispose(
   const queue = new SpeechQueue({
     say: playOnce,
     cut: () => {
+      обрывов += 1;
       // Фраза, которую сейчас оборвут, обязана закончиться и здесь — иначе
       // очередь останется ждать «отзвучало», которого уже не будет.
       finish?.(token);
@@ -2379,54 +2609,103 @@ function createPushToTalkCapture(audioWindow: BrowserWindow): AudioCapture {
  * слушающий, — ловушка: человек говорит в пустоту и считает, что его
  * игнорируют.
  */
+/** Управление немым режимом: кто угодно может вернуть слух. */
+interface НемойРежим {
+  /** Переключить. Возвращает новое состояние. */
+  toggle(): boolean;
+  state(): { muted: boolean; secondsLeft: number };
+}
+
 function registerSelfMute(
   session: VoiceSession,
   audioWindow: BrowserWindow,
   overlay: StatusOverlay,
   setMuted: (value: boolean) => void,
-): void {
+): НемойРежим {
   let muted = false;
+  let вернуть: NodeJS.Timeout | null = null;
+  let вернётсяВ = 0;
 
-  const registered = globalShortcut.register(MUTE_ACCELERATOR, () => {
-    muted = !muted;
-    setMuted(muted);
-
-    if (muted) {
-      // Сказать надо ДО того, как замолчать, и дождаться.
-      //
-      // Первая попытка делала наоборот: фраза начиналась, и тут же `sleep()`
-      // обрывал воспроизведение — человек не слышал ничего, то есть ровно то,
-      // что и чинилось. Человек смотрит не на индикатор, а в свою работу, и за
-      // вечер трижды решал, что Джарвис сломался, а тот просто не слышал.
-      void (async () => {
-        await session.speak(tr('Микрофон выключен.', 'Microphone off.'));
-        session.sleep();
-        try {
-          audioWindow.webContents.send(AUDIO_BRIDGE_CHANNELS.stopAmbient);
-        } catch {
-          // Окно захвата могло упасть — режим всё равно включается.
-        }
-        console.log('[jarvis] немой режим включён');
-        overlay.note(session.status, tr('Микрофон выключен — Ctrl+M', 'Microphone off — Ctrl+M'));
-      })();
-      return;
-    }
-
+  const слушать = (): void => {
     try {
       audioWindow.webContents.send(AUDIO_BRIDGE_CHANNELS.startAmbient);
     } catch {
-      // См. выше.
+      // Окно захвата могло упасть — режим всё равно выключается.
     }
-    console.log('[jarvis] немой режим выключен');
+  };
+
+  const включить = (сам: boolean): void => {
+    muted = false;
+    setMuted(false);
+    if (вернуть) {
+      clearTimeout(вернуть);
+      вернуть = null;
+    }
+    вернётсяВ = 0;
+    слушать();
+    console.log(`[jarvis] немой режим выключен${сам ? ' (по времени)' : ''}`);
     overlay.note(session.status, tr('Слушаю снова', 'Listening again'));
     void session.speak(tr('Слушаю.', 'Listening.'));
-  });
+  };
 
+  const выключить = (): void => {
+    muted = true;
+    setMuted(true);
+    вернётсяВ = Date.now() + MUTE_MINUTES * 60_000;
+
+    // Немота возвращается сама.
+    //
+    // Раньше она была вечной, а выключалась только сочетанием клавиш — и это
+    // тупик для того, кто до клавиатуры дотянуться не может. Таймер убирает
+    // тупик совсем: что бы ни случилось, через пять минут Джарвис снова
+    // слышит.
+    if (вернуть) clearTimeout(вернуть);
+    вернуть = setTimeout(() => включить(true), MUTE_MINUTES * 60_000);
+    вернуть.unref?.();
+
+    // Сказать надо ДО того, как замолчать, и дождаться.
+    //
+    // Первая попытка делала наоборот: фраза начиналась, и тут же `sleep()`
+    // обрывал воспроизведение — человек не слышал ничего, то есть ровно то,
+    // что и чинилось. Человек смотрит не на индикатор, а в свою работу, и за
+    // вечер трижды решал, что Джарвис сломался, а тот просто не слышал.
+    void (async () => {
+      await session.speak(
+        tr(
+          `Микрофон выключен на ${MUTE_MINUTES} минут. Потом включу сам.`,
+          `Microphone off for ${MUTE_MINUTES} minutes. I will switch it back on.`,
+        ),
+      );
+      session.sleep();
+      try {
+        audioWindow.webContents.send(AUDIO_BRIDGE_CHANNELS.stopAmbient);
+      } catch {
+        // Окно захвата могло упасть — режим всё равно включается.
+      }
+      console.log('[jarvis] немой режим включён');
+    })();
+  };
+
+  const toggle = (): boolean => {
+    if (muted) включить(false);
+    else выключить();
+    return muted;
+  };
+
+  const registered = globalShortcut.register(MUTE_ACCELERATOR, toggle);
   if (!registered) {
     console.error(`[jarvis] не удалось занять ${MUTE_ACCELERATOR} — сочетание занято.`);
-    return;
+  } else {
+    console.log(`[jarvis] ${MUTE_ACCELERATOR}: выключить и включить микрофон.`);
   }
-  console.log(`[jarvis] ${MUTE_ACCELERATOR}: выключить и включить микрофон.`);
+
+  return {
+    toggle,
+    state: () => ({
+      muted,
+      secondsLeft: muted ? Math.max(0, Math.ceil((вернётсяВ - Date.now()) / 1000)) : 0,
+    }),
+  };
 }
 
 function registerPushToTalk(session: VoiceSession): void {

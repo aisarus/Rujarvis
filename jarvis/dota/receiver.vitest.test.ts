@@ -138,3 +138,40 @@ describe('занятый порт', () => {
       .rejects.toMatchObject({ code: 'EADDRINUSE' });
   });
 });
+
+describe('пароль приёмника', () => {
+  /**
+   * Замечание CodeRabbit (кусок 3, PR №42). Порт слушает локальный адрес, и
+   * написать на него мог любой процесс машины: поддельный пакет уходил в
+   * состояние, в подсказки и в оверлей — окно с полным доступом к системе.
+   */
+  let свой: Receiver | undefined;
+  afterEach(async () => {
+    await свой?.stop();
+    свой = undefined;
+  });
+
+  it('пакет без пароля не принимается', async () => {
+    const пришли: unknown[] = [];
+    свой = await startReceiver({ port: 0, token: 'секрет', onPacket: (п) => пришли.push(п) });
+
+    await послать(свой.port, JSON.stringify({ map: { clock_time: 600 } }));
+    expect(пришли).toEqual([]);
+  });
+
+  it('пакет с чужим паролем не принимается', async () => {
+    const пришли: unknown[] = [];
+    свой = await startReceiver({ port: 0, token: 'секрет', onPacket: (п) => пришли.push(п) });
+
+    await послать(свой.port, JSON.stringify({ auth: { token: 'чужой' }, map: { clock_time: 600 } }));
+    expect(пришли).toEqual([]);
+  });
+
+  it('пакет со своим паролем проходит', async () => {
+    const пришли: unknown[] = [];
+    свой = await startReceiver({ port: 0, token: 'секрет', onPacket: (п) => пришли.push(п) });
+
+    await послать(свой.port, JSON.stringify({ auth: { token: 'секрет' }, map: { clock_time: 600 } }));
+    expect(пришли.length).toBe(1);
+  });
+});

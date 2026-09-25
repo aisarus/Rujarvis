@@ -76,6 +76,23 @@ export function подписьШагов(n: number, слова: СловаШаг
   return n + слова.many;
 }
 
+/**
+ * Догонять ли низ ленты.
+ *
+ * Правило одно: человек у самого низа — лента прыгает за новой строкой;
+ * человек отлистал назад — лента стоит, он читает, а не догоняет. Запас в
+ * 40 пикселей — на дробную прокрутку и на масштаб экрана: ровного нуля
+ * scrollTop не даёт никогда.
+ *
+ * Функция уезжает в страницу исходником (`toString`), поэтому не знает
+ * ничего снаружи себя. Проверяется она числами, а не поиском слова
+ * «follow» в тексте страницы: поиск слова не краснеет, когда знак
+ * сравнения перевёрнут, а это и есть настоящая поломка.
+ */
+export function следуетЗаНизом(scrollHeight: number, clientHeight: number, scrollTop: number): boolean {
+  return scrollHeight - clientHeight - scrollTop < 40;
+}
+
 export function buildLogWindowHtml(): string {
   return `<!doctype html>
 <html lang="${currentLanguage()}">
@@ -129,8 +146,6 @@ export function buildLogWindowHtml(): string {
 <div id="head"><div id="title">${tr('Что делаю', 'What I am doing')}</div><div id="count"></div></div>
 <div id="feed"><div id="empty">${tr('Пока ничего не делаю.', 'Nothing going on yet.')}</div></div>
 <script>
-const { ipcRenderer } = require('electron');
-const CH = ${JSON.stringify(LOG_WINDOW_CHANNELS)};
 const feed = document.getElementById('feed');
 const empty = document.getElementById('empty');
 const count = document.getElementById('count');
@@ -138,10 +153,11 @@ let shown = 0;
 
 // Прокрутка следует за низом, пока человек её не тронул. Стоит ему отлистать
 // назад - лента перестаёт прыгать: он читает, а не догоняет.
+// Правило ниже — та же функция, что проверена тестом числами.
+const следуетЗаНизом = ${следуетЗаНизом.toString()};
 let follow = true;
 feed.addEventListener('scroll', function () {
-  const bottom = feed.scrollHeight - feed.clientHeight - feed.scrollTop;
-  follow = bottom < 40;
+  follow = следуетЗаНизом(feed.scrollHeight, feed.clientHeight, feed.scrollTop);
 });
 
 function clock(at) {
@@ -195,13 +211,35 @@ function add(line) {
   if (follow) feed.scrollTop = feed.scrollHeight;
 }
 
-ipcRenderer.on(CH.line, function (_event, line) { add(line); });
-ipcRenderer.on(CH.backlog, function (_event, lines) {
+// Строки приходят через мост из preload: у самой страницы доступа к Node нет.
+window.jarvisLog.onLine(function (line) { add(line); });
+window.jarvisLog.onBacklog(function (lines) {
   for (const line of lines) add(line);
 });
 </script>
 </body>
 </html>`;
+}
+
+/**
+ * Мост между главным процессом и страницей журнала.
+ *
+ * В окно льётся вывод агента, а агент читает веб-страницы: однажды туда
+ * приедет чужой текст. Пока он выводится через textContent, и выполнить его
+ * нельзя — но окно жило с nodeIntegration, и одна будущая правка на innerHTML
+ * превратила бы чужую строку в выполнение кода с правами хозяина машины.
+ * Теперь страница не умеет require вовсе, а этот preload отдаёт ей ровно две
+ * вещи: подписку на строку и подписку на предысторию.
+ */
+export function buildLogWindowPreload(): string {
+  return `const { contextBridge, ipcRenderer } = require('electron');
+const CH = ${JSON.stringify(LOG_WINDOW_CHANNELS)};
+
+contextBridge.exposeInMainWorld('jarvisLog', {
+  onLine: (handle) => ipcRenderer.on(CH.line, (_event, line) => handle(line)),
+  onBacklog: (handle) => ipcRenderer.on(CH.backlog, (_event, lines) => handle(lines)),
+});
+`;
 }
 
 export interface LogWindow {
@@ -219,6 +257,8 @@ export function createLogWindow(): LogWindow {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'jarvis-log-'));
   const pagePath = path.join(dir, 'log.html');
   writeFileSync(pagePath, buildLogWindowHtml(), 'utf8');
+  const preloadPath = path.join(dir, 'preload.js');
+  writeFileSync(preloadPath, buildLogWindowPreload(), 'utf8');
 
   const backlog: StoryLine[] = [];
   let window: BrowserWindow | null = null;
@@ -253,7 +293,14 @@ export function createLogWindow(): LogWindow {
       // того, над чем человек работает, значит заставить его это окно закрыть.
       alwaysOnTop: false,
       skipTaskbar: false,
-      webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false },
+      // Окно журнала показывает чужой текст, поэтому прав у него нет: Node
+      // отключён, мир страницы отделён от мира preload, песочница включена.
+      webPreferences: {
+        preload: preloadPath,
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+      },
     });
 
     const current = window;

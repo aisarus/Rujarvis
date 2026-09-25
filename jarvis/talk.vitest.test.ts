@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { isTalk } from './core';
+import { BackendManager } from './backends/manager';
+import { EventChannel } from './backends/process';
+import type { AgentBackend, BackendEvent, BackendResult, BackendRun } from './backends/types';
+import { DEFAULT_JARVIS_SETTINGS, JarvisCore, isTalk } from './core';
+import { JarvisMemory } from './memory/store';
 import { route } from './router/router';
+import { TaskManager } from './tasks/manager';
 import { WorldStateStore, selectWorldStateLines } from './context/worldState';
 
 /** Как решение выглядит после роутера на настоящей фразе. */
@@ -196,5 +201,89 @@ describe('во время работы: вопрос или поправка', (
   it('знак решает там, где слова молчат', () => {
     expect(решение('ты понял что надо делать?').asks).toBe(true);
     expect(решение('далеко ещё?').asks).toBe(true);
+  });
+});
+
+/**
+ * Ответ разговора должен запоминаться САМ, а не рукой проверки.
+ *
+ * Замечания CodeRabbit (кусок 3, PR №42): обе проверки ниже раньше обходили
+ * настоящий путь — одна звала `noteResult` сама, другая считала признак
+ * вопроса, не проводя реплику через обработчик. Перестань обработчик работать
+ * — они остались бы зелёными, а человек не получил бы ответа.
+ */
+describe('вопрос во время работы проходит настоящим путём', () => {
+  function ядро(ответ: string): { core: JarvisCore; world: WorldStateStore; сказано: string[] } {
+    const сказано: string[] = [];
+    const result: BackendResult = {
+      ok: true,
+      backend: 'claude-code',
+      text: ответ,
+      durationMs: 1,
+      filesChanged: [],
+      commands: [],
+    };
+    const backend = {
+      id: 'claude-code' as const,
+      name: 'claude-code',
+      capabilities: new Set(),
+      checkAvailability: async () => ({
+        id: 'claude-code' as const,
+        installed: true,
+        authenticated: true,
+        ready: true,
+        checkedAt: 0,
+      }),
+      run: (): BackendRun => {
+        const channel = new EventChannel<BackendEvent>();
+        channel.push({ type: 'completed', backend: 'claude-code', result });
+        channel.close();
+        return {
+          id: 'r',
+          backend: 'claude-code',
+          events: channel,
+          cancel: () => undefined,
+          result: () => Promise.resolve(result),
+        };
+      },
+    } as unknown as AgentBackend;
+
+    const backends = new BackendManager();
+    backends.register(backend);
+    const world = new WorldStateStore();
+    const core = new JarvisCore({
+      backends,
+      tasks: new TaskManager({ backends }),
+      memory: new JarvisMemory(),
+      world,
+      settings: () => DEFAULT_JARVIS_SETTINGS,
+      speak: (текст: string) => sказано(сказано, текст),
+    });
+    return { core, world, сказано };
+  }
+
+  function sказано(куда: string[], текст: string): void {
+    куда.push(текст);
+  }
+
+  it('ответ на вопрос во время работы сохраняется в состоянии мира', async () => {
+    const { core, world, сказано } = ядро('Лев Толстой.');
+
+    await core.answerQuestion('кто написал войну и мир');
+
+    // Обработчик сам положил и вопрос, и ответ: следующее «а сколько ему было
+    // лет» будет о ком спрашивать.
+    expect(world.snapshot().currentUtterance).toBe('кто написал войну и мир');
+    expect(world.snapshot().previousResult?.text).toContain('Толстой');
+    expect(сказано.join(' ')).toContain('Толстой');
+  });
+
+  it('вопрос во время работы получает ответ, а не «учту»', async () => {
+    const { core, сказано } = ядро('Да, понял: делаю сферу.');
+
+    const ответ = await core.answerQuestion('ты понял что надо делать?');
+
+    expect(ответ).toContain('понял');
+    expect(сказано.length).toBeGreaterThan(0);
   });
 });

@@ -116,7 +116,11 @@ export function matchVoiceControl(transcript: string): ControlMatch | null {
   const normalized = normalizeForMatching(transcript);
   if (!normalized) return null;
 
-  const tokens = tokenize(transcript);
+  // Вопросительный знак приезжает от `tokenize` отдельным токеном — он несёт
+  // интонацию, а не слово. Здесь он только мешал: «Джарвис, хватит?» давало
+  // осмысленное «хватит ?», ни с чем не совпадало, и остановка не срабатывала.
+  // А остановка — одна из четырёх красных линий, она обязана работать всегда.
+  const tokens = tokenize(transcript).filter((token) => token !== '?');
   if (tokens.length > MAX_CONTROL_TOKENS) return null;
 
   // Обёртки снимаются тем же списком, что и в разборе команд. Раньше здесь был
@@ -175,7 +179,13 @@ export function applyVoiceControl(match: ControlMatch, target: ControlTarget): C
       target.stopSpeaking();
       const paused = target.pauseForeground();
       return paused
-        ? { action: 'paused', spoken: tr('Пауза.', 'Paused.') }
+        // Ответ нарочно не «Пауза»: эхо-страж спрашивает разбор управления
+        // ПЕРВЫМ, и собственное слово «пауза», вернувшееся из колонок, он за
+        // своё не считал. Управление срабатывало второй раз, пауза на уже
+        // остановленной задаче не ставилась, и человек слышал «нечего ставить
+        // на паузу», хотя она стоит. У «Остановил.» и «Продолжаю.» такого
+        // совпадения нет — и здесь быть не должно.
+        ? { action: 'paused', spoken: tr('Приостановил.', 'On hold.') }
         : { action: 'nothing', spoken: tr('Сейчас нечего ставить на паузу.', 'Nothing to pause right now.') };
     }
     case 'resume': {

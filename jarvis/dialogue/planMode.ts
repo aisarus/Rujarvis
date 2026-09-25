@@ -25,7 +25,7 @@ import { readConfirmation } from '../voice/confirm';
 import { normalizeForMatching } from '../router/text';
 
 /** Что человек сказал про лежащий на столе план. */
-export type PlanVerdict = 'принято' | 'правка' | 'неясно';
+export type PlanVerdict = 'принято' | 'правка' | 'отказ' | 'неясно';
 
 /**
  * Слова пуска.
@@ -100,7 +100,12 @@ export function readPlanVerdict(utterance: string): PlanVerdict {
   const токены = слова(utterance);
   if (токены.length === 0) return 'неясно';
 
-  if (содержит(ОТКАЗ, токены)) return 'правка';
+  // Отказ — это отказ, а не правка.
+  //
+  // «Отмена» и «забудь» возвращали «правку», ядро шло планировать заново с
+  // текстом «…Поправка: отмена», и человек, попросивший всё отменить, получал
+  // новый план. Теперь у отказа свой вердикт, и план просто убирается.
+  if (содержит(ОТКАЗ, токены)) return 'отказ';
 
   // Согласие коротко, правка — предложением.
   //
@@ -121,7 +126,7 @@ export function readPlanVerdict(utterance: string): PlanVerdict {
   const ответ = readConfirmation(utterance);
   if (токены.length <= 2) {
     if (ответ === 'yes') return 'принято';
-    if (ответ === 'no') return 'правка';
+    if (ответ === 'no') return 'отказ';
   }
 
   // Всё остальное во время лежащего плана — это правка к нему. Человек,

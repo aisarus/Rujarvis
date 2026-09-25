@@ -92,6 +92,20 @@ if [ "${RUJARVIS_INSTALL_TEST:-}" = "1" ]; then
   return 0 2>/dev/null || exit 0
 fi
 
+# Установка целиком лежит в функции, а зовётся последней строкой файла.
+#
+# Скрипт запускают через `curl … | bash`, а bash читает stdin по мере
+# выполнения. Два следствия, оба тихие:
+#
+#   - оборвись загрузка на середине, bash выполнит начало — например,
+#     `rm -rf "$APP_DIR"` — и остановится, не собрав ничего взамен;
+#   - любой дочерний процесс, читающий stdin (вопрос corepack о скачивании,
+#     brew, `pnpm jarvis:setup`), съест остаток текста скрипта, и установка
+#     кончится посередине без единого слова об этом.
+#
+# С функцией bash обязан дочитать файл до последней строки, прежде чем
+# выполнить хоть что-то из неё.
+main() {
 parse_args "$@"
 
 printf '\n  %sRujarvis%s\n' "$C_STEP" "$C_OFF"
@@ -173,9 +187,13 @@ fi
 step 'Получаю исходники'
 if [ -d "$SOURCE_DIR/.git" ]; then
   note "Обновляю $SOURCE_DIR"
-  git -C "$SOURCE_DIR" fetch origin "$BRANCH" || die 'Не удалось выполнить: git fetch'
-  git -C "$SOURCE_DIR" checkout "$BRANCH" || die 'Не удалось выполнить: git checkout'
-  git -C "$SOURCE_DIR" pull --ff-only origin "$BRANCH" || die 'Не удалось выполнить: git pull'
+  # Клон делается с `--depth 1 --branch`, а это подразумевает
+  # `--single-branch`: обычный `fetch origin <ветка>` не заводит
+  # `origin/<ветка>`, и `checkout` падал с «pathspec did not match» — сменить
+  # ветку без удаления папки было нельзя. Refspec заводит ссылку явно, а
+  # `checkout -B` переводит на неё; отдельный `pull` после этого не нужен.
+  git -C "$SOURCE_DIR" fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"     || die 'Не удалось выполнить: git fetch'
+  git -C "$SOURCE_DIR" checkout -B "$BRANCH" "origin/$BRANCH"     || die 'Не удалось выполнить: git checkout'
 else
   mkdir -p "$INSTALL_ROOT"
   git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$SOURCE_DIR" || die 'Не удалось выполнить: git clone'
@@ -366,8 +384,9 @@ printf '  вход в Claude Code, проверка микрофона — и м
 printf '  Папка Джарвиса: %s\n' "$INSTALL_ROOT"
 printf '  Лог:            %s\n' "$INSTALL_ROOT/logs/jarvis.log"
 printf '\n'
-warn 'Управление окнами (фокус, клавиши, снимки чужих окон) пока только на Windows:'
-warn 'драйвер написан на Windows API. Голос, разговор и работа Claude Code — работают.'
+note 'Управление окнами на маке спросит два разрешения в «Конфиденциальности»:'
+note '«Универсальный доступ» — окна, мышь, клавиши; «Запись экрана» — снимки.'
+note 'Без первого нажатия не падают, а молча ничего не делают.'
 printf '\n'
 note 'Микрофон macOS спросит один раз — разрешение будет записано на Electron:'
 note 'приложение запускается его двоичным файлом, своей подписи у сборки пока нет.'
@@ -376,3 +395,6 @@ printf '\n'
 if [ "$LAUNCH" = "1" ]; then
   open "$APP_DIR" || true
 fi
+}
+
+main "$@"

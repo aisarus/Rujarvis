@@ -46,8 +46,8 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { jarvisDataRoot } from '../setup/paths';
 
 /** Как часто слушатель заглядывает за командой, в секундах. */
 const TICK_SECONDS = 0.25;
@@ -69,13 +69,8 @@ export interface LiveResult {
 }
 
 function liveDir(): string {
-  const root =
-    process.env.JARVIS_DATA_ROOT?.trim() ||
-    path.join(
-      process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
-      'Rujarvis',
-      'data',
-    );
+  // Папка данных — из paths.ts, иначе она виндовая на любой машине.
+  const root = process.env.JARVIS_DATA_ROOT?.trim() || jarvisDataRoot();
   const dir = path.join(root, 'blender-live');
   mkdirSync(dir, { recursive: true });
   return dir;

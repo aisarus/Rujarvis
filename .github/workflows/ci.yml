@@ -45,6 +45,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
+      # Типы проверок — отдельным проходом: основной конфиг их исключает, а
+      # vitest типы не смотрит вовсе. Без этого шага `check` проходил целиком
+      # при сломанных типах в зелёной на исполнении проверке — и там нашлось
+      # одиннадцать штук, включая несуществующую способность «code».
+      - run: pnpm typecheck:tests
       - run: pnpm test
       - run: pnpm build
       - name: Installer script parses and its pure functions pass

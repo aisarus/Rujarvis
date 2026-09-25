@@ -46,8 +46,19 @@ describe('readPacket', () => {
   it('пустой блок — это не данные', () => {
     // roshan, couriers и neutralitems приходят ключами без содержимого.
     // Разбор обязан отдать пустой список, а не признак «есть».
-    const п = readPacket({ ...(бой.d as object), roshan: {}, couriers: {} }, бой.t)!;
-    expect(п.neutrals.length).toBeGreaterThanOrEqual(0);
+    //
+    // Прежнее утверждение — `length >= 0` — истинно у любого массива: оно не
+    // краснело ни при какой реализации, а название обещало проверку.
+    // Сравниваем с разбором БЕЗ этих блоков: пустые ключи не должны менять
+    // ничего.
+    const без = readPacket(бой.d as object, бой.t)!;
+    const с = readPacket({ ...(бой.d as object), roshan: {}, couriers: {} }, бой.t)!;
+
+    expect(с.neutrals).toEqual(без.neutrals);
+    expect(с.enemies).toEqual(без.enemies);
+    expect(с.vision).toEqual(без.vision);
+    // И ни одного поля про Рошана в снимке не заводится.
+    expect(Object.keys(с)).toEqual(Object.keys(без));
   });
 });
 

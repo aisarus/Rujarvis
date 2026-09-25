@@ -26,6 +26,19 @@ const WIDTH = 320;
 const HEIGHT = 84;
 
 /**
+ * Крупный режим: вдвое больше и контрастнее.
+ *
+ * Плашка 320×84 со шрифтом 15 пикселей — единственный способ увидеть
+ * состояние, и для слабого зрения он не работает вовсе. В крупном режиме
+ * шрифт 26, подпись 18, ширина 560: с метра видно, слушает Джарвис или нет.
+ *
+ * Отдельным режимом, а не «сделаем всем покрупнее»: тому, кто видит хорошо,
+ * плашка на полэкрана мешает работать.
+ */
+const BIG_WIDTH = 560;
+const BIG_HEIGHT = 120;
+
+/**
  * Насколько плашке позволено вырасти.
  *
  * Полный текст — это то, о чём просил человек, но плашка плавает поверх всего,
@@ -34,6 +47,14 @@ const HEIGHT = 84;
  * экраном.
  */
 const MAX_HEIGHT = 280;
+
+interface Размер {
+  width: number;
+  height: number;
+}
+
+const размер = (крупно: boolean): Размер =>
+  крупно ? { width: BIG_WIDTH, height: BIG_HEIGHT } : { width: WIDTH, height: HEIGHT };
 const MARGIN = 24;
 
 function buildOverlayHtml(): string {
@@ -88,6 +109,11 @@ function buildOverlayHtml(): string {
     font-size: 12px; color: #a1a1aa; margin-top: 3px;
     white-space: pre-wrap; overflow-wrap: anywhere;
   }
+  /* Крупный режим. Контраст тоже выше: серый по тёмному читается плохо. */
+  body.big #pill { min-height: 88px; padding: 20px 26px; }
+  body.big #label { font-size: 26px; line-height: 1.3; }
+  body.big #hint { font-size: 18px; color: #e4e4e7; margin-top: 6px; }
+  body.big #dot { width: 18px; height: 18px; }
 </style>
 </head>
 <body>
@@ -133,6 +159,8 @@ function подогнатьВысоту() {
 }
 
 ipcRenderer.on(${JSON.stringify(STATUS_OVERLAY_CHANNEL)}, (_event, status) => {
+  // Крупный режим переключается на ходу: его меняют голосом.
+  document.body.classList.toggle('big', Boolean(status.big));
   dot.className = status.indicator;
   label.textContent = status.label;
   pill.classList.toggle('asleep', !status.awake && status.indicator === 'idle');
@@ -163,6 +191,13 @@ export interface StatusOverlay {
   update(status: VoiceStatus): void;
   /** Короткая строка о том, что услышано и что с этим стало. */
   note(status: VoiceStatus, text: string): void;
+  /**
+   * Включить крупный режим.
+   *
+   * Функцией снаружи, а не чтением настроек изнутри: режим меняют голосом на
+   * ходу, и плашка должна перестроиться сразу, не дожидаясь перезапуска.
+   */
+  setBig(big: boolean): void;
   dispose(): void;
 }
 
@@ -209,11 +244,12 @@ function savePosition(position: SavedPosition): void {
 }
 
 export function createStatusOverlay(): StatusOverlay {
+  let крупно = false;
   const dir = mkdtempSync(path.join(os.tmpdir(), 'jarvis-overlay-'));
   const pagePath = path.join(dir, 'overlay.html');
   writeFileSync(pagePath, buildOverlayHtml(), 'utf8');
 
-  let window = openWindow(pagePath);
+  let window = openWindow(pagePath, () => размер(крупно));
 
   /**
    * Пересоздание после падения.
@@ -223,16 +259,47 @@ export function createStatusOverlay(): StatusOverlay {
    * пересоздания человек навсегда теряет единственный признак того, что
    * Джарвис его слышит, — а сам Джарвис при этом продолжает работать.
    */
-  const revive = (): void => {
-    console.log('[jarvis] окно индикатора упало, поднимаю заново');
+  // Сколько раз подряд падало и когда пробовать снова.
+  //
+  // Без задержки и предела `revive` поднимал окно мгновенно, новый кадр падал
+  // с той же причиной — и так по кругу, пока машина не начинала тормозить
+  // вся. Задержка растёт, попыток шесть, после чего Джарвис работает без
+  // индикатора и прямо об этом говорит: молча остаться без единственного
+  // признака «я слышу» хуже, чем знать, что его нет.
+  const ПОПЫТОК = 6;
+  let падений = 0;
+  let ожидание: ReturnType<typeof setTimeout> | null = null;
+  let похоронено = false;
+
+  const поднять = (): void => {
+    ожидание = null;
+    window = openWindow(pagePath, () => размер(крупно));
+    window.webContents.once('render-process-gone', revive);
+  };
+
+  function revive(): void {
+    if (похоронено) return;
+    падений += 1;
     try {
       if (!window.isDestroyed()) window.destroy();
     } catch {
       // Уже мертво — и хорошо.
     }
-    window = openWindow(pagePath);
-    window.webContents.once('render-process-gone', revive);
-  };
+    if (падений > ПОПЫТОК) {
+      console.error(
+        `[jarvis] окно индикатора упало ${падений} раз подряд — больше не поднимаю. ` +
+          'Джарвис работает, но показывать, что он слышит, нечем.',
+      );
+      return;
+    }
+    // 0.5 с, 1, 2, 4, 8, 16 — падающий по одной причине кадр перестаёт
+    // жечь машину, а разовое падение человек и не заметит.
+    const через = 500 * 2 ** (падений - 1);
+    console.log(`[jarvis] окно индикатора упало, поднимаю заново через ${через} мс (попытка ${падений} из ${ПОПЫТОК})`);
+    ожидание = setTimeout(поднять, через);
+    ожидание.unref?.();
+  }
+
   window.webContents.once('render-process-gone', revive);
 
   /**
@@ -253,18 +320,43 @@ export function createStatusOverlay(): StatusOverlay {
 
   return {
     note(status, text) {
-      send({ ...status, note: text });
+      send({ ...status, note: text, big: крупно });
     },
     update(status) {
-      send(status);
+      send({ ...status, big: крупно });
+    },
+    setBig(big) {
+      if (крупно === big) return;
+      крупно = big;
+      // Ширину задаём числом, а не из `getBounds`.
+      //
+      // При масштабе 125% `setBounds` из `getBounds` терял проценты за вызов:
+      // замерено 269 → 255 → 242 → 229 → 215 → 202 → 189, и плашка усыхала в
+      // полоску. Здесь та же ловушка, и обходится она так же.
+      if (!window.isDestroyed()) {
+        const было = window.getBounds();
+        window.setBounds({
+          x: было.x,
+          y: было.y,
+          width: big ? BIG_WIDTH : WIDTH,
+          height: big ? BIG_HEIGHT : HEIGHT,
+        });
+      }
     },
     dispose() {
+      // Отложенный подъём тоже надо отменить: иначе окно всплывёт уже после
+      // того, как его закрыли, и переживёт выключение самого Джарвиса.
+      похоронено = true;
+      if (ожидание) {
+        clearTimeout(ожидание);
+        ожидание = null;
+      }
       if (!window.isDestroyed()) window.destroy();
     },
   };
 }
 
-function openWindow(pagePath: string): BrowserWindow {
+function openWindow(pagePath: string, размерРежима: () => Размер): BrowserWindow {
   const work = screen.getPrimaryDisplay().workArea;
   const saved = readSavedPosition();
   const window = new BrowserWindow({
@@ -312,9 +404,17 @@ function openWindow(pagePath: string): BrowserWindow {
     if (event.sender !== window.webContents) return;
     if (typeof height !== 'number' || !Number.isFinite(height)) return;
     if (window.isDestroyed()) return;
-    const нужно = Math.max(HEIGHT, Math.min(MAX_HEIGHT, Math.round(height)));
+    // Размер берём у ТЕКУЩЕГО режима, а не у обычного.
+    //
+    // Здесь стояло `HEIGHT`/`WIDTH` числами, и это стирало крупный режим:
+    // `setBig(true)` растягивал окно до 560, а первая же услышанная фраза
+    // присылала высоту и возвращала ширину к 320. Шрифт оставался крупным,
+    // окно — узким, и текст срезался ровно у того человека, ради которого
+    // режим и сделан. Поймано приёмкой: «окно не выросло: 322 → 322».
+    const режим = размерРежима();
+    const нужно = Math.max(режим.height, Math.min(MAX_HEIGHT, Math.round(height)));
     const было = window.getBounds();
-    if (было.height === нужно) return;
+    if (было.height === нужно && было.width === режим.width) return;
 
     // Ширина задаётся ЧИСЛОМ, а не берётся из прошлых границ.
     //
@@ -333,7 +433,7 @@ function openWindow(pagePath: string): BrowserWindow {
     //
     // Растём вниз от той же верхней кромки: плашка стоит внизу экрана, и рост
     // вверх выталкивал бы её за край.
-    window.setBounds({ x: было.x, y: было.y, width: WIDTH, height: нужно });
+    window.setBounds({ x: было.x, y: было.y, width: режим.width, height: нужно });
   };
   ipcMain.on(`${STATUS_OVERLAY_CHANNEL}:height`, onHeight);
   window.once('closed', () => {

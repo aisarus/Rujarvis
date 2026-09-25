@@ -10,14 +10,19 @@ import { forgetChild, reapAll, trackChild, trackedChildren } from './reaper';
  * сразу конец файла, и она умирает раньше, чем до неё доберутся. Первый заход
  * так и вышел: taskkill честно отвечал «процесса нет», и виноват был тест.
  */
-function долгоживущий(): { pid: number; жив: () => boolean } {
+function долгоживущий(): { pid: number; жив: () => boolean; кончился: Promise<void> } {
   const ребёнок = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], {
     windowsHide: true,
     stdio: 'ignore',
   });
   let живой = true;
-  ребёнок.on('exit', () => { живой = false; });
-  return { pid: ребёнок.pid!, жив: () => живой };
+  const кончился = new Promise<void>((готово) => {
+    ребёнок.on('exit', () => {
+      живой = false;
+      готово();
+    });
+  });
+  return { pid: ребёнок.pid!, жив: () => живой, кончился };
 }
 
 afterEach(async () => { await reapAll(); });
@@ -71,10 +76,26 @@ describe('reaper', () => {
     // taskkill с несколькими /PID падает целиком, если один уже мёртв. Поэтому
     // цели бьются по одной — иначе выжившие остались бы жить.
     const мёртвый = долгоживущий();
-    await new Promise<void>((готово) => {
-      const т = spawn('taskkill', ['/F', '/PID', String(мёртвый.pid)], { windowsHide: true, stdio: 'ignore' });
-      т.on('exit', () => готово());
-      т.on('error', () => готово());
+    // Дожидаемся НАСТОЯЩЕЙ смерти, а не запуска команды.
+    //
+    // Раньше тест шёл дальше и когда `taskkill` не нашёлся (вне Windows его
+    // нет вовсе), и когда он вернул ненулевой код: «мёртвый» оставался жив, и
+    // проверка «один мёртвый не мешает» ничего не проверяла.
+    await new Promise<void>((готово, беда) => {
+      void мёртвый.кончился.then(() => готово());
+      if (process.platform === 'win32') {
+        const т = spawn('taskkill', ['/F', '/PID', String(мёртвый.pid)], { windowsHide: true, stdio: 'ignore' });
+        т.on('error', (error) => беда(error));
+        т.on('exit', (код) => {
+          if (код !== 0) беда(new Error(`taskkill вернул ${код}`));
+        });
+        return;
+      }
+      try {
+        process.kill(мёртвый.pid as number, 'SIGKILL');
+      } catch (error) {
+        беда(error);
+      }
     });
     const живой = долгоживущий();
 

@@ -100,7 +100,19 @@ function showSettings(page?: 'onboarding'): void {
     paths: PATHS,
     page,
     onFinished: () => {
-      void restartVoice();
+      // Первые слова после «Начать».
+      //
+      // Раньше здесь была тишина: голос просто запускался, и человек
+      // оставался со значком в трее. Как позвать и как остановить, он видел
+      // один раз на последнем шаге мастера — и больше никогда.
+      //
+      // Говорится один раз, сразу после настройки, и учит ровно трём вещам:
+      // имени, остановке и тому, как спросить остальное.
+      void restartVoice().then(() => {
+        void bridge?.session.speak(
+          uiStrings(settings.get().language).firstWords,
+        );
+      });
     },
     onSettingsChanged: (changed) => {
       // Язык, модель распознавания и папки читаются при запуске моста.
@@ -141,6 +153,20 @@ function refreshTray(): void {
       { label: status, enabled: false },
       { type: 'separator' },
       { label: t.trayEvents, enabled: Boolean(bridge), click: () => bridge?.showEvents() },
+      // Микрофон — и мышью тоже.
+      //
+      // Выключался он только сочетанием Ctrl+M, а голосом вернуть слух нельзя
+      // по определению: выключенный микрофон не слышит просьбы включиться.
+      // Человек, которому сочетание недоступно, оставался с глухим
+      // помощником до прихода того, кому доступно.
+      {
+        label: bridge?.muteState().muted ? t.trayMicOn : t.trayMicOff,
+        enabled: Boolean(bridge),
+        click: () => {
+          bridge?.toggleMute();
+          refreshTray();
+        },
+      },
       { label: t.traySettings, click: () => showSettings() },
       // Настройку можно пройти заново.
       //

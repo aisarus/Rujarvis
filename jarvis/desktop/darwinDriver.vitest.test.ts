@@ -27,6 +27,7 @@ import {
   simplify,
   typeScript,
   type DarwinWindow,
+  manualAccessibilityScript,
 } from './darwinDriver';
 import { createDesktopDriver, desktopStamp } from './platform';
 import { DesktopDriver } from './driver';
@@ -442,5 +443,41 @@ describe('выбор драйвера по платформе', () => {
   it('в журнале прогона видно, чем работали', () => {
     expect(наПлатформе('darwin', desktopStamp).path).toContain('osascript');
     expect(наПлатформе('win32', desktopStamp).path).toContain('win32-driver.ps1');
+  });
+});
+
+/**
+ * Дерево доступности у Chromium по просьбе, а не само.
+ *
+ * Electron, Chrome, Edge, VS Code, Slack — всё это Chromium, и дерево он
+ * строит только когда его попросит вспомогательная программа. Пока не
+ * попросили, System Events видит окно, а внутри пусто. Замер на macos-latest
+ * 25.09.2026: windows и look прошли, find отдал НОЛЬ элементов — нажать в
+ * окне Chromium было нельзя ни по чему.
+ */
+describe('manualAccessibilityScript', () => {
+  it('просит именно тот атрибут, который Chromium для этого и завёл', () => {
+    const скрипт = manualAccessibilityScript(4242);
+    expect(скрипт).toContain('AXManualAccessibility');
+    // Соседний AXEnhancedUserInterface не берём: его смотрят и другие
+    // программы, и у некоторых он двигает и меняет размер окон.
+    expect(скрипт).not.toContain('AXEnhancedUserInterface');
+  });
+
+  it('находит программу по её номеру, а не по имени', () => {
+    // Имён-однофамильцев на экране сколько угодно, номер один.
+    expect(manualAccessibilityScript(4242)).toContain('unix id is 4242');
+  });
+
+  it('не роняет разбор, если атрибут не принят', () => {
+    // Программа может не быть Chromium — тогда атрибута нет вовсе.
+    expect(manualAccessibilityScript(1)).toContain('try');
+  });
+
+  it('в именах переменных только латиница', () => {
+    // В AppleScript кириллица в именах даёт «syntax error: Expected
+    // expression but found unknown token». Замерено пробником 24.09.2026.
+    const безСтрок = manualAccessibilityScript(7).replace(/"[^"]*"/gu, '""');
+    expect(безСтрок).not.toMatch(/[а-яё]/iu);
   });
 });

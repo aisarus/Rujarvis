@@ -26,8 +26,16 @@ const TASK = process.argv.slice(2).join(' ') ||
   'тёмный фон, имя по центру, одна крупная фигура. Положи в папку результатов, ' +
   'открой в браузере и проверь приборами, что страница не пустая.';
 
+// Тот же файл, в который пишет агент, — иначе проба показывает чужой план.
+//
+// Чистился `план-проверки.json`, а читался `plan.json`: в разделе «ПЛАН,
+// КОТОРЫЙ ОН СОСТАВИЛ» мог оказаться план прошлого прогона или живой работы
+// Джарвиса, выданный за результат этого. Путь берём тот же, что у сервера
+// инструментов (`jarvis/desktop/mcpServer.ts`).
+const ФАЙЛ_ПЛАНА = process.env.JARVIS_PLAN?.trim() || path.join(DATA, 'plan.json');
+
 async function main(): Promise<void> {
-  const plans = new PlanStore(path.join(DATA, 'план-проверки.json'));
+  const plans = new PlanStore(ФАЙЛ_ПЛАНА);
   plans.clear();
 
   const jarvis = createJarvis({
@@ -40,7 +48,12 @@ async function main(): Promise<void> {
   await jarvis.ready();
 
   let finished = false;
+  let вышло: boolean | undefined;
+  // Чей это конец — важно: любая чужая задача ставила `finished`, и проба
+  // отчитывалась об успехе чужой работы.
+  let моя: string | undefined;
   jarvis.tasks.subscribe((event: any) => {
+    if (моя && event.task?.id !== моя) return;
     if (event.type === 'task-event') {
       const line = describeEvent(event.event, Date.now());
       if (line) console.log(`[${at()}] ${line.text}${line.detail ? ` — ${line.detail}` : ''}`);
@@ -49,6 +62,7 @@ async function main(): Promise<void> {
     if (event.type === 'task-finished') {
       finished = true;
       const result = event.task.result;
+      вышло = result?.ok === true;
       console.log('');
       console.log(`[${at()}] КОНЕЦ: ok=${result?.ok}`);
       console.log((result?.text ?? '').slice(0, 1200));
@@ -57,6 +71,7 @@ async function main(): Promise<void> {
 
   console.log(`[${at()}] говорю: ${TASK}`);
   const turn = await jarvis.core.handleUtterance(TASK);
+  if (turn.kind === 'task') моя = turn.task.id;
   console.log(`[${at()}] ход: ${turn.kind}` +
     (turn.kind === 'task' ? ` → ${turn.decision.target} (${turn.decision.needs.join(', ')})` : ''));
 
@@ -67,8 +82,11 @@ async function main(): Promise<void> {
 
   console.log('');
   console.log('=== ПЛАН, КОТОРЫЙ ОН СОСТАВИЛ ===');
-  console.log(renderPlan(new PlanStore(path.join(DATA, 'plan.json')).read()));
-  process.exit(finished ? 0 : 1);
+  console.log(renderPlan(new PlanStore(ФАЙЛ_ПЛАНА).read()));
+  // Конец работы — ещё не успех: код возврата смотрит на её итог.
+  if (!finished) console.log('НЕ ДОЖДАЛИСЬ: задача не закончилась за отведённое время.');
+  else if (!вышло) console.log('ЗАДАЧА ПРОВАЛИЛАСЬ: ok=false.');
+  process.exit(finished && вышло ? 0 : 1);
 }
 
 main().catch((error: unknown) => {

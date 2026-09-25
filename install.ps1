@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Установка Rujarvis — голосового ассистента для Windows (русский и английский).
 
@@ -67,6 +67,19 @@ function Test-Command {
     return [bool] (Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+<#
+    Запустить внешнюю программу и проверить КОД ВОЗВРАТА, а не болтовню.
+
+    Та же ловушка 5.1, что у Invoke-Quiet ниже, и здесь она стоила установки
+    целиком: при $ErrorActionPreference = 'Stop' любая строка в stderr внешней
+    программы становится NativeCommandError и бросается, а код возврата никто
+    не смотрит. `git clone` пишет «Cloning into ...» в stderr ВСЕГДА, даже
+    когда всё хорошо, — и установка падала на шаге «Получаю исходники» на
+    успешном клоне. Нашёл первый живой прогон на Windows, 25.09.2026.
+
+    Вывод не глотаем, в отличие от Invoke-Quiet: человек должен видеть, как
+    идёт клон и сборка. Ослабляется только предпочтение, а решает код.
+#>
 function Invoke-Checked {
     param(
         [Parameter(Mandatory)] [string] $FilePath,
@@ -74,9 +87,44 @@ function Invoke-Checked {
         [string] $WorkingDirectory = $PWD.Path,
         [string] $What = 'команда'
     )
-    & $FilePath @Arguments
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $FilePath @Arguments 2>&1 | ForEach-Object { "$_" }
+    }
+    finally {
+        $ErrorActionPreference = $prev
+    }
     if ($LASTEXITCODE -ne 0) {
         throw "Не удалось выполнить: $What (код $LASTEXITCODE)"
+    }
+}
+
+<#
+    Запустить внешнюю программу, не считая её stderr исключением.
+
+    В Windows PowerShell 5.1 перенаправление `2>&1` у внешней программы
+    превращает КАЖДУЮ строку stderr в ErrorRecord, а при
+    $ErrorActionPreference = 'Stop' первая же такая строка бросает
+    NativeCommandError — код возврата при этом никто не смотрит. А в stderr
+    пишут все: `npm warn`, `npm notice`, winget, corepack. Установщик падал до
+    собственных проверок и до запасных путей.
+
+    Здесь предпочтение временно ослабляется, а итог решает код возврата.
+#>
+function Invoke-Quiet {
+    param(
+        [Parameter(Mandatory)] [string] $FilePath,
+        [Parameter(Mandatory)] [string[]] $Arguments
+    )
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $FilePath @Arguments 2>&1 | Out-Null
+        return $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $prev
     }
 }
 
@@ -89,7 +137,15 @@ function Invoke-Checked {
 #>
 function Update-SessionPath {
     # Машинный и пользовательский PATH живут в реестре — это только Windows.
-    if (-not $IsWindows) { return }
+    #
+    # Проверяем НЕ через $IsWindows: этой переменной нет в Windows PowerShell
+    # 5.1, а `Set-StrictMode -Version Latest` выше запрещает читать
+    # неопределённые. Именно 5.1 открывается по умолчанию и именно в ней
+    # человек запускает установку одной строкой — установщик падал на первом
+    # же шаге с «The variable '$IsWindows' cannot be retrieved». Без строгого
+    # режима вышло бы не лучше: `-not $null` истинно, функция вышла бы сразу,
+    # и PATH не обновился бы вовсе.
+    if ($env:OS -ne 'Windows_NT') { return }
 
     # Дописываем к тому, что уже есть в окне, а не заменяем: в текущем процессе
     # бывают пути, которых в реестре нет. Так делает CI, так делают менеджеры
@@ -189,12 +245,15 @@ function Assert-NodeVersion {
     # посреди установки.
     if (Test-Command 'winget') {
         Write-Note "Установлен Node $current, нужен $wantedMajor или новее - обновляю через winget."
-        winget upgrade --id 'OpenJS.NodeJS.LTS' --source winget --accept-source-agreements `
-            --accept-package-agreements --silent 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) {
+        $code = Invoke-Quiet -FilePath 'winget' -Arguments @(
+            'upgrade', '--id', 'OpenJS.NodeJS.LTS', '--source', 'winget',
+            '--accept-source-agreements', '--accept-package-agreements', '--silent')
+        if ($code -ne 0) {
             # Node мог прийти не из winget: тогда upgrade нечего обновлять.
-            winget install --id 'OpenJS.NodeJS.LTS' --source winget --accept-source-agreements `
-                --accept-package-agreements --silent --scope user 2>&1 | Out-Null
+            Invoke-Quiet -FilePath 'winget' -Arguments @(
+                'install', '--id', 'OpenJS.NodeJS.LTS', '--source', 'winget',
+                '--accept-source-agreements', '--accept-package-agreements',
+                '--silent', '--scope', 'user') | Out-Null
         }
         Update-SessionPath
 
@@ -291,7 +350,7 @@ function Install-Pnpm {
     $wantedMajor = [int] ($Version -split '\.')[0]
 
     Write-Note "Ставлю pnpm $Version через npm."
-    npm install -g "pnpm@$Version" 2>&1 | Out-Null
+    Invoke-Quiet -FilePath 'npm' -Arguments @('install', '-g', "pnpm@$Version") | Out-Null
     Update-SessionPath
     $after = Get-PnpmVersion -Path $CheckIn
     if ($after -and [int] ($after -split '\.')[0] -eq $wantedMajor) {
@@ -300,8 +359,8 @@ function Install-Pnpm {
     }
 
     Write-Note 'npm не справился - пробую corepack.'
-    corepack enable 2>&1 | Out-Null
-    corepack prepare "pnpm@$Version" --activate 2>&1 | Out-Null
+    Invoke-Quiet -FilePath 'corepack' -Arguments @('enable') | Out-Null
+    Invoke-Quiet -FilePath 'corepack' -Arguments @('prepare', "pnpm@$Version", '--activate') | Out-Null
     Update-SessionPath
     $after = Get-PnpmVersion -Path $CheckIn
     if ($after -and [int] ($after -split '\.')[0] -eq $wantedMajor) {
@@ -509,9 +568,15 @@ if (-not (Test-Command 'pnpm')) { Install-Pnpm -Version '9.15.9' }
 Write-Step 'Получаю исходники'
 if (Test-Path (Join-Path $SourceDir '.git')) {
     Write-Note "Обновляю $SourceDir"
-    Invoke-Checked -FilePath 'git' -Arguments @('-C', $SourceDir, 'fetch', 'origin', $Branch) -What 'git fetch'
-    Invoke-Checked -FilePath 'git' -Arguments @('-C', $SourceDir, 'checkout', $Branch) -What 'git checkout'
-    Invoke-Checked -FilePath 'git' -Arguments @('-C', $SourceDir, 'pull', '--ff-only', 'origin', $Branch) -What 'git pull'
+    # Клон делается с `--depth 1 --branch`, а это подразумевает
+    # `--single-branch`: обычный `fetch origin <ветка>` не заводит
+    # `origin/<ветка>`, и `checkout` падал с «pathspec did not match» — сменить
+    # ветку без удаления папки было нельзя. Refspec заводит ссылку явно, а
+    # `checkout -B` переводит на неё; отдельный `pull` после этого не нужен.
+    Invoke-Checked -FilePath 'git' -Arguments @(
+        '-C', $SourceDir, 'fetch', 'origin', "+refs/heads/${Branch}:refs/remotes/origin/${Branch}") -What 'git fetch'
+    Invoke-Checked -FilePath 'git' -Arguments @(
+        '-C', $SourceDir, 'checkout', '-B', $Branch, "origin/${Branch}") -What 'git checkout'
 } else {
     New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
     Invoke-Checked -FilePath 'git' -Arguments @('clone', '--depth', '1', '--branch', $Branch, $RepoUrl, $SourceDir) -What 'git clone'

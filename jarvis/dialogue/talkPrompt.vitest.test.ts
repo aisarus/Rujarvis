@@ -3,10 +3,20 @@ import { describe, expect, it } from 'vitest';
 import { buildTalkOpening, buildTalkTurn } from './talkPrompt';
 
 describe('buildTalkOpening', () => {
-  it('называет все пять рычагов: неназванным разговор не воспользуется', () => {
+  it('называет ВСЕ рычаги: неназванным разговор не воспользуется', () => {
+    // Список был из пяти, а рычагов семь: `pause_work` и `resume_work` можно
+    // было удалить из правил, и проверка бы этого не заметила.
     const запрос = buildTalkOpening({ said: 'привет' });
-    for (const рычаг of ['start_work', 'add_note', 'stop_work', 'add_step', 'work_now']) {
-      expect(запрос).toContain(рычаг);
+    for (const рычаг of [
+      'start_work',
+      'add_note',
+      'stop_work',
+      'pause_work',
+      'resume_work',
+      'add_step',
+      'work_now',
+    ]) {
+      expect(запрос, рычаг).toContain(рычаг);
     }
   });
 

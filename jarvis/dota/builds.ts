@@ -81,7 +81,12 @@ export interface Fetcher {
 }
 
 const сетью: Fetcher = async (url) => {
-  const ответ = await fetch(url, { headers: { 'User-Agent': 'rujarvis-dota-assist' } });
+  // Со сроком: зависший OpenDota не давал дойти ни до `catch`, ни до кэша —
+  // человек весь матч оставался без подсказок, хотя вчерашний кэш лежал рядом.
+  const ответ = await fetch(url, {
+    headers: { 'User-Agent': 'rujarvis-dota-assist' },
+    signal: AbortSignal.timeout(10_000),
+  });
   if (!ответ.ok) throw new Error(`${url} ответил ${ответ.status}`);
   return ответ.json();
 };
@@ -156,9 +161,11 @@ export async function loadBuildBook(options: {
     const книга: BuildBook = { hero, order, fetchedAt: Date.now() };
     записатьКэш(файл, книга);
     return книга;
-  } catch {
+  } catch (беда) {
     // Сети нет — живём по вчерашнему. Нет и его — молчим про сборку: совет
-    // наугад хуже молчания.
+    // наугад хуже молчания. Но причину называем: «сети нет», «OpenDota сменил
+    // формат» и «ошибка в нашем коде» снаружи были неразличимы.
+    console.error('[dota] сборка не скачалась:', беда instanceof Error ? беда.message : беда);
     return изКэша;
   }
 }

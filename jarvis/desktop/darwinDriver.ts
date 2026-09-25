@@ -671,6 +671,34 @@ export function keyScript(keys: string): string {
  * пустоту. Замерено 24.09.2026: полтора прогона ушло на поиск несуществующей
  * беды с печатью, потому что так написанная читалка молча возвращала «».
  */
+/**
+ * Попросить программу построить дерево доступности.
+ *
+ * Chromium — а значит Electron, Chrome, Edge, VS Code, Slack, Discord — не
+ * держит дерево доступности постоянно: оно стоит памяти и времени, и строится
+ * только когда его попросит вспомогательная программа. Пока не попросили,
+ * System Events видит окно, но внутри него ПУСТО. Замер на macos-latest
+ * 25.09.2026: `windows` и `look` проходят, а `find` отдаёт ноль элементов —
+ * то есть нажать в окне Chromium было нельзя ни по чему.
+ *
+ * Просьба — это атрибут `AXManualAccessibility`, заведённый Chromium ровно
+ * для этого. Соседний `AXEnhancedUserInterface` не берём: его смотрят и
+ * другие программы, и у некоторых он двигает и меняет размер окон.
+ *
+ * Имена переменных латиницей: в AppleScript кириллица в именах даёт «syntax
+ * error: Expected expression but found unknown token».
+ */
+export function manualAccessibilityScript(pid: number): string {
+  return `
+tell application "System Events"
+  set target to first process whose unix id is ${pid}
+  try
+    set value of attribute "AXManualAccessibility" of target to true
+  end try
+end tell
+`;
+}
+
 export const ELEMENTS_SCRIPT = `
 set fieldSep to character id 31
 set rowSep to character id 30
@@ -731,6 +759,14 @@ tell application "System Events"
         set out to out & eName & fieldSep & eId & fieldSep & eRole & fieldSep & eOn & fieldSep & ex & fieldSep & ey & fieldSep & ew & fieldSep & eh & rowSep
       end if
     end repeat
+  on error err
+    -- Otkaz chteniya - eto NE "v okne net elementov".
+    --
+    -- Lyubaya oshibka (net window 1, otkaz Universalnogo dostupa, System
+    -- Events ne uspel) otdavala zagolovok bez strok: snaruzhi eto vyglyadelo
+    -- kak okno bez knopok, i model shla snimat ego glazami vmesto togo, chtoby
+    -- uznat nastoyashchuyu prichinu. Marker donosit eyo do razbora.
+    return appName & fieldSep & frontName & rowSep & "JARVIS_READ_ERROR" & fieldSep & err
   end try
   return appName & fieldSep & frontName & rowSep & out
 end tell
@@ -783,6 +819,11 @@ export function parseElements(output: string): { title: string; elements: UiElem
   for (const row of rows) {
     if (!row.trim()) continue;
     const fields = row.split(FIELD);
+    // Маркер отказа из скрипта: пустой список тогда означал бы «кнопок нет»,
+    // а на деле прочитать дерево не вышло вовсе.
+    if ((fields[0] ?? '').trim() === 'JARVIS_READ_ERROR') {
+      throw new Error(`не удалось прочитать окно: ${(fields[1] ?? '').trim() || 'без причины'}`);
+    }
     if (fields.length < 8) continue;
     const [name, id, role, enabled, x, y, width, height] = fields as string[];
     const w = number(width);
@@ -935,6 +976,20 @@ export class DarwinDriver {
     await this.osascript(appleScriptArgs(keyScript(keys)));
   }
 
+  /**
+   * Попросить программу построить дерево. Молча: отказ здесь не беда.
+   *
+   * Программа может не быть Chromium — тогда атрибута нет и просьба ничего не
+   * значит. Ронять из-за этого разбор окна нельзя.
+   */
+  async askForAccessibility(pid: number): Promise<void> {
+    try {
+      await запустить('osascript', appleScriptArgs(manualAccessibilityScript(pid)));
+    } catch {
+      // Не Chromium или атрибут не принят — дерево спросим как есть.
+    }
+  }
+
   async elements(): Promise<{ title: string; elements: UiElement[] }> {
     await this.access();
     return parseElements(await this.osascript(appleScriptArgs(ELEMENTS_SCRIPT), ELEMENTS_TIMEOUT_MS));
@@ -953,7 +1008,7 @@ export class DarwinDriver {
     const target = chooseWindow(title, windows);
     if (!target) throw new Error(explainMiss(title, windows));
 
-    return this.raise(target.pid, target.index, target.title || target.app);
+    return this.raise(target.pid, target.index, target.title || target.app, target.title);
   }
 
   /**
@@ -964,11 +1019,25 @@ export class DarwinDriver {
    * номером, а не надписью на нём, — и поднимать его им надо перед каждым
    * действием: у неактивного окна дерево и отрисовка схлопываются.
    */
-  async raise(pid: number, index: number, what = `окно ${index}`): Promise<{ title: string }> {
+  async raise(pid: number, index: number, what = `окно ${index}`, title?: string): Promise<{ title: string }> {
     await this.access();
     const front = parseFront(await this.osascript(appleScriptArgs(raiseScript(pid, index))));
     if (front.pid !== pid) {
       throw new Error(`Не вышло поднять окно. Просили: «${what}». Впереди: «${front.title || front.app}»`);
+    }
+
+    // Совпадения программы мало, когда окон у неё несколько.
+    //
+    // Просили второе окно TextEdit, впереди осталось первое — `pid` тот же, и
+    // метод отчитывался успехом. Win32-драйвер рядом сверяет дескриптор
+    // окна; здесь ближайшее, что есть, — заголовок.
+    if (title && index > 1) {
+      const впереди = (front.title || '').trim().toLowerCase();
+      if (впереди && впереди !== title.trim().toLowerCase()) {
+        throw new Error(
+          `Поднялось другое окно той же программы: «${front.title}» вместо «${title}».`,
+        );
+      }
     }
     return { title: front.title || front.app || what };
   }

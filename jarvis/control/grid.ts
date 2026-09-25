@@ -167,21 +167,38 @@ export function parseSpokenNumber(text: string): number | null {
     .split(/\s+/u)
     .filter(Boolean);
 
+  // Порядок обязателен: десятки, потом единицы. И ничего больше.
+  //
+  // Раньше слагаемые просто складывались, поэтому «пять пять» давало десять,
+  // а «сорок сорок» — восемьдесят: ошибка распознавания превращалась в клик
+  // по клетке, которую человек не называл. Число, собранное не по-русски, —
+  // это «не понял», а не «наверное, вот это».
   let total = 0;
   let found = false;
+  let былиДесятки = false;
+  let былиЕдиницы = false;
+
   for (const word of words) {
     const tens = TENS[word];
     const teen = TEENS[word];
     const unit = UNITS[word];
 
     if (tens !== undefined) {
+      // Вторые десятки или десятки после единиц — не число, а шум.
+      if (былиДесятки || былиЕдиницы) return null;
       total += tens;
+      былиДесятки = true;
       found = true;
     } else if (teen !== undefined) {
+      // «Двенадцать» — само по себе целое: рядом с ним слагаемых не бывает.
+      if (found) return null;
       total += teen;
+      былиЕдиницы = true;
       found = true;
     } else if (unit !== undefined) {
+      if (былиЕдиницы) return null;
       total += unit;
+      былиЕдиницы = true;
       found = true;
     }
   }

@@ -107,15 +107,21 @@ export async function models(): Promise<string[]> {
     const ответ = await fetch(`${COMFY_URL}/object_info/CheckpointLoaderSimple`, {
       signal: AbortSignal.timeout(10_000),
     });
-    if (!ответ.ok) return [];
+    // Отказ — это отказ, а не «моделей нет».
+    //
+    // Пустой список при сломанном узле отправлял человека искать пропавший
+    // чекпойнт, которого он не терял. Пустым список остаётся только когда
+    // сервер ответил и в нём правда ничего нет.
+    if (!ответ.ok) throw new Error(`сервер ответил HTTP ${ответ.status} на список моделей`);
     const данные = (await ответ.json()) as Record<string, unknown>;
     const узел = данные['CheckpointLoaderSimple'] as
       | { input?: { required?: { ckpt_name?: unknown[] } } }
       | undefined;
     const список = узел?.input?.required?.ckpt_name?.[0];
+    if (!узел) throw new Error('сервер не отдал узел CheckpointLoaderSimple');
     return Array.isArray(список) ? (список as string[]) : [];
-  } catch {
-    return [];
+  } catch (беда) {
+    throw беда instanceof Error ? беда : new Error(String(беда));
   }
 }
 
@@ -217,15 +223,16 @@ export async function controlnets(): Promise<string[]> {
     const ответ = await fetch(`${COMFY_URL}/object_info/ControlNetLoader`, {
       signal: AbortSignal.timeout(10_000),
     });
-    if (!ответ.ok) return [];
+    if (!ответ.ok) throw new Error(`сервер ответил HTTP ${ответ.status} на список ControlNet`);
     const данные = (await ответ.json()) as Record<string, unknown>;
     const узел = данные['ControlNetLoader'] as
       | { input?: { required?: { control_net_name?: unknown[] } } }
       | undefined;
     const список = узел?.input?.required?.control_net_name?.[0];
+    if (!узел) throw new Error('сервер не отдал узел ControlNetLoader');
     return Array.isArray(список) ? (список as string[]) : [];
-  } catch {
-    return [];
+  } catch (беда) {
+    throw беда instanceof Error ? беда : new Error(String(беда));
   }
 }
 
@@ -315,9 +322,23 @@ async function выполнить(
         signal: AbortSignal.timeout(10_000),
       });
       if (!ответ.ok) continue;
-      const история = (await ответ.json()) as Record<string, { outputs?: Record<string, Вывод> }>;
+      const история = (await ответ.json()) as Record<
+        string,
+        { outputs?: Record<string, Вывод>; status?: { status_str?: string; messages?: unknown } }
+      >;
       const запись = история[promptId];
       if (!запись) continue;
+
+      // Упавший на сервере граф — это конец, а не повод ждать дальше.
+      //
+      // ComfyUI кладёт в историю запись со `status_str: 'error'` и без
+      // картинок (кончилась видеопамять, нет файла позы). Раньше опрос уходил
+      // на новый круг и через десять минут человек слышал «не дождались
+      // картинки», хотя причина лежала тут же, в `status.messages`.
+      if (запись.status?.status_str === 'error') {
+        const причина = JSON.stringify(запись.status.messages ?? '').slice(0, 400);
+        return { ok: false, error: `сервер не справился с заказом: ${причина}` };
+      }
 
       const картинки = Object.values(запись.outputs ?? {}).flatMap((вывод) => вывод.images ?? []);
       const картинка = картинки[0];
@@ -330,7 +351,22 @@ async function выполнить(
       );
       if (!файл.ok) return { ok: false, error: 'картинка готова, но не отдалась' };
 
-      writeFileSync(запрос.saveTo, Buffer.from(await файл.arrayBuffer()));
+      const данные = Buffer.from(await файл.arrayBuffer());
+      // Запись — ОТДЕЛЬНО от опроса.
+      //
+      // Раньше её отказ попадал в общий `catch` и глушился: опрос заходил на
+      // новый круг, снова скачивал картинку, снова падал на записи — и через
+      // десять минут человек слышал «не дождались картинки», хотя картинка
+      // была готова с первой попытки. Настоящая причина (папки нет, диск
+      // полон) не доходила вовсе.
+      try {
+        writeFileSync(запрос.saveTo, данные);
+      } catch (беда) {
+        return {
+          ok: false,
+          error: `картинка готова, но не записалась в ${запрос.saveTo}: ${беда instanceof Error ? беда.message : String(беда)}`,
+        };
+      }
       return { ok: true, file: запрос.saveTo, seed };
     } catch {
       // Разрыв на опросе — не беда, спросим ещё раз.

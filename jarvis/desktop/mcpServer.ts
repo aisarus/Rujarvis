@@ -36,6 +36,7 @@ import { makePlan, markStep, renderPlan, type StepState } from '../agent/plan';
 import { buildSkillFile, isSelfAuthored, skillPath } from '../skills/author';
 import { createDesktopDriver } from './platform';
 import { createWindowTools } from './windowTools';
+import { jarvisDataRoot } from '../setup/paths';
 
 const driver = createDesktopDriver();
 // Глаза и руки по чужим окнам. На Windows это cua-driver: он поднимается при
@@ -85,12 +86,12 @@ function skillsRoot(): string {
  * по той же причине, что и путь журнала: сервер — отдельный процесс.
  */
 function openNotes(): NoteStore {
+  // Домашняя папка — из paths.ts: собранная здесь руками, она была виндовой
+  // на любой машине, и на маке заметки уезжали в ~/AppData/Local/Rujarvis.
   const file =
     process.env.JARVIS_NOTES?.trim() ||
     path.join(
-      process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
-      'Rujarvis',
-      'data',
+      jarvisDataRoot(),
       'notes.json',
     );
   return new NoteStore(file);
@@ -103,9 +104,7 @@ function openPlan(): PlanStore {
   const file =
     process.env.JARVIS_PLAN?.trim() ||
     path.join(
-      process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
-      'Rujarvis',
-      'data',
+      jarvisDataRoot(),
       'plan.json',
     );
   return new PlanStore(file);
@@ -115,9 +114,7 @@ function openJournal(): JournalStore {
   const file =
     process.env.JARVIS_JOURNAL?.trim() ||
     path.join(
-      process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
-      'Rujarvis',
-      'data',
+      jarvisDataRoot(),
       'journal.json',
     );
   return new JournalStore(file);
@@ -130,12 +127,26 @@ function openJournal(): JournalStore {
  * Отсутствие окна — обычный ответ, а не ошибка: бывает, что Blender не успел
  * или не смог открыть файл.
  */
-async function blenderWindowAppeared(attempts = 6, everyMs = 1_500): Promise<boolean> {
+async function blenderWindowAppeared(attempts = 6, everyMs = 1_500, файл?: string): Promise<boolean> {
   for (let index = 0; index < attempts; index += 1) {
     await new Promise((resolve) => setTimeout(resolve, everyMs));
     try {
       const windows = await driver.windows();
-      if (windows.some((item) => /blender/iu.test(item.title))) return true;
+      // Ищем ИМЕННО ЭТОТ файл, а не «хоть какой-нибудь Blender».
+      //
+      // Blender пишет имя файла в заголовок. Без этой проверки уже открытое
+      // окно — живой Blender или другая сцена — засчитывалось сразу, и
+      // инструмент отвечал «Открыл в окне Blender: …», хотя новый процесс не
+      // поднялся. Ровно ту ложь проверка и заведена ловить.
+      const имя = файл ? path.basename(файл).toLowerCase() : '';
+      if (
+        windows.some(
+          (item) =>
+            /blender/iu.test(item.title) && (!имя || item.title.toLowerCase().includes(имя)),
+        )
+      ) {
+        return true;
+      }
     } catch {
       // Драйвер мог быть занят — просто пробуем ещё раз.
     }
@@ -625,15 +636,19 @@ export function createDesktopMcpServer(): McpServer {
         if (live.isLive()) return say('Живой Blender уже открыт — шли скрипты через blender_live.');
 
         const exe = blender.findBlender();
-        if (!exe) return say('Blender не найден на этой машине.');
+        // Отказ — через `failed`, а не `say`.
+        //
+        // Без пометки ошибки модель читает отказ как результат и идёт дальше,
+        // а журнал стен его не запоминает: урок «на этой машине нет Блендера»
+        // пропадал, ради таких уроков журнал и заведён.
+        if (!exe) return failed(new Error('Blender не найден на этой машине.'));
 
         live.startLive(exe, file);
         const up = await live.waitLive();
-        return say(
-          up
-            ? 'Живой Blender открыт и слушает. Дальше работай через blender_live — окно не закроется.'
-            : 'Blender запущен, но слушатель не отозвался за минуту. Проверь окно глазами.',
-        );
+        if (!up) {
+          return failed(new Error('Blender запущен, но слушатель не отозвался за минуту. Проверь окно глазами.'));
+        }
+        return say('Живой Blender открыт и слушает. Дальше работай через blender_live — окно не закроется.');
       } catch (error) {
         return failed(error);
       }
@@ -706,7 +721,7 @@ export function createDesktopMcpServer(): McpServer {
         let shown = '';
         if (show) {
           blender.openInBlender(show);
-          shown = (await blenderWindowAppeared())
+          shown = (await blenderWindowAppeared(6, 1_500, show))
             ? `\nОткрыл в окне Blender: ${show}`
             : '\nОкно Blender не появилось — скажи об этом человеку, не утверждай обратное.';
         }
@@ -894,7 +909,13 @@ export function createDesktopMcpServer(): McpServer {
     async ({ goal, steps }) => {
       try {
         const plan = makePlan(goal, steps, Date.now());
-        openPlan().write(plan);
+        // Отчёт об успехе только после успешной записи.
+        //
+        // Раньше отказ диска глотался, и модель слышала «план записан», пока
+        // окно показывало старый план, а перезапуск начинал работу заново.
+        if (!openPlan().write(plan)) {
+          return failed('план не сохранился на диск, окно покажет старый');
+        }
         return say(renderPlan(plan));
       } catch (error) {
         return failed(error);
@@ -925,7 +946,10 @@ export function createDesktopMcpServer(): McpServer {
         if (!plan) return say('Плана пока нет — сначала запиши его через set_plan.');
 
         const updated = markStep(plan, index, state as StepState, Date.now(), note);
-        store.write(updated);
+        // То же, что и в set_plan: «отметил» говорим только про записанное.
+        if (!store.write(updated)) {
+          return failed('шаг не сохранился на диск, отметка не удержится');
+        }
         return say(renderPlan(updated));
       } catch (error) {
         return failed(error);
@@ -1275,8 +1299,14 @@ ${хвост}` : ''}`,
     async ({ prompt, negative, width, height, steps, seed, name }) => {
       try {
         const папка = files.outputFolder();
+        mkdirSync(папка, { recursive: true });
         const имя = (name?.trim() || 'рисунок').replace(/[\/:*?"<>|]/gu, '_');
-        const путь = path.join(папка, `${имя}.png`);
+        // Свободное имя, а не постоянное.
+        //
+        // Без `name` путь был один и тот же: второй рисунок молча уничтожал
+        // первый. `files.ts` про это говорит прямо — «вчерашний отчёт с тем же
+        // именем это чья-то работа».
+        const путь = path.join(папка, files.uniqueName(`${имя}.png`, new Set(readdirSync(папка))));
 
         const итог = await comfy.draw({
           prompt,
@@ -1332,8 +1362,11 @@ ${хвост}` : ''}`,
     async ({ keys, name, between, fps, impacts }) => {
       try {
         const папка = files.outputFolder();
+        mkdirSync(папка, { recursive: true });
         const имя = (name?.trim() || 'анимация').replace(/[\/:*?"<>|]/gu, '_');
-        const путь = path.join(папка, `${имя}.mp4`);
+        // Свободное имя: `ffmpeg -y` затирает молча, и вторая анимация без
+        // имени уносила первую.
+        const путь = path.join(папка, files.uniqueName(`${имя}.mp4`, new Set(readdirSync(папка))));
 
         const итог = await mid.sequence({
           keys,

@@ -61,6 +61,16 @@ const SENSITIVE_SHELL = [
   /\bchmod\s+777\b/i,
   /\bssh\b/i,
   /\bscp\b/i,
+  // Сеть наружу. Без них `Invoke-RestMethod`, `iwr`, `irm` и `wget` внутри
+  // проекта получали класс «обычное», и вопрос не задавался вовсе — а Джарвис
+  // запускает агента в режиме, где правки принимаются молча.
+  /\bInvoke-RestMethod\b/i,
+  /\biwr\b/i,
+  /\birm\b/i,
+  /\bwget\b/i,
+  // `curl`, который ОТПРАВЛЯЕТ. Скачивание оставляем обычной работой: иначе
+  // разрешения начнут спрашивать на каждом шагу, и им перестанут верить.
+  /\bcurl\b[^|]*\s(-d|--data\S*|-F|--form|-T|--upload-file)\b/i,
 ];
 
 /** Commands that only build, test or inspect. */

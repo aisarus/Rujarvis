@@ -64,14 +64,23 @@ export interface Ride {
  *      неудача: у страницы в один экран так и есть один экран.
  */
 export async function ridePage(): Promise<Ride> {
-  const sideways = Number(await browser.evaluate(findRider('вбок')));
-  const down = Number(await browser.evaluate(findRider('вниз')));
+  const вбок = (await browser.evaluate(findRider('вбок'))) as { полный: number; видимый: number };
+  const вниз = (await browser.evaluate(findRider('вниз'))) as { полный: number; видимый: number };
+  const sideways = Number(вбок?.полный ?? 0);
+  const down = Number(вниз?.полный ?? 0);
   const axis = longerAxis(sideways, down);
   const dir = shotsDir();
   const files: string[] = [];
 
   const size = await browser.viewport();
-  const step = axis === 'вбок' ? size.width : size.height;
+  // Шаг берём от ЕЗДОКА, а не от окна.
+  //
+  // Едет найденный контейнер, и если он уже окна (600 в окне 1200), шаг в
+  // ширину окна пропускал половину содержимого мимо кадров — а «доехали»
+  // всё равно отвечало «да».
+  const видимый = axis === 'вбок' ? Number(вбок?.видимый ?? 0) : Number(вниз?.видимый ?? 0);
+  const окно = axis === 'вбок' ? size.width : size.height;
+  const step = видимый > 0 ? Math.min(видимый, окно) : окно;
   const total = axis === 'вбок' ? sideways : down;
 
   if (axis && total > step) {

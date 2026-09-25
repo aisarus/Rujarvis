@@ -88,8 +88,16 @@ export function createGpuTranscriber(options: GpuTranscriberOptions = {}): Trans
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-        const payload = (await response.json()) as { text?: string };
-        return { text: (payload.text ?? '').trim() };
+        const payload = (await response.json()) as { text?: unknown };
+        // Пустая строка — это тишина. Отсутствие поля — это сломанный ответ.
+        //
+        // Раньше одно выдавалось за другое: `?? ''` превращал `{"error": ...}`
+        // в успешное «человек промолчал». Фраза пропадала без следа в журнале,
+        // и запасной путь не запускался — а он тут для того и заведён.
+        if (typeof payload.text !== 'string') {
+          throw new Error(`ответ без text: ${JSON.stringify(payload).slice(0, 200)}`);
+        }
+        return { text: payload.text.trim() };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (!options.fallback) throw error;

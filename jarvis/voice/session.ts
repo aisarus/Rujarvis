@@ -94,6 +94,14 @@ export interface VoiceSessionOptions {
   playback?: SpeechPlayback;
   mode?: VoiceMode;
   wakeWord?: WakeWordListenerOptions;
+  /**
+   * Отзываться ли голосом на одно имя без команды.
+   *
+   * Функцией, а не значением: настройку человек меняет на ходу, в том числе
+   * голосом («не отзывайся»), и сессия должна видеть свежее, а не то, что
+   * было при запуске.
+   */
+  acknowledgeWake?: () => boolean;
   onStatus?(status: VoiceStatus): void;
   /** Surfaces a transcript to the UI as soon as it exists. */
   onTranscript?(text: string): void;
@@ -115,6 +123,19 @@ export class VoiceSession {
   private readonly wake: WakeWordListener;
   /** Set while a push-to-talk capture is in flight. */
   private pushToTalkHeld = false;
+  /** Подъём захвата, пока он идёт: отпускание обязано его дождаться. */
+  private подъёмЗахвата: Promise<void> | null = null;
+  /**
+   * Идёт ли работа — отдельно от показа.
+   *
+   * Показ во время речи становится «Говорю», и по нему состояние задачи уже
+   * не восстановить: имя терялось, а если задача кончалась во время речи,
+   * `taskFinished` не видел «Работаю» и молчал — после речи «Работаю»
+   * возвращалось и висело навсегда.
+   */
+  private taskRunning = false;
+  /** Имя идущей задачи: показ его забывает, а говорить о ней надо по имени. */
+  private taskTitle: string | undefined;
 
   constructor(private readonly options: VoiceSessionOptions) {
     this.mode = options.mode ?? 'push-to-talk';
@@ -137,9 +158,18 @@ export class VoiceSession {
   setMode(mode: VoiceMode): void {
     this.mode = mode;
     if (mode !== 'always-listening') this.wake.reset();
-    if (mode === 'off' && this.indicator === 'listening') {
-      void this.options.capture.stop();
-      this.setIndicator('idle');
+    if (mode === 'off') {
+      // Клавишу могли держать в момент выключения.
+      //
+      // Без сброса `releasePushToTalk` проходил проверку, останавливал захват
+      // второй раз и отправлял запись в ядро при уже выключенном голосе.
+      this.pushToTalkHeld = false;
+      if (this.indicator === 'listening') {
+        // Отказ остановки не выбрасываем: в Node 22 непойманный отказ роняет
+        // весь Электрон, а человек должен узнать о нём словами.
+        void Promise.resolve(this.options.capture.stop()).catch((error: unknown) => this.fail(error));
+        this.setIndicator('idle');
+      }
     }
   }
 
@@ -171,12 +201,24 @@ export class VoiceSession {
 
     this.options.playback?.stop();
     this.pushToTalkHeld = true;
+    // Запоминаем подъём захвата: отпускание может прийти раньше, чем он
+    // поднимется, и остановить то, что ещё не началось, нельзя.
+    //
+    // Сам вызов — ВНУТРИ `try`: `start` умеет бросить и сразу, не отдавая
+    // обещания, и тогда отказ обязан попасть в тот же `catch`.
+    let подъём: Promise<void> | null = null;
     try {
-      await this.options.capture.start();
-      this.setIndicator('listening');
+      подъём = Promise.resolve(this.options.capture.start());
+      this.подъёмЗахвата = подъём;
+      await подъём;
+      // Клавишу могли отпустить, пока захват поднимался. Тогда «Слушаю…» —
+      // враньё: слушать уже некого, а индикатор застревал навсегда.
+      if (this.pushToTalkHeld) this.setIndicator('listening');
     } catch (error) {
       this.pushToTalkHeld = false;
       this.fail(error);
+    } finally {
+      if (подъём && this.подъёмЗахвата === подъём) this.подъёмЗахвата = null;
     }
   }
 
@@ -189,6 +231,19 @@ export class VoiceSession {
   async releasePushToTalk(): Promise<JarvisTurn | null> {
     if (!this.pushToTalkHeld) return null;
     this.pushToTalkHeld = false;
+
+    // Сначала даём захвату подняться. Иначе `stop()` уходил в ещё не
+    // начавшийся захват, а `start()` завершался уже после него — микрофон
+    // оставался включённым, клавишу никто не держал, и следующее нажатие
+    // начинало второй захват поверх работающего.
+    if (this.подъёмЗахвата) {
+      try {
+        await this.подъёмЗахвата;
+      } catch {
+        // Об ошибке подъёма уже сказал `pressPushToTalk`.
+        return null;
+      }
+    }
 
     let audio: Awaited<ReturnType<AudioCapture['stop']>>;
     try {
@@ -240,6 +295,34 @@ export class VoiceSession {
     if (event.type === 'wake' && !event.command) {
       this.setIndicator('listening');
       this.options.onStatus?.(this.status);
+
+      // Позвали по имени — отзовись голосом, а не только индикатором.
+      //
+      // Раньше на имя не отвечало ничто, кроме плашки в углу. Человек,
+      // который на плашку не смотрит — а тот, ради кого это делается, может
+      // и не видеть её вовсе, — оставался в тишине и не знал, услышали его
+      // или нет. Дальше он говорил задачу, и ответа ждать до десяти секунд
+      // (замерено: 8,9 / 10,4 / 11,4 / 11,8 с). Две секунды тишины человек
+      // ещё терпит, двенадцать — считает поломкой.
+      //
+      // Отклик короткий нарочно: одно слово, чтобы не мешать тому, кто уже
+      // говорит дальше.
+      //
+      // И отложенный — тоже нарочно. Сказанное сразу здесь же и гасило бы
+      // «слушаю»: `speak` честно переводит индикатор в «отвечаю», и человек
+      // вместо «я тебя слышу» увидел бы «я занят». Поэтому сначала состояние,
+      // а голос — следующим тиком, и после него состояние возвращается.
+      if (this.options.acknowledgeWake?.() === false) return null;
+
+      setTimeout(() => {
+        void (async () => {
+          await this.speak(tr('Да?', 'Yes?'));
+          if (this.wake.currentState === 'awake' && this.indicator !== 'working') {
+            this.setIndicator('listening');
+            this.options.onStatus?.(this.status);
+          }
+        })();
+      }, 0);
       return null;
     }
 
@@ -280,6 +363,8 @@ export class VoiceSession {
 
     switch (turn.kind) {
       case 'task':
+        this.taskRunning = true;
+        this.taskTitle = turn.task.title;
         this.setIndicator('working', turn.task.title);
         break;
       case 'control':
@@ -288,11 +373,21 @@ export class VoiceSession {
         this.setIndicator('idle');
         break;
     }
+
+    // Застрявшее «Думаю…» гасим, но чужого не трогаем.
+    //
+    // У разговора и плана своей ветки здесь не было: если ответ не прошёл
+    // через `answerAloud` (а `JarvisCore.say` говорит напрямую), показ так и
+    // оставался «Думаю…» навсегда. Проверка на `thinking` нужна, чтобы не
+    // затереть «Отвечаю», которое ответ мог поставить сам.
+    if (this.indicator === 'thinking') this.setIndicator('idle');
     return turn;
   }
 
   /** Called by the desktop layer when the active task finishes. */
   taskFinished(): void {
+    this.taskRunning = false;
+    this.taskTitle = undefined;
     if (this.indicator === 'working') this.setIndicator('idle');
   }
 
@@ -335,14 +430,19 @@ export class VoiceSession {
   /** Plays a line, keeping the indicator honest while it does. */
   async speak(text: string): Promise<void> {
     if (!this.options.playback || !text.trim()) return;
-    const previous = this.indicator;
     const ticket = this.silenceTicket;
     this.setIndicator('speaking');
     try {
       await this.options.playback.speak(text);
     } finally {
-      // Work that is still running should go back to showing that it is.
-      this.setIndicator(previous === 'working' ? 'working' : 'idle', this.activeTaskTitle);
+      // Возвращаемся к работе по её собственному признаку, а не по показу.
+      //
+      // Раньше здесь смотрели на то, что показывалось ДО речи, и передавали
+      // `this.activeTaskTitle`, который к этому моменту уже обнулён самим
+      // переходом в «Говорю». Получалось два вранья сразу: «Работаю» без
+      // имени задачи и — если задача кончилась, пока Джарвис говорил, —
+      // «Работаю» навсегда.
+      this.setIndicator(this.taskRunning ? 'working' : 'idle', this.taskTitle);
 
       // Окно слушания отсчитывается заново от конца фразы, а не от её начала.
       //

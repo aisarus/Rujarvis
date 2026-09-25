@@ -39,11 +39,18 @@ function eventKinds(): string[] {
 
   const from = source.indexOf('export type BackendEvent');
   expect(from, 'в types.ts не нашлось объявления BackendEvent').toBeGreaterThan(-1);
-  // Объединение кончается на первой пустой строке после объявления: дальше
-  // идут другие типы, и их варианты нам не нужны.
+  // Объявление кончается точкой с запятой в конце строки: дальше идут другие
+  // типы, и их варианты нам не нужны.
+  //
+  // Искали ровно `';\n'`, и на файле с переводами строк CRLF — обычное дело на
+  // Windows с `core.autocrlf` — не находили ничего, забирая ВЕСЬ остаток
+  // файла. Сторож тогда либо сообщал о пропаже видов, которых в объединении
+  // нет, либо пропускал лишний. И то и другое — ложный ответ там, где мерить
+  // было нечем, поэтому отсутствие границы теперь названо вслух.
   const rest = source.slice(from);
-  const until = rest.indexOf(';\n');
-  const block = until > 0 ? rest.slice(0, until) : rest;
+  const граница = /;\r?\n/u.exec(rest);
+  expect(граница, 'в types.ts не нашлось конца объявления BackendEvent').not.toBeNull();
+  const block = rest.slice(0, граница?.index ?? rest.length);
 
   const kinds = [...block.matchAll(/type:\s*'([^']+)'/gu)].map((match) => match[1] as string);
   expect(kinds.length, 'из объявления BackendEvent не вынулось ни одного вида').toBeGreaterThan(3);

@@ -26,8 +26,9 @@
     "start": "electron dist/app/main.cjs",
     "dev": "node build.mjs && electron dist/app/main.cjs",
     "typecheck": "tsc -p tsconfig.app.json",
+    "typecheck:tests": "tsc -p tsconfig.tests.json",
     "test": "vitest run --config vitest.app.config.ts",
-    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "check": "pnpm typecheck && pnpm typecheck:tests && pnpm test && pnpm build",
     "jarvis:setup": "tsx scripts/jarvis-setup.ts",
     "jarvis:try": "tsx scripts/jarvis-try.ts",
     "jarvis:talk-check": "tsx scripts/talk-live-check.ts",
@@ -36,6 +37,8 @@
     "jarvis:health": "node scripts/health.mjs",
     "jarvis:icons": "node scripts/make-icons.mjs",
     "jarvis:window-check": "node build.mjs && electron dist/qa/window-check.cjs",
+    "jarvis:cua-check": "node build.mjs && electron dist/qa/cua-check.cjs",
+    "jarvis:cli-check": "tsx scripts/qa/cli-check.ts",
     "jarvis:qa": "node build.mjs && electron dist/qa/acceptance.cjs"
   },
   "dependencies": {

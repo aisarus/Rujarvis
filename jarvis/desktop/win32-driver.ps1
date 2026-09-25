@@ -1,5 +1,10 @@
-# ---------------------------------------------------------------------------
+﻿# ---------------------------------------------------------------------------
 #  Драйвер рабочего стола: мышь, клавиатура, снимки экрана, окна.
+#
+#  ФАЙЛ СОХРАНЁН С BOM, и это не вкусовщина. Драйвер запускается командой
+#  `powershell`, то есть Windows PowerShell 5.1, а он читает файл без BOM в
+#  кодовой странице ANSI: кириллица в сообщениях об ошибках доезжала до
+#  агента набором случайных знаков, и понять, что именно не так, было нельзя.
 #
 #  Живёт одним процессом и читает команды построчно из stdin, отвечая строкой
 #  JSON в stdout. Запуск PowerShell и компиляция Add-Type стоят несколько сотен
@@ -102,8 +107,19 @@ public class Desk {
         AttachThreadInput(mine, target, false);
         AttachThreadInput(mine, front, false);
 
-        SystemParametersInfo(SET_LOCK, 0, was, SEND_CHANGE);
+        /*
+            Vozvrashchaem ZNACHENIE, a ne adres.
+            
+            U SPI_GETFOREGROUNDLOCKTIMEOUT pvParam - eto ukazatel na DWORD, a u
+            SPI_SETFOREGROUNDLOCKTIMEOUT - samo znachenie, privedyonnoe k PVOID.
+            Zdes peredavalsya `was`, to est adres bufera: Windows poluchal
+            timeout v milliony millisekund, i posle pervogo zhe pereklyucheniya
+            sistema pochti perestavala otdavat fokus komu-libo v etom seanse.
+            Kommentariy obeshchal "vozvrashchaem kak bylo" - kod etogo ne delal.
+        */
+        uint bylo = (uint)Marshal.ReadInt32(was);
         Marshal.FreeHGlobal(was);
+        SystemParametersInfo(SET_LOCK, 0, new IntPtr((int)bylo), SEND_CHANGE);
 
         System.Threading.Thread.Sleep(250);
         StringBuilder sb = new StringBuilder(512);

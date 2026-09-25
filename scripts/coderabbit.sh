@@ -28,6 +28,10 @@
 
 set -uo pipefail
 
+# Код возврата по умолчанию. Отказ бота и его молчание не должны выглядеть
+# успехом: скрипт зовут из расписания, и там смотрят на код.
+exit_code=0
+
 pr="${1:-}"
 ask="${2:-}"
 
@@ -86,6 +90,17 @@ if [ "$ask" = '--ask' ]; then
 
   if [ -z "$answered" ]; then
     echo 'Бот не ответил за десять минут. Ниже — то, что было до запроса.' >&2
+    exit_code=1
+  else
+    # Ответ бота — ещё не разбор.
+    #
+    # На «лимит исчерпан» счётчик тоже растёт, ожидание кончается, и скрипт
+    # печатал ПРЕЖНИЕ замечания с кодом 0 — как будто новый разбор выполнен.
+    last=$(gh api "repos/$repo/issues/$pr/comments" --paginate       --jq '[.[] | select(.user.login | test("coderabbit";"i"))] | last | .body' || true)
+    if printf '%s' "$last" | grep -qiE 'limit reached|rate limit|try again|quota'; then
+      echo 'ОТКАЗ: бот ответил про лимит, а не разбором. Ниже — то, что было раньше.' >&2
+      exit_code=1
+    fi
   fi
 fi
 
@@ -97,9 +112,17 @@ gh api "repos/$repo/pulls/$pr/comments" --paginate \
   || { echo 'Не удалось получить встроенные замечания.' >&2; exit 1; }
 
 echo ''
+echo '=== Итоги review ==='
+# Итог бот часто кладёт в тело review, а не в комментарий. Без этого раздела
+# человек получал пустой «разбор», хотя итог опубликован.
+gh api "repos/$repo/pulls/$pr/reviews" --paginate   --jq '.[] | select(.user.login | test("coderabbit";"i")) | select((.body // "") != "") | .body'   | sed -e 's/<!--.*-->//g' -e '/^[[:space:]]*$/d'   || { echo 'Не удалось получить review.' >&2; exit 1; }
+
+echo ''
 echo '=== Общее к PR ==='
 # `pipefail` оставлен нарочно: провал `gh` не должен теряться за `sed`.
 gh api "repos/$repo/issues/$pr/comments" --paginate \
   --jq '.[] | select(.user.login | test("coderabbit";"i")) | .body' \
   | sed -e 's/<!--.*-->//g' -e '/^[[:space:]]*$/d' \
   || { echo 'Не удалось получить общие комментарии.' >&2; exit 1; }
+
+exit "$exit_code"

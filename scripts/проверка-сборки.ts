@@ -22,12 +22,20 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+
+import { jarvisHome } from '../jarvis/setup/paths';
 
 const NL = String.fromCharCode(10);
 const корень = process.cwd();
-const дом = path.join(os.homedir(), 'AppData', 'Local', 'Rujarvis');
+// Путь установки — из переменной окружения, а не собранный руками: на маке и
+// на линуксе такого каталога нет вовсе, и это «нечем мерить», а не провал
+// сборки.
+const дом = jarvisHome();
+// Не «только на Windows»: на маке установщик кладёт то же самое в
+// ~/Library/Application Support/Rujarvis, и проверять там есть что.
+// «Нечем мерить» — это когда папки нет, а не когда система не та.
+const установлен = existsSync(дом);
 
 /** Три исхода: прошло, не прошло, нечем проверить. */
 type Исход = null | string | { нечем: string };
@@ -90,17 +98,36 @@ function найтиВГлубину(корневая: string, окончание
  */
 function дымМcp(): Promise<Исход> {
   return new Promise((готово) => {
-    const сервер = path.join(корень, 'dist-electron', 'jarvis', 'desktop', 'mcp.cjs');
+    const сервер = path.join(корень, 'dist', 'jarvis', 'desktop', 'mcp.cjs');
     if (!existsSync(сервер)) return готово('MCP-сервер не собран');
 
-    const дитя = spawn(process.execPath, [сервер], { stdio: ['pipe', 'pipe', 'ignore'] });
+    // stderr не выбрасываем: когда сервер падает при загрузке, причина
+    // только там, а раньше её не видел никто.
+    const дитя = spawn(process.execPath, [сервер], { stdio: ['pipe', 'pipe', 'pipe'] });
     let буфер = '';
+    let жалобы = '';
     let ушёл = false;
-    дитя.on('exit', () => {
-      ушёл = true;
+    let ответил = false;
+    дитя.stderr?.on('data', (кусок: Buffer) => {
+      жалобы += кусок.toString('utf8');
     });
+    дитя.on('exit', (код) => {
+      ушёл = true;
+      // Сервер, упавший на старте, — это не «медленный сервер». Раньше замер
+      // ждал сорок секунд и сообщал не ту причину, а настоящая лежала в
+      // выброшенном stderr.
+      if (!ответил) {
+        clearTimeout(сдаться);
+        готово(`сервер упал при старте (код ${код}): ${жалобы.trim().slice(0, 300) || 'без вывода'}`);
+      }
+    });
+    // Запись в мёртвый канал — обычное дело, если сервер уже упал. Без этого
+    // обработчика EPIPE ронял весь прогон со стеком, и итог по остальным
+    // пунктам не печатался вовсе.
+    дитя.stdin.on('error', () => undefined);
 
     const послать = (m: unknown): void => {
+      if (дитя.stdin.destroyed || дитя.stdin.writableEnded) return;
       дитя.stdin.write(JSON.stringify(m) + NL);
     };
 
@@ -125,6 +152,9 @@ function дымМcp(): Promise<Исход> {
         }
 
         if (м.id === 1) {
+          // Сервер заговорил: дальше его уход — это не падение, а ровно то,
+          // что здесь и проверяется («уходит вслед за клиентом»).
+          ответил = true;
           послать({ jsonrpc: '2.0', method: 'notifications/initialized' });
           послать({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
           continue;
@@ -161,20 +191,22 @@ function дымМcp(): Promise<Исход> {
 const ПРОВЕРКИ: Проверка[] = [
   {
     что: 'собран главный процесс',
-    как: () => естьФайл(path.join(корень, 'dist-electron', 'electron', 'main.cjs'), 1_000_000),
+    // Порог — «это не заглушка», а не точный размер: он был подогнан под
+    // прежнюю сборку в dist-electron, и на настоящей (874 КБ) краснел.
+    как: () => естьФайл(path.join(корень, 'dist', 'app', 'main.cjs'), 500_000),
   },
   {
     что: 'собран мост в окно',
-    как: () => естьФайл(path.join(корень, 'dist-electron', 'electron', 'preload.cjs'), 1_000),
+    как: () => естьФайл(path.join(корень, 'dist', 'app', 'preload.cjs'), 1_000),
   },
   {
     что: 'собран MCP-сервер',
-    как: () => естьФайл(path.join(корень, 'dist-electron', 'jarvis', 'desktop', 'mcp.cjs'), 100_000),
+    как: () => естьФайл(path.join(корень, 'dist', 'jarvis', 'desktop', 'mcp.cjs'), 100_000),
   },
   {
     что: 'драйвер рабочего стола есть в сборке',
     как: () =>
-      естьФайл(path.join(корень, 'dist-electron', 'jarvis', 'desktop', 'win32-driver.ps1'), 1_000),
+      естьФайл(path.join(корень, 'dist', 'jarvis', 'desktop', 'win32-driver.ps1'), 1_000),
   },
 
   // Главная проверка этого файла. Ради неё он и написан.
@@ -182,8 +214,12 @@ const ПРОВЕРКИ: Проверка[] = [
     что: 'копия драйвера совпадает с исходником',
     как: () => {
       const исходник = path.join(корень, 'jarvis', 'desktop', 'win32-driver.ps1');
-      const копия = path.join(корень, 'dist-electron', 'jarvis', 'desktop', 'win32-driver.ps1');
-      if (!existsSync(исходник) || !existsSync(копия)) return 'нечего сравнивать';
+      const копия = path.join(корень, 'dist', 'jarvis', 'desktop', 'win32-driver.ps1');
+      // «Нечего сравнивать» — это «нечем мерить». Возврат строки считался
+      // провалом и вдобавок повторял тот, что уже записан проверкой выше.
+      if (!existsSync(исходник) || !existsSync(копия)) {
+        return { нечем: `нечего сравнивать: ${!existsSync(исходник) ? 'нет исходника' : 'нет копии в сборке'}` };
+      }
       const a = хешФайла(исходник);
       const b = хешФайла(копия);
       if (a === b) return null;
@@ -219,7 +255,11 @@ const ПРОВЕРКИ: Проверка[] = [
   },
   {
     что: 'запускалка на месте',
-    как: () => естьФайл(path.join(дом, 'Jarvis.cmd'), 100),
+    // Это проверка УСТАНОВКИ, а не сборки: на машине без неё и вне Windows
+    // ответ «нечем», как у модели, голоса и драйвера рядом. Иначе полный и
+    // здоровый прогон всё равно выходил с кодом 1.
+    как: () =>
+      установлен ? естьФайл(path.join(дом, 'Jarvis.cmd'), 100) : { нечем: 'Джарвис здесь не установлен' },
   },
 
   {

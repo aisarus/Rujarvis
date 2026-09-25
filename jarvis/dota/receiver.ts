@@ -29,6 +29,16 @@ export const DEFAULT_PORT = 39847;
 export interface ReceiverOptions {
   /** 0 — просить свободный у системы; так работают тесты. */
   port?: number;
+  /**
+   * Пароль из конфига игры (`auth.token`). Пакет без него не принимается.
+   *
+   * Порт слушает локальный адрес, и до сих пор написать на него мог ЛЮБОЙ
+   * процесс машины: поддельный пакет уходил в состояние, в голосовые
+   * подсказки и в оверлей — а имя героя оттуда попадало прямо в разметку окна
+   * с полным доступом к системе. Пустое значение означает «проверять нечем»
+   * и оставляет приём открытым, как было.
+   */
+  token?: string;
   onPacket(packet: DotaPacket): void;
   /** Нечитаемое тело. Молчать о нём нельзя: это признак беды на той стороне. */
   onJunk?(raw: string): void;
@@ -51,6 +61,13 @@ export interface Receiver {
 export async function startReceiver(options: ReceiverOptions): Promise<Receiver> {
   const сервер: Server = createServer((запрос, ответ) => {
     let тело = '';
+    // Кодировку задаём ДО подписки.
+    //
+    // Иначе каждый кусок Buffer превращался в UTF-8 сам по себе, и
+    // двухбайтовая буква, разрезанная между кусками, давала два знака замены.
+    // В пакете есть кириллица (имя игрока), и запись сырого тела — которая
+    // обещана именно сырой — уходила на диск уже испорченной.
+    запрос.setEncoding('utf8');
     запрос.on('data', (кусок) => { тело += кусок; });
     запрос.on('end', () => {
       ответ.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -60,6 +77,15 @@ export async function startReceiver(options: ReceiverOptions): Promise<Receiver>
 
       let сырой: unknown;
       try { сырой = JSON.parse(тело); } catch { options.onJunk?.(тело); return; }
+
+      // Пароль проверяется ДО того, как пакет кого-либо коснулся.
+      if (options.token) {
+        const прислали = (сырой as { auth?: { token?: unknown } })?.auth?.token;
+        if (прислали !== options.token) {
+          console.error('[dota] пакет с чужим паролем отброшен');
+          return;
+        }
+      }
 
       const пакет = readPacket(сырой);
       if (!пакет) { options.onJunk?.(тело); return; }

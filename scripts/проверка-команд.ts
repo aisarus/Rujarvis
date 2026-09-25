@@ -24,7 +24,11 @@
  *   npx tsx scripts/проверка-команд.ts
  */
 
-import { aliasTarget, matchAppLaunch, spokenCloseTarget, windowAlias } from '../jarvis/apps/launch';
+import {
+  matchAppLaunch,
+  spokenCloseTarget,
+  windowCandidates,
+} from '../jarvis/apps/launch';
 import { parseDirectCommand } from '../jarvis/control/commands';
 import { obviousAside } from '../jarvis/dialogue/aside';
 import { matchVoiceControl } from '../jarvis/voice/interrupts';
@@ -79,17 +83,33 @@ async function mustFocus(said: string, expect: RegExp): Promise<Verdict> {
 
   const command = parseDirectCommand(asBridgeSees(said) ?? '');
   const title = (command as { title: string }).title;
-  const tries = [windowAlias(title), aliasTarget(title), title].filter(Boolean) as string[];
+  // Тот же список имён и тот же порядок, что у моста.
+  const tries = windowCandidates(title);
 
+  // Открыто ли окно вообще — спрашиваем ОТДЕЛЬНО.
+  //
+  // Раньше любое исключение `focus` шло в `continue`, и после всех попыток
+  // писалось «окно не открыто». Но причина могла быть другой: окно открыто, а
+  // драйвер сломан — ровно та поломка, ради которой прибор и заведён. Прогон
+  // при этом выходил с кодом 0.
+  const открыто = (await driver.windows()).some((w) =>
+    tries.some((имя) => w.title.toLowerCase().includes(имя.toLowerCase())),
+  );
+
+  let почему = '';
   for (const candidate of tries) {
     try {
       await driver.focus(candidate);
-    } catch {
+    } catch (error) {
+      почему = error instanceof Error ? error.message : String(error);
       continue;
     }
     await new Promise((r) => setTimeout(r, 500));
     const now = await front();
     return expect.test(now) ? null : `впереди «${now}», ожидали ${expect}`;
+  }
+  if (открыто) {
+    return `окно на экране есть, а переключиться не вышло (пробовали: ${tries.join(', ')})${почему ? `: ${почему}` : ''}`;
   }
   return { нечем: `окно не открыто (пробовали: ${tries.join(', ')})` };
 }

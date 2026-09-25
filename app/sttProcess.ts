@@ -181,11 +181,32 @@ export async function createSttProcess(options: SttProcessOptions): Promise<SttP
     if (trimmed) console.error(`[jarvis:stt] ${trimmed}`);
   });
 
+  // Чем кончился процесс распознавания, если он кончился.
+  //
+  // Без этого запись в мёртвый процесс роняла ВСЁ приложение: `child.stdin`
+  // выпускает EPIPE как событие 'error', слушателя не было, и необработанное
+  // исключение в главном процессе Electron гасило окно вместе с голосом.
+  // Вторая беда тише: если EPIPE не случился, запрос ложился в `pending`
+  // уже после 'exit', отклонять его было некому, и голос молчал все шестьдесят
+  // секунд тайм-аута без единой строки в журнале.
+  let умер: Error | null = null;
+  const похоронить = (error: Error) => {
+    умер ??= error;
+    for (const entry of pending.values()) entry.reject(error);
+    pending.clear();
+  };
+  child.stdin.on('error', (error: Error) => { умер ??= error; });
+  child.on('error', (error: Error) => { похоронить(error); });
+
   const ready = new Promise<void>((resolve, reject) => {
     const onExit = (code: number | null) => {
       reject(new Error(`Процесс распознавания завершился с кодом ${code} до готовности`));
     };
+    // 'error' до готовности: `spawn` не нашёл исполняемый файл. Без этого
+    // `ready` не разрешался бы никогда, и запуск вис молча.
+    const onError = (error: Error) => reject(error);
     child.once('exit', onExit);
+    child.once('error', onError);
     child.stdout.on('data', function onData(text: string) {
       buffer += text;
       let index = buffer.indexOf('\n');
@@ -202,6 +223,7 @@ export async function createSttProcess(options: SttProcessOptions): Promise<SttP
         }
         if (message.type === 'ready') {
           child.off('exit', onExit);
+          child.off('error', onError);
           resolve();
           continue;
         }
@@ -216,9 +238,7 @@ export async function createSttProcess(options: SttProcessOptions): Promise<SttP
   });
 
   child.on('exit', (code) => {
-    const error = new Error(`Процесс распознавания завершился с кодом ${code}`);
-    for (const entry of pending.values()) entry.reject(error);
-    pending.clear();
+    похоронить(new Error(`Процесс распознавания завершился с кодом ${code}`));
   });
 
   await ready;
@@ -227,6 +247,8 @@ export async function createSttProcess(options: SttProcessOptions): Promise<SttP
 
   return {
     async transcribe(samples: Float32Array, sampleRate: number) {
+      // Мёртвому писать нечего: лучше отказ сразу, чем минута тишины.
+      if (умер) throw умер;
       const resampled = resampleTo16k(samples, sampleRate);
       const id = nextId++;
       const payload = Buffer.from(
@@ -239,6 +261,12 @@ export async function createSttProcess(options: SttProcessOptions): Promise<SttP
         pending.set(id, { resolve, reject });
       });
       child.stdin.write(`${JSON.stringify({ id, samples: payload })}\n`);
+      // Процесс мог умереть между проверкой и записью: EPIPE прилетает не
+      // броском, а событием, и запрос остался бы висеть до тайм-аута.
+      if (умер) {
+        pending.delete(id);
+        throw умер;
+      }
 
       const text = await Promise.race([
         answer,

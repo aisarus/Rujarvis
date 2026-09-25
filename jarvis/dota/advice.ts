@@ -185,7 +185,12 @@ export function advise(
       : { level: 'unknown', why: 'пакетов ещё не было' },
     nearestEnemy: ближайший,
     gold: { amount: пакет?.gold ?? null, sitting: isFailure(золото) },
-    buyback: свой ? { cost: свой.buybackCost, ready: свой.buybackCooldown === 0 } : null,
+    // Неизвестная стоимость выкупа — это `null`, а не ноль: оверлей показывал
+    // «выкуп готов» за ноль золота на пакете без этих полей.
+    buyback:
+      свой && свой.buybackCost !== null
+        ? { cost: свой.buybackCost, ready: свой.buybackCooldown === 0 }
+        : null,
     camps: лагеря,
     campPoints: state.camps.map((л) => ({
       x: л.x,
@@ -233,7 +238,9 @@ export function advise(
   // Ноль здоровья при живом флаге — это миг гибели: удар уже прошёл, флаг ещё
   // не обновился. Прогон по матчу выдавал здесь «ты на 0», и это худший вид
   // подсказки — та, что опоздала и делает вид, что успела.
-  const ужеПоздно = свой !== null && свой.hp <= 0;
+  // Только ИЗМЕРЕННЫЙ ноль. Раньше ненайденное поле давало ноль, и
+  // предупреждение об опасности глушилось ровно на том пакете, где оно нужно.
+  const ужеПоздно = свой !== null && свой.hp !== null && свой.hp <= 0;
 
   const чужаяКоманда = enemyTeam(пакет?.team ?? null);
   const чужойГлиф = чужаяКоманда ? state.timers.glyph[чужаяКоманда] : null;

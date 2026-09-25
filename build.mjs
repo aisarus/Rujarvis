@@ -33,6 +33,7 @@ await Promise.all([
   esbuild.build({ ...common, entryPoints: ['scripts/qa/acceptance.ts'], outfile: 'dist/qa/acceptance.cjs' }),
   // Замер списка окон на маке: ему нужно настоящее окно Электрона.
   esbuild.build({ ...common, entryPoints: ['scripts/qa/electron-window-check.ts'], outfile: 'dist/qa/window-check.cjs' }),
+  esbuild.build({ ...common, entryPoints: ['scripts/qa/electron-cua-check.ts'], outfile: 'dist/qa/cua-check.cjs' }),
 ]);
 
 // Скрипт драйвера мыши и клавиатуры сервер ищет рядом с собой.

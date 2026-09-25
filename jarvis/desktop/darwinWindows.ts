@@ -21,6 +21,21 @@ import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
 
+// Сколько ждать, пока Chromium достроит дерево.
+//
+// Фиксированной паузы мало, и это измерено: с паузой в 700 мс `find` читал
+// одну раму окна, а диагностика секундой позже видела уже всю страницу —
+// WebArea, заголовок, кнопку и поле. Поэтому ждём не время, а признак: читаем
+// снова, пока дерево растёт, и останавливаемся, когда два чтения подряд дали
+// одинаковую длину.
+const ШАГ_ОЖИДАНИЯ_МС = 300;
+const ЖДАТЬ_ДЕРЕВО_МС = 3_000;
+const подождать = (мс: number): Promise<void> =>
+  new Promise((готово) => {
+    const таймер = setTimeout(готово, мс);
+    таймер.unref?.();
+  });
+
 import { chooseElement, type UiElement } from '../control/elements';
 
 import { DarwinDriver } from './darwinDriver';
@@ -140,7 +155,7 @@ export class DarwinWindowTools {
       );
     }
 
-    await this.driver.raise(цель.pid, цель.index, цель.title || цель.app);
+    await this.driver.raise(цель.pid, цель.index, цель.title || цель.app, цель.title);
 
     const стало = (await this.driver.windows()).find(
       (окно) => окно.pid === pid && окно.title === цель.title,
@@ -177,9 +192,62 @@ export class DarwinWindowTools {
   }
 
   /** Дерево окна, поднятого вперёд, с номерами по местам в нём. */
+  /** Кого уже просили построить дерево. Атрибут держится, пока программа жива. */
+  private readonly попрошено = new Set<number>();
+
+  /**
+   * Дождаться, пока дерево перестанет расти.
+   *
+   * Ждём признак, а не время: Chromium строит дерево постепенно, и сколько
+   * это займёт, зависит от страницы и от машины. Останавливаемся, когда два
+   * чтения подряд дали одинаковую длину, — или когда кончился запас в три
+   * секунды, чтобы не висеть на странице, которая строится вечно.
+   */
+  private async дождатьсяДерева(): Promise<void> {
+    const конец = Date.now() + ЖДАТЬ_ДЕРЕВО_МС;
+    let прежде = -1;
+    while (Date.now() < конец) {
+      await подождать(ШАГ_ОЖИДАНИЯ_МС);
+      let сейчас = 0;
+      try {
+        сейчас = (await this.driver.elements()).elements.length;
+      } catch {
+        // Окно могло исчезнуть между вопросами: пусть решает тот, кто читает
+        // дерево по-настоящему, а не это ожидание.
+        return;
+      }
+      if (сейчас > 0 && сейчас === прежде) return;
+      прежде = сейчас;
+    }
+  }
+
   private async дерево(pid: number, windowId: number): Promise<UiElement[]> {
     await this.поднять(pid, windowId);
+
+    // Просим ДО первого чтения, а не когда дерево покажется пустым.
+    //
+    // Chromium (Electron, Chrome, Edge, VS Code, Slack) держит дерево
+    // доступности только по просьбе вспомогательной программы, и без просьбы
+    // отдаёт одну раму окна. Замер на macos-latest 25.09.2026, окно Электрона
+    // с кнопкой и полем: двенадцать элементов, и все двенадцать — кнопки
+    // закрытия, сворачивания, полноэкранного режима и пустые группы.
+    // Содержимого страницы нет вовсе.
+    //
+    // Первая попытка просила только при коротком дереве, короче восьми
+    // элементов, — и не сработала ни разу: рама одна даёт двенадцать. Порог
+    // отличал «окно не отрисовано» от «окно живо» и для этого годится, а для
+    // «дерево не построено» не годился вовсе: цифры совпадают.
+    //
+    // Просим один раз на программу: атрибут держится, пока она жива, а лишний
+    // вызов osascript на каждый разбор окна стоит сотен миллисекунд.
+    if (!this.попрошено.has(pid)) {
+      this.попрошено.add(pid);
+      await this.driver.askForAccessibility(pid);
+      await this.дождатьсяДерева();
+    }
+
     const { elements } = await this.driver.elements();
+
     if (elements.length < ДЕРЕВО_ЖИВО) {
       throw new Error(
         `Окно отдало всего ${elements.length} элементов — похоже, оно не отрисовано. ` +
@@ -212,10 +280,36 @@ export class DarwinWindowTools {
   }
 
   async press(pid: number, windowId: number, index: number): Promise<string> {
-    const элемент = await this.элемент(pid, windowId, index);
-    await this.поднять(pid, windowId);
+    const элемент = await this.подтвердить(pid, windowId, index);
     await this.driver.click({ x: элемент.x, y: элемент.y });
     return `нажал «${элемент.name || элемент.id}» в (${элемент.x}, ${элемент.y})`;
+  }
+
+  /**
+   * Поднять окно и УБЕДИТЬСЯ, что под этим номером тот же элемент.
+   *
+   * Дерево берётся из памяти от прошлого `window_find`, а подъём окна может
+   * его развернуть, сдвинуть или прокрутить: клик уходил по старым
+   * координатам в совсем другое место, а инструмент отвечал «Нажал элемент
+   * [N]». Описание обещает обратное — «номер указывает на сам элемент».
+   */
+  private async подтвердить(pid: number, windowId: number, index: number): Promise<UiElement> {
+    const прежний = await this.элемент(pid, windowId, index);
+    await this.поднять(pid, windowId);
+
+    // После подъёма читаем дерево ЗАНОВО и сверяем, кто теперь под номером.
+    this.деревья.delete(this.ключ(pid, windowId));
+    const сейчас = await this.дерево(pid, windowId);
+    const теперь = сейчас[index - 1];
+
+    if (!теперь || (теперь.name || теперь.id) !== (прежний.name || прежний.id)) {
+      throw new Error(
+        `После подъёма окна под номером [${index}] уже другой элемент` +
+          (теперь ? `: «${теперь.name || теперь.id}» вместо «${прежний.name || прежний.id}»` : '') +
+          '. Сделай window_find заново.',
+      );
+    }
+    return теперь;
   }
 
   /**
@@ -227,8 +321,7 @@ export class DarwinWindowTools {
    * «aaaaaa», и это замерено.
    */
   async writeInto(pid: number, windowId: number, index: number, text: string): Promise<string> {
-    const элемент = await this.элемент(pid, windowId, index);
-    await this.поднять(pid, windowId);
+    const элемент = await this.подтвердить(pid, windowId, index);
     await this.driver.click({ x: элемент.x, y: элемент.y });
     await this.driver.type(text);
     return `напечатал в «${элемент.name || элемент.id}»`;

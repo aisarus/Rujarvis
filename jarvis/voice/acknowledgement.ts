@@ -1,14 +1,20 @@
 /**
- * Fast acknowledgements.
+ * Короткий отклик, пока работа ещё не началась.
  *
- * The main UX number for a voice assistant is how long it stays silent. A
- * reply that starts in a second and takes five minutes feels responsive; a
- * reply that says nothing for twenty seconds feels broken, even when it is
- * faster overall.
+ * Главное число для голосового помощника — сколько он молчит. Ответ, который
+ * начался через секунду и занял пять минут, ощущается быстрым; ответ, который
+ * двадцать секунд молчит, ощущается сломанным, даже если в сумме он быстрее.
  *
- * So Jarvis answers immediately from the routing decision — before any model
- * has produced a token — and the acknowledgement is deliberately honest about
- * what it means: «Понял, запускаю» is a receipt, not a completion.
+ * Поэтому Джарвис отвечает сразу по решению разбора — до того, как модель
+ * выдала хоть одно слово.
+ *
+ * ## Почему отклик не говорит «готово»
+ *
+ * Это расписка в том, что услышал, а не отчёт о сделанном. «Понял, берусь» —
+ * правда в момент, когда произносится. «Готово» в тот же момент — неправда:
+ * работа ещё не начиналась, и проверить её результат было нечем. Главное
+ * правило проекта запрещает отчитываться успехом, не проверив результата, и
+ * оно относится и к словам, которые человек слышит.
  */
 
 import type { JarvisIntent, RoutingDecision } from '../router/router';
@@ -24,7 +30,9 @@ const ACKNOWLEDGEMENTS_RU: Record<JarvisIntent, string[]> = {
   open_app: ['Открываю.', 'Сейчас открою.', 'Секунду, открываю.'],
   // «Открываю» в ответ на «создай сферу» обещает не то, что произойдёт.
   make: ['Делаю.', 'Сейчас сделаю.', 'Принялся.'],
-  control_window: ['Сейчас.', 'Готово, делаю.', 'Ага, делаю.'],
+  // Не «Готово»: отклик звучит ДО работы, и обещать сделанное в этот момент
+  // нечем.
+  control_window: ['Сейчас.', 'Переключаю.', 'Ага, делаю.'],
   modify_project: ['Понял, берусь.', 'Так, смотрю проект.', 'Ок, займусь этим.'],
   inspect_project: ['Сейчас посмотрю проект.', 'Да, смотрю.', 'Гляну.'],
   query_screen: ['Смотрю на экран.', 'Сейчас гляну.', 'Секунду, смотрю.'],
@@ -102,6 +110,12 @@ function isProjectIntent(intent: JarvisIntent): boolean {
  * Asking is better than guessing when the action cannot be undone.
  */
 export function clarificationFor(decision: RoutingDecision): string | null {
+  // Вопрос — не поручение, и уточнять в нём нечего.
+  //
+  // Разбор помечает вопрос отдельно, но уверенность такого разбора бывает
+  // низкой, и человек, спросивший «а что у меня на экране», слышал в ответ
+  // «Не понял, что именно сделать» — хотя ничего делать и не просил.
+  if (decision.asks) return null;
   if (decision.confidence >= 0.4) return null;
   if (decision.intent === 'continue') return null;
   return tr('Не понял, что именно сделать. Уточни?', 'I am not sure what to do. Could you say it differently?');

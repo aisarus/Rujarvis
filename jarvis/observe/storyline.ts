@@ -144,7 +144,15 @@ export function describeEvent(event: BackendEvent, at: number): StoryLine | null
 
     case 'tool': {
       const name = event.name ?? '';
-      const known = STEPS.find(([prefix]) => name.startsWith(prefix));
+      // Приставкой сравниваем только имена сервера рабочего стола: у них она
+      // общая и длинная. Встроенные имена короткие, и сравнение приставкой
+      // врало: `TaskOutput` и `TaskStop` показывались как «Отправляю
+      // подзадачу», `ReadMcpResource` — как «Читаю файл». Комментарий ниже
+      // запрещает ровно это: придумать чужому инструменту красивую фразу
+      // значит соврать.
+      const known = STEPS.find(([prefix]) =>
+        prefix.startsWith('mcp__') ? name.startsWith(prefix) : name === prefix,
+      );
       // Незнакомый инструмент показывается своим именем. Придумать ему
       // красивую фразу значит соврать: человек прочтёт «работаю с файлами»
       // там, где на деле происходит что-то другое.
@@ -243,6 +251,8 @@ export interface StorylineOptions {
 }
 
 export class Storyline {
+  /** Сказали ли уже вслух, что лента не рисуется. Второй раз — шум. */
+  private жаловался = false;
   private readonly limit: number;
   private readonly onLine: ((line: StoryLine) => void) | undefined;
   private readonly kept: StoryLine[] = [];
@@ -300,8 +310,16 @@ export class Storyline {
     if (this.kept.length > this.limit) this.kept.splice(0, this.kept.length - this.limit);
     try {
       this.onLine?.(line);
-    } catch {
-      // Окно могло закрыться. Рассказ из-за этого прерываться не должен.
+    } catch (error) {
+      // Окно могло закрыться — это не беда. А вот ошибка в самой отрисовке
+      // молча гасила ленту: человек видел, что она замерла, и ни одной записи
+      // об этом не появлялось. Рассказ не прерываем, но говорим один раз.
+      if (!this.жаловался) {
+        this.жаловался = true;
+        console.error(
+          `[jarvis] лента событий не рисуется: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
   }
 }

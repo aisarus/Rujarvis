@@ -21,6 +21,7 @@ function пакет(at: number, события: DotaEvent[]): DotaPacket {
     enemies: [],
     allies: [],
     neutrals: [],
+    items: [],
     vision: [],
     pings: [],
     events: события,

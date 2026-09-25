@@ -10,8 +10,23 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const LOCAL = process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local');
-const ROOT = path.join(LOCAL, 'Rujarvis');
+// Дом Джарвиса — то же правило, что в jarvis/setup/paths.ts.
+//
+// Повторено здесь потому, что этот скрипт зовут обычным node, без сборки TS,
+// и импортировать оттуда нечего. Чтобы правило не разошлось, за ним следит
+// jarvis/setup/paths.coverage.vitest.test.ts: он сверяет ответы обоих.
+const ROOT = jarvisHomeHere();
+
+function jarvisHomeHere() {
+  const explicit = process.env.JARVIS_HOME?.trim();
+  if (explicit) return path.resolve(explicit);
+  const home = os.homedir();
+  if (process.platform === 'win32') {
+    return path.join(process.env.LOCALAPPDATA?.trim() || path.join(home, 'AppData', 'Local'), 'Rujarvis');
+  }
+  if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'Rujarvis');
+  return path.join(process.env.XDG_DATA_HOME?.trim() || path.join(home, '.local', 'share'), 'rujarvis');
+}
 const results = [];
 
 // Тот же выбор сервера, что в `jarvis/desktop/launch.ts`: явная подмена или
@@ -73,7 +88,22 @@ function askMcp() {
           );
         }
         if (message.id === 2) {
-          done({ tools: message.result.tools.length, ms: Date.now() - started });
+          // Форму ответа проверяем, а не верим ей на слово.
+          //
+          // На ошибку JSON-RPC (`{ error: … }`) `message.result.tools.length`
+          // бросал TypeError прямо в обработчике: процесс падал со стеком,
+          // `done` не звали, дерево `cmd.exe → node` оставалось жить. Пустой
+          // список при этом проходил как успех — а `проверка-сборки.ts` на том
+          // же ответе считает сервер сломанным, и два прибора расходились.
+          if (message.error) {
+            done({ error: message.error.message ?? JSON.stringify(message.error) });
+          } else if (!Array.isArray(message.result?.tools)) {
+            done({ error: 'сервер ответил без списка инструментов' });
+          } else if (message.result.tools.length === 0) {
+            done({ error: 'сервер поднялся, но не отдал ни одного инструмента' });
+          } else {
+            done({ tools: message.result.tools.length, ms: Date.now() - started });
+          }
         }
       }
     });
@@ -144,7 +174,8 @@ async function main() {
 
   // MCP-сервер по-настоящему.
   const mcp = await askMcp();
-  if (mcp) ok('MCP-сервер', `${mcp.tools} инструментов за ${mcp.ms} мс`);
+  if (mcp?.error) bad('MCP-сервер', mcp.error);
+  else if (mcp) ok('MCP-сервер', `${mcp.tools} инструментов за ${mcp.ms} мс`);
   else bad('MCP-сервер', 'не ответил');
 
   console.log('');

@@ -16,7 +16,6 @@ import { createRequire } from 'node:module';
 import { createGpuTranscriber, waitForWhisperServer } from '../app/gpuTranscriber';
 import { jarvisPaths } from '../jarvis/setup/paths';
 import { DEFAULT_VOICE, Speaker } from '../jarvis/voice/tts';
-import type { Transcriber } from '../jarvis/voice/session';
 
 const speaker = new Speaker(jarvisPaths().voiceModels, DEFAULT_VOICE.ru);
 
@@ -80,12 +79,19 @@ function samplesFromWav(wav: Buffer): { samples: Float32Array; rate: number } {
 async function main(): Promise<void> {
   const endpoint = await waitForWhisperServer();
   if (!endpoint) {
-    console.log('сервер распознавания не поднят — проверять нечем');
-    process.exit(1);
+    // Код 2 — «нечем мерить», как в `voice-roundtrip.ts`. С кодом 1 неподнятый
+    // сервер был неотличим от падения самого замера.
+    console.log('НЕЧЕМ МЕРИТЬ: сервер распознавания не поднят');
+    process.exit(2);
   }
 
-  const silent: Transcriber = { transcribe: async () => ({ text: '' }) };
-  const transcriber = createGpuTranscriber({ endpoint, language: 'ru', fallback: silent });
+  // Без немого запасного пути.
+  //
+  // `createGpuTranscriber` звал его на ЛЮБОЙ сбой — срок, HTTP 500, обрыв, — а
+  // тот возвращал пустую строку. Фраза печаталась как «МИМО «стоп» → «»», и
+  // отказ прибора выглядел как плохой слух Джарвиса: чинить побежали бы
+  // распознавание, хотя упал сервер. Пусть ошибка дойдёт до `main().catch`.
+  const transcriber = createGpuTranscriber({ endpoint, language: 'ru' });
 
   let exact = 0;
   for (const phrase of PHRASES) {
