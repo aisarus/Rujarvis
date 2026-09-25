@@ -63,8 +63,8 @@ export function buildSkillFile(draft: SkillDraft): string {
 
   return [
     '---',
-    `name: ${draft.name.trim()}`,
-    `description: ${description}`,
+    `name: ${yamlСтрока(draft.name.trim())}`,
+    `description: ${yamlСтрока(description)}`,
     MARKER,
     '---',
     '',
@@ -73,9 +73,37 @@ export function buildSkillFile(draft: SkillDraft): string {
   ].join('\n');
 }
 
+/**
+ * Значение YAML в кавычках, если без них оно испортит заголовок.
+ *
+ * Описание «a: b» превращало строку в `description: a: b` — это уже не YAML, и
+ * навык переставал читаться целиком при следующем запуске. Кавычек требуют
+ * двоеточие, решётка, кавычки и знаки, с которых YAML начинает свои
+ * структуры.
+ */
+function yamlСтрока(значение: string): string {
+  const ОБРАТНЫЙ = String.fromCharCode(92);
+  const опасно = значение === '' || /[:#'"[\]{}&*!|>%@`]|^\s|\s$|^[-?]/u.test(значение);
+  if (!опасно) return значение;
+  const внутри = значение
+    .split(ОБРАТНЫЙ)
+    .join(ОБРАТНЫЙ + ОБРАТНЫЙ)
+    .split('"')
+    .join(ОБРАТНЫЙ + '"');
+  return `"${внутри}"`;
+}
+
 /** Записан ли этот навык Джарвисом. Чужой перезаписывать нельзя. */
 export function isSelfAuthored(content: string): boolean {
-  const header = content.split('---')[1];
-  if (!header) return false;
-  return header.split('\n').some((line) => line.trim() === MARKER);
+  // Границу заголовка ищем ОТДЕЛЬНОЙ СТРОКОЙ `---`.
+  //
+  // `split('---')` резал по любому вхождению: описание «a --- b» обрывало
+  // заголовок раньше метки, навык переставал считаться своим, и повторная
+  // запись в него отклонялась без `replace=true`.
+  const строки = content.split(/\r?\n/u);
+  const первая = строки.findIndex((line) => line.trim() === '---');
+  if (первая < 0) return false;
+  const вторая = строки.findIndex((line, i) => i > первая && line.trim() === '---');
+  if (вторая < 0) return false;
+  return строки.slice(первая + 1, вторая).some((line) => line.trim() === MARKER);
 }

@@ -147,7 +147,16 @@ export function probePlan({ handles = 0, probes = 12 } = {}): Array<{ what: stri
   const scrolls = Math.min(4, Math.max(2, Math.round(probes / 4)));
 
   for (let i = 0; i < scrolls; i += 1) plan.push({ what: 'прокрутить', n: i });
-  for (let i = 0; i < Math.min(handles, probes - plan.length - 2); i += 1) {
+
+  // Предел считается ОДИН РАЗ, до цикла.
+  //
+  // В условии цикла он пересчитывался, а `plan.length` рос на каждом шаге —
+  // предел падал, и нажатий выходило примерно вдвое меньше запрошенного
+  // (5 ручек при 12 пробах давали 4 нажатия, 50 при 8 — два вместо четырёх).
+  // Недоданные пробы уходили в «подвигать мышью», на которое страница
+  // отвечает редко: запас занижался, и живая вещь могла получить провал.
+  const нажатий = Math.max(0, Math.min(handles, probes - plan.length - 2));
+  for (let i = 0; i < нажатий; i += 1) {
     plan.push({ what: 'нажать', n: i });
   }
   while (plan.length < probes - 1) plan.push({ what: 'подвигать мышью', n: plan.length });

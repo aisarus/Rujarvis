@@ -16,7 +16,16 @@
 import type { BackendEvent, BackendResult } from '../backends/types';
 import type { JarvisTask, TaskState } from './manager';
 
-export type ProgressStatus = 'done' | 'active' | 'pending' | 'failed';
+/**
+ * Пятое состояние — «неизвестно».
+ *
+ * У команды код выхода бывает `undefined` (кода нет вовсе) и `null` (процесс
+ * убит сигналом). Первое превращалось в «сделано» — успех, которого никто не
+ * проверял, — второе в «провал». Оба означают «нечем мерить», и на странице
+ * хода работы человек видел то галочку у команды с неизвестным итогом, то
+ * крест у той, что могла пройти.
+ */
+export type ProgressStatus = 'done' | 'active' | 'pending' | 'failed' | 'unknown';
 
 export interface ProgressStep {
   id: string;
@@ -30,6 +39,7 @@ export const PROGRESS_MARKS: Record<ProgressStatus, string> = {
   active: '→',
   pending: '○',
   failed: '✗',
+  unknown: '·',
 };
 
 /**
@@ -104,7 +114,9 @@ export function buildProgress(
         pushStep(steps, {
           id,
           label: `Команда: ${event.command.length > 60 ? `${event.command.slice(0, 57)}…` : event.command}`,
-          status: event.exitCode !== undefined && event.exitCode !== 0 ? 'failed' : 'done',
+          // Кода нет — значит и итога нет. Ни успех, ни провал.
+          status:
+            typeof event.exitCode !== 'number' ? 'unknown' : event.exitCode === 0 ? 'done' : 'failed',
         });
         break;
       case 'file-changed':
@@ -124,7 +136,7 @@ export function buildProgress(
   }
 
   const last = steps[steps.length - 1];
-  if (last && state === 'running' && last.status === 'done') {
+  if (last && state === 'running' && (last.status === 'done' || last.status === 'unknown')) {
     last.status = 'active';
   }
   if (last && state === 'failed' && last.status === 'done') {

@@ -217,6 +217,20 @@
 </div>
 
 <script>
+/**
+ * Узел с текстом. Текст кладётся ТЕКСТОМ, а не разметкой.
+ *
+ * Имена героев приходят по сети: приёмник слушает локальный порт, и пакет
+ * может прислать кто угодно. Это окно поднято с полным доступом к системе,
+ * поэтому вклеенная в него разметка — не косметика, а чужой код.
+ */
+function узел(тег, класс, текст) {
+  const э = document.createElement(тег);
+  if (класс) э.className = класс;
+  э.textContent = текст;
+  return э;
+}
+
 /*
  * Границы миникарты сняты с настоящего кадра записи (1920×1080): левый верхний
  * угол 1677,836, сторона 238. Если человек играет в другом разрешении или с
@@ -258,8 +272,15 @@ function нарисовать(view, фон) {
   if (view.nearestEnemy) {
     const имя = view.nearestEnemy.hero.replace('npc_dota_hero_', '').replace(/_/g, ' ');
     враг.className = view.nearestEnemy.distance < 1200 ? 'близко' : '';
-    враг.innerHTML = '<div class="имя">' + имя + '</div>'
-      + '<div class="метры">' + view.nearestEnemy.distance + ' единиц</div>';
+    // Имя героя приходит по сети и в разметку не вклеивается.
+    //
+    // Проверяется только приставка `npc_dota_hero_`, а остаток шёл прямо в
+    // innerHTML — пакет с именем вроде `npc_dota_hero_<img src=x onerror=…>`
+    // выполнил бы свой код в этом окне, а оно поднято с полным доступом к
+    // системе. Узлы собираются руками, текст кладётся текстом.
+    враг.textContent = '';
+    враг.appendChild(узел('div', 'имя', имя));
+    враг.appendChild(узел('div', 'метры', view.nearestEnemy.distance + ' единиц'));
   } else {
     враг.className = 'пусто';
     враг.textContent = 'врагов не видно';
@@ -322,7 +343,9 @@ function нарисовать(view, фон) {
     for (const враг of кого.slice(0, 5)) {
       const строка = document.createElement('li');
       const имя = враг.hero.replace('npc_dota_hero_', '').replace(/_/g, ' ');
-      строка.innerHTML = имя + '<span>' + Math.round(враг.ageMs / 1000) + ' с</span>';
+      // Здесь та же дыра, что и у ближнего врага: имя пришло по сети.
+      строка.textContent = имя;
+      строка.appendChild(узел('span', '', Math.round(враг.ageMs / 1000) + ' с'));
       список.appendChild(строка);
     }
   }

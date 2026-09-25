@@ -29,6 +29,16 @@ export const DEFAULT_PORT = 39847;
 export interface ReceiverOptions {
   /** 0 — просить свободный у системы; так работают тесты. */
   port?: number;
+  /**
+   * Пароль из конфига игры (`auth.token`). Пакет без него не принимается.
+   *
+   * Порт слушает локальный адрес, и до сих пор написать на него мог ЛЮБОЙ
+   * процесс машины: поддельный пакет уходил в состояние, в голосовые
+   * подсказки и в оверлей — а имя героя оттуда попадало прямо в разметку окна
+   * с полным доступом к системе. Пустое значение означает «проверять нечем»
+   * и оставляет приём открытым, как было.
+   */
+  token?: string;
   onPacket(packet: DotaPacket): void;
   /** Нечитаемое тело. Молчать о нём нельзя: это признак беды на той стороне. */
   onJunk?(raw: string): void;
@@ -60,6 +70,15 @@ export async function startReceiver(options: ReceiverOptions): Promise<Receiver>
 
       let сырой: unknown;
       try { сырой = JSON.parse(тело); } catch { options.onJunk?.(тело); return; }
+
+      // Пароль проверяется ДО того, как пакет кого-либо коснулся.
+      if (options.token) {
+        const прислали = (сырой as { auth?: { token?: unknown } })?.auth?.token;
+        if (прислали !== options.token) {
+          console.error('[dota] пакет с чужим паролем отброшен');
+          return;
+        }
+      }
 
       const пакет = readPacket(сырой);
       if (!пакет) { options.onJunk?.(тело); return; }
