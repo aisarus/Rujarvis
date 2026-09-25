@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { advise, createMemory, type OverlayMode } from './advice';
 import type { DotaPacket, MapObject } from './packet';
+import { CAMP_POSITIONS } from './campPositions';
 import { applyPacket, createState, type DotaState } from './state';
 
 function враг(расстояние: number, имя = 'npc_dota_hero_lina'): MapObject {
@@ -140,8 +141,11 @@ describe('advise', () => {
 
   it('считает лагеря по состояниям', () => {
     const итог = advise(applyPacket(createState(), пакет(1000, [])), createMemory(), 'full');
-    const { alive, empty, stale } = итог.view.camps;
-    expect(alive + empty + stale).toBeGreaterThan(0);
+    // Точное распределение, а не «сумма больше нуля».
+    //
+    // Лагерей всегда шестнадцать, поэтому сумма была положительной, даже если
+    // подсчёт не работал вовсе. Без обзора все они «давно не видели».
+    expect(итог.view.camps).toEqual({ alive: 0, empty: 0, stale: CAMP_POSITIONS.length });
   });
 });
 

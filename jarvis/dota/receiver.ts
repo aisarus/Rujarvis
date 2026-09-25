@@ -61,6 +61,13 @@ export interface Receiver {
 export async function startReceiver(options: ReceiverOptions): Promise<Receiver> {
   const сервер: Server = createServer((запрос, ответ) => {
     let тело = '';
+    // Кодировку задаём ДО подписки.
+    //
+    // Иначе каждый кусок Buffer превращался в UTF-8 сам по себе, и
+    // двухбайтовая буква, разрезанная между кусками, давала два знака замены.
+    // В пакете есть кириллица (имя игрока), и запись сырого тела — которая
+    // обещана именно сырой — уходила на диск уже испорченной.
+    запрос.setEncoding('utf8');
     запрос.on('data', (кусок) => { тело += кусок; });
     запрос.on('end', () => {
       ответ.writeHead(200, { 'Content-Type': 'text/plain' });

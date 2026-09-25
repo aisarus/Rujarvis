@@ -77,6 +77,18 @@ export function applyPacket(
   packet: DotaPacket,
   options: { goldMark?: number } = {},
 ): DotaState {
+  // Новый матч — чистое состояние.
+  //
+  // `matchId` в пакете есть, но его никто не сравнивал, а помощник живёт
+  // одним процессом всю сессию: в следующий матч переезжали прошлые враги,
+  // старый отсчёт золота, счётчик пойманных и виденные события — а событие
+  // нового матча с тем же ключом «тип|время» и вовсе отбрасывалось как
+  // повтор. Оверлей и подсказки показывали прошлую игру.
+  const прошлыйМатч = state.latest?.matchId ?? null;
+  if (packet.matchId && прошлыйМатч && packet.matchId !== прошлыйМатч) {
+    state = createState();
+  }
+
   const отметка = options.goldMark ?? GOLD_MARK;
   const былЖив = state.latest?.self?.alive ?? true;
 
