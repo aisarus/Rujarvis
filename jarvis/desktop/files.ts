@@ -361,20 +361,68 @@ function остаётсяВКорне(name: string): boolean {
   );
 }
 
-export async function tidyRoot(dir = outputFolder()): Promise<Map<string, string>> {
+/** Пропало, пока мы смотрели, — не беда. Всё остальное — беда. */
+function этоПропажа(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === 'ENOENT';
+}
+
+export interface РазборКорня {
+  /** Что и куда уехало. */
+  moves: Map<string, string>;
+  /** На чём споткнулись: путь и причина. */
+  failures: Array<{ file: string; why: string }>;
+}
+
+/**
+ * Чем переносить. Обычно — `moveIntoFolder`.
+ *
+ * Шов нужен ради проверки. Отказ ОДНОГО переноса в настоящей файловой системе
+ * не подстроить: занятое имя перенос обходит сам, раздел-файл уезжает раньше
+ * блокируемого, а открытый файл Windows переносить всё равно даёт — всё
+ * проверено. Без шва поведение «споткнулись на одном, остальные перенесены»
+ * осталось бы непроверяемым, а значит и недоказанным.
+ */
+export type Перенос = (source: string, dir: string) => Promise<string>;
+
+export async function tidyRoot(
+  dir = outputFolder(),
+  перенести: Перенос = (source, куда) => moveIntoFolder(source, куда),
+): Promise<РазборКорня> {
   const moves = new Map<string, string>();
-  const names = await readdir(dir).catch(() => [] as string[]);
+  const failures: Array<{ file: string; why: string }> = [];
+
+  // Раньше здесь стояло `.catch(() => [])`, и «нет доступа к папке»
+  // становилось неотличимо от «в папке пусто»: человек слышал «разбирать
+  // нечего» там, где на самом деле не смогли даже заглянуть.
+  const names = await readdir(dir).catch((error: unknown) => {
+    if (этоПропажа(error)) return [] as string[];
+    throw error;
+  });
 
   for (const name of names) {
     if (остаётсяВКорне(name)) continue;
     const source = path.join(dir, name);
-    const info = await stat(source).catch(() => null);
+
+    const info = await stat(source).catch((error: unknown) => {
+      // Файл мог исчезнуть между перечислением и опросом — это бывает. А вот
+      // отказ в доступе молчать не должен: файл есть, и мы его теряем.
+      if (этоПропажа(error)) return null;
+      throw error;
+    });
     // Папки не трогаем вовсе: разделы — на месте, задачи — тоже.
     if (!info?.isFile()) continue;
-    moves.set(source, await moveIntoFolder(source, dir));
+
+    // Споткнулись на одном — остальные уже переехали, и человек должен знать
+    // куда. Раньше исключение уносило с собой весь список, и найти уже
+    // перенесённое было негде.
+    try {
+      moves.set(source, await перенести(source, dir));
+    } catch (error) {
+      failures.push({ file: source, why: error instanceof Error ? error.message : String(error) });
+    }
   }
 
-  return moves;
+  return { moves, failures };
 }
 
 export async function tidyOutput(dir: string, changed: readonly string[]): Promise<Map<string, string>> {
@@ -481,15 +529,39 @@ export async function revealPath(target: string): Promise<void> {
   const info = await stat(target);
   const команда = командаПоказа(target, info.isDirectory());
 
-  // Код возврата explorer не значит ничего: он ненулевой и при успехе.
   const дитя = spawn(команда.file, команда.args, {
     windowsVerbatimArguments: команда.verbatim,
     windowsHide: false,
     detached: true,
     stdio: 'ignore',
   });
-  дитя.on('error', () => undefined);
-  дитя.unref();
+
+  // Не запустилось — значит не показали.
+  //
+  // Раньше здесь стоял `on('error', () => undefined)`, и отсутствие самой
+  // программы (на Linux `xdg-open` есть не везде) проглатывалось: инструмент
+  // отвечал «Показал в проводнике», а на экране не появлялось ничего. Это тот
+  // же обман, что и «Открыл» без окна, только тише.
+  await new Promise<void>((resolve, reject) => {
+    дитя.once('error', reject);
+    дитя.once('spawn', resolve);
+  });
+
+  // Дальше платформы расходятся. Код возврата explorer не значит ничего: он
+  // ненулевой и при успехе. А `open` и `xdg-open` — короткие запускалки, и их
+  // код как раз значит: ненулевой там и есть «не смог».
+  if (process.platform === 'win32') {
+    дитя.unref();
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    дитя.once('error', reject);
+    дитя.once('exit', (code) => {
+      if (code === 0 || code === null) resolve();
+      else reject(new Error(`${команда.file} не смог показать файл (код ${code})`));
+    });
+  });
 }
 
 /**
@@ -499,15 +571,57 @@ export async function revealPath(target: string): Promise<void> {
  * системе типов и отсутствует у незнакомых. Стоит 40 мс против ~700 мс у
  * `FindExecutable` через PowerShell, а ответ для нашего вопроса тот же.
  */
+/** Значение по умолчанию у раздела реестра, или null. */
+async function значениеПоУмолчанию(раздел: string): Promise<string | null> {
+  try {
+    const { stdout } = await run('reg.exe', ['query', раздел, '/ve'], { windowsHide: true });
+    // Строка вида «    (По умолчанию)    REG_SZ    txtfile». Имя значения
+    // переведено на язык системы, поэтому цепляемся за тип, а не за имя.
+    const [, хвост] = stdout.split(/REG_(?:SZ|EXPAND_SZ)/u);
+    const значение = хвост?.trim().split(/\r?\n/u)[0]?.trim();
+    return значение ? значение : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Знает ли Windows, чем открыть такой файл.
+ *
+ * Мало спросить, есть ли раздел расширения: он бывает и пустым. У `.foo` может
+ * лежать ProgId, за которым нет ни одной программы, — тогда открытие снова
+ * ничего не делает, а инструмент снова отчитывается «Открыл». Поэтому путь
+ * проходится до конца: расширение → ProgId → команда открытия.
+ *
+ * Сначала выбор человека (`UserChoice`): он главнее общесистемной связки —
+ * именно его Windows и слушается, когда человек однажды выбрал программу сам.
+ */
 async function естьЧемОткрыть(target: string): Promise<boolean> {
   const ext = path.extname(target);
   if (!ext) return false;
-  try {
-    await run('reg.exe', ['query', `HKEY_CLASSES_ROOT\\${ext}`], { windowsHide: true });
-    return true;
-  } catch {
-    return false;
-  }
+
+  // У UserChoice значение именованное (`ProgId`), а не по умолчанию.
+  const выборЧеловека = await run(
+    'reg.exe',
+    [
+      'query',
+      `HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\${ext}\\UserChoice`,
+      '/v',
+      'ProgId',
+    ],
+    { windowsHide: true },
+  )
+    .then(({ stdout }) => stdout.split(/REG_SZ/u)[1]?.trim().split(/\r?\n/u)[0]?.trim() ?? null)
+    .catch(() => null);
+
+  const progId = выборЧеловека ?? (await значениеПоУмолчанию(`HKEY_CLASSES_ROOT\\${ext}`));
+  if (!progId) return false;
+
+  return run('reg.exe', ['query', `HKEY_CLASSES_ROOT\\${progId}\\shell\\open\\command`], {
+    windowsHide: true,
+  })
+    .then(() => true)
+    .catch(() => false);
 }
 
 /**
