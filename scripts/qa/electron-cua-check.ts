@@ -32,7 +32,7 @@ const СТРАНИЦА = `<!doctype html>
 <body style="font-family: system-ui; padding: 24px; background: #101014; color: #e4e4e7">
   <h1 id="zagolovok">Проба</h1>
   <button id="knopka">Нажми меня</button>
-  <input id="pole" type="text" value="" placeholder="Сюда пишем">
+  <input id="pole" type="text" value="" aria-label="Сюда пишем" placeholder="Сюда пишем">
   <p id="itog">не нажата</p>
   <script>
     document.getElementById('knopka').addEventListener('click', function () {
@@ -169,6 +169,9 @@ async function main(): Promise<void> {
     }
 
     try {
+      // Имя поля берётся из aria-label: placeholder деревом доступности не
+      // считается, и безымянное поле нельзя найти по имени ни на какой
+      // платформе — это не поломка инструмента, а отсутствие имени.
       const поля = await инструменты.find(pid, windowId, 'Сюда пишем');
       const индексПоля = поля[0]?.index ?? -1;
       if (индексПоля < 0) {
