@@ -193,6 +193,41 @@ describe('TaskManager', () => {
 
     expect(task.state).toBe('paused');
     expect(controls.cancelled).toBe(true);
+    // Пауза без id сессии — обещание, которого не сдержать: продолжить будет
+    // нечем, только начать заново.
+    expect(task.sessionId).toBe('sess-42');
+  });
+
+  it('пауза без сессии не обещает продолжения', async () => {
+    const { backend } = controllableBackend();
+    const tasks = managerWith(backend);
+
+    const task = tasks.start({ title: 'Долгая задача', request: request() });
+    await tick();
+    // События `started` не было — id сессии взяться неоткуда.
+    expect(tasks.pause(task.id)).toBe(false);
+    expect(task.state).toBe('running');
+  });
+
+  it('«стоп» на задаче в паузе правда её останавливает', async () => {
+    const { backend, controls } = controllableBackend();
+    const tasks = managerWith(backend);
+
+    const task = tasks.start({ title: 'Долгая задача', request: request() });
+    await tick();
+    controls.emit({ type: 'started', backend: 'claude-code', sessionId: 'sess-42' });
+    await tick();
+    expect(tasks.pause(task.id)).toBe(true);
+    await tick();
+
+    // Запуска в списке уже нет: его цикл закончился. Раньше `cancel` в этом
+    // случае молча отвечал успехом, задача навсегда оставалась на паузе, и
+    // Джарвис сам же предлагал её продолжить после «остановил».
+    expect(tasks.cancel(task.id)).toBe(true);
+    expect(task.state).toBe('cancelled');
+    // На паузе её больше нет. Продолжить законченную работу по её сессии
+    // по-прежнему можно — это другое обещание.
+    expect(tasks.list().some((t) => t.state === 'paused')).toBe(false);
   });
 
   it('resumes a paused task through the vendor session rather than starting over', async () => {
@@ -211,6 +246,10 @@ describe('TaskManager', () => {
       run: (backendRequest: BackendRequest): BackendRun => {
         runs.push(backendRequest);
         const channel = new EventChannel<BackendEvent>();
+        // Id сессии приезжает СОБЫТИЕМ, как у настоящего бэкенда. Раньше тест
+        // подставлял его руками, и то, что менеджер его не читает, не было
+        // видно: «продолжай» начал бы работу с нуля.
+        channel.push({ type: 'started', backend: 'claude-code', sessionId: 'sess-7' });
         const result: BackendResult = {
           ok: true,
           backend: 'claude-code',
@@ -237,7 +276,7 @@ describe('TaskManager', () => {
     const tasks = managerWith(backend);
     const task = tasks.start({ title: 'Задача', request: request() });
     await tick();
-    task.sessionId = 'sess-7';
+    expect(task.sessionId).toBe('sess-7');
 
     tasks.pause(task.id);
     await tick();

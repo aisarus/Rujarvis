@@ -182,7 +182,7 @@ export class CliProcess implements CliHandle {
 
       // Отмечаем своего: аварийное «убейся» бьёт только по этому списку, и
       // незарегистрированный агент пережил бы выключатель.
-      trackChild(child.pid);
+      trackChild(child.pid, process.platform !== 'win32');
       child.on('exit', () => forgetChild(child.pid));
 
       this.child = child;

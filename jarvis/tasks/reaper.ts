@@ -27,13 +27,31 @@
  */
 import { spawn } from 'node:child_process';
 
-/** Кого мы запускали и кто ещё жив. */
-const свои = new Set<number>();
+/**
+ * Кого мы запускали и кто ещё жив.
+ *
+ * Значение — ведёт ли этот процесс свою группу. Вне Windows агент
+ * запускается с `detached`, и его инструменты живут в ЕГО группе: убить
+ * одного лидера мало, иначе `reapAll` запишет pid в убитые, а сборка или
+ * тесты продолжат работать. Живой разговор (`liveSession.ts`) группу не
+ * заводит, и бить по группе там нельзя — задело бы соседей.
+ */
+const свои = new Map<number, { своя_группа: boolean; промахов: number }>();
+
+/**
+ * Сколько раз повторять удар по не поддавшемуся процессу.
+ *
+ * Держать такой pid вечно нельзя: система выдаёт номера повторно, и через
+ * время он может достаться постороннему. Удар по маске однажды уже снёс
+ * проводник и меню «Пуск» — повторять это чужими руками не будем. Двух
+ * попыток хватает на процесс, который просто не успел умереть.
+ */
+const ПРЕДЕЛ_ПРОМАХОВ = 2;
 
 /** Отметить порождённый процесс. Нулевой и отрицательный pid не бывает. */
-export function trackChild(pid: number | undefined): void {
+export function trackChild(pid: number | undefined, своя_группа = false): void {
   if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) return;
-  свои.add(pid);
+  свои.set(pid, { своя_группа, промахов: 0 });
 }
 
 /** Забыть завершившийся: иначе реестр растёт весь сеанс и мы бьём по пустоте. */
@@ -44,7 +62,7 @@ export function forgetChild(pid: number | undefined): void {
 
 /** Сколько процессов под присмотром. */
 export function trackedChildren(): number[] {
-  return [...свои];
+  return [...свои.keys()];
 }
 
 export interface ReapResult {
@@ -53,9 +71,17 @@ export interface ReapResult {
   failed: number[];
 }
 
-function убитьДерево(pid: number): Promise<boolean> {
+function убитьДерево(pid: number, своя_группа: boolean): Promise<boolean> {
   if (process.platform !== 'win32') {
-    try { process.kill(pid, 'SIGKILL'); return Promise.resolve(true); } catch { return Promise.resolve(false); }
+    // Отрицательный pid бьёт по всей группе — но только у того, кто её
+    // возглавляет. Безусловно так делать нельзя: у процесса без `detached`
+    // группа общая с нами, и удар задел бы самого Джарвиса.
+    try {
+      process.kill(своя_группа ? -pid : pid, 'SIGKILL');
+      return Promise.resolve(true);
+    } catch {
+      return Promise.resolve(false);
+    }
   }
   return new Promise((готово) => {
     const тк = spawn('taskkill', ['/F', '/T', '/PID', String(pid)], { windowsHide: true, stdio: 'ignore' });
@@ -65,21 +91,32 @@ function убитьДерево(pid: number): Promise<boolean> {
 }
 
 /**
- * Убить всех своих. Реестр очищается в любом случае: процесс, которого не
- * удалось убить, почти всегда уже мёртв, и держать его в списке — значит
- * бить по нему при каждом следующем «убейся».
+ * Убить всех своих.
+ *
+ * Из реестра выбывают только подтверждённо убитые. Раньше список чистился
+ * целиком ДО попытки: не поддавшийся процесс попадал в `failed`, но повторить
+ * по нему удар было уже нечем — записи не осталось. А мост при пустом
+ * `killed` ещё и говорил человеку «некого убивать», хотя кто-то как раз
+ * выжил.
  */
 export async function reapAll(): Promise<ReapResult> {
-  const цели = [...свои];
-  свои.clear();
+  const цели = [...свои.entries()];
 
   const killed: number[] = [];
   const failed: number[] = [];
-  for (const pid of цели) {
+  for (const [pid, запись] of цели) {
     // По одному, а не пачкой: taskkill с несколькими /PID падает целиком, если
     // хоть один уже мёртв, и тогда выжившие остаются жить.
-    if (await убитьДерево(pid)) killed.push(pid);
-    else failed.push(pid);
+    if (await убитьДерево(pid, запись.своя_группа)) {
+      killed.push(pid);
+      свои.delete(pid);
+      continue;
+    }
+
+    failed.push(pid);
+    запись.промахов += 1;
+    // Дальше держать бессмысленно и опасно: номер могут выдать другому.
+    if (запись.промахов >= ПРЕДЕЛ_ПРОМАХОВ) свои.delete(pid);
   }
   return { killed, failed };
 }
