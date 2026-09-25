@@ -17,7 +17,11 @@ const CLOSE_VERBS = [
   'закрой', 'закройте', 'закрыть',
   'выключи', 'выключите',
   'останови', 'остановите',
-  'убей', 'прикрой', 'сверни',
+  // «Сверни» здесь не место: свернуть окно и закрыть программу — разные
+  // вещи, и путать их дороже всего именно здесь. У «сверни» уже есть прямая
+  // команда (win+down в jarvis/control/commands.ts), и попав сюда, «сверни
+  // хром» убивало браузер вместо того, чтобы убрать его с глаз.
+  'убей', 'прикрой',
   'close', 'quit', 'exit', 'kill',
 ];
 
@@ -49,7 +53,10 @@ const REFERENTIAL = [
 
 /** Words between the verb and the name that carry no meaning here. */
 const FILLER = [
-  'мне', 'пожалуйста', 'давай', 'ка', 'мой', 'моё', 'мою', 'приложение', 'программу',
+  // Только «мое»: normalise уже заменила ё на е, и «моё» в этой таблице
+  // не совпадало никогда — «открой моё приложение хром» оставляло «мое» в
+  // названии и не находило цель вовсе.
+  'мне', 'пожалуйста', 'давай', 'ка', 'мой', 'мое', 'мою', 'приложение', 'программу',
   'the', 'my', 'please', 'up', 'app', 'application', 'program',
 ];
 
@@ -115,6 +122,15 @@ export function spokenCloseTarget(utterance: string): string | null {
   return targetAfterVerb(utterance, CLOSE_VERBS);
 }
 
+/**
+ * Отрицание перед глаголом.
+ *
+ * «Не запускай хром» содержит «запускай», и без этой проверки фраза уходила
+ * в запуск: человек прямо запретил, а программа открылась. Апостроф до сюда
+ * не доезжает — normalise превращает «don't» в «don t».
+ */
+const NEGATIONS = ['не', 'dont', 'don', 'not', 'never', 'no'];
+
 function targetAfterVerb(utterance: string, verbs: readonly string[]): string | null {
   const normalised = normalise(utterance);
   if (!normalised) return null;
@@ -123,12 +139,19 @@ function targetAfterVerb(utterance: string, verbs: readonly string[]): string | 
   const verbIndex = words.findIndex((word) => verbs.includes(word));
   if (verbIndex === -1) return null;
 
+  // Отрицание отменяет команду целиком, а не выбирает другую цель. Смотрим
+  // на всё, что стоит перед глаголом: «не надо запускать» и «пожалуйста, не
+  // открывай» — то же самое, что «не открывай».
+  if (words.slice(0, verbIndex).some((word) => NEGATIONS.includes(word))) return null;
+
   const rest = words
     .slice(verbIndex + 1)
     .filter((word) => !FILLER.includes(word));
 
-  // More than a name is a description of work: «открой файл отчёт и посчитай
-  // сумму» is a job for the agent, not a program to start.
+  // Больше трёх слов — это уже описание работы, а не название программы.
+  // «Открой файл отчёт и посчитай сумму» нечётко сопоставится с чем-нибудь
+  // установленным, и запустится не то: нечёткий поиск по ярлыкам всегда
+  // что-нибудь находит. Такую фразу должен разбирать агент.
   if (rest.length === 0 || rest.length > 3) return null;
 
   // Остались одни указательные слова — программы с таким названием не бывает.

@@ -605,8 +605,17 @@ export class ClaudeCodeBackend implements AgentBackend {
     // задаётся при запуске процесса, а процесс уже идёт.
     if (request.sessionId) return null;
 
-    const path = this.cached?.path;
-    if (!path) return null;
+    // Живую сессию поднимаем только по СВЕЖЕЙ и годной пробе.
+    //
+    // Раньше бралcя один `path`: проба «вход не выполнен» кладёт в кэш и
+    // `ready: false`, и путь — и живая сессия стартовала мимо отказа, который
+    // вернул бы обычный прогон. Срок годности тоже не смотрелся: удалённый
+    // или обновлённый CLI запускался по старому пути.
+    const кэш = this.cached;
+    const ttl = this.options.availabilityTtlMs ?? 30_000;
+    if (!кэш?.ready || !кэш.path) return null;
+    if (this.now() - кэш.checkedAt >= ttl) return null;
+    const path = кэш.path;
 
     const key: SessionKey = {
       cwd: request.cwd,

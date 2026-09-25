@@ -17,6 +17,7 @@ import { hasClaudeEnvironmentAuth, hasCodexEnvironmentAuth, resolveAuthState } f
 import type { ClaudeCliProbe } from './claudeCode';
 import type { CodexCliProbe } from './codex';
 import { localModel } from './localModel';
+import { agentEnv } from './subscriptionEnv';
 
 const run = promisify(execFile);
 
@@ -137,6 +138,14 @@ function hasCredentials(cli: Cli): boolean {
   }
 }
 
+/**
+ * Проба смотрит на то окружение, которое получит сам CLI.
+ *
+ * Иначе она ручалась за то, чего не будет: ANTHROPIC_API_KEY в системе
+ * означал «вход выполнен», а `agentEnv()` этот ключ снимает НАРОЧНО — Джарвис
+ * живёт на подписке и чужими ключами не платит. Получалось «готов» и отказ
+ * авторизации на первой же задаче.
+ */
 export function createClaudeProbe(env: NodeJS.ProcessEnv = process.env): ClaudeCliProbe {
   return {
     async status() {
@@ -144,7 +153,8 @@ export function createClaudeProbe(env: NodeJS.ProcessEnv = process.env): ClaudeC
       // Со своей моделью вход в аккаунт Anthropic не нужен: CLI идёт на сервер
       // человека. Нужен только сам установленный Claude Code.
       if (localModel()) return { ...status, loggedIn: status.installed };
-      return { ...status, loggedIn: resolveAuthState(status.loggedIn, hasClaudeEnvironmentAuth(env)) };
+      const какУCli = agentEnv(env);
+      return { ...status, loggedIn: resolveAuthState(status.loggedIn, hasClaudeEnvironmentAuth(какУCli)) };
     },
   };
 }
@@ -153,7 +163,8 @@ export function createCodexProbe(env: NodeJS.ProcessEnv = process.env): CodexCli
   return {
     async status() {
       const status = await cliStatus('codex', env);
-      return { ...status, loggedIn: resolveAuthState(status.loggedIn, hasCodexEnvironmentAuth(env)) };
+      const какУCli = agentEnv(env);
+      return { ...status, loggedIn: resolveAuthState(status.loggedIn, hasCodexEnvironmentAuth(какУCli)) };
     },
   };
 }
