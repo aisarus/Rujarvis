@@ -1499,7 +1499,17 @@ async function поднятьМост(options: {
             // costs minutes and, on this runtime, tends to report success for
             // something it never did.
             console.log(`[jarvis] «${wanted}» не нашёл среди установленных`);
-            await session.speak(tr(`Не нашёл ${wanted}.`, `Could not find ${wanted}.`));
+            // «Не нашёл» по неполному списку — это «не знаю», а не «не стоит».
+            // Записи магазина могли не приехать, а в них живут Dota 2 и всё
+            // остальное из Store: сказать «нет такой» значит соврать.
+            await session.speak(
+              списокБылПолон()
+                ? tr(`Не нашёл ${wanted}.`, `Could not find ${wanted}.`)
+                : tr(
+                    `Не нашёл ${wanted}, но список программ неполный — Windows не ответил про магазин.`,
+                    `Could not find ${wanted}, but the program list is incomplete: Windows did not answer about the store.`,
+                  ),
+            );
             session.keepAwake();
             return;
           }
@@ -2110,13 +2120,23 @@ interface Shortcut {
  * to the one path that is supposed to be instant.
  */
 let shortcutCache: Shortcut[] | null = null;
+// Полон ли список в кэше. Неполный не кэшируем: магазин мог не ответить
+// один раз, и запирать половину правды до перезапуска приложения незачем.
+let списокПолон = false;
 
 async function listStartMenuShortcuts(): Promise<Shortcut[]> {
   if (shortcutCache) return shortcutCache;
   // Один обход на всех: у моста была своя копия, и когда она расходилась
   // с той, по которой идёт проверка, проверка тихо проверяла не то.
-  shortcutCache = await listInstalledPrograms();
-  return shortcutCache;
+  const итог = await listInstalledPrograms();
+  списокПолон = итог.полный;
+  if (итог.полный) shortcutCache = итог.programs;
+  return итог.programs;
+}
+
+/** Был ли последний прочитанный список полным. */
+function списокБылПолон(): boolean {
+  return списокПолон;
 }
 
 /**

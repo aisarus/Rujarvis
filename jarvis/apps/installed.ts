@@ -60,8 +60,31 @@ async function walkShortcuts(dir: string, depth: number, into: InstalledProgram[
   }
 }
 
-/** То, что Windows считает запускаемым: магазин, игры, ярлыки без .lnk. */
-async function listShellApps(): Promise<Array<{ name: string; appId: string }>> {
+/**
+ * Запрос списка программ к PowerShell.
+ *
+ * Вынесен наружу, потому что его проверяют настоящим запуском: ошибка была не
+ * в разборе, а в том, как Node читает вывод PowerShell. Пока проверка держала
+ * свою копию строки, удаление `[Console]::OutputEncoding` отсюда оставляло её
+ * зелёной — а голосом переставали находиться программы с русскими именами.
+ *
+ * Кодировка задаётся здесь, а не предполагается: при перенаправленном выводе
+ * PowerShell пишет кодовой страницей консоли, Node читает как UTF-8, и
+ * «Архиватор Windows» приезжает мусором.
+ */
+export const START_APPS_COMMAND =
+  '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ' +
+  'Get-StartApps | ConvertTo-Json -Compress';
+
+/**
+ * То, что Windows считает запускаемым: магазин, игры, ярлыки без .lnk.
+ *
+ * `null` — НЕ «ничего не нашлось», а «спросить не вышло». Разница в том, что
+ * на первое чинят машину, а на второе — программу, и склеивать их нельзя:
+ * без записей из магазина «дота» не находит Dota 2 и уходит искать среди
+ * остального, где ближайшим по звуку оказываются «Источники данных ODBC».
+ */
+async function listShellApps(): Promise<Array<{ name: string; appId: string }> | null> {
   try {
     const { stdout } = await run(
       'powershell',
@@ -69,17 +92,20 @@ async function listShellApps(): Promise<Array<{ name: string; appId: string }>> 
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        // Кодировка задаётся здесь, а не предполагается: при перенаправленном
-        // выводе PowerShell пишет кодовой страницей консоли, Node читает как
-        // UTF-8, и «Архиватор Windows» приезжает мусором.
-        '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ' +
-          'Get-StartApps | ConvertTo-Json -Compress',
+        START_APPS_COMMAND,
       ],
       { windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
     );
-    const parsed = JSON.parse(stdout) as Array<{ Name?: string; AppID?: string }>;
-    return parsed
-      .filter((entry) => entry.Name && entry.AppID)
+    // Пустой вывод — это не пустой список, а немой PowerShell: Get-StartApps
+    // на живой Windows не возвращает ноль программ никогда.
+    if (!stdout.trim()) throw new Error('Get-StartApps ничего не ответил');
+    const parsed = JSON.parse(stdout) as unknown;
+    // Одна программа — и ConvertTo-Json отдаёт объект, а не массив: ключа
+    // -AsArray в 5.1 нет, поэтому равняем здесь. Без этого `.filter` бросал
+    // исключение, и оно превращалось в «ничего не установлено».
+    const список = (Array.isArray(parsed) ? parsed : [parsed]) as Array<{ Name?: string; AppID?: string }>;
+    return список
+      .filter((entry) => entry && entry.Name && entry.AppID)
       .map((entry) => ({ name: entry.Name as string, appId: entry.AppID as string }));
   } catch (error) {
     // Молчать нельзя. Пустой список выглядит как «ничего не установлено», а на
@@ -88,8 +114,20 @@ async function listShellApps(): Promise<Array<{ name: string; appId: string }>> 
     // по звуку оказываются «Источники данных ODBC». Ложные совпадения ловились
     // ровно в этом состоянии.
     console.error('[jarvis] список программ из магазина не получен:', error);
-    return [];
+    return null;
   }
+}
+
+/** Список программ и то, полон ли он. */
+export interface InstalledList {
+  programs: InstalledProgram[];
+  /**
+   * `false` — записи магазина получить не вышло, и список неполон.
+   *
+   * Решать по неполному списку должен тот, кто его видит: «не нашёл» при
+   * `полный: false` значит «не знаю», а не «не установлено».
+   */
+  полный: boolean;
 }
 
 /**
@@ -99,24 +137,33 @@ async function listShellApps(): Promise<Array<{ name: string; appId: string }>> 
  * из магазина «дота» не находит Dota 2 и уходит искать среди остального, где
  * ближайшим по звуку оказываются «Источники данных ODBC».
  */
-export async function listInstalledPrograms(): Promise<InstalledProgram[]> {
-  const roots = [
-    path.join(process.env.APPDATA ?? '', 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
-    path.join(process.env.ProgramData ?? '', 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
-  ].filter((root) => root.length > 0);
+export async function listInstalledPrograms(): Promise<InstalledList> {
+  // Проверяется сама переменная, а не склеенный путь: path.join('', 'Microsoft',
+  // …) возвращает непустую ОТНОСИТЕЛЬНУЮ строку, и старый фильтр по длине не
+  // отсекал ничего — обход шёл от текущей рабочей папки.
+  const roots = [process.env.APPDATA, process.env.ProgramData]
+    .filter((base): base is string => Boolean(base && base.trim()))
+    .map((base) => path.join(base, 'Microsoft', 'Windows', 'Start Menu', 'Programs'));
 
   const found: InstalledProgram[] = [];
   for (const root of roots) await walkShortcuts(root, 0, found);
 
-  for (const app of await listShellApps()) {
+  const изМагазина = await listShellApps();
+  for (const app of изМагазина ?? []) {
     if (found.some((item) => item.name.toLowerCase() === app.name.toLowerCase())) continue;
     found.push({ name: app.name, target: app.appId, kind: startKind(app.appId) });
   }
-  return found;
+  return { programs: found, полный: изМагазина !== null };
 }
 
-/** Откуда `start` возьмёт программу, или null — если ниоткуда. */
-export type StartSource = 'протокол' | 'PATH' | 'реестр' | null;
+/**
+ * Откуда `start` возьмёт программу.
+ *
+ * `null` — ниоткуда, программы нет. `'неизвестно'` — спросить не вышло, и
+ * это третий ответ, а не первый: на «нет» чинят машину, на «не спросили» —
+ * программу. Свернуть одно в другое значит отправить человека чинить не то.
+ */
+export type StartSource = 'протокол' | 'PATH' | 'реестр' | 'неизвестно' | null;
 
 let machinePath: string | null = null;
 
@@ -128,7 +175,7 @@ let machinePath: string | null = null;
  * самого Git. Проверка отвечала «запускается», Джарвис из своего окружения
  * этих файлов не видел. Спрашивать надо у Windows, а не у своей оболочки.
  */
-async function systemPath(): Promise<string> {
+async function systemPath(): Promise<string | null> {
   if (machinePath !== null) return machinePath;
   try {
     const { stdout } = await run(
@@ -142,21 +189,28 @@ async function systemPath(): Promise<string> {
       ],
       { windowsHide: true },
     );
+    if (!stdout.trim()) return null;
     machinePath = stdout.trim();
   } catch {
-    machinePath = process.env.PATH ?? '';
+    // Молча подставить PATH процесса нельзя: там лежат заглушки Git, ради
+    // которых эта функция и написана, и ответ «запускается» вышел бы по
+    // заведомо неверному окружению — да ещё и осел бы в кэше до конца жизни
+    // процесса. Лучше честное «не знаю».
+    return null;
   }
   return machinePath;
 }
 
 /** Окружение процесса с подменённым PATH: без своей оболочки в нём. */
-async function cleanEnv(): Promise<NodeJS.ProcessEnv> {
+async function cleanEnv(): Promise<NodeJS.ProcessEnv | null> {
+  const путь = await systemPath();
+  if (путь === null) return null;
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (key.toLowerCase() === 'path') continue;
     env[key] = value;
   }
-  env.PATH = await systemPath();
+  env.PATH = путь;
   return env;
 }
 
@@ -170,23 +224,43 @@ async function cleanEnv(): Promise<NodeJS.ProcessEnv> {
 export async function startSource(target: string): Promise<StartSource> {
   if (target.includes('://') || /^[a-z][a-z0-9+.-]*:$/iu.test(target)) return 'протокол';
 
+  const env = await cleanEnv();
+  // PATH машины получить не вышло: спросить не у чего, и врать нечем.
+  if (!env) return 'неизвестно';
+
   try {
-    await run('where.exe', [target], { windowsHide: true, env: await cleanEnv() });
+    await run('where.exe', [target], { windowsHide: true, env });
     return 'PATH';
-  } catch {
-    // Нет в PATH — значит остаётся реестр.
+  } catch (error) {
+    // where.exe говорит «не найдено» кодом 1. Всё остальное — не ответ:
+    // самого where нет, вызов оборвался по тайм-ауту, процесс убит. Считать
+    // это за «не найдено» значит выдать «нечем мерить» за «не установлено».
+    if (!сказалНеНашёл(error)) return 'неизвестно';
   }
 
   const key = String.raw`SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths`;
+  let спроситьНеВышло = false;
   for (const hive of ['HKLM', 'HKCU']) {
     for (const name of [`${target}.exe`, target]) {
       try {
         await run('reg', ['query', `${hive}\\${key}\\${name}`], { windowsHide: true });
         return 'реестр';
-      } catch {
-        // Следующее написание.
+      } catch (error) {
+        // reg query тоже отвечает «нет такого ключа» кодом 1.
+        if (!сказалНеНашёл(error)) спроситьНеВышло = true;
       }
     }
   }
-  return null;
+  return спроситьНеВышло ? 'неизвестно' : null;
+}
+
+/**
+ * Отличает ответ «не найдено» от «спросить не вышло».
+ *
+ * И `where.exe`, и `reg query` сообщают «нет такого» кодом возврата 1. Код 2
+ * у where — «неверные аргументы», отсутствие самого файла даёт ENOENT, а
+ * оборванный по тайм-ауту вызов не даёт кода вовсе.
+ */
+function сказалНеНашёл(error: unknown): boolean {
+  return (error as { code?: unknown } | null)?.code === 1;
 }

@@ -100,7 +100,9 @@ it into things you never asked for.
 
 What the hook cannot see: a click by screen coordinates or by element number
 does not say what is being pressed. Codex runs in its own sandbox
-(`workspace-write`, no network) and gets no desktop tools. Details:
+(`workspace-write`: writes only inside the working folder) and gets no desktop
+tools; whether that sandbox has network access is set by Codex's own
+configuration, not by Jarvis — check it if that matters to you. Details:
 [docs/jarvis/architecture.md](docs/jarvis/architecture.md).
 
 ## Where things are
@@ -128,8 +130,10 @@ Folders and log**, which helps when it mishears.
 
 Speech is recognised and synthesised locally. The only things that leave your
 machine are what you send to the Claude Code or Codex CLI you signed in to —
-the same as using them directly — and your audio, only if you opt into cloud
-recognition by setting `ELEVENLABS_API_KEY`. There is no telemetry.
+the same as using them directly — and your audio, only if you opt into
+recognition off this machine: the cloud (`ELEVENLABS_API_KEY`) or your own
+whisper.cpp server over the network (`JARVIS_GPU_STT` pointing somewhere other
+than `localhost`). There is no telemetry.
 
 ## Honest status
 
