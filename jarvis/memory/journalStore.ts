@@ -14,7 +14,7 @@
  * простота здесь важнее: журнал не та вещь, ради которой стоит не запуститься.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { contextGradient, type GradientOptions, type JarvisEvent } from './journal';
@@ -73,7 +73,15 @@ export class JournalStore {
   private save(): void {
     try {
       mkdirSync(path.dirname(this.file), { recursive: true });
-      writeFileSync(this.file, JSON.stringify(this.events), 'utf8');
+      // Запись через временный файл, как в хранилище памяти рядом.
+      //
+      // Прямая запись в целевой файл оставляла при обрыве обрезанный JSON: на
+      // следующем запуске журнал читался как пустой, и первая же запись
+      // затирала его совсем. Пропадал не «вчерашний день», а всё, включая
+      // сырьё для уроков.
+      const черновик = `${this.file}.${process.pid}.tmp`;
+      writeFileSync(черновик, JSON.stringify(this.events), 'utf8');
+      renameSync(черновик, this.file);
     } catch {
       // Диск может быть занят или полон. Память в этом запуске уже есть —
       // ронять из-за этого ассистента нельзя.

@@ -145,6 +145,8 @@ export function normaliseSettings(raw: unknown): AppSettings {
 
 export class SettingsStore {
   private current: AppSettings;
+  /** Почему настройки не прочитались. Пустая строка — прочитались. */
+  private неПрочитался = '';
   private readonly listeners = new Set<(settings: AppSettings) => void>();
 
   constructor(private readonly file: string) {
@@ -159,6 +161,22 @@ export class SettingsStore {
   update(patch: Partial<AppSettings>): AppSettings {
     const next = normaliseSettings({ ...this.current, ...patch });
     mkdirSync(path.dirname(this.file), { recursive: true });
+
+    // Нечитаемый файл сначала откладываем в сторону, а не затираем.
+    //
+    // Человек сможет достать из копии то, что пропало, а по имени файла
+    // поймёт, что случилось.
+    if (this.неПрочитался) {
+      const копия = `${this.file}.broken-${Date.now()}`;
+      try {
+        renameSync(this.file, копия);
+        console.error(`[jarvis] нечитаемые настройки отложены в ${копия}`);
+      } catch {
+        // Не вышло отложить — значит файла уже нет или он занят. Писать
+        // поверх всё равно придётся: без настроек Джарвис не работает.
+      }
+      this.неПрочитался = '';
+    }
     const temp = `${this.file}.tmp`;
     writeFileSync(temp, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
     renameSync(temp, this.file);
@@ -175,8 +193,18 @@ export class SettingsStore {
   private read(): AppSettings {
     if (!existsSync(this.file)) return { ...DEFAULT_SETTINGS };
     try {
+      this.неПрочитался = '';
       return normaliseSettings(JSON.parse(readFileSync(this.file, 'utf8')));
-    } catch {
+    } catch (error) {
+      // «Файла нет» и «файл не прочитался» — разные вещи.
+      //
+      // Раньше обе давали значения по умолчанию, и ПЕРВАЯ ЖЕ правка
+      // записывала их поверх настоящих: пропадали рабочая папка, адрес
+      // локальной модели, выбранная модель Клода, а `onboarded` становился
+      // ложью — человеку заново показывали онбординг. Ни одного слова при
+      // этом он не видел. Файл мог всего лишь оказаться занят антивирусом.
+      this.неПрочитался = error instanceof Error ? error.message : String(error);
+      console.error(`[jarvis] настройки не прочитались (${this.file}): ${this.неПрочитался}`);
       return { ...DEFAULT_SETTINGS };
     }
   }

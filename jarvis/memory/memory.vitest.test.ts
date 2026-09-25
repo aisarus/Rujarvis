@@ -265,3 +265,47 @@ describe('selectWorldStateLines', () => {
     expect(resultLine).not.toContain('много текста');
   });
 });
+
+describe('нечитаемая память не затирается', () => {
+  /**
+   * Замечание CodeRabbit (кусок 3, PR №42). Отказ чтения давал пустой снимок,
+   * и ПЕРВАЯ ЖЕ запись сохраняла его поверх файла: проекты, псевдонимы и
+   * предпочтения человека пропадали молча. Файл мог всего лишь оказаться
+   * занят другим процессом.
+   */
+  it('после отказа чтения запись на диск не идёт', async () => {
+    const сохранений: number[] = [];
+    const занято: MemoryStorage = {
+      load: async () => {
+        throw new Error('EBUSY');
+      },
+      save: async () => {
+        сохранений.push(1);
+      },
+    };
+
+    const memory = new JarvisMemory({ storage: занято });
+    await memory.load();
+    await memory.rememberProject({ name: 'aegis', path: 'D:/Projects/aegis' });
+
+    // В этой сессии псевдоним работает — но пустая память на диск не уехала.
+    expect(memory.findProject('aegis')).toBeDefined();
+    expect(сохранений).toEqual([]);
+  });
+
+  it('отсутствие файла — это пустая память, и она сохраняется', async () => {
+    const сохранений: number[] = [];
+    const пусто: MemoryStorage = {
+      load: async () => null,
+      save: async () => {
+        сохранений.push(1);
+      },
+    };
+
+    const memory = new JarvisMemory({ storage: пусто });
+    await memory.load();
+    await memory.rememberProject({ name: 'aegis', path: 'D:/Projects/aegis' });
+
+    expect(сохранений.length).toBe(1);
+  });
+});
