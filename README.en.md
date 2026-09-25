@@ -45,8 +45,16 @@ curl -fsSL https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.sh | 
 Same order: Homebrew, Git and Node.js are installed if missing, the app is
 built, the speech models are downloaded, **Rujarvis** lands in `~/Applications`.
 Voice, the conversation and Claude Code work the same as on Windows. Driving
-other windows — focus, keys, screenshots — is Windows-only for now: that driver
-is written against the Windows API.
+other windows — focus, keys, screenshots, reading elements — works on macOS
+too, through System Events and CoreGraphics instead of the Windows API.
+Measured on a real Mac on 2026-09-24: of sixteen acceptance scenarios thirteen
+passed, two had nothing to measure (they are about the Windows registry), and
+one failed — the click grid does not cover the menu bar and the dock.
+
+macOS asks for two separate permissions: Accessibility (windows, mouse, keys)
+and Screen Recording (screenshots). Without the first, CGEvent does not fail —
+it **silently does nothing** — so Jarvis asks for the permission up front
+rather than discovering it from a no-op.
 
 On first start a short setup walks you through the language, signing in to
 Claude Code, the speech models and a microphone check. Everything can be
