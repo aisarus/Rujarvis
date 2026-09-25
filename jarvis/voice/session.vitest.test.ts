@@ -226,6 +226,37 @@ describe('always listening', () => {
     expect(h.transcripts).toEqual(['открой хром']);
   });
 
+  /**
+   * На имя отзываются голосом, а не только плашкой.
+   *
+   * Тот, ради кого это делается, может не видеть плашку вовсе. Без отклика он
+   * оставался в тишине и не знал, услышали его или нет, — а ответа на саму
+   * задачу ждать до десяти секунд (замерено: 8,9 / 10,4 / 11,4 / 11,8 с).
+   * Две секунды тишины человек терпит, двенадцать — считает поломкой.
+   */
+  it('отзывается голосом, когда позвали по имени', async () => {
+    const h = harness({ mode: 'always-listening' });
+    await h.session.acceptAmbientTranscript('Джарвис');
+
+    // Отклик отложен на тик нарочно: иначе он гасит «слушаю».
+    expect(h.session.status.indicator).toBe('listening');
+    expect(h.playback.spoken).toEqual([]);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(h.playback.spoken).toEqual(['Да?']);
+    // И после отклика состояние возвращается: человек ещё говорит.
+    expect(h.session.status.indicator).toBe('listening');
+  });
+
+  it('на имя с командой в одном вдохе отклика нет: сразу дело', async () => {
+    const h = harness({ mode: 'always-listening' });
+    await h.session.acceptAmbientTranscript('Джарвис, открой хром');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.playback.spoken).not.toContain('Да?');
+  });
+
   it('waits for the command when the wake word came alone', async () => {
     const h = harness({ mode: 'always-listening' });
 

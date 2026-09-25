@@ -136,8 +136,29 @@ export interface JarvisVoiceBridge {
   session: VoiceSession;
   /** Открыть окно событий: что Джарвис услышал, решил и сделал. */
   showEvents(): void;
+  /**
+   * Немой режим: выключить и включить микрофон не с клавиатуры.
+   *
+   * Нужно не для удобства. Раньше выключить и включить можно было ТОЛЬКО
+   * сочетанием Ctrl+M: в трее такого пункта не было, а голосом вернуть слух
+   * нельзя по определению — он не слушает. Человек, который не может нажать
+   * сочетание, оставался с глухим помощником до прихода того, кто может.
+   */
+  toggleMute(): boolean;
+  /** Выключен ли микрофон сейчас и сколько секунд до возврата. */
+  muteState(): { muted: boolean; secondsLeft: number };
   dispose(): void;
 }
+
+/**
+ * Насколько замолкает микрофон.
+ *
+ * Немота теперь временная, и это главное. Постоянная немота — тупик: вернуть
+ * слух можно было только клавиатурой, а человек с моторными нарушениями этого
+ * сделать не может. Пять минут — достаточно, чтобы поговорить по телефону, и
+ * мало, чтобы забыть.
+ */
+const MUTE_MINUTES = 5;
 
 let active: JarvisVoiceBridge | null = null;
 
@@ -1625,7 +1646,7 @@ async function поднятьМост(options: {
   audioWindow.webContents.send(AUDIO_BRIDGE_CHANNELS.startAmbient);
 
   registerPushToTalk(session);
-  registerSelfMute(session, audioWindow, overlay, (value) => {
+  const немой = registerSelfMute(session, audioWindow, overlay, (value) => {
     muted = value;
   });
 
@@ -1646,7 +1667,19 @@ async function поднятьМост(options: {
     // помощнике нет ничего — человек говорит в пустоту и думает, что его
     // игнорируют.
     if (muted) {
-      overlay.note(session.status, tr('Микрофон выключен — Ctrl+M', 'Microphone off — Ctrl+M'));
+      // Видно, что немота кончится, и когда.
+      //
+      // Подпись «Микрофон выключен — Ctrl+M» была подсказкой для того, кто
+      // может нажать сочетание. Для остальных она означала «всё, конец».
+      // Отсчёт говорит обратное: подожди, я вернусь сам.
+      const { secondsLeft } = немой.state();
+      const минут = Math.floor(secondsLeft / 60);
+      const секунд = secondsLeft % 60;
+      const сколько = минут > 0 ? `${минут}:${String(секунд).padStart(2, '0')}` : `${секунд} с`;
+      overlay.note(
+        session.status,
+        tr(`Микрофон выключен, включу через ${сколько}`, `Microphone off, back in ${сколько}`),
+      );
       return;
     }
     overlay.update(session.status);
@@ -1656,6 +1689,8 @@ async function поднятьМост(options: {
   active = {
     jarvis,
     session,
+    toggleMute: () => немой.toggle(),
+    muteState: () => немой.state(),
     showEvents: () => {
       logWindow?.open();
     },
@@ -2379,54 +2414,103 @@ function createPushToTalkCapture(audioWindow: BrowserWindow): AudioCapture {
  * слушающий, — ловушка: человек говорит в пустоту и считает, что его
  * игнорируют.
  */
+/** Управление немым режимом: кто угодно может вернуть слух. */
+interface НемойРежим {
+  /** Переключить. Возвращает новое состояние. */
+  toggle(): boolean;
+  state(): { muted: boolean; secondsLeft: number };
+}
+
 function registerSelfMute(
   session: VoiceSession,
   audioWindow: BrowserWindow,
   overlay: StatusOverlay,
   setMuted: (value: boolean) => void,
-): void {
+): НемойРежим {
   let muted = false;
+  let вернуть: NodeJS.Timeout | null = null;
+  let вернётсяВ = 0;
 
-  const registered = globalShortcut.register(MUTE_ACCELERATOR, () => {
-    muted = !muted;
-    setMuted(muted);
-
-    if (muted) {
-      // Сказать надо ДО того, как замолчать, и дождаться.
-      //
-      // Первая попытка делала наоборот: фраза начиналась, и тут же `sleep()`
-      // обрывал воспроизведение — человек не слышал ничего, то есть ровно то,
-      // что и чинилось. Человек смотрит не на индикатор, а в свою работу, и за
-      // вечер трижды решал, что Джарвис сломался, а тот просто не слышал.
-      void (async () => {
-        await session.speak(tr('Микрофон выключен.', 'Microphone off.'));
-        session.sleep();
-        try {
-          audioWindow.webContents.send(AUDIO_BRIDGE_CHANNELS.stopAmbient);
-        } catch {
-          // Окно захвата могло упасть — режим всё равно включается.
-        }
-        console.log('[jarvis] немой режим включён');
-        overlay.note(session.status, tr('Микрофон выключен — Ctrl+M', 'Microphone off — Ctrl+M'));
-      })();
-      return;
-    }
-
+  const слушать = (): void => {
     try {
       audioWindow.webContents.send(AUDIO_BRIDGE_CHANNELS.startAmbient);
     } catch {
-      // См. выше.
+      // Окно захвата могло упасть — режим всё равно выключается.
     }
-    console.log('[jarvis] немой режим выключен');
+  };
+
+  const включить = (сам: boolean): void => {
+    muted = false;
+    setMuted(false);
+    if (вернуть) {
+      clearTimeout(вернуть);
+      вернуть = null;
+    }
+    вернётсяВ = 0;
+    слушать();
+    console.log(`[jarvis] немой режим выключен${сам ? ' (по времени)' : ''}`);
     overlay.note(session.status, tr('Слушаю снова', 'Listening again'));
     void session.speak(tr('Слушаю.', 'Listening.'));
-  });
+  };
 
+  const выключить = (): void => {
+    muted = true;
+    setMuted(true);
+    вернётсяВ = Date.now() + MUTE_MINUTES * 60_000;
+
+    // Немота возвращается сама.
+    //
+    // Раньше она была вечной, а выключалась только сочетанием клавиш — и это
+    // тупик для того, кто до клавиатуры дотянуться не может. Таймер убирает
+    // тупик совсем: что бы ни случилось, через пять минут Джарвис снова
+    // слышит.
+    if (вернуть) clearTimeout(вернуть);
+    вернуть = setTimeout(() => включить(true), MUTE_MINUTES * 60_000);
+    вернуть.unref?.();
+
+    // Сказать надо ДО того, как замолчать, и дождаться.
+    //
+    // Первая попытка делала наоборот: фраза начиналась, и тут же `sleep()`
+    // обрывал воспроизведение — человек не слышал ничего, то есть ровно то,
+    // что и чинилось. Человек смотрит не на индикатор, а в свою работу, и за
+    // вечер трижды решал, что Джарвис сломался, а тот просто не слышал.
+    void (async () => {
+      await session.speak(
+        tr(
+          `Микрофон выключен на ${MUTE_MINUTES} минут. Потом включу сам.`,
+          `Microphone off for ${MUTE_MINUTES} minutes. I will switch it back on.`,
+        ),
+      );
+      session.sleep();
+      try {
+        audioWindow.webContents.send(AUDIO_BRIDGE_CHANNELS.stopAmbient);
+      } catch {
+        // Окно захвата могло упасть — режим всё равно включается.
+      }
+      console.log('[jarvis] немой режим включён');
+    })();
+  };
+
+  const toggle = (): boolean => {
+    if (muted) включить(false);
+    else выключить();
+    return muted;
+  };
+
+  const registered = globalShortcut.register(MUTE_ACCELERATOR, toggle);
   if (!registered) {
     console.error(`[jarvis] не удалось занять ${MUTE_ACCELERATOR} — сочетание занято.`);
-    return;
+  } else {
+    console.log(`[jarvis] ${MUTE_ACCELERATOR}: выключить и включить микрофон.`);
   }
-  console.log(`[jarvis] ${MUTE_ACCELERATOR}: выключить и включить микрофон.`);
+
+  return {
+    toggle,
+    state: () => ({
+      muted,
+      secondsLeft: muted ? Math.max(0, Math.ceil((вернётсяВ - Date.now()) / 1000)) : 0,
+    }),
+  };
 }
 
 function registerPushToTalk(session: VoiceSession): void {
