@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { PROFILE_DIR, браузераНет, порядокКаналов } from './browser';
+import { PROFILE_DIR, браузераНет, порядокКаналов, полныйАдрес } from './browser';
 import { jarvisHome } from '../setup/paths';
 
 /**
@@ -72,5 +72,34 @@ describe('PROFILE_DIR', () => {
     // установщик, ни уборка, ни сам человек.
     expect(PROFILE_DIR.startsWith(jarvisHome())).toBe(true);
     expect(path.basename(PROFILE_DIR).startsWith('browser-profile-')).toBe(true);
+  });
+});
+
+/**
+ * Что дописывать https, а что оставить как есть.
+ *
+ * Проверка только на «://» пропускала схемы без двух косых черт: `data:`
+ * приезжал как `https://data:text/html…` и не открывался вовсе. Поймано
+ * живым прогоном на маке 25.09.2026.
+ */
+describe('полныйАдрес', () => {
+  it('узнаёт схемы с двумя косыми чертами', () => {
+    for (const адрес of ['https://ya.ru', 'http://localhost:3000', 'file:///tmp/x.html']) {
+      expect(полныйАдрес(адрес), адрес).toBe(true);
+    }
+  });
+
+  it('узнаёт схемы без двух косых черт', () => {
+    for (const адрес of ['data:text/html,<p>x', 'about:blank', 'mailto:a@b.c', 'view-source:https://ya.ru']) {
+      expect(полныйАдрес(адрес), адрес).toBe(true);
+    }
+  });
+
+  it('голому имени узла с портом https как раз нужен', () => {
+    // Под правило «любая схема:» подходит и «localhost:3000», а это не схема,
+    // а имя с портом. Поэтому схемы перечислены поимённо.
+    for (const адрес of ['localhost:3000', 'ya.ru', 'example.com/путь', '127.0.0.1:8080']) {
+      expect(полныйАдрес(адрес), адрес).toBe(false);
+    }
   });
 });
