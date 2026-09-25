@@ -59,11 +59,14 @@ export class PlanStore {
     }
   }
 
-  clear(): void {
+  /** Стереть план. `false` — не стёрся, и говорить «убрал» нельзя. */
+  clear(): boolean {
     try {
       if (existsSync(this.file)) writeFileSync(this.file, 'null', 'utf8');
-    } catch {
-      // См. выше.
+      return true;
+    } catch (error) {
+      console.error(`[jarvis] план не стёрся: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
     }
   }
 }

@@ -211,6 +211,24 @@ function onAudio(event) {
     sawSpeech &&
     samplesToMs(silenceSamples) >= SILENCE_MS_TO_CLOSE &&
     samplesToMs(speechSamples) >= MIN_SPEECH_MS;
+
+  // Короткий всплеск — это не речь, и запирать им запись нельзя.
+  //
+  // Щелчок или стук по столу короче MIN_SPEECH_MS поднимал sawSpeech, после
+  // чего закрытие по тишине не срабатывало НИКОГДА: речи меньше 400 мс.
+  // Запись росла до потолка и уходила с пометкой «length», а это для
+  // turn.ts значит «человек ещё говорит» — следующую настоящую фразу он
+  // приклеивал к пятнадцати секундам тишины, на которой Whisper выдумывает
+  // субтитры. Забываем такой всплеск и слушаем дальше.
+  const falseStart =
+    sawSpeech &&
+    samplesToMs(silenceSamples) >= SILENCE_MS_TO_CLOSE &&
+    samplesToMs(speechSamples) < MIN_SPEECH_MS;
+  if (falseStart) {
+    resetBuffer();
+    return;
+  }
+
   const closedByLength = samplesToMs(bufferedSamples) >= MAX_UTTERANCE_MS;
 
   if (closedBySilence || closedByLength) {
@@ -225,6 +243,15 @@ function onAudio(event) {
  * capture stopped dead — eighty seconds without a single buffer, not even
  * noise — while the assistant went on believing it was listening.
  */
+// Когда в последний раз жаловались, что микрофона нет.
+//
+// Сторож пробует каждые две секунды, а Дота держит устройство минутами:
+// без этого счётчика человек получил бы тридцать одинаковых строк в минуту
+// и перестал бы читать их вовсе. Жалуемся на первый отказ и потом раз в
+// полминуты.
+let lastComplaintAt = 0;
+const COMPLAIN_EVERY_MS = 30_000;
+
 async function restartCapture(reason) {
   if (restarting) return;
   restarting = true;
@@ -245,9 +272,14 @@ async function restartCapture(reason) {
   try {
     await ensureCapture();
     lastAudioAt = Date.now();
+    lastComplaintAt = 0;
     ipcRenderer.send(CH.error, 'микрофон взят заново: ' + reason);
   } catch (error) {
-    ipcRenderer.send(CH.error, 'не удалось вернуть микрофон: ' + String((error && error.message) || error));
+    const now = Date.now();
+    if (now - lastComplaintAt >= COMPLAIN_EVERY_MS) {
+      lastComplaintAt = now;
+      ipcRenderer.send(CH.error, 'не удалось вернуть микрофон: ' + String((error && error.message) || error));
+    }
   } finally {
     restarting = false;
   }
@@ -256,13 +288,37 @@ async function restartCapture(reason) {
 // A stream that stops delivering is the only reliable signal: an ended track
 // does not always fire, and a device change does not always end the track.
 setInterval(function () {
-  if (restarting || !audioContext) return;
+  if (restarting) return;
   if (!ambient && !pushing) return;
+  // Сторож пробует СНОВА, пока слушание включено.
+  //
+  // Раньше он выходил по пустому audioContext, а неудачный перезапуск оставлял
+  // его пустым: одна занятая Дотой звуковая карта — и помощник глох до
+  // перезапуска приложения, хотя это ровно та беда, от которой сторож и
+  // написан.
+  if (!audioContext) {
+    restartCapture('микрофона нет, пробую снова');
+    return;
+  }
   if (Date.now() - lastAudioAt > 5000) restartCapture('звук перестал поступать');
 }, 2000);
 
+let capturePromise = null;
+
 async function ensureCapture() {
   if (audioContext) return;
+  // Один подъём на всех.
+  //
+  // Проверка выше стоит ДО ожидания микрофона: startAmbient и startPush,
+  // пришедшие подряд, оба её проходили и заводили по своему конвейеру.
+  // Второй перезаписывал ссылки, но первый продолжал слать куски — в буфер
+  // попадало всё дважды, а первый поток не закрывался уже никогда.
+  if (capturePromise) return capturePromise;
+  capturePromise = raiseCapture().finally(function () { capturePromise = null; });
+  return capturePromise;
+}
+
+async function raiseCapture() {
   stream = await navigator.mediaDevices.getUserMedia({
     audio: {
       channelCount: 1,

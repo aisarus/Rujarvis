@@ -196,7 +196,15 @@ export function createCliRun(spec: CliRunSpec): BackendRun {
     const outcome = await child.wait();
     const usageLimited = state.usageLimited || looksUsageLimited(outcome.stderr);
     const exitFailed = outcome.exitCode !== 0 && outcome.exitCode !== null;
+    // Смерть от сигнала — это не успех.
+    //
+    // При убийстве сигналом `exitCode` равен `null`, и проверка выше его
+    // нарочно пропускала. Но процесс, которого убил OOM-killer, выключатель
+    // «убейся» или сам человек, работу не доделал: итог уходил с `ok: true` и
+    // пустым или обрезанным текстом — отчёт об успехе без всякой проверки.
+    const killedBySignal = outcome.exitCode === null && Boolean(outcome.signal);
     const failed =
+      killedBySignal ||
       outcome.spawnError !== undefined ||
       state.fatalMessage !== undefined ||
       outcome.cancelled ||

@@ -912,7 +912,13 @@ export function createDesktopMcpServer(): McpServer {
     async ({ goal, steps }) => {
       try {
         const plan = makePlan(goal, steps, Date.now());
-        openPlan().write(plan);
+        // Отчёт об успехе только после успешной записи.
+        //
+        // Раньше отказ диска глотался, и модель слышала «план записан», пока
+        // окно показывало старый план, а перезапуск начинал работу заново.
+        if (!openPlan().write(plan)) {
+          return failed('план не сохранился на диск, окно покажет старый');
+        }
         return say(renderPlan(plan));
       } catch (error) {
         return failed(error);
@@ -943,7 +949,10 @@ export function createDesktopMcpServer(): McpServer {
         if (!plan) return say('Плана пока нет — сначала запиши его через set_plan.');
 
         const updated = markStep(plan, index, state as StepState, Date.now(), note);
-        store.write(updated);
+        // То же, что и в set_plan: «отметил» говорим только про записанное.
+        if (!store.write(updated)) {
+          return failed('шаг не сохранился на диск, отметка не удержится');
+        }
         return say(renderPlan(updated));
       } catch (error) {
         return failed(error);

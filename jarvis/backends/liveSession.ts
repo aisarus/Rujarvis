@@ -33,9 +33,9 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { cliLaunch } from './spawnCli';
 import { randomUUID } from 'node:crypto';
 
-import { EventChannel } from './process';
+import { EventChannel, looksUsageLimited } from './process';
 import { forgetChild, trackChild } from '../tasks/reaper';
-import type { BackendEvent, BackendResult, BackendRun } from './types';
+import type { BackendEvent, BackendFileChange, BackendResult, BackendRun } from './types';
 
 const BACKEND_ID = 'claude-code' as const;
 const NL = String.fromCharCode(10);
@@ -138,6 +138,11 @@ interface Turn {
   startedAt: number;
   text: string;
   sessionId?: string;
+  /** Что тронул этот ход. Живой путь раньше терял это целиком. */
+  files: BackendFileChange[];
+  commands: string[];
+  /** Подписка кончилась — менеджеру это нужно, чтобы взять другой помощник. */
+  usageLimited?: boolean;
   /** Счётчик молчания. Перевзводится на каждом признаке жизни. */
   timer: NodeJS.Timeout;
   /**
@@ -244,7 +249,20 @@ export class LiveSession {
     this.dead = true;
     const turn = this.turn;
     this.turn = null;
+    // Процесс ГАСИМ, а не просто забываем.
+    //
+    // Раньше `kill` был только в `dispose`, а по сроку молчания и по потолку
+    // звался этот метод: зависший `claude` вместе со своим MCP-сервером и
+    // PowerShell оставался жить. `forgetChild` ждёт события выхода, а его не
+    // будет. Каждый срок оставлял ещё один процесс — та самая утечка на 956
+    // МБ, о которой сказано выше.
+    const ушедший = this.child;
     this.child = null;
+    try {
+      ушедший?.kill();
+    } catch {
+      // Уже мёртв — и хорошо.
+    }
     if (turn) {
       clearTimeout(turn.timer);
       clearTimeout(turn.ceiling);
@@ -311,6 +329,15 @@ export class LiveSession {
     this.options.consumeLine(raw, (event) => {
       if (event.type === 'started' && event.sessionId) turn.sessionId = event.sessionId;
       if (event.type === 'assistant-text') turn.text += event.text;
+      // Копим то, что потом уходит в итог.
+      //
+      // Живой путь собирал результат сам и всегда отдавал пустые списки: мост
+      // сообщал «файлы не менялись» после правок, а исчерпанную подписку
+      // менеджер не видел и не переключался на запасной помощник — человек
+      // получал отказ вместо работы.
+      if (event.type === 'file-changed') turn.files.push(event.change);
+      if (event.type === 'command') turn.commands.push(event.command);
+      if (event.type === 'error' && looksUsageLimited(event.message)) turn.usageLimited = true;
       turn.channel.push(event);
     });
 
@@ -328,9 +355,16 @@ export class LiveSession {
       text: typeof raw.result === 'string' && raw.result ? raw.result : turn.text,
       sessionId: turn.sessionId,
       durationMs: this.now() - turn.startedAt,
-      filesChanged: [],
-      commands: [],
-      error: failed ? String(raw.subtype ?? 'не вышло') : undefined,
+      filesChanged: turn.files,
+      commands: turn.commands,
+      // Причина — из самого ответа, а не из его вида: «error_during_execution»
+      // человеку ничего не говорит, а текст говорит.
+      ...(turn.usageLimited || (failed && typeof raw.result === 'string' && looksUsageLimited(raw.result))
+        ? { usageLimited: true }
+        : {}),
+      error: failed
+        ? (typeof raw.result === 'string' && raw.result ? raw.result : String(raw.subtype ?? 'не вышло'))
+        : undefined,
     };
     turn.channel.push({ type: 'completed', backend: BACKEND_ID, result });
     turn.channel.close();
@@ -378,7 +412,7 @@ export class LiveSession {
         : undefined;
       ceiling?.unref?.();
 
-      this.turn = { channel, settle, startedAt: this.now(), text: '', timer, ceiling };
+      this.turn = { channel, settle, startedAt: this.now(), text: '', files: [], commands: [], timer, ceiling };
       this.spoken = true;
       channel.push({ type: 'started', backend: BACKEND_ID });
       this.child?.stdin?.write(userMessage(prompt));
