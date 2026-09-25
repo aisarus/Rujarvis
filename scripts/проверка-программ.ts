@@ -356,7 +356,12 @@ async function checkLiveFocus(driver: DesktopDriver): Promise<void> {
     try {
       reported = (await driver.focus(target)).title;
     } catch (error) {
-      say({ нечем: error instanceof Error ? error.message : String(error) }, target, '');
+      // Окно этой цели ТОЧНО на экране: она прошла отбор выше. Значит отказ
+      // переключения — это «не прошло», а не «нечем мерить», и ровно та
+      // поломка, ради которой всё заведено: «Переключись на Edge» отвечало
+      // «не получилось». Сворачивать её в «нечем» — прятать, и прогон выходил
+      // с нулём, сообщая «Всё прошло».
+      say(`драйвер отказался переключать: ${error instanceof Error ? error.message : String(error)}`, target, '');
       continue;
     }
     // Сразу, без своей задержки: драйвер внутри уже выждал четверть секунды и

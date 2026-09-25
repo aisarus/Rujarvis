@@ -13,7 +13,7 @@
  * что его попросили.
  */
 
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -89,15 +89,28 @@ async function main(): Promise<void> {
     return { ok: true, text: ответы[request.kind] ?? 'сделано' };
   });
 
+  // Сервер и CLI проверяем ДО прогрева.
+  //
+  // Без них все восемь ходов проходили впустую, и проверка отвечала «не
+  // прошло»: человек чинил разговор, хотя сломан был прибор. Это «нечем
+  // мерить», и у него свой код.
+  const сервер = конфиг();
+  if (!сервер) {
+    console.log('НЕЧЕМ МЕРИТЬ: сервера разговора нет — сначала pnpm run build');
+    process.exit(2);
+  }
+  const статусCLI = await createClaudeProbe().status();
+  console.log(`CLI: ${статусCLI.path ?? 'не найден'} (установлен: ${статусCLI.installed})`);
+  if (!статусCLI.path) {
+    console.log('НЕЧЕМ МЕРИТЬ: Claude Code не найден — разговору не на чем работать');
+    process.exit(2);
+  }
+
   const сказанное: string[] = [];
   const разговор = new TalkSession({
-    cliPath: async () => {
-      const статус = await createClaudeProbe().status();
-      console.log(`CLI: ${статус.path ?? 'не найден'} (установлен: ${статус.installed})`);
-      return статус.path ?? null;
-    },
+    cliPath: async () => статусCLI.path ?? null,
     cwd: ДОМ,
-    mcpConfig: конфиг(),
+    mcpConfig: сервер,
     delta: { journalFile: ЖУРНАЛ, planFile: ПЛАН },
     state: () => ({
       work: renderPlan(JSON.parse(readFileSync(ПЛАН, 'utf8')) as Plan).split(
@@ -148,18 +161,41 @@ async function main(): Promise<void> {
   перестать();
   разговор.dispose('проверка окончена');
 
+  // Служебный отказ — не ответ.
+  //
+  // `TalkSession` говорит через тот же `speak` и свои отказы («Не смог
+  // ответить.», «Разговор недоступен…»), поэтому «разговор отвечал вслух»
+  // проходило, даже когда он не ответил ни разу.
+  const ОТКАЗЫ = ['Не смог ответить.', 'Разговор недоступен'];
+  const настоящиеОтветы = сказанное.filter((фраза) => !ОТКАЗЫ.some((о) => фраза.startsWith(о)));
+
+
   console.log(`${String.fromCharCode(10)}— итог —`);
-  console.log(`ответов вслух: ${сказанное.length} из ${ходы.length}`);
+  console.log(
+    `ответов вслух: ${настоящиеОтветы.length} из ${ходы.length}` +
+      (сказанное.length > настоящиеОтветы.length ? ` (и ${сказанное.length - настоящиеОтветы.length} отказов)` : ''),
+  );
   console.log(`времена: ${времена.map((т) => т.toFixed(1)).join(', ')} с`);
 
   // Ящика может не быть вовсе: если разговор не позвал add_note, файл никто не
   // создал. Это ответ «нет», а не повод уронить проверку.
+  //
+  // А вот битый файл — совсем другое дело: раньше `catch` без разбора глотал
+  // и ошибку разбора, и сломанная запись выглядела как «не звал». Теперь
+  // отсутствие и порча названы по-разному.
+  const файлЯщика = path.join(ДОМ, 'notes.json');
   let ящик: Array<{ text: string }> = [];
-  try {
-    ящик = JSON.parse(readFileSync(path.join(ДОМ, 'notes.json'), 'utf8')) as Array<{ text: string }>;
-  } catch {
-    ящик = [];
+  let ящикБит = '';
+  if (existsSync(файлЯщика)) {
+    try {
+      const разобрано: unknown = JSON.parse(readFileSync(файлЯщика, 'utf8'));
+      if (Array.isArray(разобрано)) ящик = разобрано as Array<{ text: string }>;
+      else ящикБит = 'в notes.json не список';
+    } catch (error) {
+      ящикБит = `notes.json не читается: ${error instanceof Error ? error.message : String(error)}`;
+    }
   }
+  if (ящикБит) console.log(`ВНИМАНИЕ: ${ящикБит}`);
   const план = JSON.parse(readFileSync(ПЛАН, 'utf8')) as Plan;
   const виды = new Set(просьбы.map((п) => п.kind));
 
@@ -170,7 +206,8 @@ async function main(): Promise<void> {
     ['stop_work дошёл до моста', виды.has('stop')],
     ['pause_work дошёл до моста', виды.has('pause')],
     ['resume_work дошёл до моста', виды.has('resume')],
-    ['разговор отвечал вслух', сказанное.length > 0],
+    ['разговор отвечал вслух', настоящиеОтветы.length > 0],
+    ['ящик не побит', ящикБит === ''],
   ];
 
   let плохо = 0;
