@@ -156,3 +156,43 @@ describe('parseLiveEdit in English', () => {
     }
   });
 });
+
+describe('живая правка не делает того, о чём не просили', () => {
+  /**
+   * Замечания CodeRabbit (кусок 3, PR №42). Все четыре кончались тем, что
+   * человек слышал отчёт о сделанном, а в сцене происходило другое — или
+   * ничего.
+   */
+  it('дробное расстояние не рвётся на две цифры', () => {
+    const правка = parseLiveEdit('подними на 0,5');
+    expect(правка).not.toBeNull();
+    // Раньше число бралось первое — ноль, — Блендер не двигал ничего, а
+    // человек слышал «Сдвинул».
+    expect(правка?.code).toContain('0.5');
+  });
+
+  it('запрет не превращается в действие', () => {
+    expect(parseLiveEdit("don't rotate it")).toBeNull();
+    expect(parseLiveEdit('не крась это в синий')).toBeNull();
+  });
+
+  it('неоднозначное имя не выбирается молча', () => {
+    const правка = parseLiveEdit('удали ракету');
+    expect(правка?.code).toContain('_один(');
+    // Отказ виден в самом скрипте: несколько совпадений — это ошибка, а не
+    // «возьму первого попавшегося».
+    expect(правка?.code).toContain('raise RuntimeError');
+  });
+
+  it('покраска проверяет, что красить было чем', () => {
+    const правка = parseLiveEdit('сделай ракету синей');
+    expect(правка?.code).toContain('м.users > 1');
+    expect(правка?.code).toContain('OUTPUT_MATERIAL');
+    expect(правка?.code).toContain('if вход is None');
+  });
+
+  it('анимация отвечает по итогу, а не по факту вызова', () => {
+    expect(parseLiveEdit('запусти анимацию')?.code).toContain('CANCELLED');
+    expect(parseLiveEdit('останови анимацию')?.code).toContain('is_animation_playing');
+  });
+});
