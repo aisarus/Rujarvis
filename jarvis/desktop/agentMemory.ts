@@ -11,7 +11,7 @@
  * and two writers on one file lose each other's work.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { jarvisPaths } from '../setup/paths';
@@ -33,8 +33,21 @@ function read(): Note[] {
   try {
     const parsed = JSON.parse(readFileSync(file, 'utf8')) as { notes?: Note[] };
     return Array.isArray(parsed.notes) ? parsed.notes : [];
-  } catch {
-    // A corrupt file must not make the assistant unusable; it starts over.
+  } catch (error) {
+    // Битый файл откладываем в сторону, а не затираем.
+    //
+    // Раньше он читался как пустой, и следующая же заметка записывала
+    // хранилище из одной строки — до двухсот накопленных заметок пропадали
+    // молча. А попасть на половину файла легко: у каждой живой сессии свой
+    // сервер, и писателей бывает до четырёх.
+    const копия = `${file}.broken-${Date.now()}`;
+    try {
+      renameSync(file, копия);
+      console.error(`[jarvis] память агента не разобралась, отложена в ${копия}`);
+    } catch {
+      console.error(`[jarvis] память агента не разобралась: ${file}`);
+    }
+    void error;
     return [];
   }
 }
@@ -42,7 +55,11 @@ function read(): Note[] {
 function write(notes: Note[]): void {
   const file = memoryFile();
   mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, JSON.stringify({ notes }, null, 2), 'utf8');
+  // Через временный файл: обрыв посреди записи не должен оставить половину,
+  // которую следующий читатель примет за пустоту.
+  const черновик = `${file}.${process.pid}.tmp`;
+  writeFileSync(черновик, JSON.stringify({ notes }, null, 2), 'utf8');
+  renameSync(черновик, file);
 }
 
 /** Stores a fact, replacing any earlier one under the same key. */

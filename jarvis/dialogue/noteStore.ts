@@ -29,16 +29,17 @@ const LIMIT = 20;
 export class NoteStore {
   constructor(private readonly file: string) {}
 
-  add(text: string, at: number = Date.now()): void {
+  /** Добавить поправку. `false` — на диск не легло, и человеку об этом скажут. */
+  add(text: string, at: number = Date.now()): boolean {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed) return true;
 
     const notes = this.read();
     // Человек повторяет себя, когда не слышит ответа. Это одна правка.
-    if (notes.some((note) => note.text === trimmed)) return;
+    if (notes.some((note) => note.text === trimmed)) return true;
 
     notes.push({ at, text: trimmed });
-    this.write(notes.slice(-LIMIT));
+    return this.write(notes.slice(-LIMIT));
   }
 
   /** Забирает всё и очищает. */
@@ -66,8 +67,7 @@ export class NoteStore {
     const notes = this.read();
     const left = notes.filter((note) => note.text !== trimmed);
     if (left.length === notes.length) return false;
-    this.write(left);
-    return true;
+    return this.write(left);
   }
 
   clear(): void {
@@ -92,12 +92,22 @@ export class NoteStore {
     }
   }
 
-  private write(notes: Note[]): void {
+  /**
+   * Записать. Возвращает, дошло ли до диска.
+   *
+   * Раньше отказ глотался молча, а инструмент отвечал человеку успехом:
+   * «Учту» звучало, поправка не сохранялась, и узнать об этом было неоткуда.
+   * Ронять помощника из-за занятого диска по-прежнему не будем — но и врать
+   * не будем.
+   */
+  private write(notes: Note[]): boolean {
     try {
       mkdirSync(path.dirname(this.file), { recursive: true });
       writeFileSync(this.file, JSON.stringify(notes), 'utf8');
-    } catch {
-      // Диск мог быть занят. Потерянная правка лучше упавшего помощника.
+      return true;
+    } catch (error) {
+      console.error(`[jarvis] ящик поправок не записался: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
     }
   }
 }

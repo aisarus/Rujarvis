@@ -16,7 +16,7 @@
  * и прочитать, — это план, про который нельзя сказать, врёт он или нет.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import type { Plan, PlanStep, StepState } from './plan';
@@ -37,13 +37,25 @@ export class PlanStore {
     }
   }
 
-  write(plan: Plan): void {
+  /**
+   * Записать план. Возвращает, дошло ли до диска.
+   *
+   * Отказ глотался молча, и инструмент отвечал человеку успехом: «дописал
+   * шагом три» звучало, шага в плане не появлялось. Ронять помощника из-за
+   * занятого диска по-прежнему не будем — но и врать не будем.
+   */
+  write(plan: Plan): boolean {
     try {
       mkdirSync(path.dirname(this.file), { recursive: true });
-      writeFileSync(this.file, JSON.stringify(plan, null, 2), 'utf8');
-    } catch {
-      // Диск занят. Потерянный план хуже, чем сохранённый, но лучше, чем
-      // упавший посреди работы помощник.
+      // Через временный файл: обрыв посреди записи оставлял обрезанный JSON,
+      // а следующий читатель принимал его за отсутствующий план.
+      const черновик = `${this.file}.${process.pid}.tmp`;
+      writeFileSync(черновик, JSON.stringify(plan, null, 2), 'utf8');
+      renameSync(черновик, this.file);
+      return true;
+    } catch (error) {
+      console.error(`[jarvis] план не записался: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
     }
   }
 

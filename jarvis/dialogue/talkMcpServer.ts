@@ -149,7 +149,11 @@ export function createTalkMcpServer(bridge = new TalkBridge(bridgeDir())): McpSe
     ({ text }) => {
       const clean = text.trim();
       if (!clean) return refused('Пустая поправка — не поправка.');
-      new NoteStore(dataFile('JARVIS_NOTES', 'notes.json')).add(clean);
+      // Успех отвечаем только если запись дошла до диска. Иначе человек
+      // слышал «положил», а поправка исчезала — и узнать об этом было
+      // неоткуда.
+      const легло = new NoteStore(dataFile('JARVIS_NOTES', 'notes.json')).add(clean);
+      if (!легло) return refused('Не записал поправку: не вышло сохранить.');
       return say('Положил в поправки, агент заберёт сам.');
     },
   );
@@ -173,7 +177,7 @@ export function createTalkMcpServer(bridge = new TalkBridge(bridgeDir())): McpSe
       const changed = addStep(plan, text, Date.now());
       if (!changed) return refused('Не добавил: пусто, повтор или план уже полон.');
 
-      store.write(changed);
+      if (!store.write(changed)) return refused('Не дописал: не вышло сохранить план.');
       return say(`Дописал шагом ${changed.steps.length}.`);
     },
   );

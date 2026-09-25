@@ -305,10 +305,28 @@ async function freeTarget(folder: string, name: string): Promise<string> {
 async function moveEntry(source: string, target: string): Promise<void> {
   try {
     await rename(source, target);
-  } catch {
-    // Переименование не работает между дисками — тогда копия и удаление.
-    await cp(source, target, { recursive: true, errorOnExist: true, force: false });
-    await rm(source, { recursive: true, force: true }).catch(() => {});
+    return;
+  } catch (error) {
+    // На копию переходим только когда дело в разных дисках.
+    //
+    // Раньше сюда сваливался ЛЮБОЙ отказ: занятый файл (EBUSY, EPERM) давал
+    // копию, а удаление источника падало — и его отказ глушился. Инструмент
+    // отвечал «файл теперь здесь», оригинал оставался на месте, и следующая
+    // уборка раскладывала его второй раз как «… (2).png».
+    const код = (error as NodeJS.ErrnoException)?.code;
+    if (код !== 'EXDEV') throw error;
+  }
+
+  await cp(source, target, { recursive: true, errorOnExist: true, force: false });
+  try {
+    await rm(source, { recursive: true, force: true });
+  } catch (error) {
+    // Копия уже лежит на месте — убираем её, чтобы файл не оказался в двух
+    // местах сразу, и говорим правду.
+    await rm(target, { recursive: true, force: true }).catch(() => undefined);
+    throw new Error(
+      `скопировал, но не смог убрать исходник ${source}: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 

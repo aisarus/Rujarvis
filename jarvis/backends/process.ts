@@ -237,6 +237,17 @@ export class CliProcess implements CliHandle {
         });
       });
 
+      // Отказ записи в stdin — не повод ронять приложение.
+      //
+      // Если CLI кончился раньше, чем прочитал ввод (ошибка входа, неверный
+      // ключ, асинхронный ENOENT на Windows), поток отдаёт `error` — EPIPE
+      // или ERR_STREAM_DESTROYED. Слушателя не было, и Node выбрасывал это
+      // необработанным исключением: падал весь Электрон из-за процесса, исход
+      // которого и так придёт событиями `close` и `error`.
+      child.stdin?.on('error', (error: Error) => {
+        console.error(`[jarvis] не записалось в ввод процесса: ${error.message}`);
+      });
+
       if (this.options.stdin !== undefined) {
         child.stdin?.end(this.options.stdin);
       } else {

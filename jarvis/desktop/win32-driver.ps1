@@ -102,8 +102,19 @@ public class Desk {
         AttachThreadInput(mine, target, false);
         AttachThreadInput(mine, front, false);
 
-        SystemParametersInfo(SET_LOCK, 0, was, SEND_CHANGE);
+        /*
+            Vozvrashchaem ZNACHENIE, a ne adres.
+            
+            U SPI_GETFOREGROUNDLOCKTIMEOUT pvParam - eto ukazatel na DWORD, a u
+            SPI_SETFOREGROUNDLOCKTIMEOUT - samo znachenie, privedyonnoe k PVOID.
+            Zdes peredavalsya `was`, to est adres bufera: Windows poluchal
+            timeout v milliony millisekund, i posle pervogo zhe pereklyucheniya
+            sistema pochti perestavala otdavat fokus komu-libo v etom seanse.
+            Kommentariy obeshchal "vozvrashchaem kak bylo" - kod etogo ne delal.
+        */
+        uint bylo = (uint)Marshal.ReadInt32(was);
         Marshal.FreeHGlobal(was);
+        SystemParametersInfo(SET_LOCK, 0, new IntPtr((int)bylo), SEND_CHANGE);
 
         System.Threading.Thread.Sleep(250);
         StringBuilder sb = new StringBuilder(512);
