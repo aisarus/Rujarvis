@@ -262,6 +262,26 @@ let lastCell: number | null = null;
 let thoughtRef: UtteranceBuffer | null = null;
 let overlayRef: StatusOverlay | null = null;
 let talkRef: TalkSession | null = null;
+
+/**
+ * Шов для приёмки: подставить те же ссылки, что ставит запуск моста.
+ *
+ * Настройки голосом живут на ссылках уровня модуля, и заполняет их
+ * `startJarvisVoiceBridge` — а он требует микрофон, модели и звуковое окно.
+ * Без шва проверка упиралась в разбор фразы и обрывалась ровно там, где
+ * начинается работа: изменилось ли значение, что услышал человек, и стало ли
+ * окно шире. Именно в этом месте и нашлась потеря крупного режима.
+ *
+ * Приёмка возвращает `null` за собой, чтобы соседние случаи не наткнулись на
+ * чужой склад настроек.
+ */
+export function привязатьНастройкиДляПриёмки(
+  store: SettingsStore | null,
+  overlay: StatusOverlay | null,
+): void {
+  settingsRef = store;
+  overlayRef = overlay;
+}
 /** Как остановить мост разговора при выходе. */
 let stopTalkBridge: (() => void) | null = null;
 /**
@@ -534,6 +554,7 @@ async function применитьНастройку(
   if (what === 'bigMode' || what === 'wakeAck') {
     const значение = direction === 'on';
     store.update({ [what]: значение } as Partial<AppSettings>);
+    if (what === 'bigMode') overlayRef?.setBig(значение);
     const фразы: Record<'bigMode' | 'wakeAck', [string, string]> = {
       bigMode: [tr('Сделал крупнее.', 'Text is larger now.'), tr('Вернул обычный размер.', 'Back to normal size.')],
       wakeAck: [tr('Буду отзываться.', 'I will answer.'), tr('Не буду отзываться.', 'I will stay quiet.')],
@@ -1013,6 +1034,9 @@ async function поднятьМост(options: {
   }
 
   const overlay = createStatusOverlay();
+  // Крупный режим — из настроек, и сразу: его могли включить голосом в прошлый
+  // раз, и при запуске плашка обязана быть такой, какой её оставили.
+  overlay.setBig(settings().bigMode);
   overlayRef = overlay;
   gridOverlay = createGridOverlay();
   helpOverlay = createHelpOverlay();
@@ -1702,6 +1726,30 @@ async function поднятьМост(options: {
       note('file', `сделал ${path.basename(file)} — ${file}`);
     }
     if (full) void session.speak(full);
+
+    // Куда лёг файл — вслух, а не только в проводник.
+    //
+    // Проводник открывается и выделяет файл, и для зрячего этого хватает. Тот,
+    // кто на экран не смотрит — или не видит его, — узнавал о результате
+    // ровно ничего: ответ агента говорит, ЧТО сделано, но не ГДЕ лежит.
+    //
+    // Называем папку, а не путь целиком: «C:\Users\…\Картинки» на слух
+    // невыносимо и бесполезно.
+    if (made?.paths?.length) {
+      const файл = made.paths[0] as string;
+      const раздел = path.basename(path.dirname(файл));
+      const сколько = made.paths.length;
+      const ещё =
+        сколько > 1
+          ? tr(` И ещё ${сколько - 1}, там же.`, ` And ${сколько - 1} more, in the same place.`)
+          : '';
+      void session.speak(
+        tr(
+          `Файл ${path.basename(файл)} лежит в папке ${раздел}.${ещё}`,
+          `File ${path.basename(файл)} is in the ${раздел} folder.${ещё}`,
+        ),
+      );
+    }
 
     // Правка, которую никто не забрал, — это не правка, а потерянная просьба.
     //

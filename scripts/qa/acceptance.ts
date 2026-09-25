@@ -24,7 +24,11 @@ import path from 'node:path';
 
 import { app, BrowserWindow, screen } from 'electron';
 
-import { runDirectCommand, type ГоворящаяСессия } from '../../app/voiceBridge';
+import {
+  привязатьНастройкиДляПриёмки,
+  runDirectCommand,
+  type ГоворящаяСессия,
+} from '../../app/voiceBridge';
 import { parseDirectCommand } from '../../jarvis/control/commands';
 import { cannotMeasure, failed, passed, type Gate } from '../../jarvis/measure/gate';
 import { командаПоказа, openPath, tidyRoot } from '../../jarvis/desktop/files';
@@ -33,9 +37,10 @@ import { createWindowTools } from '../../jarvis/desktop/windowTools';
 import { createHelpOverlay } from '../../app/helpOverlay';
 import { createLogWindow } from '../../app/logWindow';
 import { createStatusOverlay } from '../../app/statusOverlay';
+import { DEFAULT_VOICE, Speaker } from '../../jarvis/voice/tts';
 import { openSettingsWindow } from '../../app/settingsWindow';
 import { jarvisPaths } from '../../jarvis/setup/paths';
-import { SettingsStore } from '../../jarvis/setup/settings';
+import { SPEECH_VOLUME_RANGE, SettingsStore } from '../../jarvis/setup/settings';
 
 const ждать = (мс: number): Promise<void> => new Promise((r) => setTimeout(r, мс));
 
@@ -139,7 +144,20 @@ const окна: Случай[] = [
         const исход = await runDirectCommand(команда, тихаяСессия());
         await ждать(700);
 
-        if (исход.passed === false) return failed(`команда отказала: ${исход.why}`);
+        if (исход.passed === false) {
+          // Полноэкранная игра впереди — это не поломка Джарвиса.
+          //
+          // Windows не отдаёт передний план, пока впереди исключительный
+          // полноэкранный режим: драйвер честно находит окно и честно не может
+          // его поднять, называя помеху («Vperedi: Dota 2»). Считать это
+          // провалом — ложный провал, а он дороже ложного успеха: чинить
+          // побежали бы рабочий код. Меряем только то, что зависит от нас.
+          const помеха = /Vperedi:\s*(.+?)\s*$/u.exec(исход.why ?? '')?.[1];
+          if (помеха && !помеха.toLowerCase().includes(ИМЯ_ОКНА.toLowerCase())) {
+            return cannotMeasure(`впереди «${помеха}» — Windows не отдаёт передний план`);
+          }
+          return failed(`команда отказала: ${исход.why}`);
+        }
         return окно.isMinimized() ? failed('окно осталось свёрнутым') : passed('свёрнутое окно поднялось');
       } finally {
         if (!окно.isDestroyed()) окно.destroy();
@@ -193,6 +211,174 @@ function временныйДом(): { paths: ReturnType<typeof jarvisPaths>; se
 }
 
 const интерфейс: Случай[] = [
+  {
+    имя: 'крупный режим: плашка правда крупнее, а не просто помечена',
+    async проверка(): Promise<Gate> {
+      // Настройка без отрисовки — обман. Меряем саму страницу: шрифт и ширину
+      // окна, а не наличие галочки.
+      const былиДо = снимокОкон();
+      const плашка = createStatusOverlay();
+      const состояние = { indicator: 'listening', listening: true, awake: true, muted: false } as never;
+      try {
+        плашка.note(состояние, 'Слушаю');
+        await ждать(700);
+
+        const окно = новоеОкно(былиДо);
+        if (!окно) return cannotMeasure('окно плашки не нашлось');
+
+        const шрифт = async (): Promise<number> =>
+          Number(
+            await окно.webContents.executeJavaScript(
+              "parseFloat(getComputedStyle(document.getElementById('label')).fontSize)",
+            ),
+          );
+
+        const обычный = await шрифт();
+        const узкое = окно.getBounds().width;
+
+        плашка.setBig(true);
+        плашка.note(состояние, 'Слушаю');
+        await ждать(600);
+
+        const крупный = await шрифт();
+        const широкое = окно.getBounds().width;
+
+        if (!(крупный > обычный)) return failed(`шрифт не вырос: ${обычный} → ${крупный}`);
+        if (!(широкое > узкое)) return failed(`окно не выросло: ${узкое} → ${широкое}`);
+        // Человеку со слабым зрением 20 пикселей мало.
+        if (крупный < 24) return failed(`крупный шрифт всего ${крупный} точек`);
+        return passed(`шрифт ${обычный} → ${крупный}, окно ${узкое} → ${широкое}`);
+      } finally {
+        плашка.dispose();
+      }
+    },
+  },
+  {
+    имя: 'настройки голосом: фраза меняет значение, а не только отвечает',
+    async проверка(): Promise<Gate> {
+      // Разбор фразы проверен отдельно. Здесь проверяется то, что за ним:
+      // дошло ли изменение до склада настроек, услышал ли человек новое
+      // значение и стало ли окно шире на самом деле.
+      const каталог = mkdtempSync(path.join(os.tmpdir(), 'jarvis-qa-settings-'));
+      const склад = new SettingsStore(path.join(каталог, 'settings.json'));
+      const былиДо = снимокОкон();
+      const плашка = createStatusOverlay();
+      const сказано: string[] = [];
+      const сессия: ГоворящаяСессия = {
+        speak(text) {
+          сказано.push(text);
+        },
+        status: { indicator: 'listening', listening: true, awake: true, muted: false } as never,
+      };
+
+      привязатьНастройкиДляПриёмки(склад, плашка);
+      try {
+        await ждать(600);
+        const окно = новоеОкно(былиДо);
+        if (!окно) return cannotMeasure('окно плашки не нашлось');
+
+        const выполнить = async (фраза: string): Promise<Gate> => {
+          const разбор = parseDirectCommand(фраза);
+          if (!разбор || разбор.kind !== 'setting') {
+            return failed(`«${фраза}» разобралась не как настройка: ${разбор?.kind ?? 'ничего'}`);
+          }
+          return runDirectCommand(разбор, сессия);
+        };
+
+        // Идём вниз, а не вверх: по умолчанию громкость уже на потолке, и
+        // «громче» там законно ничего не меняет.
+        const громкостьДо = склад.get().speechVolume;
+        const вниз = await выполнить('говори тише');
+        if (вниз.passed !== true) return вниз;
+        const громкостьПосле = склад.get().speechVolume;
+        if (!(громкостьПосле < громкостьДо)) {
+          return failed(`громкость не изменилась: ${громкостьДо} → ${громкостьПосле}`);
+        }
+        if (!сказано.at(-1)?.includes('Громкость')) {
+          return failed(`человек не услышал нового значения: «${сказано.at(-1) ?? ''}»`);
+        }
+
+        const вверх = await выполнить('говори громче');
+        if (вверх.passed !== true) return вверх;
+        if (!(склад.get().speechVolume > громкостьПосле)) {
+          return failed(`обратно вверх не пошло: осталось ${склад.get().speechVolume}`);
+        }
+
+        // Упираемся в оба предела: важно, что там честно говорят «не могу»,
+        // а не молчат и не уходят за край.
+        const доПредела = async (фраза: string): Promise<Gate | null> => {
+          for (let i = 0; i < 14; i += 1) {
+            const шаг = await выполнить(фраза);
+            if (шаг.passed !== true) return шаг;
+          }
+          return null;
+        };
+
+        const сорвалось = await доПредела('говори тише');
+        if (сорвалось) return сорвалось;
+        const дно = склад.get().speechVolume;
+        if (Math.abs(дно - SPEECH_VOLUME_RANGE.min) > 0.001) {
+          return failed(`громкость ушла мимо предела: ${дно} вместо ${SPEECH_VOLUME_RANGE.min}`);
+        }
+        if (!сказано.at(-1)?.includes('Тише уже не могу')) {
+          return failed(`на нижнем пределе сказано «${сказано.at(-1) ?? ''}»`);
+        }
+
+        const сорвалосьВверх = await доПредела('говори громче');
+        if (сорвалосьВверх) return сорвалосьВверх;
+        const потолок = склад.get().speechVolume;
+        if (Math.abs(потолок - SPEECH_VOLUME_RANGE.max) > 0.001) {
+          return failed(`громкость ушла выше предела: ${потолок} вместо ${SPEECH_VOLUME_RANGE.max}`);
+        }
+        if (!сказано.at(-1)?.includes('Громче уже не могу')) {
+          return failed(`на верхнем пределе сказано «${сказано.at(-1) ?? ''}»`);
+        }
+
+        const узкое = окно.getBounds().width;
+        const крупно = await выполнить('плохо вижу');
+        if (крупно.passed !== true) return крупно;
+        if (склад.get().bigMode !== true) return failed('крупный режим не записался в настройки');
+        await ждать(500);
+        const широкое = окно.getBounds().width;
+        if (!(широкое > узкое)) return failed(`окно не выросло: ${узкое} → ${широкое}`);
+
+        return passed(
+          `громкость ${громкостьДо} → ${дно} → ${потолок} (оба предела), окно ${узкое} → ${широкое}`,
+        );
+      } finally {
+        привязатьНастройкиДляПриёмки(null, null);
+        плашка.dispose();
+      }
+    },
+  },
+  {
+    имя: 'скорость речи: «медленнее» правда удлиняет фразу',
+    async проверка(): Promise<Gate> {
+      // Настройка есть, но синтез мог её игнорировать. Меряем длительность
+      // одного и того же текста на двух скоростях.
+      const пути = jarvisPaths();
+      const голос = new Speaker(пути.voiceModels, DEFAULT_VOICE.ru);
+      try {
+        const текст = 'Проверка скорости речи.';
+        const обычно = await голос.say(текст, 1);
+        const медленно = await голос.say(текст, 0.5);
+
+        const длина = (wav: Buffer): number => wav.length;
+        if (!(длина(медленно.wav) > длина(обычно.wav) * 1.2)) {
+          return failed(
+            `медленная речь не длиннее: ${длина(обычно.wav)} против ${длина(медленно.wav)} байт`,
+          );
+        }
+        return passed(
+          `обычно ${Math.round(длина(обычно.wav) / 1024)} КБ, медленно ${Math.round(длина(медленно.wav) / 1024)} КБ`,
+        );
+      } catch (error) {
+        return cannotMeasure(`синтез недоступен: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        голос.dispose();
+      }
+    },
+  },
   {
     имя: 'плашка: текст не срезается',
     async проверка(): Promise<Gate> {

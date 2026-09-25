@@ -666,7 +666,12 @@ describe('Claude Code adapter', () => {
     const availability = await backend.checkAvailability();
     expect(availability.ready).toBe(true);
     expect(availability.authenticated).toBe(false);
-    expect(availability.reason).toContain('вход не подтверждён');
+    // Отказ говорится ВСЛУХ, и человек на том конце может не знать слов
+    // «CLI» и «аккаунт». Проверяем смысл, а не прежнюю формулировку: названо,
+    // к кому обратиться и что сделать.
+    expect(availability.reason).toContain('кто меня ставил');
+    expect(availability.reason).toMatch(/войти/u);
+    expect(availability.reason).not.toMatch(/CLI/u);
 
     const result = await backend.run(request()).result();
     expect(result.ok).toBe(true);
@@ -694,7 +699,9 @@ describe('Claude Code adapter', () => {
 
     const result = await backend.run(request()).result();
     expect(result.ok).toBe(false);
-    expect(result.error).toContain('не установлен');
+    expect(result.error).toContain('кто меня ставил');
+    expect(result.error).toMatch(/установить/u);
+    expect(result.error).not.toMatch(/CLI/u);
   });
 
   it('survives a probe that rejects', async () => {

@@ -36,7 +36,10 @@ import {
 const BACKEND_ID = 'claude-code' as const;
 
 const AUTH_UNKNOWN_REASON =
-  'Claude Code установлен, но вход не подтверждён. Пробую запустить — если вход не выполнен, запустите claude и войдите в аккаунт.';
+  // Отказ говорится ВСЛУХ, и человек на том конце может не знать слов
+  // «CLI», «аккаунт» и «Claude Code» вовсе. Поэтому просьба обращена не к
+  // нему, а к тому, кто ставил, — и названа простыми словами.
+  'Похоже, я не могу связаться с тем, кто выполняет работу. Попросите того, кто меня ставил, открыть программу Claude и войти.';
 
 const CAPABILITIES: ReadonlySet<JarvisCapability> = new Set<JarvisCapability>([
   'reasoning',
@@ -490,7 +493,8 @@ export class ClaudeCodeBackend implements AgentBackend {
         availability = unavailable(
           BACKEND_ID,
           status.error ??
-            'Claude Code CLI не установлен. Установите его и войдите командой claude.',
+            'У меня нет помощника, который делает работу. Попросите того, кто меня ставил, ' +
+              'установить Claude Code и войти.',
           { checkedAt: this.now() },
         );
       } else if (status.loggedIn === 'unknown') {
