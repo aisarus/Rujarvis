@@ -173,9 +173,13 @@ fi
 step 'Получаю исходники'
 if [ -d "$SOURCE_DIR/.git" ]; then
   note "Обновляю $SOURCE_DIR"
-  git -C "$SOURCE_DIR" fetch origin "$BRANCH" || die 'Не удалось выполнить: git fetch'
-  git -C "$SOURCE_DIR" checkout "$BRANCH" || die 'Не удалось выполнить: git checkout'
-  git -C "$SOURCE_DIR" pull --ff-only origin "$BRANCH" || die 'Не удалось выполнить: git pull'
+  # Клон делается с `--depth 1 --branch`, а это подразумевает
+  # `--single-branch`: обычный `fetch origin <ветка>` не заводит
+  # `origin/<ветка>`, и `checkout` падал с «pathspec did not match» — сменить
+  # ветку без удаления папки было нельзя. Refspec заводит ссылку явно, а
+  # `checkout -B` переводит на неё; отдельный `pull` после этого не нужен.
+  git -C "$SOURCE_DIR" fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"     || die 'Не удалось выполнить: git fetch'
+  git -C "$SOURCE_DIR" checkout -B "$BRANCH" "origin/$BRANCH"     || die 'Не удалось выполнить: git checkout'
 else
   mkdir -p "$INSTALL_ROOT"
   git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$SOURCE_DIR" || die 'Не удалось выполнить: git clone'

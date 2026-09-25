@@ -29,6 +29,8 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
+
+import { cliLaunch } from './spawnCli';
 import { randomUUID } from 'node:crypto';
 
 import { EventChannel } from './process';
@@ -197,9 +199,13 @@ export class LiveSession {
   warm(): void {
     if (this.child) return;
     const spawnIt = this.options.spawnProcess ?? spawn;
-    const child = spawnIt(this.options.command, buildLiveArgs(this.options.key, this.options.extraArgs), {
+    // Та же беда, что у разовых прогонов: `claude.cmd` без оболочки не
+    // запускается вовсе, а с оболочкой разваливается на пробеле в пути.
+    const запуск = cliLaunch(this.options.command, buildLiveArgs(this.options.key, this.options.extraArgs));
+    const child = spawnIt(запуск.command, запуск.args, {
       cwd: this.options.key.cwd,
       env: this.options.env,
+      shell: запуск.shell,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });

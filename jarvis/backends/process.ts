@@ -8,6 +8,8 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 
+import { cliLaunch } from './spawnCli';
+
 import { forgetChild, trackChild } from '../tasks/reaper';
 
 /**
@@ -159,9 +161,13 @@ export class CliProcess implements CliHandle {
 
       let child: ChildProcess;
       try {
-        child = spawn(this.options.command, this.options.args, {
+        // `.cmd` без оболочки Node запускать отказывается (EINVAL), а с
+        // оболочкой — не экранирует пробелы. Оба случая закрыты здесь.
+        const запуск = cliLaunch(this.options.command, this.options.args);
+        child = spawn(запуск.command, запуск.args, {
           cwd: this.options.cwd,
           env: this.options.env ?? process.env,
+          shell: запуск.shell,
           stdio: ['pipe', 'pipe', 'pipe'],
           // A detached group lets cancellation reach grandchildren (a build,
           // a test runner) instead of orphaning them.

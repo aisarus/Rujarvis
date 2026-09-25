@@ -89,13 +89,21 @@ export function resolveCli(
 }
 
 async function version(file: string): Promise<string | null> {
+  const черезОболочку = /\.(cmd|bat)$/iu.test(file);
   try {
-    // .cmd на Windows запускается только через оболочку.
-    const { stdout } = await run(file, ['--version'], {
+    // `.cmd` на Windows запускается только через оболочку — И ТОЛЬКО В
+    // КАВЫЧКАХ.
+    //
+    // При `shell: true` Node склеивает путь и аргументы в одну строку, ничего
+    // не экранируя: путь вида `C:\Users\Иван Петров\...\claude.cmd` доходил до
+    // cmd.exe как команда `C:\Users\Иван`. Версия не читалась, и человек
+    // получал «не установлен» на установленном CLI. Пути с пробелами здесь
+    // обычное дело.
+    const { stdout } = await run(черезОболочку ? `"${file}"` : file, ['--version'], {
       timeout: 10_000,
       encoding: 'utf8',
       windowsHide: true,
-      shell: /\.(cmd|bat)$/iu.test(file),
+      shell: черезОболочку,
     });
     return stdout.trim();
   } catch {
