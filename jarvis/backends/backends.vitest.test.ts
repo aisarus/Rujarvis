@@ -1155,6 +1155,31 @@ describe('BackendManager', () => {
     expect(final.ok).toBe(false);
     expect(final.error).toContain('Нет доступных backend');
   });
+
+  it('с одним Кодексом отказ по экрану называет причину, а не шлёт в настройки', async () => {
+    // У человека с одним Кодексом настройки В ПОРЯДКЕ: Кодекс зелёный и
+    // работает. Экран ему недоступен потому, что инструменты рабочего стола
+    // есть только у Claude Code. «Проверьте настройки AI-аккаунтов» на это
+    // отправляло чинить не туда — человек открывал настройки, видел зелёный
+    // Кодекс и не понимал ничего.
+    const менеджер = managerWith(stubBackend('codex', result({ ok: true, backend: 'codex', text: 'ок' })));
+    const итог = await менеджер.run(request({ capabilities: ['computer'] })).result();
+    expect(итог.ok).toBe(false);
+    expect(итог.error).toContain('только Claude Code');
+    expect(итог.error).toContain('песочнице');
+    expect(итог.error).not.toContain('Проверьте настройки');
+  });
+
+  it('без единого бэкенда причина прежняя: чинить правда настройки', () => {
+    // Обратная сторона: когда не вошли НИКУДА, «проверьте настройки» — верный
+    // совет, и подменять его рассказом про Кодекс нельзя.
+    return new BackendManager()
+      .run(request({ capabilities: ['computer'] }))
+      .result()
+      .then((итог) => {
+        expect(итог.error).toContain('Проверьте настройки');
+      });
+  });
 });
 
 describe('isBackendLevelFailure', () => {
