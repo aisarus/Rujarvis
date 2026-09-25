@@ -47,6 +47,55 @@ for pr in $list; do
     continue
   fi
 
+  # Разбор уже идёт — не дёргаем повторно.
+  #
+  # Без этого задача из планировщика писала «@coderabbitai review» каждые
+  # пятнадцать минут в PR, который бот прямо сейчас и разбирает: и шум в
+  # обсуждении, и лишний расход лимита.
+  #
+  # Время и текст берём ОТДЕЛЬНЫМИ запросами. Первая версия склеивала их в
+  # одну строку и брала `tail -1` — а тело у бота многострочное, и в руки
+  # попадала последняя строка «</details>» без времени и без признака.
+  when=$(gh api "repos/$repo/issues/$pr/comments" --paginate     --jq '[.[] | select(.user.login | test("coderabbit";"i"))] | last | .created_at'     | tail -1) || { echo "Не удалось прочитать ответы бота в PR №$pr." >&2; exit 1; }
+  text=$(gh api "repos/$repo/issues/$pr/comments" --paginate     --jq '[.[] | select(.user.login | test("coderabbit";"i"))] | last | .body | gsub("
+"; " ")')     || { echo "Не удалось прочитать ответы бота в PR №$pr." >&2; exit 1; }
+
+  # Разбор без единого встроенного замечания — тоже разбор.
+  #
+  # Бот отвечает общим комментарием «Actionable comments posted: 0» или
+  # «Review skipped», и встроенных замечаний при этом нет вовсе. Скрипт считал
+  # такой кусок неразобранным, просил разбор у него снова и снова и НИКОГДА не
+  # доходил до остальных: обход вставал на первом же чистом куске, а каждые
+  # пятнадцать минут уходил запрос из расписания.
+  if printf '%s' "$text" | grep -qE 'Actionable comments posted|Review skipped|No actionable comments'; then
+    echo "PR №$pr разобран без замечаний — пропускаю."
+    continue
+  fi
+
+  # «Уже разобран» без единого замечания — не разбор, а тупик.
+  #
+  # Бот отвечает «Already reviewed the last commit» и ничего не делает: он
+  # считает коммит просмотренным, хотя замечаний не появилось. Обычная просьба
+  # тут бесполезна — расписание повторяло бы её вечно. Нужен полный обход.
+  if printf '%s' "$text" | grep -qE 'Already reviewed|Action not completed'; then
+    echo "PR №$pr считается разобранным, но замечаний нет — прошу полный обход…"
+    gh pr comment "$pr" --repo "$repo" --body '@coderabbitai full review' >/dev/null || {
+      echo "Не удалось попросить полный обход у PR №$pr." >&2
+      exit 1
+    }
+    echo "Запрошено. Следующий кусок — в следующий раз, когда отпустит лимит."
+    exit 0
+  fi
+
+  if printf '%s' "$text" | grep -qE 'Review triggered|Currently processing'; then
+    age=$(( ( $(date -u +%s) - $(date -u -d "$when" +%s 2>/dev/null || echo 0) ) / 60 ))
+    # Полчаса на девяносто файлов хватает; если завис — попробуем снова.
+    if [ "$age" -ge 0 ] && [ "$age" -lt 30 ]; then
+      echo "PR №$pr уже разбирается ($age мин назад) — жду."
+      exit 0
+    fi
+  fi
+
   echo "Прошу разбор у PR №$pr…"
   gh pr comment "$pr" --repo "$repo" --body '@coderabbitai review' >/dev/null || {
     echo "Не удалось попросить разбор у PR №$pr." >&2
