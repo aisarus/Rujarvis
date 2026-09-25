@@ -18,6 +18,7 @@ function makePng(
   width: number,
   height: number,
   colour: (x: number, y: number) => [number, number, number],
+  способ = 0,
 ): Buffer {
   const chunk = (name: string, data: Buffer): Buffer => {
     const length = Buffer.alloc(4);
@@ -34,15 +35,51 @@ function makePng(
   header[11] = 0;
   header[12] = 0; // без чересстрочности
 
-  const raw = Buffer.alloc((width * 3 + 1) * height);
+  // Сначала сырые пиксели построчно, потом — фильтрация тем же способом,
+  // каким её снимает разборщик. Кодирование фильтра — обратная операция, и
+  // второй разборщик ради этого писать не нужно.
+  const шаг = width * 3;
+  const строки: number[][] = [];
   for (let y = 0; y < height; y += 1) {
-    const row = y * (width * 3 + 1);
-    raw[row] = 0; // способ фильтрации: никакой
+    const строка: number[] = [];
     for (let x = 0; x < width; x += 1) {
       const [r, g, b] = colour(x, y);
-      raw[row + 1 + x * 3] = r;
-      raw[row + 2 + x * 3] = g;
-      raw[row + 3 + x * 3] = b;
+      строка.push(r, g, b);
+    }
+    строки.push(строка);
+  }
+
+  const paeth = (a: number, b: number, c: number): number => {
+    const p = a + b - c;
+    const pa = Math.abs(p - a);
+    const pb = Math.abs(p - b);
+    const pc = Math.abs(p - c);
+    if (pa <= pb && pa <= pc) return a;
+    return pb <= pc ? b : c;
+  };
+
+  const raw = Buffer.alloc((шаг + 1) * height);
+  for (let y = 0; y < height; y += 1) {
+    const row = y * (шаг + 1);
+    raw[row] = способ;
+    const текущая = строки[y] as number[];
+    const прошлая = (строки[y - 1] ?? []) as number[];
+    for (let i = 0; i < шаг; i += 1) {
+      const сырой = текущая[i] as number;
+      const слева = i >= 3 ? (текущая[i - 3] as number) : 0;
+      const сверху = y > 0 ? (прошлая[i] as number) : 0;
+      const наискось = y > 0 && i >= 3 ? (прошлая[i - 3] as number) : 0;
+      const вычесть =
+        способ === 1
+          ? слева
+          : способ === 2
+            ? сверху
+            : способ === 3
+              ? Math.floor((слева + сверху) / 2)
+              : способ === 4
+                ? paeth(слева, сверху, наискось)
+                : 0;
+      raw[row + 1 + i] = (сырой - вычесть) & 0xff;
     }
   }
 
@@ -185,5 +222,32 @@ describe('inkGate', () => {
 
     expect(isUnknown(gate)).toBe(true);
     expect(isFailure(gate)).toBe(false);
+  });
+});
+
+describe('снятие фильтров PNG', () => {
+  /**
+   * Замечание CodeRabbit (кусок 3, PR №42). Все проверки строили картинку
+   * способом 0 — «никакой фильтрации», — и ветки Sub, Up, Average и Paeth в
+   * разборщике не выполнялись НИ РАЗУ. Сломай любую из них, и набор остался
+   * бы зелёным. А снимки Chromium и Electron кодируются адаптивно: ошибка
+   * там портила бы пиксели каждого настоящего снимка, и `frameInk` мерил бы
+   * мусор.
+   */
+  const пёстрая = (x: number, y: number): [number, number, number] => [
+    (x * 37 + y * 11) & 0xff,
+    (x * 5 + y * 83) & 0xff,
+    (x * 149 + y * 29) & 0xff,
+  ];
+
+  it.each([0, 1, 2, 3, 4])('способ %i разбирается в те же пиксели', (способ) => {
+    const разобранное = decodePng(makePng(7, 5, пёстрая, способ));
+    expect(разобранное, `способ ${способ} не разобрался`).not.toBeNull();
+
+    const ожидаемые: number[] = [];
+    for (let y = 0; y < 5; y += 1) {
+      for (let x = 0; x < 7; x += 1) ожидаемые.push(...пёстрая(x, y));
+    }
+    expect([...(разобранное?.pixels ?? [])]).toEqual(ожидаемые);
   });
 });

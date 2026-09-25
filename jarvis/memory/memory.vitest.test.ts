@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -151,6 +151,37 @@ describe('file-backed memory', () => {
 
     const raw = await readFile(file, 'utf-8');
     expect(JSON.parse(raw)).toEqual(snapshot);
+
+    // Черновиков не остаётся.
+    //
+    // Раньше проверялись только запись и чтение: замени write-then-rename на
+    // прямую запись в целевой файл — и проверка осталась бы зелёной. То есть
+    // она проверяла комментарий, а не код.
+    const остатки = (await readdir(dir)).filter((имя) => имя.endsWith('.tmp'));
+    expect(остатки).toEqual([]);
+  });
+
+  it('два сохранения подряд не мешают друг другу', async () => {
+    // Имя черновика было общим на процесс, и две записи без `await` шли в
+    // ОДИН файл: второе переименование падало, либо на место памяти въезжала
+    // перемешанная половина.
+    const dir = await temporaryDir();
+    const file = path.join(dir, 'memory.json');
+    const storage = createFileMemoryStorage(file);
+    const снимок = (имя: string): MemorySnapshot => ({
+      projects: [{ name: имя, path: `D:/Projects/${имя}` }],
+      apps: [],
+      recentTasks: [],
+      preferences: {},
+    });
+
+    await Promise.all([storage.save(снимок('первый')), storage.save(снимок('второй'))]);
+
+    const прочитано = JSON.parse(await readFile(file, 'utf-8')) as MemorySnapshot;
+    // Который из двух победил — не важно; важно, что файл целый и это один
+    // из них, а не их смесь.
+    expect(['первый', 'второй']).toContain(прочитано.projects[0]?.name);
+    expect((await readdir(dir)).filter((имя) => имя.endsWith('.tmp'))).toEqual([]);
   });
 
   it('keeps everything under one Jarvis folder that JARVIS_HOME can move', () => {

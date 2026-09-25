@@ -63,7 +63,10 @@ describe('строка на событие', () => {
       { type: 'status', backend: 'x', text: 'т' },
       { type: 'assistant-text', backend: 'x', text: 'т' },
       { type: 'tool', backend: 'x', name: 'т' },
-      { type: 'file-changed', backend: 'x', change: { path: 'п', kind: 'created' } },
+      // Поле называется `action`, а не `kind`. С опечаткой строка выходила
+      // «правлю файл undefined: п», а проверка `.not.toBe('')` её пропускала:
+      // сторож оставался зелёным при любом сломанном поле.
+      { type: 'file-changed', backend: 'x', change: { path: 'п', action: 'created' } },
       { type: 'command', backend: 'x', command: 'ls' },
       { type: 'error', backend: 'x', message: 'м', retryable: false },
       {
@@ -73,7 +76,11 @@ describe('строка на событие', () => {
       },
     ];
     for (const event of every) {
-      expect(lineFor(event as never)).not.toBe('');
+      const строка = lineFor(event as never);
+      expect(строка, `вид ${String((event as { type: string }).type)} без строки`).not.toBe('');
+      // И пустых мест в строке быть не должно: «undefined» внутри означает,
+      // что поле события прочитали не то.
+      expect(строка).not.toContain('undefined');
     }
   });
 });

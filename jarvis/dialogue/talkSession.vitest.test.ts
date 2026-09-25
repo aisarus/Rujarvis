@@ -216,7 +216,20 @@ describe('TalkSession', () => {
 
     expect(ключи[0]?.cwd).toBe(dir);
     expect(ключи[0]?.permissionMode).toBe('default');
-    expect(ключи[0]?.tools.split(',')).toEqual(talkToolNames());
+    // Список записан ЛИТЕРАЛОМ, а не вызовом той же функции.
+    //
+    // Сравнение с `talkToolNames()` — это сравнение значения с самим собой:
+    // лишний глагол в `TALK_TOOLS` (скажем, запуск оболочки) проехал бы
+    // незамеченным, а это граница безопасности разговора.
+    expect(ключи[0]?.tools.split(',')).toEqual([
+      'mcp__jarvis-talk__start_work',
+      'mcp__jarvis-talk__add_note',
+      'mcp__jarvis-talk__stop_work',
+      'mcp__jarvis-talk__pause_work',
+      'mcp__jarvis-talk__resume_work',
+      'mcp__jarvis-talk__add_step',
+      'mcp__jarvis-talk__work_now',
+    ]);
     expect(ключи[0]?.tools).not.toContain('Bash');
     expect(ключи[0]?.tools).not.toContain('Write');
     // Каждый глагол — через рабочий поток: своего имени вне сервера нет ни у

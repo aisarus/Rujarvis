@@ -16,6 +16,17 @@ import { EMPTY_SNAPSHOT, type MemorySnapshot, type MemoryStorage } from './store
 export function createFileMemoryStorage(
   filePath = path.join(jarvisPaths().data, 'memory.json'),
 ): MemoryStorage {
+  /**
+   * Записи выстраиваются в очередь.
+   *
+   * Своё имя черновика решает половину беды, но не всю: на Windows два
+   * переименования в один и тот же файл дают EPERM — второе падает, потому
+   * что первое держит цель. А отказ записи молча терял псевдоним, которому
+   * человек только что научил Джарвиса. Очередь дешевле любых разбирательств:
+   * сохранений тут единицы в минуту.
+   */
+  let очередь: Promise<void> = Promise.resolve();
+
   return {
     async load() {
       let raw: string;
@@ -59,15 +70,24 @@ export function createFileMemoryStorage(
     },
 
     async save(snapshot) {
-      await mkdir(path.dirname(filePath), { recursive: true });
-      // Write-then-rename: a crash mid-write must not leave a truncated file
-      // that silently loses every project alias the user taught Jarvis.
-      // Своё имя на каждую запись: два сохранения подряд без `await` писали в
-      // ОДИН файл, и второе переименование падало с ENOENT — либо на место
-      // памяти въезжала перемешанная половина.
-      const temporary = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-      await writeFile(temporary, JSON.stringify(snapshot, null, 2), 'utf-8');
-      await rename(temporary, filePath);
+      const моя = очередь.then(() => записать(snapshot));
+      // Хвост не должен обрываться на неудаче: упавшая запись не повод
+      // перестать сохранять дальше.
+      очередь = моя.catch(() => undefined);
+      return моя;
     },
   };
+
+  async function записать(snapshot: MemorySnapshot): Promise<void> {
+    await mkdir(path.dirname(filePath), { recursive: true });
+    // Сначала во временный файл, потом переименование: обрыв посреди записи
+    // не должен оставить обрезанный файл, унося с собой все псевдонимы, к
+    // которым человек приучил Джарвиса.
+    //
+    // Имя черновика своё на каждую запись: с общим два сохранения подряд без
+    // `await` писали в ОДИН файл.
+    const temporary = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+    await writeFile(temporary, JSON.stringify(snapshot, null, 2), 'utf-8');
+    await rename(temporary, filePath);
+  }
 }

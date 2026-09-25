@@ -331,7 +331,13 @@ describe('TaskManager', () => {
     }
     await tick();
 
-    expect(task.events.length).toBeLessThanOrEqual(5);
+    // Точное число и ПОСЛЕДНИЕ события.
+    //
+    // «Не больше пяти» проходило и на пустом списке, и когда предел отрезал
+    // не тот конец: человек увидел бы первые шаги вместо свежих.
+    expect(task.events).toHaveLength(5);
+    expect(task.events.at(-1)).toMatchObject({ type: 'status', text: 'шаг 19' });
+    expect(task.events.at(0)).toMatchObject({ type: 'status', text: 'шаг 15' });
     controls.finish();
     await tick();
   });
@@ -461,7 +467,10 @@ describe('progress', () => {
 
 describe('TaskManager timing', () => {
   it('uses the injected clock so timestamps are testable', async () => {
-    const clock = vi.fn(() => 1_000);
+    // Часы должны ИДТИ: с постоянным значением проверка `finishedAt`
+    // проходила бы, даже если туда попадёт время создания или начала.
+    let тик = 1_000;
+    const clock = vi.fn(() => тик++);
     const { backend, controls } = controllableBackend();
     const backends = new BackendManager();
     backends.register(backend);
@@ -472,6 +481,7 @@ describe('TaskManager timing', () => {
     expect(task.createdAt).toBe(1_000);
     controls.finish();
     await tick();
-    expect(task.finishedAt).toBe(1_000);
+    expect(task.finishedAt).toBeGreaterThan(task.startedAt ?? 0);
+    expect(task.startedAt).toBeGreaterThan(task.createdAt);
   });
 });

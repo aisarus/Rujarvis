@@ -89,9 +89,13 @@ describe('decide', () => {
     expect(decision.outcome).toBe('refuse');
   });
 
-  it('is a pure function of the action, so identical actions decide identically', () => {
+  it('одна и та же команда решается одинаково — и решается ОПАСНОЙ', () => {
+    // Сравнение вызова с самим собой падало бы только от
+    // недетерминированности: `rm -rf build` мог перестать считаться опасным, а
+    // проверка осталась бы зелёной. Ожидание записано значением.
     const action: JarvisAction = { kind: 'shell', command: 'rm -rf build', insideProject: true };
-    expect(decide(action)).toEqual(decide(action));
+    expect(decide(action)).toMatchObject({ outcome: 'ask', level: 'dangerous' });
+    expect(decide(action)).toEqual(decide({ ...action }));
   });
 });
 
