@@ -10,12 +10,13 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 
-import { app, Menu, nativeImage, shell, Tray } from 'electron';
+import { app, desktopCapturer, Menu, nativeImage, shell, systemPreferences, Tray } from 'electron';
 
 import { APP_ROOT } from './root';
 import { setLanguage } from '../jarvis/locale/language';
 import { jarvisPaths } from '../jarvis/setup/paths';
 import { SettingsStore } from '../jarvis/setup/settings';
+import { запроситьРазрешения, чегоНеХватает, type Система } from './macPermissions';
 import { openSettingsWindow } from './settingsWindow';
 import { uiStrings } from './ui/strings';
 import { startJarvisVoiceBridge, type JarvisVoiceBridge } from './voiceBridge';
@@ -64,6 +65,48 @@ let voiceError = '';
 
 function iconPath(name: string): string {
   return path.join(APP_ROOT, 'resources', name);
+}
+
+/**
+ * Настоящая система для модуля разрешений.
+ *
+ * Здесь только переходники к Электрону — вся логика и все решения лежат в
+ * `macPermissions.ts`, где их можно проверить, не поднимая приложение.
+ */
+const СИСТЕМА: Система = {
+  спроситьМикрофон: () => systemPreferences.askForMediaAccess('microphone'),
+  довереныЛиМы: (спрашивать) => systemPreferences.isTrustedAccessibilityClient(спрашивать),
+  состояниеЭкрана: () => systemPreferences.getMediaAccessStatus('screen'),
+  // Отдельной просьбы про запись экрана у macOS нет: окно показывается на
+  // первой попытке снять экран. Кадр 1×1 — нам нужен вопрос, а не картинка.
+  тронутьЭкран: async () => {
+    await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } });
+  },
+};
+
+/**
+ * Спросить разрешения до первой команды.
+ *
+ * Не после её провала: без «Универсального доступа» нажатия не падают, а
+ * молча не доходят, и человек будет искать поломку в Джарвисе, которой нет.
+ * Окна показывает система, и только один раз — промахнуться мимо этого раза
+ * нельзя.
+ */
+async function askPermissions(): Promise<void> {
+  if (process.platform !== 'darwin') return;
+  try {
+    const опрос = await запроситьРазрешения(СИСТЕМА);
+    console.log(
+      `[main] разрешения macOS: микрофон ${опрос.микрофон}, ` +
+        `универсальный доступ ${опрос.доступность}, запись экрана ${опрос.экран}`,
+    );
+    const беда = чегоНеХватает(опрос);
+    if (беда) console.log(`[main] ${беда}`);
+  } catch (error) {
+    // Спросить не вышло — работаем дальше: система спросит сама на первой
+    // операции, и это хуже, но не смертельно.
+    console.error('[main] не удалось спросить разрешения macOS:', error);
+  }
 }
 
 async function startVoice(): Promise<void> {
@@ -223,7 +266,12 @@ void app.whenReady().then(async () => {
 
   if (!settings.get().onboarded) {
     showSettings('onboarding');
+    // Разрешения спрашиваем и здесь: мастер ведёт человека по шагам, и окна
+    // системы должны появиться рядом с ними, а не через неделю, когда он
+    // впервые скажет «нажми кнопку».
+    await askPermissions();
     return;
   }
+  await askPermissions();
   await startVoice();
 });

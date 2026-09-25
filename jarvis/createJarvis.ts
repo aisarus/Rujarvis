@@ -159,6 +159,10 @@ export function createJarvis(options: CreateJarvisOptions = {}): Jarvis {
       probe: createCodexProbe(),
       model: options.codexModel,
       allowFullAccess: options.allowUnrestrictedCli === true,
+      // Тот же рабочий стол, что у Claude Code. Кодекс берёт MCP-серверы из
+      // своего config.toml, но `-c` перекрывает его на один запуск — чужой
+      // файл настроек мы не трогаем.
+      desktopMcpConfig: options.desktopMcpConfig,
     }),
   );
 

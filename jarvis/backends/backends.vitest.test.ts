@@ -1156,6 +1156,19 @@ describe('BackendManager', () => {
     expect(final.error).toContain('Нет доступных backend');
   });
 
+  it('Кодексу с рабочим столом задачу про экран отдают, а без него — нет', async () => {
+    // Раньше Кодекс исключался из задач про экран навсегда. Это было верно,
+    // пока рук у него не было; теперь рабочий стол даётся ему тем же
+    // MCP-сервером, что и Клоду, и спрашивать надо агента, а не платформу.
+    const сРуками = stubBackend('codex', result({ ok: true, backend: 'codex', text: 'ок' }));
+    (сРуками as { capabilities: ReadonlySet<string> }).capabilities = new Set(['computer']);
+    const менеджер = managerWith(сРуками);
+    expect(менеджер.plan(request({ capabilities: ['computer'] })).order).toEqual(['codex']);
+
+    const безРук = stubBackend('codex', result({ ok: true, backend: 'codex', text: 'ок' }));
+    expect(managerWith(безРук).plan(request({ capabilities: ['computer'] })).order).toEqual([]);
+  });
+
   it('с одним Кодексом отказ по экрану называет причину, а не шлёт в настройки', async () => {
     // У человека с одним Кодексом настройки В ПОРЯДКЕ: Кодекс зелёный и
     // работает. Экран ему недоступен потому, что инструменты рабочего стола
