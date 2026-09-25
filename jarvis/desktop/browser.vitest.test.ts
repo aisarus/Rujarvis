@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { PROFILE_DIR, браузераНет, порядокКаналов, полныйАдрес } from './browser';
+import { PROFILE_DIR, браузераНет, порядокКаналов, полныйАдрес, адресДляПерехода } from './browser';
 import { jarvisHome } from '../setup/paths';
 
 /**
@@ -101,5 +101,17 @@ describe('полныйАдрес', () => {
     for (const адрес of ['localhost:3000', 'ya.ru', 'example.com/путь', '127.0.0.1:8080']) {
       expect(полныйАдрес(адрес), адрес).toBe(false);
     }
+  });
+});
+
+describe('адресДляПерехода', () => {
+  it('одно правило на все переходы, а не копия в каждом', () => {
+    // Копия жила в openTab и отстала: openUrl уже понимал data:, а вторая
+    // вкладка на том же адресе падала. Живой прогон 25.09.2026, обе
+    // платформы сразу.
+    expect(адресДляПерехода('ya.ru')).toBe('https://ya.ru');
+    expect(адресДляПерехода('data:text/html,<p>x')).toBe('data:text/html,<p>x');
+    expect(адресДляПерехода('https://ya.ru')).toBe('https://ya.ru');
+    expect(адресДляПерехода('localhost:3000')).toBe('https://localhost:3000');
   });
 });

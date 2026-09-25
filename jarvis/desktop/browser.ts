@@ -237,6 +237,10 @@ async function найтиВкладку(target: string): Promise<{ page: Page; i
  * взяты любым `схема:`, потому что «localhost:3000» под такое правило тоже
  * подходит, а это голое имя узла с портом, и https ему как раз нужен.
  */
+export function адресДляПерехода(url: string): string {
+  return полныйАдрес(url) ? url : `https://${url}`;
+}
+
 export function полныйАдрес(url: string): boolean {
   if (/^[a-z][a-z0-9+.-]*:\/\//iu.test(url)) return true;
   return /^(data|about|mailto|blob|view-source|chrome|edge):/iu.test(url);
@@ -244,7 +248,7 @@ export function полныйАдрес(url: string): boolean {
 
 export async function openUrl(url: string): Promise<{ title: string; url: string }> {
   const page = await currentPage();
-  const target = полныйАдрес(url) ? url : `https://${url}`;
+  const target = адресДляПерехода(url);
   await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   return { title: await page.title(), url: page.url() };
 }
@@ -467,7 +471,7 @@ export async function openTab(url?: string): Promise<{ title: string; url: strin
   const page = (await ctx.newPage()) as Page;
   активная = page;
   if (url) {
-    const target = /^[a-z][a-z0-9+.-]*:\/\//iu.test(url) ? url : `https://${url}`;
+    const target = адресДляПерехода(url);
     await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   }
   await page.bringToFront().catch(() => undefined);
