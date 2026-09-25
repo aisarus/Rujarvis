@@ -29,6 +29,8 @@ $functions = $ast.FindAll(
 Invoke-Expression (($functions | ForEach-Object { $_.Extent.Text }) -join "`n")
 
 $failures = 0
+# Пропущенное считается отдельно: «нечем мерить» — не «прошло».
+$skipped = 0
 function Assert-That {
     param([string] $Name, [bool] $Condition)
     if ($Condition) {
@@ -231,6 +233,15 @@ if ($IsWindows) {
         $env:Path = $before
     }
 }
+else {
+    # «Нечем мерить» обязано отличаться от «прошло».
+    #
+    # Блок выше не выполнялся вне Windows и не печатал ничего, а в конце
+    # выводилось «проверки функций пройдены». Человек на macOS видел зелёный
+    # итог, хотя Update-SessionPath никто не трогал.
+    Write-Host 'пропуск: PATH проверяется только на Windows' -ForegroundColor Yellow
+    $skipped += 1
+}
 
 # --- Драйвер окон ------------------------------------------------------------
 # Сумма нужна для каждой архитектуры, иначе проверка молча пропустит архив.
@@ -246,4 +257,9 @@ if ($failures -gt 0) {
     Write-Host "Провалено проверок: $failures" -ForegroundColor Red
     exit 1
 }
-Write-Host 'install.ps1: проверки функций пройдены' -ForegroundColor Green
+if ($skipped -gt 0) {
+    Write-Host "install.ps1: проверки функций пройдены, пропущено: $skipped" -ForegroundColor Yellow
+}
+else {
+    Write-Host 'install.ps1: проверки функций пройдены' -ForegroundColor Green
+}

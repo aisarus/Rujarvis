@@ -73,7 +73,22 @@ function askMcp() {
           );
         }
         if (message.id === 2) {
-          done({ tools: message.result.tools.length, ms: Date.now() - started });
+          // Форму ответа проверяем, а не верим ей на слово.
+          //
+          // На ошибку JSON-RPC (`{ error: … }`) `message.result.tools.length`
+          // бросал TypeError прямо в обработчике: процесс падал со стеком,
+          // `done` не звали, дерево `cmd.exe → node` оставалось жить. Пустой
+          // список при этом проходил как успех — а `проверка-сборки.ts` на том
+          // же ответе считает сервер сломанным, и два прибора расходились.
+          if (message.error) {
+            done({ error: message.error.message ?? JSON.stringify(message.error) });
+          } else if (!Array.isArray(message.result?.tools)) {
+            done({ error: 'сервер ответил без списка инструментов' });
+          } else if (message.result.tools.length === 0) {
+            done({ error: 'сервер поднялся, но не отдал ни одного инструмента' });
+          } else {
+            done({ tools: message.result.tools.length, ms: Date.now() - started });
+          }
         }
       }
     });
@@ -144,7 +159,8 @@ async function main() {
 
   // MCP-сервер по-настоящему.
   const mcp = await askMcp();
-  if (mcp) ok('MCP-сервер', `${mcp.tools} инструментов за ${mcp.ms} мс`);
+  if (mcp?.error) bad('MCP-сервер', mcp.error);
+  else if (mcp) ok('MCP-сервер', `${mcp.tools} инструментов за ${mcp.ms} мс`);
   else bad('MCP-сервер', 'не ответил');
 
   console.log('');

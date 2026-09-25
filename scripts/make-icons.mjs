@@ -3,9 +3,17 @@
 // Запуск: node scripts/make-icons.mjs  → resources/icon.png, icon.ico, tray.png, tray.ico
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 
-const OUT = path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([a-z]:)/i, '$1')), '..', 'resources');
+// `fileURLToPath`, а не `URL.pathname`.
+//
+// `pathname` оставляет процентную кодировку как есть: в пути вида
+// «C:\Users\Иван\Мои проекты\rujarvis» каталогом вывода становился
+// «C:/Users/%D0%98.../resources». `mkdirSync` молча его создавал, скрипт
+// отчитывался успехом, а `resources/` проекта не менялся вовсе. Пути с
+// пробелами и кириллицей здесь норма, а не исключение.
+const OUT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'resources');
 
 const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
   let c = n;

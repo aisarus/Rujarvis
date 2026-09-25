@@ -107,8 +107,16 @@ check 'честно сказано, что окна пока только на W
 
 # Команда из README должна работать. Через конвейер ключи достаются скрипту
 # только после `-s --`: иначе их забирает себе сам bash.
+#
+# Проверяли отсутствие ОДНОЙ неправильной формы — `| bash --`. Мимо проходили
+# `| bash --language en` и `| bash -s --language en`: в обеих ключи забирает
+# себе bash. Теперь правило прямое: если после `bash` вообще что-то стоит,
+# это обязано быть `-s --`.
 for readme in "$ROOT/README.md" "$ROOT/README.en.md"; do
-  check "в $(basename "$readme") ключи доходят до скрипта, а не до bash"     "$(grep -q 'install.sh | bash --' "$readme" || printf 'да')"
+  bad=$(grep -nE 'install\.sh[[:space:]]*\|[[:space:]]*bash[[:space:]]+' "$readme"     | grep -vE '\|[[:space:]]*bash[[:space:]]+-s[[:space:]]+--([[:space:]]|$)' || true)
+  check "в $(basename "$readme") ключи доходят до скрипта, а не до bash"     "$([ -z "$bad" ] && printf 'да')"
+  [ -z "$bad" ] || printf '  %s
+' "$bad"
   check "в $(basename "$readme") есть команда установки на macOS"     "$(grep -q 'install.sh' "$readme" && printf 'да')"
 done
 
@@ -120,10 +128,21 @@ done
 # при этом живут прекрасно — ломаются именно имена.
 #
 # Ищем присваивания и подстановки с кириллицей в скриптах и в прогонах CI.
+#
+# Список читается ПО СТРОКАМ, а не делением по пробелам.
+#
+# `for file in $shell_files` разваливал путь вида «/Users/x/Мои проекты/…» на
+# куски, каждый кусок отсеивался как несуществующий файл, и проверка печатала
+# «ok», не посмотрев ни одного файла. Ровно тот провал, который она и должна
+# ловить. Поэтому же ниже считается, сколько файлов реально просмотрено: ноль
+# — это не успех.
 shell_files=$(find "$ROOT/scripts" -name '*.sh' 2>/dev/null; find "$ROOT/.github/workflows" -name '*.yml' 2>/dev/null; echo "$ROOT/install.sh")
 cyrillic_names=''
-for file in $shell_files; do
+looked_at=0
+while IFS= read -r file; do
+  [ -n "$file" ] || continue
   [ -f "$file" ] || continue
+  looked_at=$((looked_at + 1))
   # Строки-комментарии пропускаем: в них кириллица и должна быть.
   hits=$(grep -nE '(^|[^#[:alnum:]_])[А-Яа-яЁё][А-Яа-яЁё_0-9]*=' "$file" 2>/dev/null | grep -vE '^[0-9]+:[[:space:]]*#' || true)
   if [ -n "$hits" ]; then
@@ -131,7 +150,10 @@ for file in $shell_files; do
 ' ' ')
 "
   fi
-done
+done <<EOF
+$shell_files
+EOF
+check 'проверке кириллицы досталось что проверять'   "$([ "$looked_at" -gt 0 ] && printf 'да')"
 check 'в оболочке нет имён кириллицей: bash отвечает на них 127'   "$([ -z "$cyrillic_names" ] && printf 'да')"
 [ -z "$cyrillic_names" ] || printf '%s' "$cyrillic_names"
 
