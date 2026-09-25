@@ -442,3 +442,32 @@ describe('resampleTo16k filters what it cannot represent', () => {
     expect(rms(resampleTo16k(tone(10_000, 44_100), 44_100))).toBeLessThan(0.1);
   });
 });
+
+describe('отклик не обещает сделанного и не переспрашивает про вопрос', () => {
+  /**
+   * Замечания CodeRabbit (кусок 3, PR №42).
+   */
+  it('ни один отклик не говорит «Готово»', () => {
+    // Отклик звучит ДО работы: обещать сделанное в этот момент нечем.
+    const все: string[] = [];
+    for (const intent of [
+      'open_app', 'make', 'control_window', 'modify_project', 'inspect_project',
+      'query_screen', 'browse', 'file_task', 'communicate', 'system', 'continue', 'chat',
+    ] as const) {
+      for (let i = 0; i < 12; i += 1) {
+        все.push(acknowledgementFor({ intent, confidence: 0.9, asks: false } as never) ?? '');
+      }
+    }
+    expect(все.filter((фраза) => /готово|done/iu.test(фраза))).toEqual([]);
+  });
+
+  it('на вопрос не отвечают «не понял, что именно сделать»', () => {
+    // Человек ничего не поручал: уточнять в вопросе нечего.
+    const вопрос = { intent: 'query_screen', confidence: 0.2, asks: true } as never;
+    expect(clarificationFor(вопрос)).toBeNull();
+
+    // А неуверенное ПОРУЧЕНИЕ по-прежнему уточняется.
+    const поручение = { intent: 'make', confidence: 0.2, asks: false } as never;
+    expect(clarificationFor(поручение)).not.toBeNull();
+  });
+});
