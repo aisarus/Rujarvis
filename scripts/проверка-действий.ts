@@ -25,7 +25,14 @@ import { promisify } from 'node:util';
 import { windowCandidates } from '../jarvis/apps/launch';
 import { parseDirectCommand } from '../jarvis/control/commands';
 import { DesktopDriver } from '../jarvis/desktop/driver';
-import { diff, describeDiff, unmet, type Expectation, type Snapshot } from '../jarvis/observe/machine';
+import {
+  diff,
+  describeDiff,
+  unmet,
+  НЕЧЕМ,
+  type Expectation,
+  type Snapshot,
+} from '../jarvis/observe/machine';
 import { meaningfulSpeech } from '../jarvis/voice/noise';
 import { findWakeWord } from '../jarvis/voice/wakeWord';
 
@@ -211,7 +218,10 @@ async function main(): Promise<void> {
       } else {
         const до = await снять();
         const беда = await выполнить(случай.сказано);
-        исход = беда ?? (await дождаться(случай.ждём, до));
+        const ответ = беда ?? (await дождаться(случай.ждём, до));
+        // Пометка «нечем мерить» из наблюдателя — это третий исход, а не
+        // провал: сворачивать его в «не прошло» правила проекта запрещают.
+        исход = typeof ответ === 'string' && ответ.startsWith(НЕЧЕМ) ? { нечем: ответ } : ответ;
         if (исход === null && !случай.ждём.nothing) {
           console.log(`       ${describeDiff(diff(до, await снять()))}`);
         }

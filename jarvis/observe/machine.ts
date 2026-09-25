@@ -56,9 +56,23 @@ export interface Diff {
   renamed: Array<{ was: string; now: string }>;
 }
 
+/**
+ * Что есть в `a` и чего не хватает в `b` — С УЧЁТОМ ПОВТОРОВ.
+ *
+ * Раньше здесь было множество, и одинаковые заголовки схлопывались: два окна
+ * «Документ», из которых закрыли одно, давали пустую разницу. Проверка
+ * «ничего не должно было случиться» такое закрытие не замечала.
+ */
 function only<T>(a: readonly T[], b: readonly T[]): T[] {
-  const there = new Set(b);
-  return a.filter((item) => !there.has(item));
+  const остаток = new Map<T, number>();
+  for (const item of b) остаток.set(item, (остаток.get(item) ?? 0) + 1);
+  const лишние: T[] = [];
+  for (const item of a) {
+    const сколько = остаток.get(item) ?? 0;
+    if (сколько > 0) остаток.set(item, сколько - 1);
+    else лишние.push(item);
+  }
+  return лишние;
 }
 
 /**
@@ -77,10 +91,19 @@ export function diff(before: Snapshot, after: Snapshot): Diff {
   const closed = only(wasTitles, nowTitles);
 
   // Пара «исчезло одно, появилось одно» у одной программы — это переименование.
+  //
+  // Но только если у программы НЕ ИЗМЕНИЛОСЬ число окон. Иначе закрытие
+  // одного окна Edge и открытие другого выглядело как смена вкладки: оба
+  // события исчезали из разницы, и проверка «сменился заголовок» засчитывала
+  // успех там, где случилось совсем другое.
+  const сколькоОкон = (снимок: Snapshot, process: string): number =>
+    снимок.windows.filter((w) => w.process === process).length;
+
   const renamed: Diff['renamed'] = [];
   for (const gone of [...closed]) {
     const owner = before.windows.find((w) => w.title === gone)?.process;
     if (!owner) continue;
+    if (сколькоОкон(before, owner) !== сколькоОкон(after, owner)) continue;
     const born = opened.find(
       (title) => after.windows.find((w) => w.title === title)?.process === owner,
     );
@@ -157,6 +180,9 @@ function has(list: readonly string[], needle: string): boolean {
  * Причина возвращается словами, а не булевым: «не сработало» без объяснения
  * заставляет воспроизводить вручную, а это и есть то, на что уходил день.
  */
+/** Пометка «нечем мерить» в тексте ответа: вызывающий отличит её от провала. */
+export const НЕЧЕМ = 'НЕЧЕМ МЕРИТЬ';
+
 export function unmet(expect: Expectation, d: Diff, after?: Snapshot): string | null {
   if (expect.nothing) {
     // Дрейф фокуса не считается. На живом рабочем столе окно впереди меняется
@@ -169,6 +195,10 @@ export function unmet(expect: Expectation, d: Diff, after?: Snapshot): string | 
       ...d.closed.map((t) => `закрылось ${t}`),
       ...d.started.map((p) => `запустилось ${p}`),
       ...d.stopped.map((p) => `остановилось ${p}`),
+      // Переименование — тоже действие. Смена вкладки в браузере не меняет ни
+      // числа окон, ни списка программ, и проверка «ничего не должно было
+      // случиться» её не замечала.
+      ...d.renamed.map((r) => `стало «${r.now}» вместо «${r.was}»`),
     ];
     return сделано.length === 0 ? null : `ожидали бездействия, а случилось: ${сделано.join(', ')}`;
   }
@@ -176,7 +206,13 @@ export function unmet(expect: Expectation, d: Diff, after?: Snapshot): string | 
     // Смотрим на СОСТОЯНИЕ после, а не только на разницу. Команда «переключись
     // на эдж», когда Edge и так впереди, отработала верно и не изменила
     // ничего — требовать изменения значило бы объявить провалом успех.
-    const front = after?.front ?? d.front?.now ?? '';
+    // Снимок после обязателен: без него состояние неизвестно.
+    //
+    // Раньше его отсутствие подставляло пустую строку, и проверка объявляла
+    // провал — хотя нужное окно могло уже быть впереди и команда просто
+    // ничего не меняла. Это «нечем мерить», и оно помечено словами.
+    const front = after?.front ?? d.front?.now;
+    if (front === undefined) return `${НЕЧЕМ}: снимка после действия нет`;
     if (!front.toLowerCase().includes(expect.frontContains.toLowerCase())) {
       return `впереди «${front || 'ничего'}», ждали «${expect.frontContains}»`;
     }
@@ -187,7 +223,12 @@ export function unmet(expect: Expectation, d: Diff, after?: Snapshot): string | 
   if (expect.stopped !== undefined && !has(d.stopped, expect.stopped)) {
     return `не закрылось «${expect.stopped}» (${describeDiff(d)})`;
   }
-  if (expect.titleChanged === true && d.renamed.length === 0 && d.front === undefined) {
+  // Смотрим на переименование, а не на смену фокуса.
+  //
+  // Переключение между двумя уже открытыми окнами задаёт `front`, но
+  // заголовок при этом ни у кого не менялся — а проверка смены вкладки
+  // засчитывала это за успех.
+  if (expect.titleChanged === true && d.renamed.length === 0) {
     return `заголовок не сменился (${describeDiff(d)})`;
   }
   return null;
