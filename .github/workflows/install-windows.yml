@@ -46,7 +46,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Проверки установщика — обеими оболочками
         # Пятёркой ТОЖЕ, а не только семёркой.
