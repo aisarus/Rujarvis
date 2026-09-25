@@ -6,21 +6,32 @@
 #   bash scripts/coderabbit.sh 32           # разбор для PR №32
 #   bash scripts/coderabbit.sh 32 --ask     # попросить разбор и дождаться его
 #
-# Зачем скрипт. На бесплатном плане для открытых проектов CodeRabbit не
-# ревьюит репозитории младше десяти звёзд: во всех прогонах висело «Review
-# skipped… fewer than 10 stars». Разбор при этом можно попросить вручную —
-# комментарием в PR, — но потом его замечания надо ещё и достать: они лежат в
-# двух разных местах API (встроенные в код и общие к PR), и в вебе их читать
-# глазами долго.
+# Зачем скрипт. Замечания лежат в двух разных местах API — встроенные в код и
+# общие к PR, — и в вебе их читать глазами долго. Скрипт складывает оба места
+# в один текст: файл, строка, что сказано.
 #
-# Скрипт складывает оба места в один текст: файл, строка, что сказано.
+# Три правки по замечаниям самого CodeRabbit на первый вариант этого скрипта
+# (PR №35) — он нашёл в нём ровно тот класс ошибок, против которого написан
+# весь остальной проект:
+#
+#   1. `gh api --paginate --jq` печатает ответ НА КАЖДУЮ СТРАНИЦУ отдельно.
+#      На двух страницах в переменной оказывалось две строки, и числовое
+#      сравнение ломалось. Теперь страницы складываются в одно число.
+#   2. Отказ `gh` подменялся нулём или текстом, и скрипт выходил с успехом,
+#      ничего не запросив и ничего не получив. Теперь каждый вызов проверяется
+#      и провал виден по коду возврата.
+#   3. Ожидание ловило появление ВСТРОЕННОГО замечания. Но бот часто отвечает
+#      только общим комментарием — «замечаний нет» или «лимит исчерпан», — и
+#      тогда ждать было нечего, а скрипт ждал все десять минут. Теперь ждём
+#      ЛЮБОГО ответа бота, а по истечении срока честно говорим, что ответа не
+#      было.
 
 set -uo pipefail
 
 pr="${1:-}"
 ask="${2:-}"
 
-if [ "$pr" = "--ask" ]; then
+if [ "$pr" = '--ask' ]; then
   ask='--ask'
   pr=''
 fi
@@ -33,43 +44,62 @@ if [ -z "$pr" ]; then
   exit 1
 fi
 
-repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner) || {
+  echo 'Не удалось определить репозиторий.' >&2
+  exit 1
+}
 echo "Разбор CodeRabbit: $repo, PR №$pr"
 
-count_inline() {
-  gh api "repos/$repo/pulls/$pr/comments" --paginate \
-    --jq '[.[] | select(.user.login | test("coderabbit";"i"))] | length' 2>/dev/null || echo 0
+# Число со ВСЕХ страниц, а не с каждой по отдельности.
+count_bot() {
+  local where="$1" out
+  out=$(gh api "repos/$repo/$where/$pr/comments" --paginate \
+    --jq '[.[] | select(.user.login | test("coderabbit";"i"))] | length') || return 1
+  # Каждая страница дала своё число — складываем.
+  echo "$out" | awk '{sum += $1} END {print sum + 0}'
 }
 
 if [ "$ask" = '--ask' ]; then
-  before=$(count_inline)
-  echo "Прошу разбор (встроенных замечаний сейчас: $before)…"
-  gh pr comment "$pr" --body '@coderabbitai review' >/dev/null
+  inline_before=$(count_bot pulls) || { echo 'Не удалось прочитать встроенные замечания.' >&2; exit 1; }
+  issue_before=$(count_bot issues) || { echo 'Не удалось прочитать комментарии к PR.' >&2; exit 1; }
+  echo "Прошу разбор (встроенных сейчас: $inline_before, общих: $issue_before)…"
 
-  # Ждём до десяти минут: бот отвечает не сразу, а молчаливое ожидание
-  # неотличимо от поломки.
+  gh pr comment "$pr" --body '@coderabbitai review' >/dev/null || {
+    echo 'Не удалось попросить разбор: gh pr comment вернул ошибку.' >&2
+    exit 1
+  }
+
+  # Ждём ЛЮБОГО ответа бота: встроенного замечания или общего комментария.
+  # Молчаливое ожидание неотличимо от поломки, поэтому ход виден.
+  answered=''
   for i in $(seq 1 40); do
     sleep 15
-    now=$(count_inline)
-    printf '\r  жду %sс, встроенных замечаний: %s   ' "$((i * 15))" "$now"
-    if [ "${now:-0}" -gt "${before:-0}" ]; then
-      echo ''
+    inline_now=$(count_bot pulls) || { echo 'Опрос не удался.' >&2; exit 1; }
+    issue_now=$(count_bot issues) || { echo 'Опрос не удался.' >&2; exit 1; }
+    printf '\r  жду %sс: встроенных %s, общих %s   ' "$((i * 15))" "$inline_now" "$issue_now"
+    if [ "$inline_now" -gt "$inline_before" ] || [ "$issue_now" -gt "$issue_before" ]; then
+      answered='да'
       break
     fi
   done
   echo ''
+
+  if [ -z "$answered" ]; then
+    echo 'Бот не ответил за десять минут. Ниже — то, что было до запроса.' >&2
+  fi
 fi
 
 echo ''
 echo '=== Замечания по строкам ==='
 gh api "repos/$repo/pulls/$pr/comments" --paginate \
   --jq '.[] | select(.user.login | test("coderabbit";"i"))
-        | "\n--- \(.path):\(.line // .original_line // "?")\n\(.body)"' 2>/dev/null \
-  || echo '(не удалось получить)'
+        | "\n--- \(.path):\(.line // .original_line // "?")\n\(.body)"' \
+  || { echo 'Не удалось получить встроенные замечания.' >&2; exit 1; }
 
 echo ''
 echo '=== Общее к PR ==='
+# `pipefail` оставлен нарочно: провал `gh` не должен теряться за `sed`.
 gh api "repos/$repo/issues/$pr/comments" --paginate \
-  --jq '.[] | select(.user.login | test("coderabbit";"i")) | .body' 2>/dev/null \
+  --jq '.[] | select(.user.login | test("coderabbit";"i")) | .body' \
   | sed -e 's/<!--.*-->//g' -e '/^[[:space:]]*$/d' \
-  || echo '(не удалось получить)'
+  || { echo 'Не удалось получить общие комментарии.' >&2; exit 1; }
