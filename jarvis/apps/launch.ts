@@ -187,6 +187,23 @@ export function windowAlias(phrase: string): string | null {
   return null;
 }
 
+/**
+ * Под какими именами искать окно и в каком порядке.
+ *
+ * Один список на мост и на проверку. Раньше они расходились: мост пробовал
+ * `[windowAlias ?? aliasTarget, title]`, а проверка — `[windowAlias,
+ * aliasTarget, title]`, то есть три попытки вместо двух. Проверка проходила
+ * через третье написание там, где мост уже сдался после первого, — и
+ * показывала работающим то, что у человека не работало.
+ *
+ * Оконное имя впереди пускового: «блендер» как окно — это Blender, а
+ * запускать его надо ярлыком из меню «Пуск», и это разные строки.
+ */
+export function windowCandidates(title: string): string[] {
+  const первый = windowAlias(title) ?? aliasTarget(title);
+  return [первый, title].filter((имя): имя is string => Boolean(имя));
+}
+
 export function aliasTarget(phrase: string): string | null {
   for (const [names, target] of APP_ALIASES) {
     if (names.includes(phrase)) return target;

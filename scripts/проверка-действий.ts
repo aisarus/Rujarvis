@@ -22,7 +22,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
-import { aliasTarget, windowAlias } from '../jarvis/apps/launch';
+import { windowCandidates } from '../jarvis/apps/launch';
 import { parseDirectCommand } from '../jarvis/control/commands';
 import { DesktopDriver } from '../jarvis/desktop/driver';
 import { diff, describeDiff, unmet, type Expectation, type Snapshot } from '../jarvis/observe/machine';
@@ -61,16 +61,22 @@ async function программы(): Promise<string[]> {
       { windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
     );
     return stdout.split(/\r?\n/u).map((s) => s.trim()).filter(Boolean);
-  } catch {
-    return [];
+  } catch (error) {
+    // Пустой список вместо отказа — ложь в обе стороны.
+    //
+    // Если PowerShell недоступен совсем, процессы не мерились НИКОГДА, и
+    // случаи «ничего не должно случиться» проходили, не проверив запуск
+    // программ. Если он упал разово, «до» и «после» получали разные списки, и
+    // разбор видел запуск и закрытие программ, которых не было.
+    throw new Error(
+      `не удалось прочитать список программ: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
 /** Снимок машины: что впереди, какие окна, какие программы. */
 async function снять(): Promise<Snapshot> {
   const [окна, процессы] = await Promise.all([driver.windows(), программы()]);
-  const byPid = new Map(окна.map((w) => [w.pid, w.title]));
-  void byPid;
   return {
     at: Date.now(),
     front: окна.find((w) => w.focused)?.title ?? '',
@@ -102,9 +108,9 @@ async function выполнить(сказано: string): Promise<string | null
       await driver.scroll(команда.amount);
       return null;
     case 'focus': {
-      const варианты = [windowAlias(команда.title), aliasTarget(команда.title), команда.title];
+      // Тот же список имён и тот же порядок, что у моста.
+      const варианты = windowCandidates(команда.title);
       for (const цель of варианты) {
-        if (!цель) continue;
         try {
           await driver.focus(цель);
           return null;
@@ -112,7 +118,7 @@ async function выполнить(сказано: string): Promise<string | null
           // Пробуем следующее написание.
         }
       }
-      return `окно не найдено ни под одним именем: ${варианты.filter(Boolean).join(', ')}`;
+      return `окно не найдено ни под одним именем: ${варианты.join(', ')}`;
     }
     default:
       return `эта проверка не умеет выполнять «${команда.kind}»`;
@@ -154,12 +160,14 @@ async function дождаться(ждём: Expectation, до: Snapshot, сро�
  * по имени процесса врала, будто окно приложения открыто.
  */
 async function естьОкно(часть: string): Promise<boolean> {
-  try {
-    const окна = await driver.windows();
-    return окна.some((w) => w.title.toLowerCase().includes(часть.toLowerCase()));
-  } catch {
-    return false;
-  }
+  // Без `try`: отказ драйвера — это «не прошло», а не «окна нет».
+  //
+  // Раньше любое исключение давало `false`, все три случая переключения
+  // уходили в «нечем проверить», `плохо` оставалось нулём, и прогон выходил с
+  // кодом 0 со словами «Всё прошло, нечем проверить: 3». Исключение теперь
+  // ловит общий `catch` прогона и пишет ПЛОХО.
+  const окна = await driver.windows();
+  return окна.some((w) => w.title.toLowerCase().includes(часть.toLowerCase()));
 }
 
 const СЛУЧАИ: Случай[] = [

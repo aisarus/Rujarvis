@@ -32,7 +32,14 @@ import {
 import { APP_ROOT } from './root';
 import { failed, passed, type Gate } from '../jarvis/measure/gate';
 import { listInstalledPrograms } from '../jarvis/apps/installed';
-import { aliasTarget, matchAppLaunch, spokenCloseTarget, spokenTarget, windowAlias } from '../jarvis/apps/launch';
+import {
+  aliasTarget,
+  matchAppLaunch,
+  spokenCloseTarget,
+  spokenTarget,
+  windowAlias,
+  windowCandidates,
+} from '../jarvis/apps/launch';
 import { readConfirmation } from '../jarvis/voice/confirm';
 import { chooseShortcut } from '../jarvis/apps/startMenu';
 import { OUTPUT_SECTIONS, revealPath, sectionDir, tidyOutput } from '../jarvis/desktop/files';
@@ -369,7 +376,7 @@ export async function runDirectCommand(
         // заголовке окна не встречается, а "Chrome" встречается.
         // Оконное имя вперёд пускового: «блендер» как окно это Blender, а
         // запустить его надо ярлыком из меню «Пуск» — это разные строки.
-        const alias = windowAlias(command.title) ?? aliasTarget(command.title);
+        const варианты = windowCandidates(command.title);
         // Сначала по псевдониму, потом по сказанному вслух. Псевдоним знает
         // имя программы, но окно может называться иначе — «Riot Client» в
         // таблице нет, а сказать про него человек может.
@@ -381,8 +388,7 @@ export async function runDirectCommand(
         // Драйвер теперь перечисляет, что на экране, - и это должно дойти
         // до человека, а не осесть в пустых скобках.
         let почему = '';
-        for (const candidate of [alias, command.title]) {
-          if (!candidate) continue;
+        for (const candidate of варианты) {
           try {
             found = await desktop.focus(candidate);
             break;
