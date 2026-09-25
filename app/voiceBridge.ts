@@ -2440,6 +2440,16 @@ function createPlayback(audioWindow: BrowserWindow): SpeechPlayback & { dispose(
   };
   /** Чем закончить фразу, которая звучит прямо сейчас. */
   let finish: ((forToken: number) => void) | null = null;
+  /**
+   * Сколько раз просили замолчать.
+   *
+   * Синтез длится заметно дольше нажатия, а `finish` появляется только ПОСЛЕ
+   * него. Поэтому «стоп», сказанный во время синтеза, не отменял ничего:
+   * `cut()` звал `finish?.()`, которого ещё нет, синтез спокойно доходил до
+   * конца, и фраза звучала уже после просьбы замолчать. Остановка — красная
+   * линия, она не может опаздывать на секунду.
+   */
+  let обрывов = 0;
 
   ipcMain.on(AUDIO_BRIDGE_CHANNELS.spoken, (_event, forToken: number) => {
     finish?.(forToken);
@@ -2451,7 +2461,10 @@ function createPlayback(audioWindow: BrowserWindow): SpeechPlayback & { dispose(
     try {
       // Скорость — из настроек: её меняют голосом на ходу, поэтому читаем
       // при каждой фразе, а не запоминаем при запуске.
+      const былоОбрывов = обрывов;
       const result = await currentSpeaker().say(text, settings().speechSpeed);
+      // Пока синтезировали, могли попросить замолчать.
+      if (обрывов !== былоОбрывов) return;
       if (audioWindow.isDestroyed()) return;
 
       token += 1;
@@ -2482,6 +2495,7 @@ function createPlayback(audioWindow: BrowserWindow): SpeechPlayback & { dispose(
   const queue = new SpeechQueue({
     say: playOnce,
     cut: () => {
+      обрывов += 1;
       // Фраза, которую сейчас оборвут, обязана закончиться и здесь — иначе
       // очередь останется ждать «отзвучало», которого уже не будет.
       finish?.(token);

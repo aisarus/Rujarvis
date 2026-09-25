@@ -183,6 +183,12 @@ export function findWakeWord(transcript: string): WakeWordMatch | null {
 function rebuildCommand(original: string, tokens: readonly string[], from: number): string {
   if (from >= tokens.length) return '';
 
+  // После имени остался один вопросительный знак — значит, команды не было.
+  //
+  // `tokenize` добавляет '?' отдельным токеном, и «Джарвис?» возвращало
+  // команду '?': мост считал её непустой и нёс в ядро знак препинания.
+  if (tokens.slice(from).every((token) => token === '?')) return '';
+
   // `tokenize` splits on exactly these runs, so the n-th run in the original
   // string is the n-th token.
   const runs = [...original.matchAll(/[\p{L}\p{N}]+/gu)];

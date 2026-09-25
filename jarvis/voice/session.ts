@@ -123,6 +123,8 @@ export class VoiceSession {
   private readonly wake: WakeWordListener;
   /** Set while a push-to-talk capture is in flight. */
   private pushToTalkHeld = false;
+  /** Подъём захвата, пока он идёт: отпускание обязано его дождаться. */
+  private подъёмЗахвата: Promise<void> | null = null;
 
   constructor(private readonly options: VoiceSessionOptions) {
     this.mode = options.mode ?? 'push-to-talk';
@@ -145,9 +147,18 @@ export class VoiceSession {
   setMode(mode: VoiceMode): void {
     this.mode = mode;
     if (mode !== 'always-listening') this.wake.reset();
-    if (mode === 'off' && this.indicator === 'listening') {
-      void this.options.capture.stop();
-      this.setIndicator('idle');
+    if (mode === 'off') {
+      // Клавишу могли держать в момент выключения.
+      //
+      // Без сброса `releasePushToTalk` проходил проверку, останавливал захват
+      // второй раз и отправлял запись в ядро при уже выключенном голосе.
+      this.pushToTalkHeld = false;
+      if (this.indicator === 'listening') {
+        // Отказ остановки не выбрасываем: в Node 22 непойманный отказ роняет
+        // весь Электрон, а человек должен узнать о нём словами.
+        void Promise.resolve(this.options.capture.stop()).catch((error: unknown) => this.fail(error));
+        this.setIndicator('idle');
+      }
     }
   }
 
@@ -179,12 +190,24 @@ export class VoiceSession {
 
     this.options.playback?.stop();
     this.pushToTalkHeld = true;
+    // Запоминаем подъём захвата: отпускание может прийти раньше, чем он
+    // поднимется, и остановить то, что ещё не началось, нельзя.
+    //
+    // Сам вызов — ВНУТРИ `try`: `start` умеет бросить и сразу, не отдавая
+    // обещания, и тогда отказ обязан попасть в тот же `catch`.
+    let подъём: Promise<void> | null = null;
     try {
-      await this.options.capture.start();
-      this.setIndicator('listening');
+      подъём = Promise.resolve(this.options.capture.start());
+      this.подъёмЗахвата = подъём;
+      await подъём;
+      // Клавишу могли отпустить, пока захват поднимался. Тогда «Слушаю…» —
+      // враньё: слушать уже некого, а индикатор застревал навсегда.
+      if (this.pushToTalkHeld) this.setIndicator('listening');
     } catch (error) {
       this.pushToTalkHeld = false;
       this.fail(error);
+    } finally {
+      if (подъём && this.подъёмЗахвата === подъём) this.подъёмЗахвата = null;
     }
   }
 
@@ -197,6 +220,19 @@ export class VoiceSession {
   async releasePushToTalk(): Promise<JarvisTurn | null> {
     if (!this.pushToTalkHeld) return null;
     this.pushToTalkHeld = false;
+
+    // Сначала даём захвату подняться. Иначе `stop()` уходил в ещё не
+    // начавшийся захват, а `start()` завершался уже после него — микрофон
+    // оставался включённым, клавишу никто не держал, и следующее нажатие
+    // начинало второй захват поверх работающего.
+    if (this.подъёмЗахвата) {
+      try {
+        await this.подъёмЗахвата;
+      } catch {
+        // Об ошибке подъёма уже сказал `pressPushToTalk`.
+        return null;
+      }
+    }
 
     let audio: Awaited<ReturnType<AudioCapture['stop']>>;
     try {
@@ -324,6 +360,14 @@ export class VoiceSession {
         this.setIndicator('idle');
         break;
     }
+
+    // Застрявшее «Думаю…» гасим, но чужого не трогаем.
+    //
+    // У разговора и плана своей ветки здесь не было: если ответ не прошёл
+    // через `answerAloud` (а `JarvisCore.say` говорит напрямую), показ так и
+    // оставался «Думаю…» навсегда. Проверка на `thinking` нужна, чтобы не
+    // затереть «Отвечаю», которое ответ мог поставить сам.
+    if (this.indicator === 'thinking') this.setIndicator('idle');
     return turn;
   }
 

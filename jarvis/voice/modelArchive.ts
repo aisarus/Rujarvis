@@ -8,7 +8,7 @@
  */
 
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, rm, stat } from 'node:fs/promises';
+import { mkdir, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -37,6 +37,11 @@ export interface ArchiveInstall {
   onProgress?(progress: ModelInstallProgress): void;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
+  /**
+   * Чем распаковывать. Настоящая работа — `extractTarBz2`; подменяется в
+   * проверках, чтобы показать оборванную распаковку без архива на 2 ГБ.
+   */
+  extractImpl?(archivePath: string, destinationDir: string): Promise<void>;
 }
 
 /**
@@ -57,7 +62,20 @@ export function resolveArchiveEntry(destinationDir: string, entryName: string): 
 export async function extractTarBz2(archivePath: string, destinationDir: string): Promise<void> {
   const extract = tar.extract();
 
-  const extractDone = new Promise<void>((resolve, reject) => {
+  // Ошибку записи мало сообщить — надо ещё остановить сам разбор архива.
+  //
+  // Раньше `reject` только отклонял обещание, а `next()` не вызывался: tar
+  // ждал продолжения вечно, `pipeline` не завершался, и до `await extractDone`
+  // дело не доходило. Получалось два несчастья сразу — установка висела на
+  // «распаковываю…», а необработанный отказ в Node 22 роняет весь Электрон.
+  // Случай житейский: кончилось место на диске или файл модели занят.
+  const extractDone = new Promise<void>((resolve, отклонить) => {
+    const reject = (error: unknown): void => {
+      const беда = error instanceof Error ? error : new Error(String(error));
+      // Рвём разбор: тогда и `pipeline` закончится отказом, а не тишиной.
+      extract.destroy(беда);
+      отклонить(беда);
+    };
     extract.on('entry', (header: TarHeader, stream: Readable, next: () => void) => {
       let destinationPath: string;
       try {
@@ -99,8 +117,12 @@ export async function extractTarBz2(archivePath: string, destinationDir: string)
     extract.on('error', reject);
   });
 
-  await pipeline(createReadStream(archivePath), unbzip2Stream(), extract);
-  await extractDone;
+  // Оба обещания ждём вместе, а не по очереди.
+  //
+  // По очереди отказ распаковки оказывался никем не присмотренным ровно до
+  // конца `pipeline` — то есть до никогда. `Promise.all` вешает обработчик
+  // сразу на оба и отдаёт первую же ошибку.
+  await Promise.all([pipeline(createReadStream(archivePath), unbzip2Stream(), extract), extractDone]);
 }
 
 async function download(options: ArchiveInstall, target: string): Promise<void> {
@@ -133,6 +155,15 @@ async function download(options: ArchiveInstall, target: string): Promise<void> 
   await pipeline(source, writeStream);
 }
 
+/** Есть ли такая папка. Отсутствие — не ошибка, а ответ. */
+async function существует(путь: string): Promise<boolean> {
+  try {
+    return (await stat(путь)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /** Поставить модель или сразу вернуться, если она уже стоит. Возвращает её папку. */
 export async function installArchive(options: ArchiveInstall): Promise<string> {
   const modelRoot = path.join(options.installRoot, options.rootDirName);
@@ -144,6 +175,7 @@ export async function installArchive(options: ArchiveInstall): Promise<string> {
 
   await mkdir(options.installRoot, { recursive: true });
   const archivePath = path.join(options.installRoot, `${options.rootDirName}.tar.bz2.partial`);
+  const перевалка = path.join(options.installRoot, `${options.rootDirName}.unpacking`);
 
   try {
     await rm(archivePath, { force: true });
@@ -160,9 +192,31 @@ export async function installArchive(options: ArchiveInstall): Promise<string> {
     }
 
     options.onProgress?.({ stage: 'extracting' });
+    // Распаковываем В СТОРОНУ, а въезжаем на место переименованием.
+    //
+    // Раньше распаковка шла прямо в `modelRoot`. Убитый посреди записи
+    // процесс оставлял обрезанный файл, а `isInstalled` смотрит только на
+    // наличие файлов — и следующий запуск считал модель установленной.
+    // Переустановка не начиналась, загрузка в worker падала, и выбраться
+    // человек мог только удалив папку руками. Шапка файла обещает, что
+    // «прерванная установка не оставляет полузаписанного»; теперь так и есть:
+    // переименование на одной файловой системе либо случилось, либо нет.
+    await rm(перевалка, { recursive: true, force: true });
+    await (options.extractImpl ?? extractTarBz2)(archivePath, перевалка);
+
+    const распакованное = path.join(перевалка, options.rootDirName);
+    if (!(await существует(распакованное))) {
+      throw new Error(
+        tr(
+          `В архиве нет папки ${options.rootDirName}.`,
+          `The archive has no ${options.rootDirName} folder.`,
+        ),
+      );
+    }
+
     // Остатки прошлой распаковки убираем, чтобы повтор не смешал две версии.
     await rm(modelRoot, { recursive: true, force: true });
-    await extractTarBz2(archivePath, options.installRoot);
+    await rename(распакованное, modelRoot);
 
     options.onProgress?.({ stage: 'verifying' });
     if (!(await options.isInstalled())) {
@@ -182,5 +236,6 @@ export async function installArchive(options: ArchiveInstall): Promise<string> {
     throw error;
   } finally {
     await rm(archivePath, { force: true }).catch(() => undefined);
+    await rm(перевалка, { recursive: true, force: true }).catch(() => undefined);
   }
 }

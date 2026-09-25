@@ -176,6 +176,21 @@ parentPort.on('message', (message) => {
 export interface RecognitionWorker {
   transcribe(samples: Float32Array): Promise<string>;
   dispose(): Promise<void>;
+  /**
+   * Жив ли поток. Необязателен: подделки в проверках его не заводят.
+   *
+   * Нужен потому, что умерший поток снаружи неотличим от занятого: сообщения
+   * в него уходят молча, и ответа просто не приходит.
+   */
+  isAlive?(): boolean;
+}
+
+/** Распознавание не уложилось во время — в отличие от «не смог разобрать». */
+export class RecognitionTimeout extends Error {
+  constructor() {
+    super('Распознавание речи не уложилось во время');
+    this.name = 'RecognitionTimeout';
+  }
 }
 
 export type RecognitionWorkerFactory = (
@@ -204,19 +219,34 @@ export const createWorkerThreadRecognizer: RecognitionWorkerFactory = async (opt
   const pending = new Map<number, { resolve(text: string): void; reject(error: Error): void }>();
   let nextId = 0;
 
+  // Ждём «готов», но и смерть потока — тоже ответ.
+  //
+  // Раньше слушались только 'message' и 'error'. Поток, вышедший БЕЗ ошибки
+  // (так кончается abort внутри WASM), не давал ни того, ни другого: обещание
+  // не завершалось никогда, а срок на распознавание начинается только ПОСЛЕ
+  // него — сессия висела на «Распознаю…» бесконечно.
   await new Promise<void>((resolve, reject) => {
+    const снять = (): void => {
+      worker.off('message', onMessage);
+      worker.off('error', onError);
+      worker.off('exit', onExit);
+    };
     const onMessage = (message: { type?: string }): void => {
-      if (message?.type === 'ready') {
-        worker.off('error', onError);
-        resolve();
-      }
+      if (message?.type !== 'ready') return;
+      снять();
+      resolve();
     };
     const onError = (error: Error): void => {
-      worker.off('message', onMessage);
+      снять();
       reject(error);
     };
-    worker.once('message', onMessage);
+    const onExit = (code: number): void => {
+      снять();
+      reject(new Error(`Распознавание не запустилось: поток вышел с кодом ${code}`));
+    };
+    worker.on('message', onMessage);
     worker.once('error', onError);
+    worker.once('exit', onExit);
   });
 
   worker.on('message', (message: { type?: string; id?: number; text?: string; error?: string }) => {
@@ -228,12 +258,29 @@ export const createWorkerThreadRecognizer: RecognitionWorkerFactory = async (opt
     else entry.resolve(message.text ?? '');
   });
 
-  worker.on('error', (error) => {
+  // Смерть потока надо ПОМНИТЬ, а не только сообщить ожидающим.
+  //
+  // Раньше после 'error' запись о потоке оставалась в кэше распознавателя, и
+  // каждая следующая фраза уходила в мёртвый поток, чтобы через тридцать
+  // секунд получить «не уложилось». Джарвис становился глухим до перезапуска,
+  // и человеку это выглядело как «просто перестал слышать».
+  let мёртв = false;
+  const похоронить = (error: Error): void => {
+    мёртв = true;
     for (const entry of pending.values()) entry.reject(error);
     pending.clear();
+  };
+  worker.on('error', похоронить);
+  worker.on('exit', (code: number) => {
+    if (code === 0 && pending.size === 0) {
+      мёртв = true;
+      return;
+    }
+    похоронить(new Error(`Распознавание прервалось: поток вышел с кодом ${code}`));
   });
 
   return {
+    isAlive: () => !мёртв,
     transcribe(samples) {
       const id = nextId++;
       return new Promise<string>((resolve, reject) => {
@@ -258,6 +305,8 @@ export const createWorkerThreadRecognizer: RecognitionWorkerFactory = async (opt
  */
 export class WhisperRecognizer {
   private worker: Promise<RecognitionWorker> | null = null;
+  /** Тот самый поток, что лежит в `worker`: по нему узнаём, чей кэш чистить. */
+  private current: RecognitionWorker | null = null;
 
   constructor(
     private readonly options: WhisperRecognizerOptions,
@@ -275,11 +324,16 @@ export class WhisperRecognizer {
         this.modelId,
         this.options.quantized ?? true,
       );
-      this.worker = this.factory({ ...this.options, paths }).catch((error: unknown) => {
-        // A failed load must not poison every later attempt.
-        this.worker = null;
-        throw error;
-      });
+      this.worker = this.factory({ ...this.options, paths })
+        .then((worker) => {
+          this.current = worker;
+          return worker;
+        })
+        .catch((error: unknown) => {
+          // A failed load must not poison every later attempt.
+          this.worker = null;
+          throw error;
+        });
     }
     return this.worker;
   }
@@ -290,23 +344,49 @@ export class WhisperRecognizer {
     const resampled = resampleTo16k(samples, sampleRate);
 
     const timeoutMs = this.options.timeoutMs ?? 30_000;
-    const text = await Promise.race([
-      worker.transcribe(resampled),
-      new Promise<never>((_, reject) => {
-        const timer = setTimeout(
-          () => reject(new Error('Распознавание речи не уложилось во время')),
-          timeoutMs,
-        );
-        timer.unref?.();
-      }),
-    ]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const text = await Promise.race([
+        worker.transcribe(resampled),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new RecognitionTimeout()), timeoutMs);
+          timer.unref?.();
+        }),
+      ]);
+      return { text: text.trim(), durationMs: Date.now() - started };
+    } catch (error) {
+      // Отличаем «зависло или умерло» от «не смог разобрать».
+      //
+      // Первое лечится только новым потоком: однопоточный worker, застрявший
+      // в декодировании, занят навсегда, и все следующие фразы тоже получат
+      // срок. Второе — обычная неудача одной фразы, и ради неё терять
+      // прогретую модель (это секунды) незачем.
+      if (error instanceof RecognitionTimeout || worker.isAlive?.() === false) {
+        await this.выбросить(worker);
+      }
+      throw error;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
 
-    return { text: text.trim(), durationMs: Date.now() - started };
+  /** Убрать поток из кэша и погасить его — если с тех пор не завели новый. */
+  private async выбросить(worker: RecognitionWorker): Promise<void> {
+    if (this.current === worker) {
+      this.worker = null;
+      this.current = null;
+    }
+    try {
+      await worker.dispose();
+    } catch {
+      // Гасить уже мёртвый поток — не новость.
+    }
   }
 
   async dispose(): Promise<void> {
     const worker = this.worker;
     this.worker = null;
+    this.current = null;
     if (!worker) return;
     try {
       await (await worker).dispose();

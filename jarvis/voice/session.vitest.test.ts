@@ -434,3 +434,56 @@ describe('окно слушания и речь', () => {
     expect(h.session.status.awake).toBe(false);
   });
 });
+
+describe('клавиша отпущена не вовремя', () => {
+  // Замечания CodeRabbit по куску 4 (PR №43). Оба случая — про микрофон,
+  // который остаётся включённым, хотя человек ничего не держит.
+
+  it('отпускание во время подъёма захвата ждёт подъёма и не врёт про «Слушаю»', async () => {
+    const h = harness();
+
+    let поднять: (() => void) | null = null;
+    let подняли = false;
+    h.capture.start = () =>
+      new Promise<void>((resolve) => {
+        поднять = () => {
+          подняли = true;
+          resolve();
+        };
+      });
+
+    let остановленПослеПодъёма: boolean | null = null;
+    h.capture.stop = async () => {
+      остановленПослеПодъёма = подняли;
+      h.capture.stopped += 1;
+      return { samples: new Float32Array(0), sampleRate: 16_000 };
+    };
+
+    const нажатие = h.session.pressPushToTalk();
+    const отпускание = h.session.releasePushToTalk();
+    поднять?.();
+    const [, итог] = await Promise.all([нажатие, отпускание]);
+
+    // Останавливать то, что ещё не поднялось, бессмысленно: захват оставался
+    // работать, а индикатор застревал на «Слушаю…» навсегда.
+    expect(остановленПослеПодъёма).toBe(true);
+    expect(h.session.status.indicator).not.toBe('listening');
+    expect(итог).toBeNull();
+  });
+
+  it('выключение голоса при зажатой клавише не отправляет запись в ядро', async () => {
+    const h = harness();
+
+    await h.session.pressPushToTalk();
+    expect(h.session.status.indicator).toBe('listening');
+
+    h.session.setMode('off');
+    const итог = await h.session.releasePushToTalk();
+
+    expect(итог).toBeNull();
+    // Ровно одна остановка — та, что сделало выключение. Вторая означала бы,
+    // что отпускание прошло дальше и отправило запись при выключенном голосе.
+    expect(h.capture.stopped).toBe(1);
+    expect(h.transcripts).toEqual([]);
+  });
+});
