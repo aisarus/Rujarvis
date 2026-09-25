@@ -129,6 +129,11 @@ jobs:
         # речи весом больше десяти мегабайт (скачивание могло оборваться на
         # середине и оставить огрызок) и ярлык — без него человек не знает,
         # чем это запускать.
+        #
+        # Папки `logs` в этом списке нет нарочно: её заводит приложение при
+        # первом запуске (jarvis/setup/paths.ts), установщик только печатает
+        # путь к ней. Первый прогон упал именно на этом — ошибка была в
+        # ожидании, а не в установщике.
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
@@ -136,7 +141,7 @@ jobs:
           '=== Rujarvis folder ==='
           Get-ChildItem $root | Select-Object -ExpandProperty Name
 
-          foreach ($needed in 'src', 'models', 'logs') {
+          foreach ($needed in 'src', 'models', 'data') {
             if (-not (Test-Path (Join-Path $root $needed))) { throw "no folder: $needed" }
           }
           if (-not (Test-Path (Join-Path $root 'src\dist'))) { throw 'not built: src\dist missing' }
