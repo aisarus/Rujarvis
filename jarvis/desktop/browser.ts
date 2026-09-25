@@ -35,11 +35,27 @@ export const PROFILE_DIR = path.join(
 
 let context: BrowserContext | null = null;
 let browser: Browser | null = null;
+/**
+ * Идущий запуск. Ждать его, а не начинать второй.
+ *
+ * Клиент MCP зовёт инструменты параллельно, а `context` появлялся только
+ * ПОСЛЕ ожидания: оба вызова проходили проверку и оба запускали браузер на
+ * один профиль. Второй падал, и человек читал «Профиль браузера занят,
+ * закрой его» — хотя чужого окна не было вовсе, мы сами себе и мешали.
+ */
+let запускается: Promise<BrowserContext> | null = null;
 
 /** Открывает браузер один раз и держит его между вызовами. */
 async function ensureBrowser(): Promise<BrowserContext> {
   if (context) return context;
+  if (запускается) return запускается;
+  запускается = поднять().finally(() => {
+    запускается = null;
+  });
+  return запускается;
+}
 
+async function поднять(): Promise<BrowserContext> {
   const { chromium } = await import('playwright');
   try {
     context = await launch(chromium);
@@ -260,8 +276,15 @@ export async function waitForText(text: string, timeoutMs = 180_000): Promise<bo
   try {
     await page.getByText(text).first().waitFor({ state: 'visible', timeout: timeoutMs });
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    // `false` — только по сроку. Всё остальное пробрасываем.
+    //
+    // Раньше сюда сваливались и закрытый браузер, и упавшая страница, и
+    // неверный локатор: агент читал «не дождался за отведённое время» и ждал
+    // дальше, а настоящая причина терялась.
+    const текст = error instanceof Error ? error.message : String(error);
+    if (/timeout|exceeded/iu.test(текст)) return false;
+    throw error;
   }
 }
 
@@ -324,6 +347,23 @@ export async function hover(x: number, y: number): Promise<void> {
 /** Размер видимой части страницы — для расчёта проезда. */
 export async function viewport(): Promise<{ width: number; height: number }> {
   const page = await currentPage();
+  // Спрашиваем саму страницу, а не Playwright.
+  //
+  // Контекст открыт с `viewport: null` (окно во весь экран), и
+  // `page.viewportSize()` при этом всегда `null` — возвращалась заглушка
+  // 1280×720. От неё берётся шаг проезда и считается «доехали»: на
+  // развёрнутом окне кадры перекрывались, на узком между ними пропадали
+  // куски страницы, а отметка о конце была неверной.
+  try {
+    const свой = (await page.evaluate(
+      '[window.innerWidth, window.innerHeight]',
+    )) as [number, number];
+    if (Number.isFinite(свой[0]) && свой[0] > 0 && Number.isFinite(свой[1]) && свой[1] > 0) {
+      return { width: Math.round(свой[0]), height: Math.round(свой[1]) };
+    }
+  } catch {
+    // Страница могла закрыться прямо сейчас — тогда спросим Playwright.
+  }
   const size = page.viewportSize();
   return size ?? { width: 1280, height: 720 };
 }

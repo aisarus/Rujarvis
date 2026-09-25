@@ -140,7 +140,7 @@ export class DarwinWindowTools {
       );
     }
 
-    await this.driver.raise(цель.pid, цель.index, цель.title || цель.app);
+    await this.driver.raise(цель.pid, цель.index, цель.title || цель.app, цель.title);
 
     const стало = (await this.driver.windows()).find(
       (окно) => окно.pid === pid && окно.title === цель.title,
@@ -212,10 +212,36 @@ export class DarwinWindowTools {
   }
 
   async press(pid: number, windowId: number, index: number): Promise<string> {
-    const элемент = await this.элемент(pid, windowId, index);
-    await this.поднять(pid, windowId);
+    const элемент = await this.подтвердить(pid, windowId, index);
     await this.driver.click({ x: элемент.x, y: элемент.y });
     return `нажал «${элемент.name || элемент.id}» в (${элемент.x}, ${элемент.y})`;
+  }
+
+  /**
+   * Поднять окно и УБЕДИТЬСЯ, что под этим номером тот же элемент.
+   *
+   * Дерево берётся из памяти от прошлого `window_find`, а подъём окна может
+   * его развернуть, сдвинуть или прокрутить: клик уходил по старым
+   * координатам в совсем другое место, а инструмент отвечал «Нажал элемент
+   * [N]». Описание обещает обратное — «номер указывает на сам элемент».
+   */
+  private async подтвердить(pid: number, windowId: number, index: number): Promise<UiElement> {
+    const прежний = await this.элемент(pid, windowId, index);
+    await this.поднять(pid, windowId);
+
+    // После подъёма читаем дерево ЗАНОВО и сверяем, кто теперь под номером.
+    this.деревья.delete(this.ключ(pid, windowId));
+    const сейчас = await this.дерево(pid, windowId);
+    const теперь = сейчас[index - 1];
+
+    if (!теперь || (теперь.name || теперь.id) !== (прежний.name || прежний.id)) {
+      throw new Error(
+        `После подъёма окна под номером [${index}] уже другой элемент` +
+          (теперь ? `: «${теперь.name || теперь.id}» вместо «${прежний.name || прежний.id}»` : '') +
+          '. Сделай window_find заново.',
+      );
+    }
+    return теперь;
   }
 
   /**
@@ -227,8 +253,7 @@ export class DarwinWindowTools {
    * «aaaaaa», и это замерено.
    */
   async writeInto(pid: number, windowId: number, index: number, text: string): Promise<string> {
-    const элемент = await this.элемент(pid, windowId, index);
-    await this.поднять(pid, windowId);
+    const элемент = await this.подтвердить(pid, windowId, index);
     await this.driver.click({ x: элемент.x, y: элемент.y });
     await this.driver.type(text);
     return `напечатал в «${элемент.name || элемент.id}»`;
