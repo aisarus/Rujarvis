@@ -34,14 +34,14 @@
  * посмотрит в журнал. Здесь проверяется путь, а не слух.
  */
 
-import path from 'node:path';
-import { createRequire } from 'node:module';
-
 import { fixMishearings } from '../jarvis/voice/mishearing';
 import { meaningfulSpeech } from '../jarvis/voice/noise';
 import { route } from '../jarvis/router/router';
 import { isTalk } from '../jarvis/core';
 import { tokenize } from '../jarvis/router/text';
+import { DEFAULT_PERMISSIONS } from '../jarvis/types';
+import { jarvisPaths } from '../jarvis/setup/paths';
+import { DEFAULT_VOICE, Speaker, isVoiceInstalled } from '../jarvis/voice/tts';
 
 const СЕРВЕР = process.env.JARVIS_GPU_STT ?? 'http://127.0.0.1:8178';
 
@@ -76,76 +76,35 @@ const СЛУЧАИ: Случай[] = [
   { текст: 'Ты сделал ракету?', ждём: 'ответ словами', словоВопроса: false },
 ];
 
-const ГОЛОС = path.join(
-  process.env.TEST_TTS_INSTALL_ROOT ??
-    path.join(process.env.APPDATA ?? '', 'Interpreter', 'tts-models'),
-  'vits-piper-ru_RU-irina-medium',
-  'vits-piper-ru_RU-irina-medium',
-);
+// Голос берём из хранилища ДЖАРВИСА, а не из чужого каталога.
+//
+// Здесь стоял путь `APPDATA/Interpreter/tts-models/...` — наследие другой
+// программы. `jarvis-setup` кладёт голоса в `<home>/models/voices/<id>`,
+// поэтому на нормально установленной машине стенд не находил голос, все пять
+// случаев получали «нечем проверить», а прогон выходил с нулём: успех без
+// единой выполненной проверки.
+const КОРЕНЬ_ГОЛОСОВ = process.env.TEST_TTS_INSTALL_ROOT ?? jarvisPaths().voiceModels;
+const ГОЛОС_ID = DEFAULT_VOICE.ru;
 
-function wav16(samples: Float32Array, sampleRate: number): Buffer {
-  const data = Buffer.alloc(samples.length * 2);
-  for (let i = 0; i < samples.length; i += 1) {
-    const s = Math.max(-1, Math.min(1, samples[i] as number));
-    data.writeInt16LE(Math.round(s * 32767), i * 2);
-  }
-  const head = Buffer.alloc(44);
-  head.write('RIFF', 0);
-  head.writeUInt32LE(36 + data.length, 4);
-  head.write('WAVE', 8);
-  head.write('fmt ', 12);
-  head.writeUInt32LE(16, 16);
-  head.writeUInt16LE(1, 20);
-  head.writeUInt16LE(1, 22);
-  head.writeUInt32LE(sampleRate, 24);
-  head.writeUInt32LE(sampleRate * 2, 28);
-  head.writeUInt16LE(2, 32);
-  head.writeUInt16LE(16, 34);
-  head.write('data', 36);
-  head.writeUInt32LE(data.length, 40);
-  return Buffer.concat([head, data]);
-}
 
 /**
- * Голос для стенда.
+ * Голос для стенда — тот же `Speaker`, которым говорит сам Джарвис.
+ *
+ * Своя обвязка sherpa здесь повторяла его слово в слово и вдобавок глотала
+ * любую ошибку: испорченный `.onnx`, смена API, отсутствие самого sherpa —
+ * всё это одинаково превращалось в «голос не установлен», и человек шёл
+ * скачивать то, что у него уже стоит.
  *
  * Синтез и распознавание обязаны быть в разных процессах — сборка sherpa для
  * WebAssembly держит один экземпляр модуля на процесс и падает от второго.
- * Здесь это выполнено само собой: распознаватель живёт за HTTP.
+ * Здесь это выполнено само собой: распознаватель живёт за HTTP, а `Speaker`
+ * уводит синтез в свой поток.
  */
-function создатьГолос(): { сказать(текст: string): Buffer } | null {
-  try {
-    const require_ = createRequire(path.join(process.cwd(), 'package.json'));
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sherpa = require_('sherpa-onnx') as any;
-    const tts = sherpa.createOfflineTts({
-      offlineTtsModelConfig: {
-        offlineTtsVitsModelConfig: {
-          model: path.join(ГОЛОС, 'ru_RU-irina-medium.onnx'),
-          tokens: path.join(ГОЛОС, 'tokens.txt'),
-          dataDir: path.join(ГОЛОС, 'espeak-ng-data'),
-          lexicon: '',
-          noiseScale: 0.667,
-          noiseScaleW: 0.8,
-          lengthScale: 1.0,
-        },
-        numThreads: 1,
-        provider: 'cpu',
-        debug: 0,
-      },
-      ruleFsts: '',
-      ruleFars: '',
-      maxNumSentences: 1,
-    });
-    return {
-      сказать(текст: string): Buffer {
-        const audio = tts.generate({ text: текст, sid: 0, speed: 1.0 });
-        return wav16(audio.samples, audio.sampleRate);
-      },
-    };
-  } catch {
-    return null;
+function создатьГолос(): { голос: Speaker } | { беда: string } {
+  if (!isVoiceInstalled(КОРЕНЬ_ГОЛОСОВ, ГОЛОС_ID)) {
+    return { беда: `голоса ${ГОЛОС_ID} нет в ${КОРЕНЬ_ГОЛОСОВ}` };
   }
+  return { голос: new Speaker(КОРЕНЬ_ГОЛОСОВ, ГОЛОС_ID) };
 }
 
 async function распознать(wav: Buffer): Promise<string> {
@@ -154,7 +113,13 @@ async function распознать(wav: Buffer): Promise<string> {
   form.append('response_format', 'json');
   form.append('language', 'ru');
   form.append('translate', 'false');
-  const response = await fetch(`${СЕРВЕР}/inference`, { method: 'POST', body: form });
+  // Со сроком: сервер мог принять соединение и зависнуть, и тогда проверка
+  // висела бесконечно, не отдав НИ ОДНОГО из трёх исходов.
+  const response = await fetch(`${СЕРВЕР}/inference`, {
+    method: 'POST',
+    body: form,
+    signal: AbortSignal.timeout(20_000),
+  });
   if (!response.ok) throw new Error(`сервер ответил HTTP ${response.status}`);
   const payload = (await response.json()) as { text?: string };
   return (payload.text ?? '').trim();
@@ -173,7 +138,8 @@ async function main(): Promise<void> {
   console.log(`Сквозная проверка вопросов: ${СЛУЧАИ.length} фраз${String.fromCharCode(10)}`);
 
   const живой = await серверЖивой();
-  const голос = живой ? создатьГолос() : null;
+  const стенд = живой ? создатьГолос() : null;
+  const голос = стенд && 'голос' in стенд ? стенд.голос : null;
 
   let плохо = 0;
   let нечем = 0;
@@ -187,16 +153,21 @@ async function main(): Promise<void> {
       if (!живой) {
         вердикт = { нечем: `распознаватель не поднят (${СЕРВЕР})` };
       } else if (!голос) {
-        вердикт = { нечем: 'голос для стенда не установлен' };
+        // Причину называем словами: раньше любая поломка синтеза выглядела
+        // как «голос не установлен».
+        вердикт = { нечем: стенд && 'беда' in стенд ? стенд.беда : 'голос для стенда недоступен' };
       } else {
-        const сырое = await распознать(голос.сказать(случай.текст));
+        const сырое = await распознать((await голос.say(случай.текст)).wav);
         // Ровно тот путь очистки, что стоит в обёртке распознавателя.
         const очищенное = meaningfulSpeech(fixMishearings(сырое));
         if (!очищенное) {
           вердикт = `очистка съела фразу целиком: ${JSON.stringify(сырое)}`;
         } else {
           const естьЗнак = tokenize(очищенное).includes('?');
-          const решение = route(очищенное, { basePermissions: { canRunCode: true } as never });
+          // Права по умолчанию, а не выдуманные: `{ canRunCode: true } as
+          // never` оставлял `edit` пустым, и разбор мог выбрать осмотр проекта
+          // вместо правки — то есть мерился не тот путь, которым ходит ядро.
+          const решение = route(очищенное, { basePermissions: DEFAULT_PERMISSIONS });
           const вышло = isTalk(решение) ? 'ответ словами' : 'работа';
 
           // Вопрос без вопросительного слова держится ТОЛЬКО на знаке. Если
