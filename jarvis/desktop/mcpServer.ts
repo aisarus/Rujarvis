@@ -625,15 +625,19 @@ export function createDesktopMcpServer(): McpServer {
         if (live.isLive()) return say('Живой Blender уже открыт — шли скрипты через blender_live.');
 
         const exe = blender.findBlender();
-        if (!exe) return say('Blender не найден на этой машине.');
+        // Отказ — через `failed`, а не `say`.
+        //
+        // Без пометки ошибки модель читает отказ как результат и идёт дальше,
+        // а журнал стен его не запоминает: урок «на этой машине нет Блендера»
+        // пропадал, ради таких уроков журнал и заведён.
+        if (!exe) return failed(new Error('Blender не найден на этой машине.'));
 
         live.startLive(exe, file);
         const up = await live.waitLive();
-        return say(
-          up
-            ? 'Живой Blender открыт и слушает. Дальше работай через blender_live — окно не закроется.'
-            : 'Blender запущен, но слушатель не отозвался за минуту. Проверь окно глазами.',
-        );
+        if (!up) {
+          return failed(new Error('Blender запущен, но слушатель не отозвался за минуту. Проверь окно глазами.'));
+        }
+        return say('Живой Blender открыт и слушает. Дальше работай через blender_live — окно не закроется.');
       } catch (error) {
         return failed(error);
       }
@@ -1275,8 +1279,14 @@ ${хвост}` : ''}`,
     async ({ prompt, negative, width, height, steps, seed, name }) => {
       try {
         const папка = files.outputFolder();
+        mkdirSync(папка, { recursive: true });
         const имя = (name?.trim() || 'рисунок').replace(/[\/:*?"<>|]/gu, '_');
-        const путь = path.join(папка, `${имя}.png`);
+        // Свободное имя, а не постоянное.
+        //
+        // Без `name` путь был один и тот же: второй рисунок молча уничтожал
+        // первый. `files.ts` про это говорит прямо — «вчерашний отчёт с тем же
+        // именем это чья-то работа».
+        const путь = path.join(папка, files.uniqueName(`${имя}.png`, new Set(readdirSync(папка))));
 
         const итог = await comfy.draw({
           prompt,
@@ -1332,8 +1342,11 @@ ${хвост}` : ''}`,
     async ({ keys, name, between, fps, impacts }) => {
       try {
         const папка = files.outputFolder();
+        mkdirSync(папка, { recursive: true });
         const имя = (name?.trim() || 'анимация').replace(/[\/:*?"<>|]/gu, '_');
-        const путь = path.join(папка, `${имя}.mp4`);
+        // Свободное имя: `ffmpeg -y` затирает молча, и вторая анимация без
+        // имени уносила первую.
+        const путь = path.join(папка, files.uniqueName(`${имя}.mp4`, new Set(readdirSync(папка))));
 
         const итог = await mid.sequence({
           keys,

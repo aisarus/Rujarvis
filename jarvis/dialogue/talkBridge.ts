@@ -30,6 +30,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -116,8 +117,15 @@ export class TalkBridge {
 
     // Никто не забрал. Запрос убираем за собой: исполненный через минуту после
     // разговора он был бы неожиданностью, а не помощью.
+    //
+    // Но «убрал» и «не успел убрать» — разные ответы. Если файла уже нет,
+    // значит его ЗАБРАЛИ и, возможно, исполняют прямо сейчас. Сказать в этом
+    // случае «не ответил» значит соврать: разговор передаст человеку, что
+    // ничего не запущено, тот повторит просьбу — и работа заведётся дважды.
+    const был = existsSync(this.file('req', id));
     drop(this.file('req', id));
-    return { ok: false, text: 'Джарвис не ответил.' };
+    if (был) return { ok: false, text: 'Джарвис не ответил.' };
+    return { ok: false, text: 'Джарвис взял просьбу, но не ответил вовремя — исход неизвестен.' };
   }
 
   /**
@@ -217,7 +225,12 @@ export class TalkBridge {
 
   private writeAnswer(id: string, answer: TalkAnswer): void {
     try {
-      writeFileSync(this.file('ans', id), JSON.stringify(answer), 'utf8');
+      // Через переименование: спрашивающий опрашивает папку каждые сто
+      // миллисекунд и успевал заглянуть в ещё пустой файл, не разобрать его —
+      // и удалить. Ответ пропадал совсем.
+      const черновик = `${this.file('ans', id)}.tmp`;
+      writeFileSync(черновик, JSON.stringify(answer), 'utf8');
+      renameSync(черновик, this.file('ans', id));
     } catch {
       // Диск занят. Спрашивающий уйдёт по сроку и скажет об этом честно.
     }

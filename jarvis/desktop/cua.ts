@@ -133,7 +133,11 @@ export class CuaDriver {
       this.buffer = this.buffer.slice(end + 1);
       if (!line.startsWith('{')) continue;
 
-      let message: { id?: number; result?: { content?: { text?: string }[] }; error?: unknown };
+      let message: {
+        id?: number;
+        result?: { content?: { text?: string }[]; isError?: boolean };
+        error?: unknown;
+      };
       try {
         message = JSON.parse(line);
       } catch {
@@ -148,7 +152,20 @@ export class CuaDriver {
         seat.reject(new Error(JSON.stringify(message.error)));
         continue;
       }
-      seat.resolve((message.result?.content ?? []).map((c) => c.text ?? '').join(''));
+
+      const текст = (message.result?.content ?? []).map((c) => c.text ?? '').join('');
+
+      // Отказ ИНСТРУМЕНТА приходит не ошибкой протокола, а полем `isError` в
+      // ответе. Смотрели только на ошибку протокола, поэтому «element not
+      // found» и «session has ended» доезжали как успешная строка — и
+      // `window_press`, `window_write`, `window_key` бодро отвечали
+      // «Нажал», ничего не нажав.
+      if (message.result?.isError === true) {
+        seat.reject(new Error(текст || 'драйвер отказал без объяснения'));
+        continue;
+      }
+
+      seat.resolve(текст);
     }
   }
 

@@ -370,6 +370,13 @@ export class JarvisCore {
         this.pendingPlan = null;
         return this.startApproved(принятый);
       }
+      if (вердикт === 'отказ') {
+        // План убираем и ничего не планируем: человек попросил отменить.
+        this.pendingPlan = null;
+        const сказано = tr('Хорошо, отменил.', 'All right, cancelled.');
+        this.say(сказано, settings);
+        return { kind: 'control', outcome: { action: 'stopped', spoken: сказано }, spoken: сказано };
+      }
       if (вердикт === 'правка') {
         const прежний = this.pendingPlan;
         this.pendingPlan = null;
@@ -656,7 +663,13 @@ export class JarvisCore {
   private async startApproved(принятый: { utterance: string; plan: Plan }): Promise<JarvisTurn> {
     this.approving = принятый.plan;
     try {
-      return await this.handleUtterance(принятый.utterance);
+      // `asWork` обязателен: человек УЖЕ согласился на работу.
+      //
+      // Без него просьба вроде «сначала распиши как будешь делать мультик»
+      // на втором проходе снова выглядела разговором, уходила в ответ вслух —
+      // и задача не заводилась вовсе, а план к этому моменту уже обнулён.
+      // Человек сказал «погнали» и не получил ничего.
+      return await this.handleUtterance(принятый.utterance, { asWork: true });
     } finally {
       this.approving = null;
     }
@@ -737,11 +750,25 @@ export class JarvisCore {
 
     let spoken: string;
     let backend = BACKEND_OF_TALK;
+    // Отказ — это не ответ «не знаю».
+    //
+    // Раньше «Не знаю.» звучало и когда ни один помощник не доступен, эндпоинт
+    // молчит или CLI не запустился, а в состояние мира это писалось с
+    // `ok: true`. Человек слышал «не знаю» о вопросе, на который никто даже не
+    // пытался отвечать, а следующая реплика получала в контекст выдуманный
+    // успешный ответ.
+    let вышло = true;
     try {
       const result = await run.result();
-      spoken = result.ok && result.text.trim() ? result.text.trim() : tr('Не знаю.', 'I do not know.');
+      вышло = result.ok && result.text.trim().length > 0;
+      spoken = вышло
+        ? result.text.trim()
+        : result.ok
+          ? tr('Не знаю.', 'I do not know.')
+          : tr('Не смог ответить.', 'Could not answer.');
       backend = result.backend || BACKEND_OF_TALK;
     } catch {
+      вышло = false;
       spoken = tr('Не смог ответить.', 'Could not answer.');
     }
 
@@ -754,7 +781,7 @@ export class JarvisCore {
     // было лет» спрашивать было не о ком: в состоянии мира лежал вопрос и
     // ничего больше. Это и есть «нет нормального режима разговора» — реплики
     // не складывались в разговор.
-    this.options.world.noteResult({ text: short, ok: true, backend });
+    this.options.world.noteResult({ text: short, ok: вышло, backend });
 
     this.say(short, settings);
     return short;
