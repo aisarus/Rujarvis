@@ -1,2 +1,0 @@
-# Project B
-Second workspace
