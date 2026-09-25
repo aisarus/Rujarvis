@@ -10,12 +10,7 @@ import {
   matchVoiceControl,
   type ControlTarget,
 } from './interrupts';
-import {
-  spokenFailure,
-  splitSentences,
-  stripUnspeakable,
-  toSpokenResponse,
-} from './spokenResponse';
+import { spokenFailure, stripUnspeakable, toSpokenResponse } from './spokenResponse';
 import { acknowledgementFor, clarificationFor } from './acknowledgement';
 import {
   DEFAULT_WHISPER_MODEL,
@@ -399,9 +394,14 @@ describe('archive extraction safety', () => {
     expect(resolveArchiveEntry(root, '/etc/passwd')).toBe(path.resolve(root, 'etc', 'passwd'));
   });
 
-  it('не выпускает наружу через обратные слеши', () => {
-    // На Windows разделителем работает и «\», и попытка выхода выглядит иначе.
-    const climb = ['..', '..', 'windows', 'system32'].join(path.sep);
+  it.runIf(process.platform === 'win32')('не выпускает наружу через обратные слеши', () => {
+    // Обратный слеш — разделитель ТОЛЬКО на Windows.
+    //
+    // Проверка склеивала путь через `path.sep`, а на POSIX это «/» — то есть
+    // ровно та же строка, что в проверке выше, и второй случай не проверял
+    // ничего. С явным обратным слешем на POSIX `path.normalize` не считает
+    // его разделителем, поэтому случай пропускается честно.
+    const climb = String.raw`..\..\windows\system32`;
     expect(() => resolveArchiveEntry(root, climb)).toThrow(/escapes/);
   });
 });

@@ -252,7 +252,7 @@ describe('задача про рабочий стол не уходит тому
       manager.register(stubBackend(id));
     }
 
-    const plan = manager.plan(request({ capabilities: ['computer', 'code', 'files'] }));
+    const plan = manager.plan(request({ capabilities: ['computer', 'coding', 'files'] }));
 
     expect(plan.order[0]).toBe('claude-code');
     expect(plan.order).not.toContain('openai-compatible');
@@ -459,7 +459,7 @@ describe('Claude Code adapter', () => {
 
   it('даёт читать свою папку и там, где экран не нужен', () => {
     // Знание о себе не зависит от того, просили ли трогать мышь.
-    const args = buildClaudeArgs(request({ capabilities: ['code'] }), {
+    const args = buildClaudeArgs(request({ capabilities: ['coding'] }), {
       permissionMode: 'acceptEdits',
       homeDir: 'C:/жарвис',
       gateSettings: 'C:/jarvis/gate-settings.json',
@@ -468,7 +468,7 @@ describe('Claude Code adapter', () => {
   });
 
   it('подключает хук красных линий к каждой работе', () => {
-    const args = buildClaudeArgs(request({ capabilities: ['code'] }), {
+    const args = buildClaudeArgs(request({ capabilities: ['coding'] }), {
       permissionMode: 'acceptEdits',
       gateSettings: 'C:/jarvis/gate-settings.json',
     });
@@ -507,7 +507,7 @@ describe('Claude Code adapter', () => {
   });
 
   it('leaves the desktop tools out of work that does not touch the screen', () => {
-    const args = buildClaudeArgs(request({ capabilities: ['code'] }), {
+    const args = buildClaudeArgs(request({ capabilities: ['coding'] }), {
       permissionMode: 'acceptEdits',
       desktopMcpConfig: 'C:/jarvis/desktop.json',
     });

@@ -25,6 +25,15 @@ const стенд = vi.hoisted(() => ({
   настройкиОкна: null as null | { settings: { update(patch: { language: 'ru' | 'en' }): unknown } },
 }));
 
+/**
+ * Чтение в обход сужения типов.
+ *
+ * Поля стенда заполняет уже загруженный `main`, а вывод типов этого не видит:
+ * после `стенд.готово = null` он считает поле навсегда пустым и отказывается
+ * вызывать его даже через `?.()`. Функция возвращает объявленный тип.
+ */
+const взять = <K extends keyof typeof стенд>(ключ: K): (typeof стенд)[K] => стенд[ключ];
+
 vi.mock('electron', () => {
   class Tray {
     constructor() {
@@ -88,7 +97,7 @@ async function запустить(лок: boolean): Promise<void> {
   vi.resetModules();
   process.env.JARVIS_HOME = домДляПроверки();
   await import('./main');
-  стенд.готово?.();
+  взять('готово')?.();
   // Дать цепочке промисов `whenReady().then(...)` доработать.
   for (let i = 0; i < 20; i += 1) await Promise.resolve();
   await new Promise((r) => setTimeout(r, 10));
@@ -145,14 +154,14 @@ describe('язык главного процесса', () => {
     vi.resetModules();
     process.env.JARVIS_HOME = домДляПроверки('ru', false);
     await import('./main');
-    стенд.готово?.();
+    взять('готово')?.();
     for (let i = 0; i < 20; i += 1) await Promise.resolve();
 
     const { currentLanguage } = await import('../jarvis/locale/language');
     expect(currentLanguage()).toBe('ru');
 
     // Мастер меняет язык через то же хранилище, что держит главный процесс.
-    const хранилище = стенд.настройкиОкна?.settings;
+    const хранилище = взять('настройкиОкна')?.settings;
     expect(хранилище).toBeTruthy();
     хранилище?.update({ language: 'en' });
     expect(currentLanguage()).toBe('en');

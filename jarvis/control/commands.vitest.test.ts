@@ -15,6 +15,11 @@ function act(phrase: string): string | null {
       return `click:${command.button}${command.double ? ':2' : ''}`;
     case 'type':
       return `type:${command.text}`;
+    default:
+      // Остальные виды команд здесь не разбираются, но молча возвращать
+      // `undefined` нельзя: тогда несовпадение выглядит как «ничего не
+      // разобралось», хотя разобралось — просто в другое.
+      return command.kind;
   }
 }
 
