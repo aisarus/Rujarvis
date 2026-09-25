@@ -20,6 +20,7 @@ const стенд = vi.hoisted(() => ({
   лок: true,
   трееПоявилось: 0,
   голосЗапущен: 0,
+  микрофонПереключен: 0,
   готово: null as null | (() => void),
   подсказка: '',
   настройкиОкна: null as null | { settings: { update(patch: { language: 'ru' | 'en' }): unknown } },
@@ -70,7 +71,20 @@ vi.mock('electron', () => {
 vi.mock('./voiceBridge', () => ({
   startJarvisVoiceBridge: async () => {
     стенд.голосЗапущен += 1;
-    return { showEvents: () => {}, dispose: () => {} };
+    // Подделка обязана уметь всё, чем пользуется `main`.
+    //
+    // Неполная роняла построение меню значка необработанной ошибкой
+    // «bridge?.muteState is not a function». Набор при этом оставался
+    // зелёным, но vitest предупреждал прямо: такая ошибка может дать ложно
+    // пройденные проверки — их и стало на восемьдесят меньше.
+    return {
+      showEvents: () => {},
+      dispose: () => {},
+      toggleMute: () => {
+        стенд.микрофонПереключен += 1;
+      },
+      muteState: () => ({ muted: false, secondsLeft: 0 }),
+    };
   },
 }));
 
