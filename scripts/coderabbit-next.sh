@@ -60,6 +60,18 @@ for pr in $list; do
   text=$(gh api "repos/$repo/issues/$pr/comments" --paginate     --jq '[.[] | select(.user.login | test("coderabbit";"i"))] | last | .body | gsub("
 "; " ")')     || { echo "Не удалось прочитать ответы бота в PR №$pr." >&2; exit 1; }
 
+  # Разбор без единого встроенного замечания — тоже разбор.
+  #
+  # Бот отвечает общим комментарием «Actionable comments posted: 0» или
+  # «Review skipped», и встроенных замечаний при этом нет вовсе. Скрипт считал
+  # такой кусок неразобранным, просил разбор у него снова и снова и НИКОГДА не
+  # доходил до остальных: обход вставал на первом же чистом куске, а каждые
+  # пятнадцать минут уходил запрос из расписания.
+  if printf '%s' "$text" | grep -qE 'Actionable comments posted|Review skipped|No actionable comments'; then
+    echo "PR №$pr разобран без замечаний — пропускаю."
+    continue
+  fi
+
   if printf '%s' "$text" | grep -qE 'Review triggered|Currently processing'; then
     age=$(( ( $(date -u +%s) - $(date -u -d "$when" +%s 2>/dev/null || echo 0) ) / 60 ))
     # Полчаса на девяносто файлов хватает; если завис — попробуем снова.
