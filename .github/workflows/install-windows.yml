@@ -48,9 +48,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Проверки установщика
+      - name: Проверки установщика — обеими оболочками
+        # Пятёркой ТОЖЕ, а не только семёркой.
+        #
+        # Сторож install.ps1 сам был написан через `$IsWindows`: в 5.1 этой
+        # переменной нет, строгого режима в нём нет тоже — он молча уходил в
+        # ветку /bin/sh, и две проверки падали. А ещё он был без BOM и в 5.1
+        # не разбирался вовсе. Видно это было только запуском пятёркой, но
+        # звали его всегда семёркой. Замер 25.09.2026: 5.1 — «Провалено
+        # проверок: 2» после починки кодировки, 7 — ноль.
+        #
+        # Отдельным процессом (`-File`), а не точкой: при `shell: pwsh` GitHub
+        # дописывает `exit $LASTEXITCODE`, и чужой код возврата изнутри
+        # скрипта утекал наружу.
         shell: pwsh
-        run: ./scripts/check-install-script.ps1
+        run: |
+          pwsh -NoProfile -File scripts/check-install-script.ps1
+          if ($LASTEXITCODE -ne 0) { throw "pwsh 7: $LASTEXITCODE" }
+          powershell.exe -NoProfile -File scripts/check-install-script.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Windows PowerShell 5.1: $LASTEXITCODE" }
 
       - name: Ветка PR — та самая, а не однофамилица
         # Установщик клонирует фиксированный aisarus/Rujarvis по ИМЕНИ ветки.

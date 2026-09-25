@@ -1,4 +1,4 @@
-<#
+﻿<#
     Проверка install.ps1: разбор синтаксиса и тесты чистых функций.
 
     Запуск:  pwsh -NoProfile -File scripts/check-install-script.ps1
@@ -41,10 +41,20 @@ function Assert-That {
     }
 }
 
-$shell = if ($IsWindows) { "$env:SystemRoot\System32\cmd.exe" } else { '/bin/sh' }
-$failArgs = if ($IsWindows) { @('/c', 'exit 3') } else { @('-c', 'exit 3') }
-$okArgs = if ($IsWindows) { @('/c', 'exit 0') } else { @('-c', 'exit 0') }
-$presentCommand = if ($IsWindows) { 'cmd' } else { 'ls' }
+# Windows определяем по $env:OS, а не по той переменной, которой нет в 5.1.
+#
+# Ровно из-за неё падал сам install.ps1 — и вот она же сидела в стороже,
+# который это и должен ловить. Строгого режима здесь нет, поэтому ничего
+# не падало: читалось как $null, скрипт молча уходил в ветку /bin/sh, и
+# две проверки Invoke-Checked проваливались. Увидеть это можно было только
+# запустив сторожа пятёркой, а CI зовёт его семёркой, где переменная есть.
+# Замер 25.09.2026: под 5.1 «Провалено проверок: 2», под 7 — ноль.
+$onWindows = $env:OS -eq 'Windows_NT'
+
+$shell = if ($onWindows) { "$env:SystemRoot\System32\cmd.exe" } else { '/bin/sh' }
+$failArgs = if ($onWindows) { @('/c', 'exit 3') } else { @('-c', 'exit 3') }
+$okArgs = if ($onWindows) { @('/c', 'exit 0') } else { @('-c', 'exit 0') }
+$presentCommand = if ($onWindows) { 'cmd' } else { 'ls' }
 
 Assert-That 'Test-Command находит существующую команду' (Test-Command $presentCommand)
 Assert-That 'Test-Command не находит несуществующую' (-not (Test-Command 'no-such-command-xyz'))
@@ -219,7 +229,7 @@ finally {
 # Замена отняла бы пути, которые есть в процессе, но не в реестре: так собран
 # PATH в CI и у менеджеров версий.
 
-if ($IsWindows) {
+if ($onWindows) {
     $ownPath = Join-Path ([System.IO.Path]::GetTempPath()) 'rujarvis-path-probe'
     $before = $env:Path
     try {
@@ -263,3 +273,13 @@ if ($skipped -gt 0) {
 else {
     Write-Host 'install.ps1: проверки функций пройдены' -ForegroundColor Green
 }
+
+# Итог проверки — её код возврата, а не то, что осталось от чужой команды.
+#
+# Без этой строки скрипт печатал «проверки пройдены» и возвращал единицу:
+# $LASTEXITCODE держал код последней НАТИВНОЙ команды, отработавшей где-то
+# внутри. `ci.yml` этого не видел, потому что зовёт скрипт отдельным процессом
+# (`pwsh -File`), где код берётся заново. А обход установки Windows зовёт его
+# через `shell: pwsh`, то есть точкой, и чужая единица утекала наружу: шаг
+# падал на зелёной проверке. Поймано первым же живым прогоном 25.09.2026.
+exit 0
