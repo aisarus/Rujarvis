@@ -125,6 +125,17 @@ export class VoiceSession {
   private pushToTalkHeld = false;
   /** Подъём захвата, пока он идёт: отпускание обязано его дождаться. */
   private подъёмЗахвата: Promise<void> | null = null;
+  /**
+   * Идёт ли работа — отдельно от показа.
+   *
+   * Показ во время речи становится «Говорю», и по нему состояние задачи уже
+   * не восстановить: имя терялось, а если задача кончалась во время речи,
+   * `taskFinished` не видел «Работаю» и молчал — после речи «Работаю»
+   * возвращалось и висело навсегда.
+   */
+  private taskRunning = false;
+  /** Имя идущей задачи: показ его забывает, а говорить о ней надо по имени. */
+  private taskTitle: string | undefined;
 
   constructor(private readonly options: VoiceSessionOptions) {
     this.mode = options.mode ?? 'push-to-talk';
@@ -352,6 +363,8 @@ export class VoiceSession {
 
     switch (turn.kind) {
       case 'task':
+        this.taskRunning = true;
+        this.taskTitle = turn.task.title;
         this.setIndicator('working', turn.task.title);
         break;
       case 'control':
@@ -373,6 +386,8 @@ export class VoiceSession {
 
   /** Called by the desktop layer when the active task finishes. */
   taskFinished(): void {
+    this.taskRunning = false;
+    this.taskTitle = undefined;
     if (this.indicator === 'working') this.setIndicator('idle');
   }
 
@@ -415,14 +430,19 @@ export class VoiceSession {
   /** Plays a line, keeping the indicator honest while it does. */
   async speak(text: string): Promise<void> {
     if (!this.options.playback || !text.trim()) return;
-    const previous = this.indicator;
     const ticket = this.silenceTicket;
     this.setIndicator('speaking');
     try {
       await this.options.playback.speak(text);
     } finally {
-      // Work that is still running should go back to showing that it is.
-      this.setIndicator(previous === 'working' ? 'working' : 'idle', this.activeTaskTitle);
+      // Возвращаемся к работе по её собственному признаку, а не по показу.
+      //
+      // Раньше здесь смотрели на то, что показывалось ДО речи, и передавали
+      // `this.activeTaskTitle`, который к этому моменту уже обнулён самим
+      // переходом в «Говорю». Получалось два вранья сразу: «Работаю» без
+      // имени задачи и — если задача кончилась, пока Джарвис говорил, —
+      // «Работаю» навсегда.
+      this.setIndicator(this.taskRunning ? 'working' : 'idle', this.taskTitle);
 
       // Окно слушания отсчитывается заново от конца фразы, а не от её начала.
       //

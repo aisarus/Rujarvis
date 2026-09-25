@@ -487,3 +487,39 @@ describe('клавиша отпущена не вовремя', () => {
     expect(h.transcripts).toEqual([]);
   });
 });
+
+describe('речь не должна терять состояние задачи', () => {
+  /**
+   * Замечание CodeRabbit (кусок 4, PR №43). Показ во время речи становится
+   * «Говорю», и состояние задачи по нему уже не восстановить.
+   */
+  it('после речи «Работаю» возвращается С ИМЕНЕМ задачи', async () => {
+    const h = harness();
+    await h.session.pressPushToTalk();
+    await h.session.releasePushToTalk();
+    expect(h.session.status.indicator).toBe('working');
+    const имя = h.session.status.activeTaskTitle;
+    expect(имя).toBeTruthy();
+
+    await h.session.speak('Работаю над этим.');
+
+    expect(h.session.status.indicator).toBe('working');
+    expect(h.session.status.activeTaskTitle).toBe(имя);
+    expect(h.session.status.label).toMatch(/^Работаю: .+/u);
+  });
+
+  it('задача, кончившаяся во время речи, не оставляет «Работаю» навсегда', async () => {
+    const h = harness();
+    await h.session.pressPushToTalk();
+    await h.session.releasePushToTalk();
+    expect(h.session.status.indicator).toBe('working');
+
+    // Задача заканчивается, пока Джарвис говорит: показ в этот момент
+    // «Говорю», и старый код молчал, а потом возвращал «Работаю».
+    const речь = h.session.speak('Готово.');
+    h.session.taskFinished();
+    await речь;
+
+    expect(h.session.status.indicator).toBe('idle');
+  });
+});
