@@ -1,0 +1,63 @@
+{
+  "name": "rujarvis",
+  "version": "0.3.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "description": "Voice assistant for Windows in Russian and English, driven by your Claude Code subscription",
+  "homepage": "https://github.com/aisarus/Rujarvis",
+  "bugs": "https://github.com/aisarus/Rujarvis/issues",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aisarus/Rujarvis.git"
+  },
+  "author": {
+    "name": "Rujarvis contributors"
+  },
+  "type": "module",
+  "main": "dist/app/main.cjs",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=9 <10"
+  },
+  "scripts": {
+    "postinstall": "node scripts/ensure-electron.mjs",
+    "build": "node build.mjs",
+    "start": "electron dist/app/main.cjs",
+    "dev": "node build.mjs && electron dist/app/main.cjs",
+    "typecheck": "tsc -p tsconfig.app.json",
+    "test": "vitest run --config vitest.app.config.ts",
+    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "jarvis:setup": "tsx scripts/jarvis-setup.ts",
+    "jarvis:try": "tsx scripts/jarvis-try.ts",
+    "jarvis:talk-check": "tsx scripts/talk-live-check.ts",
+    "jarvis:roundtrip": "tsx scripts/voice-roundtrip.ts",
+    "jarvis:mac-check": "tsx scripts/probe-darwin-driver.ts",
+    "jarvis:health": "node scripts/health.mjs",
+    "jarvis:icons": "node scripts/make-icons.mjs",
+    "jarvis:window-check": "node build.mjs && electron dist/qa/window-check.cjs",
+    "jarvis:qa": "node build.mjs && electron dist/qa/acceptance.cjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "playwright": "1.56.1",
+    "sherpa-onnx": "1.12.29",
+    "tar-stream": "3.1.8",
+    "unbzip2-stream": "1.4.3",
+    "zod": "4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "24.9.1",
+    "electron": "42.5.1",
+    "esbuild": "0.27.0",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
+  }
+}
