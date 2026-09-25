@@ -12,7 +12,16 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import path from 'node:path';
 
 import type { RiskLevel } from '../types';
@@ -27,6 +36,23 @@ export interface GateQuestion {
 export type GateHandler = (question: GateQuestion) => Promise<boolean> | boolean;
 
 /** Имя файла — только из этих знаков: id приходит из чужого процесса. */
+/** Что ответил человек — или почему ответа нет. */
+export type ГолосЧеловека = 'allow' | 'deny' | 'timeout' | 'failed';
+
+/**
+ * Файл моложе пяти секунд — значит, его, скорее всего, прямо сейчас пишут.
+ *
+ * Пять секунд с запасом: запись занимает миллисекунды, а опрос идёт раз в
+ * десятую долю секунды.
+ */
+function свежий(file: string, now: number): boolean {
+  try {
+    return now - statSync(file).mtimeMs < 5_000;
+  } catch {
+    return false;
+  }
+}
+
 const SAFE_ID = /^[a-z0-9-]{1,64}$/iu;
 const LEVELS = new Set<RiskLevel>(['safe', 'normal', 'sensitive', 'dangerous']);
 
@@ -45,26 +71,45 @@ export class GateBridge {
     private readonly options: { waitMs?: number; stepMs?: number; now?: () => number } = {},
   ) {}
 
-  /** Сторона хука: спросить и дождаться. `false` — и на отказ, и на молчание. */
-  async ask(summary: string, level: RiskLevel): Promise<boolean> {
+  /**
+   * Сторона хука: спросить и дождаться.
+   *
+   * Ответ из четырёх слов, а не из двух.
+   *
+   * Раньше возвращалось `false` и на отказ человека, и на молчание, и на
+   * сломанный мост — а хук превращал это в «Человек не разрешил» и запрещал
+   * повторять попытку. То есть агент говорил человеку, что тот отказал, хотя
+   * вопроса не было вовсе, и сломанный мост так никто и не замечал. Решение
+   * во всех трёх случаях одно — не пускать, — но причина разная, и называть
+   * её надо честно.
+   */
+  async ask(summary: string, level: RiskLevel): Promise<ГолосЧеловека> {
     const now = this.options.now ?? Date.now;
     const id = randomUUID();
     const question: GateQuestion = { id, summary, level, at: now() };
     try {
       mkdirSync(this.dir, { recursive: true });
-      writeFileSync(this.file('ask', id), JSON.stringify(question), 'utf8');
+      // Пишем во временный файл и переименовываем.
+      //
+      // `writeFileSync` сначала создаёт файл пустым и лишь потом заполняет.
+      // Читающая сторона успевала заглянуть в эту щель, не разбирала пустоту
+      // и УДАЛЯЛА файл — вопрос пропадал, человек ничего не слышал, а хук
+      // ждал минуту и отказывал.
+      const черновик = `${this.file('ask', id)}.tmp`;
+      writeFileSync(черновик, JSON.stringify(question), 'utf8');
+      renameSync(черновик, this.file('ask', id));
     } catch {
-      return false;
+      return 'failed';
     }
 
     const deadline = now() + (this.options.waitMs ?? GATE_WAIT_MS);
     while (now() < deadline) {
       const answer = this.readAnswer(id);
-      if (answer !== null) return answer;
+      if (answer !== null) return answer ? 'allow' : 'deny';
       await pause(this.options.stepMs ?? STEP_MS);
     }
     drop(this.file('ask', id));
-    return false;
+    return 'timeout';
   }
 
   /** Вопросы прошлого запуска: задавать их сейчас — неожиданность, а не забота. */
@@ -102,8 +147,14 @@ export class GateBridge {
       if (!name.startsWith('ask-') || !name.endsWith('.json')) continue;
       const file = path.join(this.dir, name);
       const question = readQuestion(file);
+      if (!question) {
+        // Свежий неразобранный файл — скорее всего его прямо сейчас пишут.
+        // Удалять такой значит терять вопрос человека совсем.
+        if (свежий(file, (this.options.now ?? Date.now)())) continue;
+        drop(file);
+        continue;
+      }
       drop(file);
-      if (!question) continue;
       let allow = false;
       try {
         allow = (await handler(question)) === true;

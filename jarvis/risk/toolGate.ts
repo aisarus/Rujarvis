@@ -49,12 +49,38 @@ type Input = Record<string, unknown>;
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 
+// `\b` после кириллицы НЕ РАБОТАЕТ, даже с флагом `u`.
+//
+// Для `\b` символ слова — только ASCII, поэтому `/перевод\b/iu` не находит
+// «Перевод», `/написать\b/iu` — «Написать», а `/пин\b/iu` — «ПИН-код». Три
+// красные линии из четырёх молча пропускали кнопку: клик получал класс
+// «безопасно» и не спрашивал никого. Замер: `/перевод\b/iu.test('Перевод')`
+// возвращает false.
+//
+// Вместо границы — «дальше не буква»: так «Перевод» и «ПИН-код» ловятся, а
+// «Переводчик» остаётся в покое.
+// Шаблоны собираются `String.raw`, а не обычной строкой.
+//
+// В обычном шаблоне граница слова превращается в символ забоя, и ветка
+// перестаёт совпадать вовсе: «Buy now» получал класс «безопасно». Поймано
+// проверкой сразу после правки — ровно тот случай, ради которого она есть.
+const КОНЕЦ_СЛОВА = String.raw`(?![\p{L}\p{N}])`;
+
 /** Надписи кнопок, за которыми деньги. */
-const PAYMENT_LABEL = /оплат|купить|покупк|заказ|перевест|перевод\b|pay\b|payment|buy\b|purchase|checkout|place order|subscribe/iu;
+const PAYMENT_LABEL = new RegExp(
+  String.raw`оплат|купить|покупк|заказ|перевест|перевод${КОНЕЦ_СЛОВА}|pay\b|payment|buy\b|purchase|checkout|place order|subscribe`,
+  'iu',
+);
 /** Надписи кнопок, за которыми сообщение другим людям. */
-const SEND_LABEL = /отправ|опубликова|написать\b|send\b|post\b|publish|tweet|reply\b/iu;
+const SEND_LABEL = new RegExp(
+  String.raw`отправ|опубликова|написать${КОНЕЦ_СЛОВА}|send\b|post\b|publish|tweet|reply\b`,
+  'iu',
+);
 /** Поля, в которые вводят платёжные данные и пароли. */
-const SECRET_FIELD = /карт|card|cvv|cvc|парол|password|пин|pin\b/iu;
+const SECRET_FIELD = new RegExp(
+  String.raw`карт|card|cvv|cvc|парол|password|пин${КОНЕЦ_СЛОВА}|pin\b`,
+  'iu',
+);
 
 /** Файлы, открытие которых запускает программу. */
 const EXECUTABLE = /\.(exe|bat|cmd|com|ps1|vbs|vbe|js|jse|wsf|msi|msix|scr|lnk|reg|hta|jar)$/iu;
@@ -64,8 +90,16 @@ export function classifyToolUse(tool: string, input: Input, context: GateContext
 
   if (SHELL_TOOLS.has(tool)) {
     const command = text('command');
+    // «Внутри проекта» — только если команда не метит в защищённое.
+    //
+    // Раньше здесь стояло `insideProject: true` без всяких условий, и
+    // `Set-Content` в папку моста разрешений проходил как обычная работа.
+    // Этого хватало, чтобы подложить `ok-<id>.json` с `{"allow": true}` —
+    // мост принял бы это за разрешение, данное голосом. Красная линия,
+    // которую можно обойти изнутри, — не линия.
+    const метитВЗащищённое = protectedRoots(context).some((root) => mentions(command, root));
     return {
-      level: classifyAction({ kind: 'shell', command, insideProject: true }),
+      level: classifyAction({ kind: 'shell', command, insideProject: !метитВЗащищённое }),
       summary: tr(`Агент хочет выполнить команду: ${clip(command)}.`, `The agent wants to run: ${clip(command)}.`),
     };
   }
@@ -164,6 +198,22 @@ const SYSTEM_ROOTS = [
 
 export function isSystemPath(file: string): boolean {
   return SYSTEM_ROOTS.some((pattern) => pattern.test(file.trim()));
+}
+
+/**
+ * Упоминает ли команда этот путь — в любом написании.
+ *
+ * Строка команды не разбирается на аргументы нарочно: цель не в том, чтобы
+ * понять команду, а в том, чтобы не пропустить упоминание защищённой папки
+ * ни с прямыми, ни с обратными слешами, ни в другом регистре.
+ */
+function mentions(command: string, root: string): boolean {
+  if (!command || !root) return false;
+  // Обратный слеш через код символа: в шаблонных строках и заменах он
+  // схлопывается вдвое незаметно, и правка ломает разбор пути молча.
+  const ОБРАТНЫЙ = String.fromCharCode(92);
+  const вид = (текст: string): string => текст.toLowerCase().split(ОБРАТНЫЙ).join('/');
+  return вид(command).includes(вид(root));
 }
 
 /** Лежит ли файл внутри одной из папок. Регистр и вид косой черты не важны. */

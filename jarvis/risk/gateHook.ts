@@ -14,7 +14,7 @@ import os from 'node:os';
 
 import { setLanguage, type Language } from '../locale/language';
 import { riskRank } from '../types';
-import { GateBridge } from './gateBridge';
+import { GateBridge, type ГолосЧеловека } from './gateBridge';
 import { classifyToolUse, type GateContext } from './toolGate';
 
 export interface GateConfig {
@@ -43,7 +43,7 @@ export interface HookOutput {
   };
 }
 
-type Ask = (summary: string, level: 'sensitive' | 'dangerous') => Promise<boolean>;
+type Ask = (summary: string, level: 'sensitive' | 'dangerous') => Promise<ГолосЧеловека>;
 
 /** Решение по одному вызову. `null` — вмешиваться незачем. */
 export async function decideToolUse(
@@ -65,10 +65,20 @@ export async function decideToolUse(
   const risk = classifyToolUse(input.tool_name, toolInput, context);
   if (riskRank(risk.level) < riskRank('sensitive')) return null;
 
-  const allowed = await ask(risk.summary, risk.level as 'sensitive' | 'dangerous');
-  if (allowed) return decision('allow', `Человек разрешил голосом: ${risk.summary}`);
+  const ответ = await ask(risk.summary, risk.level as 'sensitive' | 'dangerous');
+  if (ответ === 'allow') return decision('allow', `Человек разрешил голосом: ${risk.summary}`);
+
+  // Не пускаем во всех трёх случаях, но называем причину как есть: «мост
+  // сломан» и «человек отказал» — разные вещи, и первое надо чинить, а не
+  // обходить.
+  const причина =
+    ответ === 'deny'
+      ? `Человек не разрешил: ${risk.summary}`
+      : ответ === 'timeout'
+        ? `Человек не ответил на вопрос: ${risk.summary}`
+        : `Не удалось спросить человека (мост разрешений не работает): ${risk.summary}`;
   return deny(
-    `Человек не разрешил: ${risk.summary} Не пытайся сделать это обходным путём — ` +
+    `${причина} Не пытайся сделать это обходным путём — ` +
       'скажи, что это действие требует разрешения, и продолжай остальную работу.',
   );
 }

@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -54,6 +54,19 @@ describe('classifyToolUse', () => {
     expect(level('mcp__jarvis-desktop__browser_fill', { label: 'Поиск', value: 'погода' })).toBe('safe');
   });
 
+  it('кириллица в конце надписи не делает кнопку безопасной', () => {
+    // Граница слова в JS считает словом только латиницу, поэтому «Перевод»,
+    // «Написать» и «ПИН-код» проходили мимо всех трёх шаблонов и получали
+    // класс «безопасно» — три красные линии из четырёх молча открывались.
+    expect(level('mcp__jarvis-desktop__browser_click', { text: 'Перевод' })).toBe('dangerous');
+    expect(level('mcp__jarvis-desktop__browser_click', { text: 'Написать' })).toBe('sensitive');
+    expect(level('mcp__jarvis-desktop__browser_fill', { label: 'ПИН-код', value: '1234' })).toBe('sensitive');
+    expect(level('mcp__jarvis-desktop__browser_fill', { label: 'ПИН', value: '1234' })).toBe('sensitive');
+
+    // А соседнее слово с тем же началом трогать не за что.
+    expect(level('mcp__jarvis-desktop__browser_click', { text: 'Переводчик' })).toBe('safe');
+  });
+
   it('asks before a skill lands in every Claude Code session and before running a program', () => {
     expect(level('mcp__jarvis-desktop__write_skill', { name: 'x' })).toBe('sensitive');
     expect(level('mcp__jarvis-desktop__show_file', { file: 'C:/Downloads/setup.exe', open: true })).toBe('sensitive');
@@ -95,7 +108,7 @@ describe('decideToolUse', () => {
       config,
       async () => {
         asked = true;
-        return true;
+        return 'allow';
       },
     );
     expect(result).toBeNull();
@@ -104,15 +117,15 @@ describe('decideToolUse', () => {
 
   it('allows a red-line action only on a yes, and says what was asked', async () => {
     const input = { tool_name: 'Bash', tool_input: { command: 'git push origin main' }, cwd: context.cwd };
-    const yes = await decideToolUse(input, config, async () => true);
-    const no = await decideToolUse(input, config, async () => false);
+    const yes = await decideToolUse(input, config, async () => 'allow');
+    const no = await decideToolUse(input, config, async () => 'deny');
     expect(yes?.hookSpecificOutput.permissionDecision).toBe('allow');
     expect(no?.hookSpecificOutput.permissionDecision).toBe('deny');
     expect(no?.hookSpecificOutput.permissionDecisionReason).toContain('git push origin main');
   });
 
   it('refuses a call it cannot read instead of letting it through', async () => {
-    const result = await decideToolUse({ tool_input: {} }, config, async () => true);
+    const result = await decideToolUse({ tool_input: {} }, config, async () => 'allow');
     expect(result?.hookSpecificOutput.permissionDecision).toBe('deny');
   });
 });
@@ -128,8 +141,8 @@ describe('GateBridge', () => {
       return question.level === 'sensitive';
     });
     try {
-      expect(await hook.ask('Отправить письмо?', 'sensitive')).toBe(true);
-      expect(await hook.ask('Оплатить?', 'dangerous')).toBe(false);
+      expect(await hook.ask('Отправить письмо?', 'sensitive')).toBe('allow');
+      expect(await hook.ask('Оплатить?', 'dangerous')).toBe('deny');
     } finally {
       stop();
     }
@@ -139,7 +152,19 @@ describe('GateBridge', () => {
   it('treats silence as a no', async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'gate-'));
     const hook = new GateBridge(dir, { stepMs: 5, waitMs: 50 });
-    expect(await hook.ask('Удалить?', 'dangerous')).toBe(false);
+    // Молчание — не отказ человека, и называется оно своим словом. Решение
+    // то же (не пускать), но чинить по нему будут разное.
+    expect(await hook.ask('Удалить?', 'dangerous')).toBe('timeout');
+  });
+
+  it('сломанный мост не выдаётся за отказ человека', async () => {
+    // Папка, в которую нельзя писать: у моста нет способа задать вопрос.
+    // Раньше это давало то же `false`, что и «человек сказал нет», и агент
+    // сообщал человеку, что тот отказал, хотя вопроса не было вовсе.
+    const занято = path.join(mkdtempSync(path.join(os.tmpdir(), 'gate-')), 'файл');
+    writeFileSync(занято, 'не папка', 'utf8');
+    const hook = new GateBridge(занято, { stepMs: 5, waitMs: 50 });
+    expect(await hook.ask('Удалить?', 'dangerous')).toBe('failed');
   });
 });
 
