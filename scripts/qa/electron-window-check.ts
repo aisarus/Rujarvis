@@ -162,9 +162,30 @@ async function main(): Promise<void> {
   console.log(`  System Events увидел через ${увиделSe < 0 ? 'так и не увидел' : `${увиделSe} мс`}`);
   if (!второе.isDestroyed()) второе.destroy();
 
-  const итог = (await driver.windows().catch(() => [])).some((о) => о.title === ИМЯ_ОКНА);
-  console.log(`\nИтог: окно Электрона ${итог ? 'видно' : 'НЕ ВИДНО'} драйверу.`);
+  // Отказ драйвера — не то же самое, что «окно не видно».
+  //
+  // `.catch(() => [])` превращал одно в другое, и замер, заведённый ровно
+  // ради того чтобы узнать, какое из двух утверждений ложно, называл не ту
+  // поломку. Теперь причина видна словами.
+  let список: Awaited<ReturnType<typeof driver.windows>> | null = null;
+  let отказ = '';
+  try {
+    список = await driver.windows();
+  } catch (error) {
+    отказ = error instanceof Error ? error.message : String(error);
+  }
+
   if (!окно.isDestroyed()) окно.destroy();
+
+  if (!список) {
+    console.log(`\nИтог: драйвер не ответил — ${отказ}`);
+    console.log('Это НЕ «окно не видно»: проверять было нечем.');
+    app.exit(2);
+    return;
+  }
+
+  const итог = список.some((о) => о.title === ИМЯ_ОКНА);
+  console.log(`\nИтог: окно Электрона ${итог ? 'видно' : 'НЕ ВИДНО'} драйверу.`);
   app.exit(итог ? 0 : 1);
 }
 
@@ -172,4 +193,15 @@ async function main(): Promise<void> {
 // должен пережить это сам.
 app.on('window-all-closed', () => {});
 
-void app.whenReady().then(main);
+// Отклонённое обещание в главном процессе Электрона — это просто
+// предупреждение: `window-all-closed` заглушён, `app.exit` не зовётся, и
+// прогон на macos-latest висел до тайм-аута задания, не отдав кода отказа.
+// Правило «пусть исключение улетит, Node выйдет с ненулевым кодом» — про
+// Node, а не про главный процесс Электрона.
+void app
+  .whenReady()
+  .then(main)
+  .catch((error: unknown) => {
+    console.error('\nЗамер оборвался:', error instanceof Error ? error.message : String(error));
+    app.exit(3);
+  });

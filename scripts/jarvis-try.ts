@@ -15,6 +15,7 @@
 import readline from 'node:readline/promises';
 import process from 'node:process';
 import { DEFAULT_JARVIS_SETTINGS, type JarvisSettings } from '../jarvis/core';
+import type { BackendResult } from '../jarvis/backends/types';
 import { buildProgress, renderProgress } from '../jarvis/tasks/progress';
 import { route } from '../jarvis/router/router';
 import { createJarvis } from '../jarvis/createJarvis';
@@ -52,6 +53,19 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2), process.cwd());
   const settings: JarvisSettings = { ...DEFAULT_JARVIS_SETTINGS };
 
+  // Один интерфейс чтения на весь процесс.
+  //
+  // Подтверждение открывало ВТОРОЙ интерфейс на том же `stdin`, а его
+  // `close()` зовёт `input.pause()`. Флаг «приостановлено» при этом ставился
+  // только второму, поэтому `question('> ')` основного цикла уже не поднимал
+  // ввод: после первой чувствительной задачи разговор намертво вис на
+  // приглашении. Пока оба интерфейса открыты, каждый символ ещё и двоился.
+  const консоль: { открытая: readline.Interface | null } = { открытая: null };
+  const спросить = (вопрос: string): Promise<string> => {
+    консоль.открытая ??= readline.createInterface({ input: process.stdin, output: process.stdout });
+    return консоль.открытая.question(вопрос);
+  };
+
   const jarvis = createJarvis({
     workspace: args.workspace,
     settings: () => settings,
@@ -61,9 +75,7 @@ async function main(): Promise<void> {
     // Sensitive work still asks. Typing instead of speaking is not a reason
     // to skip the gate.
     approve: async (request) => {
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      const answer = await rl.question(`${YELLOW}! ${request.summary} [y/N] ${RESET}`);
-      rl.close();
+      const answer = await спросить(`${YELLOW}! ${request.summary} [y/N] ${RESET}`);
       return answer.trim().toLowerCase().startsWith('y');
     },
   });
@@ -79,7 +91,7 @@ async function main(): Promise<void> {
   }
   console.log('');
 
-  const runOne = async (utterance: string): Promise<void> => {
+  const runOne = async (utterance: string): Promise<BackendResult | undefined> => {
     if (args.dry) {
       const decision = route(utterance, {
         basePermissions: settings.basePermissions,
@@ -106,7 +118,7 @@ async function main(): Promise<void> {
 
     if (turn.kind !== 'task') {
       console.log(`${DIM}(${turn.kind})${RESET}`);
-      return;
+      return undefined;
     }
 
     console.log(
@@ -142,19 +154,24 @@ async function main(): Promise<void> {
     if (result?.error) {
       console.log(`${RED}x ${result.error}${RESET}`);
     }
+    return result;
   };
 
   if (args.utterance) {
-    await runOne(args.utterance);
+    // Код возврата — по итогу задачи, а не по факту, что она кончилась.
+    // Скрипт, запущенный из другого скрипта, отдавал 0 на упавшей работе.
+    const result = await runOne(args.utterance);
+    if (!result) console.log(`${DIM}(результата нет)${RESET}`);
+    if (result?.ok !== true) process.exitCode = 1;
+    консоль.открытая?.close();
     return;
   }
 
   console.log(`${DIM}Пиши обычными словами. Пустая строка или Ctrl+C — выход.${RESET}`);
   console.log(`${DIM}Например: «открой хром», «что на экране», «почини билд через Клод Код».${RESET}\n`);
 
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   for (;;) {
-    const line = (await rl.question('> ')).trim();
+    const line = (await спросить('> ')).trim();
     if (!line) break;
     try {
       await runOne(line);
@@ -163,7 +180,7 @@ async function main(): Promise<void> {
     }
     console.log('');
   }
-  rl.close();
+  консоль.открытая?.close();
 }
 
 if (process.env.JARVIS_TRY_IMPORT_ONLY !== '1') {

@@ -32,6 +32,7 @@ async function main(): Promise<void> {
     );
   }
 
+  let моя: string | undefined;
   jarvis.tasks.subscribe((event) => {
     if (event.type === 'task-event') {
       const step = event.event;
@@ -42,23 +43,33 @@ async function main(): Promise<void> {
       return;
     }
     if (event.type !== 'task-finished') return;
-    if (event.type === 'task-finished') {
-      const result = event.task.result;
-      console.log(`[${at()}] backend: ${result?.backend}`);
-      console.log(`[${at()}] ok=${result?.ok} ошибка=${result?.error ?? 'нет'}`);
-      console.log(`[${at()}] ответ: ${(result?.text ?? '').slice(0, 400)}`);
-      process.exit(0);
-    }
+    // Чужую задачу за свою не принимаем.
+    if (моя && event.task.id !== моя) return;
+    const result = event.task.result;
+    console.log(`[${at()}] backend: ${result?.backend}`);
+    console.log(`[${at()}] ok=${result?.ok} ошибка=${result?.error ?? 'нет'}`);
+    console.log(`[${at()}] ответ: ${(result?.text ?? '').slice(0, 400)}`);
+    // Конец работы — не то же самое, что её успех. Код возврата смотрел
+    // только на то, что задача закончилась: упавшая работа давала ноль, и
+    // скрипт, запущенный из другого скрипта, считал её сделанной.
+    process.exit(result?.ok === true ? 0 : 1);
   });
 
   console.log(`[${at()}] отправляю: «${utterance}»`);
   const turn = await jarvis.core.handleUtterance(utterance);
   console.log(`[${at()}] ход: ${turn.kind}`);
   if (turn.kind === 'task') {
+    моя = turn.task.id;
     console.log(`[${at()}] план: ${turn.task.title}`);
-  } else if (turn.kind === 'clarify' || turn.kind === 'refused') {
-    console.log(`[${at()}] сказал: ${turn.spoken}`);
-    process.exit(0);
+  } else {
+    // Переспрос и отказ — отдельный исход, а не успех. И ждать четыре минуты
+    // «завершения», которого не будет, незачем.
+    if (turn.kind === 'clarify' || turn.kind === 'refused') {
+      console.log(`[${at()}] сказал: ${turn.spoken}`);
+    } else {
+      console.log(`[${at()}] задачи не вышло: ход ${turn.kind}`);
+    }
+    process.exit(2);
   }
 
   setTimeout(() => {

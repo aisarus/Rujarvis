@@ -173,7 +173,11 @@ const окна: Случай[] = [
       if (!команда) return cannotMeasure('фраза не разобралась — проверять нечего');
 
       const исход = await runDirectCommand(команда, тихаяСессия());
-      if (исход.passed !== false) return failed('несуществующее окно «нашлось»');
+      // Три ответа, а не два: `passed !== false` истинно и для `null`, и тогда
+      // «драйвер не смог ответить» превращалось в «несуществующее окно
+      // нашлось» — ложный диагноз, по которому чинят не то.
+      if (исход.passed === null) return cannotMeasure(`драйвер не ответил: ${исход.why}`);
+      if (исход.passed === true) return failed('несуществующее окно «нашлось»');
 
       // «Не получилось» без единой подсказки — это и была беда.
       //
@@ -476,8 +480,15 @@ const интерфейс: Случай[] = [
           return failed(`окно ${рамка.height} точек выше рабочей области ${рабочая.height}`);
         }
 
+        // Меряем ТОТ элемент, который прокручивается.
+        //
+        // Прокрутка у справки на `body` (`overflow-y: auto; height: 100%`), и
+        // `documentElement.scrollHeight` при длинном списке остаётся равен
+        // высоте окна: обрезанный список выглядел полностью видимым.
         const [нужно, дали, есть_подсказка] = (await окно.webContents.executeJavaScript(
-          "[document.documentElement.scrollHeight, window.innerHeight, /длиннее окна|longer than/iu.test(document.body.innerText)]",
+          '[Math.max(document.body.scrollHeight, document.documentElement.scrollHeight),' +
+            ' document.body.clientHeight,' +
+            ' /длиннее окна|longer than/iu.test(document.body.innerText)]',
         )) as [number, number, boolean];
 
         if (дали >= нужно) return passed(`список влез целиком: ${нужно} ≤ ${дали}`);
@@ -567,14 +578,25 @@ const интерфейс: Случай[] = [
         окно.show();
         await ждать(600);
 
+        // Ищем СВОЁ окно, а не «хоть какое-нибудь».
+        //
+        // Проверка смотрела только на длину списка, а обещала в комментарии
+        // доказательство своим окном. На машине с открытым браузером она
+        // проходила, даже когда окна приёмки в списке не было, — то есть
+        // ровно в том случае, который расследует `electron-window-check.ts`.
+        const своё = (список: readonly { title: string }[]): boolean =>
+          список.some((окно) => окно.title.toLowerCase().includes(ИМЯ_ОКНА.toLowerCase()));
+
         const окна = await драйвер.windows();
         if (окна.length === 0) return failed('список пуст, хотя на экране есть хотя бы своё окно');
+        if (!своё(окна)) {
+          return failed(`своего окна «${ИМЯ_ОКНА}» в списке из ${окна.length} нет`);
+        }
 
         // И второй раз, уже после того как драйвер мог закончить сессию.
         const снова = await драйвер.windows();
-        return снова.length > 0
-          ? passed(`${окна.length} окон, со второго раза ${снова.length}`)
-          : failed('со второго раза список опустел — сессия не поднялась');
+        if (!своё(снова)) return failed('со второго раза своё окно пропало — сессия не поднялась');
+        return passed(`${окна.length} окон, со второго раза ${снова.length}, своё на месте`);
       } catch (error) {
         return failed(error instanceof Error ? error.message : String(error));
       } finally {

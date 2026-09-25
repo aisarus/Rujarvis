@@ -6,6 +6,10 @@
  * цвет сферы на зелёный» он отвечал «не понял».
  */
 
+import { mkdtempSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import { createJarvis } from '../jarvis/createJarvis';
 import { jarvisOutputDir } from '../jarvis/setup/paths';
 
@@ -13,7 +17,18 @@ const started = Date.now();
 const at = (): string => `${((Date.now() - started) / 1000).toFixed(1)}с`;
 
 async function main(): Promise<void> {
+  // Память — во временную папку, а не в рабочую.
+  //
+  // Проба записывает ПОДДЕЛЬНУЮ задачу («Создай в блендере красную сферу») и
+  // раньше клала её в настоящую память человека. После каждого прогона там
+  // оставалась выдуманная работа с `sessionId: 'сессия-проверки'`, и живой
+  // Джарвис принимал короткое «поменяй цвет» за её продолжение — вплоть до
+  // попытки вернуться в сессию, которой никогда не было.
+  const своя_память = path.join(mkdtempSync(path.join(os.tmpdir(), 'jarvis-probe-')), 'memory.json');
+  console.log(`[${at()}] память пробы: ${своя_память}`);
+
   const jarvis = createJarvis({
+    memoryFile: своя_память,
     workspace: process.cwd(),
     outputDir: jarvisOutputDir(),
     desktopMcpConfig: process.env.JARVIS_MCP_CONFIG,

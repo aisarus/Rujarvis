@@ -85,6 +85,15 @@ export interface CreateJarvisOptions {
   /** Папка на рабочем столе, куда агент складывает готовые файлы. */
   outputDir?: string;
   /**
+   * Куда писать память о задачах. По умолчанию — рабочая память человека.
+   *
+   * Отдельный путь нужен пробам: они записывали поддельные задачи прямо в
+   * настоящую память, и живой Джарвис потом принимал короткую просьбу за
+   * продолжение выдуманной — вплоть до попытки вернуться в сессию, которой
+   * никогда не было.
+   */
+  memoryFile?: string;
+  /**
    * Журнал собственных действий — пассивная память.
    *
    * Передаётся функцией, а не объектом: ядру нужны только готовые строки, и
@@ -166,7 +175,7 @@ export function createJarvis(options: CreateJarvisOptions = {}): Jarvis {
     );
   }
 
-  const memory = new JarvisMemory({ storage: createFileMemoryStorage() });
+  const memory = new JarvisMemory({ storage: createFileMemoryStorage(options.memoryFile) });
   const world = new WorldStateStore({ observer: options.desktopObserver });
   const tasks = new TaskManager({ backends });
 

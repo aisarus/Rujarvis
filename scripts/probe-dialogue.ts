@@ -22,10 +22,12 @@ async function main(): Promise<void> {
   await jarvis.ready();
 
   const answers: string[] = [];
+  const сессии: Array<string | undefined> = [];
   jarvis.tasks.subscribe((event) => {
     if (event.type !== 'task-finished') return;
     const result = event.task.result;
     answers.push(result?.text ?? '');
+    сессии.push(result?.sessionId);
     console.log(`[${at()}] ход ${answers.length}: сессия=${result?.sessionId ?? 'нет'}`);
     console.log(`[${at()}] ответ: ${(result?.text ?? '').slice(0, 120)}`);
   });
@@ -44,9 +46,14 @@ async function main(): Promise<void> {
       }, 180_000);
     });
 
+  // Число НЕ пишем на диск.
+  //
+  // Первый ход просил записать 7431 в файл в рабочей папке — и второй ход мог
+  // просто найти этот файл. Проверка печатала «РАЗГОВОР НЕПРЕРЫВЕН» при
+  // сломанном `--resume`, а каждый прогон оставлял мусор в репозитории.
   console.log(`[${at()}] ход 1: называю число`);
   const first = await jarvis.core.handleUtterance(
-    'Запиши в файл число 7431 и ответь одним словом.',
+    'Запомни число 7431. Ничего никуда не записывай, ответь одним словом «запомнил».',
   );
   console.log(`[${at()}] ход: ${first.kind}` +
     (first.kind === 'task' ? ` → ${first.decision.target} (${first.decision.needs.join(', ')})` : ''));
@@ -57,9 +64,13 @@ async function main(): Promise<void> {
   await waitFor(2);
 
   const remembered = (answers[1] ?? '').includes('7431');
+  // Та же сессия — второе доказательство, независимое от ответа модели.
+  const одна_сессия = Boolean(сессии[0]) && сессии[0] === сессии[1];
   console.log('');
+  console.log(`сессии: ${сессии[0] ?? 'нет'} → ${сессии[1] ?? 'нет'}`);
+  if (!одна_сессия) console.log('СЕССИЯ НЕ ПРОДОЛЖЕНА: второй ход пошёл в новую.');
   console.log(remembered ? 'РАЗГОВОР НЕПРЕРЫВЕН' : 'ВТОРОЙ ХОД НЕ ПОМНИТ ПЕРВОГО');
-  process.exit(remembered ? 0 : 1);
+  process.exit(remembered && одна_сессия ? 0 : 1);
 }
 
 main().catch((error: unknown) => {

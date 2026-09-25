@@ -23,7 +23,7 @@ import { jarvisPaths } from '../jarvis/setup/paths';
 import { SettingsStore } from '../jarvis/setup/settings';
 import { getWhisperModel, recommendWhisperModel, WHISPER_MODEL_IDS, type WhisperModelId } from '../jarvis/voice/sttModels';
 import type { ModelInstallProgress } from '../jarvis/voice/modelArchive';
-import { DEFAULT_VOICE, getVoice, installVoice, isVoiceInstalled } from '../jarvis/voice/tts';
+import { getVoice, installVoice, isVoiceInstalled, voiceForLanguage } from '../jarvis/voice/tts';
 import { installWhisperModel } from '../jarvis/voice/whisperInstall';
 import { isWhisperModelInstalled } from '../jarvis/voice/whisperRecognizer';
 
@@ -62,7 +62,13 @@ async function main(): Promise<void> {
   const model: WhisperModelId = (WHISPER_MODEL_IDS as readonly string[]).includes(askedModel ?? '')
     ? (askedModel as WhisperModelId)
     : recommendWhisperModel({ totalRamMb: machine.totalRamMb, hasGpu: machine.hasGpu });
-  const voiceId = DEFAULT_VOICE[language];
+  // Голос человека не трогаем, если он на нужном языке.
+  //
+  // Раньше здесь всегда стоял голос по умолчанию, и повторный запуск —
+  // например, `pnpm jarvis:setup -- --model small` ради смены распознавания —
+  // возвращал выбравшему Дмитрия обратно Ирину. Шапка файла сама предлагает
+  // запускать настройку руками; она не должна отменять чужой выбор.
+  const voiceId = voiceForLanguage(language, settings.get().voiceId);
 
   console.log(`Папка Джарвиса: ${paths.home}`);
   console.log(`Язык: ${language === 'en' ? 'English' : 'русский'}`);

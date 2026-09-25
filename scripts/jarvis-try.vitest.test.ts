@@ -26,8 +26,11 @@ describe('jarvis:try arguments', () => {
   });
 
   it('takes a workspace and leaves it out of the utterance', () => {
-    const args = parseArgs(['--workspace', 'D:\\Projects\\aegis', 'почини', 'билд'], '/work');
-    expect(args.workspace).toBe('D:\\Projects\\aegis');
+    // `String.raw`, а не экранированные слеши: правило проекта. Записи
+    // равнозначны, но в экранированной слеш теряется при первой же правке, а
+    // пути Windows здесь везде.
+    const args = parseArgs(['--workspace', String.raw`D:\Projects\aegis`, 'почини', 'билд'], '/work');
+    expect(args.workspace).toBe(String.raw`D:\Projects\aegis`);
     expect(args.utterance).toBe('почини билд');
   });
 
