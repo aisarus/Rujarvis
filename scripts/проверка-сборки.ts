@@ -22,19 +22,20 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+
+import { jarvisHome } from '../jarvis/setup/paths';
 
 const NL = String.fromCharCode(10);
 const корень = process.cwd();
 // Путь установки — из переменной окружения, а не собранный руками: на маке и
 // на линуксе такого каталога нет вовсе, и это «нечем мерить», а не провал
 // сборки.
-const дом = path.join(
-  process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
-  'Rujarvis',
-);
-const установлен = process.platform === 'win32' && existsSync(дом);
+const дом = jarvisHome();
+// Не «только на Windows»: на маке установщик кладёт то же самое в
+// ~/Library/Application Support/Rujarvis, и проверять там есть что.
+// «Нечем мерить» — это когда папки нет, а не когда система не та.
+const установлен = existsSync(дом);
 
 /** Три исхода: прошло, не прошло, нечем проверить. */
 type Исход = null | string | { нечем: string };

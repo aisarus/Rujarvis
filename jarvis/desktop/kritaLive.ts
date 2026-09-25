@@ -35,6 +35,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { jarvisDataRoot } from '../setup/paths';
 
 /** Сколько ждать ответа на одну команду. Рисование бывает долгим. */
 const ANSWER_TIMEOUT_MS = 120_000;
@@ -60,13 +61,8 @@ export interface LiveResult {
 
 /** Общая папка. Тот же путь вычисляет и надстройка внутри Криты. */
 function liveDir(): string {
-  const root =
-    process.env.JARVIS_DATA_ROOT?.trim() ||
-    path.join(
-      process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
-      'Rujarvis',
-      'data',
-    );
+  // Папка данных — из paths.ts, иначе она виндовая на любой машине.
+  const root = process.env.JARVIS_DATA_ROOT?.trim() || jarvisDataRoot();
   const place = path.join(root, 'krita-live');
   mkdirSync(place, { recursive: true });
   return place;

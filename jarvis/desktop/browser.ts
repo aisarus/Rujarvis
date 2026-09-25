@@ -16,6 +16,7 @@ import { mkdtempSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import type { Browser, BrowserContext, Page } from 'playwright';
+import { jarvisHome } from '../setup/paths';
 
 /**
  * Какой браузер вести.
@@ -27,11 +28,53 @@ import type { Browser, BrowserContext, Page } from 'playwright';
  */
 const CHANNEL = process.env.JARVIS_BROWSER_CHANNEL?.trim() || 'msedge';
 
-export const PROFILE_DIR = path.join(
-  process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
-  'Rujarvis',
-  `browser-profile-${CHANNEL}`,
-);
+/**
+ * Чем пробовать, если названного браузера на машине нет.
+ *
+ * Edge стоит на каждой Windows и почти ни на одном маке — а канал Playwright
+ * без установленного браузера не запускается вовсе: «Chromium distribution
+ * 'msedge' is not found». На маке вкладки из-за этого не открывались совсем,
+ * и человек видел стену логов Playwright вместо ответа.
+ *
+ * Поэтому порядок: сначала названный (его выбрал человек или он стоит по
+ * умолчанию), потом остальные из семейства, и последним — chromium, который
+ * Playwright носит с собой. Профиль у каждого движка свой: смена браузера
+ * означает и новый вход, поэтому менять его молча на каждый запуск нельзя —
+ * только когда прежний не завёлся.
+ */
+const ЗАПАСНЫЕ = ['msedge', 'chrome', 'chromium'];
+
+/** Из чего выбирать на этой машине: названный первым, дальше — остальные. */
+export function порядокКаналов(channel = CHANNEL, запасные = ЗАПАСНЫЕ): string[] {
+  return [channel, ...запасные.filter((имя) => имя !== channel)];
+}
+
+/**
+ * Похоже ли это на «такого браузера тут нет».
+ *
+ * Отличать обязательно: на отсутствие браузера пробуют следующий, а на всё
+ * остальное — падают. Иначе занятый профиль или сломанный запуск тихо увели
+ * бы человека в другой браузер с другим входом.
+ */
+export function браузераНет(error: unknown): boolean {
+  const текст = error instanceof Error ? error.message : String(error);
+  return (
+    текст.includes('is not found') ||
+    текст.includes('Failed to launch') ||
+    текст.includes('executable doesn') ||
+    текст.includes('No such file or directory')
+  );
+}
+
+/**
+ * Профиль браузера — внутри папки Джарвиса, какой бы она ни была.
+ *
+ * Собранный руками, путь получался виндовым на любой машине: на маке
+ * LOCALAPPDATA не задан, и профиль ложился в ~/AppData/Local/Rujarvis —
+ * рядом с домом, но не в нём. Снаружи папки Джарвиса его не видит ни
+ * установщик, ни уборка, ни сам человек.
+ */
+export const PROFILE_DIR = path.join(jarvisHome(), `browser-profile-${CHANNEL}`);
 
 let context: BrowserContext | null = null;
 let browser: Browser | null = null;
@@ -57,19 +100,43 @@ async function ensureBrowser(): Promise<BrowserContext> {
 
 async function поднять(): Promise<BrowserContext> {
   const { chromium } = await import('playwright');
-  try {
-    context = await launch(chromium);
-  } catch (error) {
-    // Профиль занят другим окном — самая частая причина, и в сыром виде она
-    // приезжает стеной логов Playwright, из которой ничего не понять.
-    // Снимать чужой замок нельзя: два браузера на один профиль его портят.
-    if (looksLikeProfileLock(error)) {
-      throw new Error(
-        `Профиль браузера занят: где-то уже открыто окно с ${PROFILE_DIR}. ` +
-          'Закрой его и повтори.',
-      );
+  const пробовали: string[] = [];
+  let последняя: unknown = null;
+
+  for (const канал of порядокКаналов()) {
+    try {
+      context = await launch(chromium, канал);
+      if (канал !== CHANNEL) {
+        // Молчать нельзя: профиль у каждого движка свой, и человек должен
+        // понимать, почему его вход не подхватился.
+        console.log(`[jarvis] ${CHANNEL} не нашёлся, веду ${канал}`);
+      }
+      break;
+    } catch (error) {
+      // Профиль занят другим окном — самая частая причина, и в сыром виде она
+      // приезжает стеной логов Playwright, из которой ничего не понять.
+      // Снимать чужой замок нельзя: два браузера на один профиль его портят.
+      if (looksLikeProfileLock(error)) {
+        throw new Error(
+          `Профиль браузера занят: где-то уже открыто окно с ${PROFILE_DIR}. ` +
+            'Закрой его и повтори.',
+        );
+      }
+      // Нет такого браузера — пробуем следующий. Любая другая беда своя, и
+      // прятать её за перебором значит врать про причину.
+      if (!браузераНет(error)) throw error;
+      пробовали.push(канал);
+      последняя = error;
     }
-    throw error;
+  }
+
+  if (!context) {
+    const причина = последняя instanceof Error ? последняя.message : String(последняя);
+    throw new Error(
+      `Не нашёл ни одного браузера (пробовал: ${пробовали.join(', ')}). ` +
+        'Поставьте Chrome или Edge, либо выполните «pnpm exec playwright install chromium». ' +
+        `Последняя ошибка: ${причина}`,
+    );
   }
 
   // Браузер — дочерний процесс, и без этого он переживает свой сервер,
@@ -86,9 +153,11 @@ async function поднять(): Promise<BrowserContext> {
 
 type Chromium = Awaited<typeof import('playwright')>['chromium'];
 
-function launch(chromium: Chromium): Promise<BrowserContext> {
+function launch(chromium: Chromium, канал: string): Promise<BrowserContext> {
   return chromium.launchPersistentContext(PROFILE_DIR, {
-    channel: CHANNEL,
+    // `chromium` — не канал, а та сборка, которую Playwright носит с собой:
+    // каналом её просить нельзя, поле остаётся пустым.
+    channel: канал === 'chromium' ? undefined : канал,
     headless: false,
     viewport: null,
     // Без этого Chrome отменяет скачивание молча, и файл, который человек

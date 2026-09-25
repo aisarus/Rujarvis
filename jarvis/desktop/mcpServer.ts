@@ -36,6 +36,7 @@ import { makePlan, markStep, renderPlan, type StepState } from '../agent/plan';
 import { buildSkillFile, isSelfAuthored, skillPath } from '../skills/author';
 import { createDesktopDriver } from './platform';
 import { createWindowTools } from './windowTools';
+import { jarvisDataRoot } from '../setup/paths';
 
 const driver = createDesktopDriver();
 // Глаза и руки по чужим окнам. На Windows это cua-driver: он поднимается при
@@ -85,12 +86,12 @@ function skillsRoot(): string {
  * по той же причине, что и путь журнала: сервер — отдельный процесс.
  */
 function openNotes(): NoteStore {
+  // Домашняя папка — из paths.ts: собранная здесь руками, она была виндовой
+  // на любой машине, и на маке заметки уезжали в ~/AppData/Local/Rujarvis.
   const file =
     process.env.JARVIS_NOTES?.trim() ||
     path.join(
-      process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
-      'Rujarvis',
-      'data',
+      jarvisDataRoot(),
       'notes.json',
     );
   return new NoteStore(file);
@@ -103,9 +104,7 @@ function openPlan(): PlanStore {
   const file =
     process.env.JARVIS_PLAN?.trim() ||
     path.join(
-      process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
-      'Rujarvis',
-      'data',
+      jarvisDataRoot(),
       'plan.json',
     );
   return new PlanStore(file);
@@ -115,9 +114,7 @@ function openJournal(): JournalStore {
   const file =
     process.env.JARVIS_JOURNAL?.trim() ||
     path.join(
-      process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
-      'Rujarvis',
-      'data',
+      jarvisDataRoot(),
       'journal.json',
     );
   return new JournalStore(file);

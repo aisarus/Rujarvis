@@ -27,7 +27,6 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 
@@ -37,14 +36,15 @@ import { PlanStore } from '../agent/planStore';
 import { TalkBridge } from './talkBridge';
 import { TALK_SERVER } from './talkSession';
 import { addStep, renderPlan } from '../agent/plan';
+import { jarvisDataRoot } from '../setup/paths';
 
 function dataFile(variable: string, name: string): string {
+  // Папка данных — из paths.ts. Собранная руками, она была виндовой везде, и
+  // на маке разговор писал план в ~/AppData/Local/Rujarvis, которой там нет.
   return (
     process.env[variable]?.trim() ||
     path.join(
-      process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
-      'Rujarvis',
-      'data',
+      jarvisDataRoot(),
       name,
     )
   );

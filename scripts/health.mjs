@@ -10,8 +10,23 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const LOCAL = process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local');
-const ROOT = path.join(LOCAL, 'Rujarvis');
+// Дом Джарвиса — то же правило, что в jarvis/setup/paths.ts.
+//
+// Повторено здесь потому, что этот скрипт зовут обычным node, без сборки TS,
+// и импортировать оттуда нечего. Чтобы правило не разошлось, за ним следит
+// jarvis/setup/paths.coverage.vitest.test.ts: он сверяет ответы обоих.
+const ROOT = jarvisHomeHere();
+
+function jarvisHomeHere() {
+  const explicit = process.env.JARVIS_HOME?.trim();
+  if (explicit) return path.resolve(explicit);
+  const home = os.homedir();
+  if (process.platform === 'win32') {
+    return path.join(process.env.LOCALAPPDATA?.trim() || path.join(home, 'AppData', 'Local'), 'Rujarvis');
+  }
+  if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'Rujarvis');
+  return path.join(process.env.XDG_DATA_HOME?.trim() || path.join(home, '.local', 'share'), 'rujarvis');
+}
 const results = [];
 
 // Тот же выбор сервера, что в `jarvis/desktop/launch.ts`: явная подмена или
