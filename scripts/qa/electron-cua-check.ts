@@ -22,6 +22,7 @@
 import { app, BrowserWindow } from 'electron';
 
 import { createWindowTools } from '../../jarvis/desktop/windowTools';
+import { DarwinDriver } from '../../jarvis/desktop/darwinDriver';
 
 const ИМЯ_ОКНА = 'Проба компьютер-юза Rujarvis';
 
@@ -124,9 +125,24 @@ async function main(): Promise<void> {
     try {
       const найдено = await инструменты.find(pid, windowId, 'Нажми');
       индексКнопки = найдено[0]?.index ?? -1;
+      if (найдено.length === 0 && process.platform === 'darwin') {
+        // Не гадать, а посмотреть: «кнопки нет» и «дерева нет» — разные беды,
+        // и лечатся они по-разному. Своего мака у автора нет, и единственный
+        // способ узнать, что там внутри, — напечатать это здесь.
+        try {
+          const драйвер = new DarwinDriver();
+          const { title, elements } = await драйвер.elements();
+          console.log(`    дерево окна «${title}»: ${elements.length} элементов`);
+          for (const э of elements.slice(0, 12)) {
+            console.log(`      ${э.type} | ${э.name}`);
+          }
+        } catch (беда) {
+          console.log(`    дерево спросить не вышло: ${беда instanceof Error ? беда.message : String(беда)}`);
+        }
+      }
       записать(
         'find: кнопка находится по своему тексту',
-        найдено.length > 0 ? { прошло: true } : { прошло: false, почему: 'ни одного элемента' },
+        найдено.length > 0 ? { прошло: true } : { прошло: false, почему: 'кнопки нет в дереве окна' },
       );
     } catch (error) {
       const почему = error instanceof Error ? error.message : String(error);
