@@ -50,18 +50,30 @@ const LIMIT = 15;
  */
 export const ЭХО_РАЗГОВОРА = 'разговор';
 
-function readJson(file: string): unknown {
+/**
+ * Три ответа вместо двух: прочиталось, файла нет, прочитать не вышло.
+ *
+ * Раньше и то и другое давало `null`, опорная точка вставала в ноль, и если
+ * файл чинился к следующему ходу, разговору вываливалась вся накопленная
+ * история как новости. «Ничего не случилось» тоже было неотличимо от отказа
+ * чтения.
+ */
+type Чтение = { есть: true; данные: unknown } | { есть: false; почему: 'нет файла' | 'не прочитался' };
+
+function readJson(file: string): Чтение {
   try {
-    return JSON.parse(readFileSync(file, 'utf8'));
-  } catch {
-    // Файла нет или он испорчен. Это не данные — но и не повод падать посреди
+    return { есть: true, данные: JSON.parse(readFileSync(file, 'utf8')) };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return { есть: false, почему: 'нет файла' };
+    // Испорчен или занят. Это не данные — но и не повод падать посреди
     // разговора.
-    return null;
+    return { есть: false, почему: 'не прочитался' };
   }
 }
 
 function readEvents(file: string): JarvisEvent[] {
-  const parsed = readJson(file);
+  const чтение = readJson(file);
+  const parsed = чтение.есть ? чтение.данные : null;
   if (!Array.isArray(parsed)) return [];
   return parsed.filter(
     (item): item is JarvisEvent =>
@@ -74,7 +86,8 @@ function readEvents(file: string): JarvisEvent[] {
 }
 
 function readPlan(file: string): Plan | null {
-  const parsed = readJson(file);
+  const чтение = readJson(file);
+  const parsed = чтение.есть ? чтение.данные : null;
   if (!parsed || typeof parsed !== 'object') return null;
   const plan = parsed as Partial<Plan>;
   if (typeof plan.goal !== 'string' || !Array.isArray(plan.steps)) return null;
@@ -103,12 +116,21 @@ export class WorkDelta {
    * План идёт первым: он — костяк, а события журнала объясняют его движение.
    */
   since(): string[] {
-    const lines = [...this.planLines(), ...this.journalLines()];
-    if (lines.length <= this.limit) return lines;
+    const план = this.planLines();
+    const журнал = this.journalLines();
+
+    // Режем ЖУРНАЛ, а план оставляем целиком.
+    //
+    // Потолок брал хвост общего списка, и при смене цели с полутора десятками
+    // событий строка «новый план» и движение шагов уходили в «…и ещё N
+    // раньше», а оставались рядовые «открыл» и «сохранил». То есть терялось
+    // ровно то, что названо костяком строкой выше.
+    const место = Math.max(0, this.limit - план.length);
+    if (журнал.length <= место) return [...план, ...журнал];
 
     // Остаются свежие: старое человек уже слышал или оно уже неважно.
-    const hidden = lines.length - this.limit;
-    return [`…и ещё ${hidden} раньше`, ...lines.slice(-this.limit)];
+    const hidden = журнал.length - место;
+    return [...план, `…и ещё ${hidden} раньше`, ...журнал.slice(журнал.length - место)];
   }
 
   private journalLines(): string[] {

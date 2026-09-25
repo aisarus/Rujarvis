@@ -11,7 +11,7 @@ function ok(text: string): BackendResult {
   return { ok: true, backend: 'claude-code', text, durationMs: 1, filesChanged: [], commands: [] };
 }
 
-function failed(error: string): BackendResult {
+function failed(error: string, cancelled = false): BackendResult {
   return {
     ok: false,
     backend: 'claude-code',
@@ -19,6 +19,7 @@ function failed(error: string): BackendResult {
     durationMs: 1,
     filesChanged: [],
     commands: [],
+    cancelled,
     error,
   };
 }
@@ -180,7 +181,12 @@ describe('TalkSession', () => {
   it('за отменённый ход не извиняется', async () => {
     // «Стоп» и «забудь» гасят сессию, и её ход возвращается неудачей. Это
     // исполненная просьба человека, а не поломка.
-    const { разговор } = завести([new Поддельная([failed('Отменено')])]);
+    //
+    // Отмена — ПРИЗНАК результата. Раньше её узнавали по слову «отмен» в
+    // тексте ошибки: настоящая беда с этим словом внутри пряталась, а отмена
+    // с другой формулировкой («Человек попросил забыть») вызывала извинение
+    // на пустом месте.
+    const { разговор } = завести([new Поддельная([failed('Человек попросил забыть', true)])]);
 
     await разговор.hear('что там');
 
@@ -189,6 +195,14 @@ describe('TalkSession', () => {
 
   it('о настоящей неудаче говорит вслух', async () => {
     const { разговор } = завести([new Поддельная([failed('Сессия молчит слишком долго')])]);
+
+    await разговор.hear('что там');
+
+    expect(сказанное).toEqual(['Не смог ответить.']);
+  });
+
+  it('беда со словом «отмена» внутри больше не прячется', async () => {
+    const { разговор } = завести([new Поддельная([failed('не удалось отменить прошлый ход')])]);
 
     await разговор.hear('что там');
 
