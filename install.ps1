@@ -67,6 +67,19 @@ function Test-Command {
     return [bool] (Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+<#
+    Запустить внешнюю программу и проверить КОД ВОЗВРАТА, а не болтовню.
+
+    Та же ловушка 5.1, что у Invoke-Quiet ниже, и здесь она стоила установки
+    целиком: при $ErrorActionPreference = 'Stop' любая строка в stderr внешней
+    программы становится NativeCommandError и бросается, а код возврата никто
+    не смотрит. `git clone` пишет «Cloning into ...» в stderr ВСЕГДА, даже
+    когда всё хорошо, — и установка падала на шаге «Получаю исходники» на
+    успешном клоне. Нашёл первый живой прогон на Windows, 25.09.2026.
+
+    Вывод не глотаем, в отличие от Invoke-Quiet: человек должен видеть, как
+    идёт клон и сборка. Ослабляется только предпочтение, а решает код.
+#>
 function Invoke-Checked {
     param(
         [Parameter(Mandatory)] [string] $FilePath,
@@ -74,7 +87,14 @@ function Invoke-Checked {
         [string] $WorkingDirectory = $PWD.Path,
         [string] $What = 'команда'
     )
-    & $FilePath @Arguments
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $FilePath @Arguments 2>&1 | ForEach-Object { "$_" }
+    }
+    finally {
+        $ErrorActionPreference = $prev
+    }
     if ($LASTEXITCODE -ne 0) {
         throw "Не удалось выполнить: $What (код $LASTEXITCODE)"
     }

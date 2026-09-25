@@ -77,6 +77,69 @@ try {
     $passed = $false
 }
 Assert-That 'Invoke-Checked пропускает нулевой код выхода' $passed
+# Болтовня в stderr — не отказ.
+#
+# В 5.1 при $ErrorActionPreference = 'Stop' строка stderr внешней программы
+# становится NativeCommandError и бросается, а код возврата никто не смотрит.
+# `git clone` пишет «Cloning into ...» в stderr ВСЕГДА, даже на успехе, — и
+# установка падала на шаге «Получаю исходники» при успешном клоне. Нашёл
+# первый живой прогон установки на Windows 25.09.2026.
+#
+# Проверяется это ДОЧЕРНЕЙ оболочкой со слитыми потоками, а не вызовом прямо
+# здесь. Первая попытка звала Invoke-Checked в этом же процессе и оставалась
+# зелёной на заведомо сломанном коде: NativeCommandError рождается только
+# тогда, когда stderr внешней программы куда-то перенаправлен — а GitHub
+# запускает шаг именно так, `powershell -command ". 'файл'"`. Проверка, не
+# воспроизводящая условие, проверяет не то.
+$noiseProbe = @'
+$ErrorActionPreference = 'Stop'
+__FUNCTION__
+# Потоки СЛИВАЮТСЯ: без этого ловушка не срабатывает вовсе.
+#
+# Замер 25.09.2026: прямой вызов проходит, а `... *>&1 | Out-Null` роняет
+# NativeCommandError. Первая версия этой пробы звала функцию прямо и потому
+# зеленела на заведомо сломанном коде. Сливает потоки всякий, кто пишет
+# установку в журнал, - и шаг CI, и человек, собирающий отчёт об ошибке.
+$ok = $true
+try {
+    Invoke-Checked -FilePath $env:ComSpec -Arguments @('/c', 'echo Cloning into repo 1>&2 & exit 0') -What 'klon' *>&1 | Out-Null
+} catch {
+    $ok = $false
+}
+$seen = $false
+try {
+    Invoke-Checked -FilePath $env:ComSpec -Arguments @('/c', 'echo beda 1>&2 & exit 7') -What 'klon' *>&1 | Out-Null
+} catch {
+    $seen = $_.Exception.Message -match '7'
+}
+"ITOG noise=$ok fail=$seen"
+'@
+
+if ($onWindows) {
+    $checkedText = ($functions | Where-Object { $_.Name -eq 'Invoke-Checked' } | Select-Object -First 1).Extent.Text
+    $probeFile = Join-Path ([IO.Path]::GetTempPath()) 'rujarvis-noise-probe.ps1'
+    # С BOM: 5.1 читает UTF-8 без него как ANSI и не разбирает кириллицу.
+    [IO.File]::WriteAllText($probeFile, $noiseProbe.Replace('__FUNCTION__', $checkedText), [Text.UTF8Encoding]::new($true))
+    # Ослабляем предпочтение и здесь: проба НАРОЧНО шумит в stderr, и с
+    # 'Stop' эта строка роняла бы самого сторожа вместо честного FAIL.
+    # Поймано на себе же, 25.09.2026.
+    $prevPref = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $answer = & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command ". '$probeFile'" 2>&1 | Out-String
+    }
+    finally {
+        $ErrorActionPreference = $prevPref
+    }
+    Remove-Item $probeFile -Force -ErrorAction SilentlyContinue
+    Assert-That 'Invoke-Checked не считает stderr отказом при нулевом коде' ($answer -match 'noise=True')
+    Assert-That 'Invoke-Checked всё ещё падает на настоящем отказе с болтовнёй' ($answer -match 'fail=True')
+}
+else {
+    Write-Host 'пропуск: ловушка stderr есть только в Windows PowerShell' -ForegroundColor Yellow
+    $skipped += 2
+}
+
 
 
 # --- Проверка версии Node ---------------------------------------------------
