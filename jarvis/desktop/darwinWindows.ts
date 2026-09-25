@@ -21,6 +21,15 @@ import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
 
+// Пауза перед вторым вопросом о дереве. Chromium строит его не мгновенно:
+// на macos-latest между просьбой и готовым деревом проходит заметное время.
+const ПАУЗА_ДЕРЕВА_МС = 700;
+const новаяПопытка = (): Promise<void> =>
+  new Promise((готово) => {
+    const таймер = setTimeout(готово, ПАУЗА_ДЕРЕВА_МС);
+    таймер.unref?.();
+  });
+
 import { chooseElement, type UiElement } from '../control/elements';
 
 import { DarwinDriver } from './darwinDriver';
@@ -179,7 +188,21 @@ export class DarwinWindowTools {
   /** Дерево окна, поднятого вперёд, с номерами по местам в нём. */
   private async дерево(pid: number, windowId: number): Promise<UiElement[]> {
     await this.поднять(pid, windowId);
-    const { elements } = await this.driver.elements();
+    let { elements } = await this.driver.elements();
+
+    // Пусто — это ещё не «нечего нажимать».
+    //
+    // Chromium (Electron, Chrome, Edge, VS Code, Slack) строит дерево
+    // доступности только по просьбе вспомогательной программы. Пока не
+    // попросили, внутри окна не видно НИЧЕГО: замер на macos-latest 25.09.2026
+    // дал ноль элементов при живом окне. Просим и спрашиваем заново — строится
+    // дерево не мгновенно, поэтому с паузой.
+    if (elements.length < ДЕРЕВО_ЖИВО) {
+      await this.driver.askForAccessibility(pid);
+      await новаяПопытка();
+      ({ elements } = await this.driver.elements());
+    }
+
     if (elements.length < ДЕРЕВО_ЖИВО) {
       throw new Error(
         `Окно отдало всего ${elements.length} элементов — похоже, оно не отрисовано. ` +

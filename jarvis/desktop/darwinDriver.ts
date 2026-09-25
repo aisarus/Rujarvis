@@ -671,6 +671,34 @@ export function keyScript(keys: string): string {
  * пустоту. Замерено 24.09.2026: полтора прогона ушло на поиск несуществующей
  * беды с печатью, потому что так написанная читалка молча возвращала «».
  */
+/**
+ * Попросить программу построить дерево доступности.
+ *
+ * Chromium — а значит Electron, Chrome, Edge, VS Code, Slack, Discord — не
+ * держит дерево доступности постоянно: оно стоит памяти и времени, и строится
+ * только когда его попросит вспомогательная программа. Пока не попросили,
+ * System Events видит окно, но внутри него ПУСТО. Замер на macos-latest
+ * 25.09.2026: `windows` и `look` проходят, а `find` отдаёт ноль элементов —
+ * то есть нажать в окне Chromium было нельзя ни по чему.
+ *
+ * Просьба — это атрибут `AXManualAccessibility`, заведённый Chromium ровно
+ * для этого. Соседний `AXEnhancedUserInterface` не берём: его смотрят и
+ * другие программы, и у некоторых он двигает и меняет размер окон.
+ *
+ * Имена переменных латиницей: в AppleScript кириллица в именах даёт «syntax
+ * error: Expected expression but found unknown token».
+ */
+export function manualAccessibilityScript(pid: number): string {
+  return `
+tell application "System Events"
+  set target to first process whose unix id is ${pid}
+  try
+    set value of attribute "AXManualAccessibility" of target to true
+  end try
+end tell
+`;
+}
+
 export const ELEMENTS_SCRIPT = `
 set fieldSep to character id 31
 set rowSep to character id 30
@@ -946,6 +974,20 @@ export class DarwinDriver {
   async key(keys: string): Promise<void> {
     await this.access();
     await this.osascript(appleScriptArgs(keyScript(keys)));
+  }
+
+  /**
+   * Попросить программу построить дерево. Молча: отказ здесь не беда.
+   *
+   * Программа может не быть Chromium — тогда атрибута нет и просьба ничего не
+   * значит. Ронять из-за этого разбор окна нельзя.
+   */
+  async askForAccessibility(pid: number): Promise<void> {
+    try {
+      await запустить('osascript', appleScriptArgs(manualAccessibilityScript(pid)));
+    } catch {
+      // Не Chromium или атрибут не принят — дерево спросим как есть.
+    }
   }
 
   async elements(): Promise<{ title: string; elements: UiElement[] }> {
