@@ -1,0 +1,213 @@
+# Установщик Windows — вживую, в той оболочке, где его и запускают.
+#
+# `scripts/check-install-script.ps1` разбирает синтаксис и чистые функции.
+# Этого мало, и вот чем это кончилось: `$IsWindows` в `Update-SessionPath`
+# валил установку на первом же шаге в Windows PowerShell 5.1 — в той самой
+# оболочке, которая открывается по умолчанию и в которой человек выполняет
+# `irm | iex`. Разбор этого не видел, нашёл сторонний обзор. На маке живая
+# установка гоняется каждый пуш с 24.09, на Windows не гонялась никогда —
+# при том, что Windows тут основная платформа.
+#
+# Здесь установка идёт целиком и ИМЕННО через powershell.exe (5.1), а не через
+# pwsh 7: разница между ними и была дырой.
+#
+# Чего этот прогон НЕ проверяет, и об этом надо помнить: на образе GitHub уже
+# стоят Git и Node, поэтому ветка `Install-Missing` с winget здесь не
+# исполняется. Настоящая чистая машина остаётся непроверенной. Но самый
+# дорогой участок — установка pnpm и правка PATH — проверяется: pnpm с пути
+# убирается нарочно, иначе `Install-Pnpm` не вызовется вовсе, а это ровно та
+# функция, в которой жила критическая ошибка.
+#
+# Внутри блоков `shell: powershell` всё латиницей, включая строки. Windows
+# PowerShell 5.1 читает UTF-8 без BOM как ANSI, и буква «Д» (D0 94) даёт байт
+# 0x94 — закрывающую кавычку: строка обрывается посреди слова, и скрипт не
+# разбирается. По-русски здесь только эти комментарии: они остаются в YAML и
+# до PowerShell не доезжают.
+name: Install on Windows
+
+on:
+  workflow_dispatch:
+  # Ветки разбора — не изменения кода: это срезы уже проверенного main,
+  # отданные боту. Полный обход создаёт восемь веток разом.
+  pull_request:
+    branches-ignore: ['coderabbit/**']
+  push:
+    branches: [main, 'install/**']
+  schedule:
+    # Раз в неделю: ломается обычно не наш код, а то, что снаружи — winget,
+    # узлы npm, адреса моделей.
+    - cron: '0 7 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Проверки установщика
+        shell: pwsh
+        run: ./scripts/check-install-script.ps1
+
+      - name: Ветка PR — та самая, а не однофамилица
+        # Установщик клонирует фиксированный aisarus/Rujarvis по ИМЕНИ ветки.
+        # Для PR из форка это имя может вести в другое место, и прогон проверил
+        # бы чужой код, отчитавшись успехом.
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          want='${{ github.event.pull_request.head.sha }}'
+          have=$(git ls-remote https://github.com/aisarus/Rujarvis.git \
+            "refs/heads/${GITHUB_HEAD_REF}" | cut -f1)
+          echo "голова PR: $want"
+          echo "в aisarus/Rujarvis: ${have:-нет такой ветки}"
+          test "$have" = "$want" || {
+            echo
+            echo 'Установщик ставит только из aisarus/Rujarvis по имени ветки,'
+            echo 'а здесь это имя ведёт в другое место (PR из форка или ветку удалили).'
+            echo 'Поставить ровно этот код нечем, и выдавать это за проверку нельзя.'
+            exit 1
+          }
+
+      - name: Что уже стоит на машине
+        # В первую строку журнала: без этого «установка прошла» ничего не
+        # значит — неясно, что поставил установщик, а что лежало до него.
+        shell: powershell
+        run: |
+          "PowerShell: $($PSVersionTable.PSVersion) ($($PSVersionTable.PSEdition))"
+          foreach ($name in 'git', 'node', 'npm', 'pnpm', 'corepack', 'winget') {
+            $found = Get-Command $name -ErrorAction SilentlyContinue
+            "{0,-9} {1}" -f $name, $(if ($found) { $found.Source } else { 'MISSING' })
+          }
+
+      - name: Установка целиком в Windows PowerShell 5.1
+        # powershell, а не pwsh: 5.1 и есть проверяемое условие.
+        #
+        # pnpm убираем с пути нарочно. Именно `Install-Pnpm` зовёт
+        # `Update-SessionPath`, где и жил `$IsWindows`; на машине с готовым
+        # pnpm эта ветка не исполняется, то есть проверка обходила бы ровно то
+        # место, ради которого написана.
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -and $_ -notmatch 'pnpm' }) -join ';'
+          $branch = if ($env:GITHUB_HEAD_REF) { $env:GITHUB_HEAD_REF } else { $env:GITHUB_REF_NAME }
+          "installing branch $branch"
+          & .\install.ps1 -Branch $branch -WhisperModel tiny -NoLaunch *>&1 |
+            Tee-Object -FilePath "$env:TEMP\install.log"
+
+      - name: Что получилось
+        # Проверяется не «команда отработала», а четыре следа на диске:
+        # исходники, СОБРАННОЕ приложение (без dist оно не запустится), модель
+        # речи весом больше десяти мегабайт (скачивание могло оборваться на
+        # середине и оставить огрызок) и ярлык — без него человек не знает,
+        # чем это запускать.
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:LOCALAPPDATA 'Rujarvis'
+          '=== Rujarvis folder ==='
+          Get-ChildItem $root | Select-Object -ExpandProperty Name
+
+          foreach ($needed in 'src', 'models', 'logs') {
+            if (-not (Test-Path (Join-Path $root $needed))) { throw "no folder: $needed" }
+          }
+          if (-not (Test-Path (Join-Path $root 'src\dist'))) { throw 'not built: src\dist missing' }
+
+          $models = Get-ChildItem (Join-Path $root 'models') -Recurse -File -ErrorAction SilentlyContinue
+          $bytes = ($models | Measure-Object -Property Length -Sum).Sum
+          "speech model files: $($models.Count), total $([math]::Round($bytes / 1MB)) MB"
+          if ($bytes -lt 10MB) { throw 'speech models did not download' }
+
+          $lnk = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Rujarvis.lnk'
+          if (-not (Test-Path $lnk)) { throw "no shortcut: $lnk" }
+          "shortcut in place: $lnk"
+
+      - name: Речь работает по кругу
+        # Синтез своим голосом и распознавание своим же слухом: отвечает на
+        # «будет ли он говорить и слышать», не требуя микрофона.
+        shell: bash
+        run: |
+          set -o pipefail
+          cd "$LOCALAPPDATA/Rujarvis/src"
+          # Код возврата у скрипта трёхзначный: 2 — нечем мерить (нет голоса
+          # или модели), 1 — узнал не всё, 0 — всё. На whisper-tiny с
+          # синтетической речью единица это норма, ради неё порог и заведён.
+          set +e
+          pnpm jarvis:roundtrip 2>&1 | tee /tmp/roundtrip.log | tail -30
+          roundtrip_code=$?
+          set -e
+          test "$roundtrip_code" -ne 2 || {
+            echo 'jarvis:roundtrip: нечем мерить, нет голоса или модели'
+            exit 1
+          }
+          grep -q 'из 12' /tmp/roundtrip.log || {
+            echo "jarvis:roundtrip вернул $roundtrip_code и не дошёл до итога"
+            exit 1
+          }
+          # Нижняя граница, а не цель: заметить обвал, а не гнаться за цифрой.
+          heard=$(grep -oE '[0-9]+ из 12' /tmp/roundtrip.log | tail -1 | grep -oE '^[0-9]+' || echo 0)
+          echo "речь по кругу: $heard из 12 (нижняя граница 5)"
+          test "$heard" -ge 5 || { echo 'речь просела ниже границы'; exit 1; }
+
+      - name: Приёмка
+        shell: bash
+        run: |
+          set -o pipefail
+          cd "$LOCALAPPDATA/Rujarvis/src"
+          # Окна у раннера нет и человека за ним тоже: сценарий с подъёмом
+          # окна честно пометит себя «нечем мерить», а не провалится.
+          export JARVIS_QA_NO_FOCUS=1
+          set +e
+          pnpm jarvis:qa 2>&1 | tee /tmp/qa.log | tail -40
+          qa_code=$?
+          set -e
+
+          # Список известных и осознанно отложенных дыр пока пуст: на Windows
+          # приёмка проходит целиком. Первая строка в нём должна появляться
+          # вместе с объяснением, а не молча.
+          fresh=$(grep -a 'НЕ ПРОШЛО' /tmp/qa.log || true)
+          if [ -n "$fresh" ]; then
+            echo 'Провалы приёмки на Windows:'
+            echo "$fresh"
+            exit 1
+          fi
+
+          # Итог обязан быть: без него прогон не дошёл до конца, и отсутствие
+          # строк «НЕ ПРОШЛО» в обрывке не доказывает ничего.
+          grep -a 'Всего' /tmp/qa.log || {
+            echo 'Приёмка не дошла до итога: судить не по чему.'
+            tail -40 /tmp/qa.log || true
+            exit 1
+          }
+          if [ "$qa_code" -ne 0 ]; then
+            echo "Приёмка вернула $qa_code."
+          fi
+
+      - name: Повторная установка не ломает поставленное
+        # Человек запускает установку второй раз чаще, чем кажется: обновиться,
+        # доставить модель, починить после сбоя.
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:LOCALAPPDATA 'Rujarvis'
+          $models = Join-Path $root 'models'
+          $before = (Get-ChildItem $models -Recurse -File | Measure-Object -Property Length -Sum).Sum
+          $branch = if ($env:GITHUB_HEAD_REF) { $env:GITHUB_HEAD_REF } else { $env:GITHUB_REF_NAME }
+          & .\install.ps1 -Branch $branch -WhisperModel tiny -NoLaunch *>&1 |
+            Tee-Object -FilePath "$env:TEMP\install2.log"
+          $after = (Get-ChildItem $models -Recurse -File | Measure-Object -Property Length -Sum).Sum
+          "models before $([math]::Round($before / 1MB)) MB, after $([math]::Round($after / 1MB)) MB"
+          if ($after -lt $before) { throw 'models shrank after the second run' }
+          $lnk = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Rujarvis.lnk'
+          if (-not (Test-Path $lnk)) { throw 'no shortcut after the second run' }
+
+      - name: Журнал установки, если что-то упало
+        if: failure()
+        shell: powershell
+        run: |
+          Get-Content "$env:TEMP\install.log" -Tail 120 -ErrorAction SilentlyContinue
