@@ -234,6 +234,34 @@ jobs:
           $lnk = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Rujarvis.lnk'
           if (-not (Test-Path $lnk)) { throw 'no shortcut after the second run' }
 
+      - name: Ставлю Claude Code — как его ставит человек
+        # Подписки в прогоне нет и быть не может: Джарвис живёт на подписках,
+        # а пароли в CI не носят. Но между «CLI установлен» и «агент ответил»
+        # лежит дорога, на которой всё и ломалось: найти файл среди десятка
+        # мест, куда его кладут разные менеджеры, запустить так, чтобы Node
+        # согласился, собрать аргументы и получить внятный отказ вместо
+        # падения. Эта дорога проверяется целиком.
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: 'Claude Code: путь до подписки'
+        shell: bash
+        run: |
+          set -o pipefail
+          cd "$LOCALAPPDATA/Rujarvis/src"
+          set +e
+          pnpm jarvis:cli-check 2>&1 | tee /tmp/cli.log | tail -30
+          cli_code=$?
+          set -e
+          grep -a 'Всего' /tmp/cli.log || {
+            echo 'Замер не дошёл до итога: судить не по чему.'
+            exit 1
+          }
+          if [ "$cli_code" -eq 2 ]; then
+            echo 'Claude Code: нечем мерить — без подписки дальше не пройти.'
+            exit 0
+          fi
+          test "$cli_code" -eq 0 || { echo "Claude Code на Windows не работает (код $cli_code)"; exit 1; }
+
       - name: Журнал установки, если что-то упало
         if: failure()
         shell: powershell

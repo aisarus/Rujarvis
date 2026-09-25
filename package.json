@@ -38,6 +38,7 @@
     "jarvis:icons": "node scripts/make-icons.mjs",
     "jarvis:window-check": "node build.mjs && electron dist/qa/window-check.cjs",
     "jarvis:cua-check": "node build.mjs && electron dist/qa/cua-check.cjs",
+    "jarvis:cli-check": "tsx scripts/qa/cli-check.ts",
     "jarvis:qa": "node build.mjs && electron dist/qa/acceptance.cjs"
   },
   "dependencies": {
