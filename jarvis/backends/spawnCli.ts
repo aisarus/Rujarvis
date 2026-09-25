@@ -16,6 +16,12 @@
  * не экранирует. Путь `C:\Users\Иван Петров\AppData\Roaming\npm\claude.cmd`
  * доезжал до cmd.exe как команда `C:\Users\Иван`. Пути с пробелами и
  * кириллицей здесь норма, а не редкость.
+ *
+ * Поэтому под оболочку уходит одна готовая строка, а список аргументов пуст.
+ * Это не только честнее — иначе Node печатает DEP0190 на каждый запуск:
+ * «args with shell option are not escaped, only concatenated». Предупреждение
+ * ровно про то, что здесь уже сделано руками, но отличить сделанное от
+ * несделанного оно не умеет и просто шумит в журнале.
  */
 
 /** Нужна ли оболочка, чтобы запустить этот файл. */
@@ -41,5 +47,5 @@ export function cliLaunch(
   args: readonly string[],
 ): { command: string; args: string[]; shell: boolean } {
   if (!needsShell(command)) return { command, args: [...args], shell: false };
-  return { command: quote(command), args: args.map(quote), shell: true };
+  return { command: [command, ...args].map(quote).join(' '), args: [], shell: true };
 }

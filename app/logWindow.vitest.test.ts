@@ -1,6 +1,14 @@
+import { Script } from 'node:vm';
+
 import { describe, expect, it } from 'vitest';
 
-import { buildLogWindowHtml, подписьШагов, СЛОВА_ШАГОВ } from './logWindow';
+import {
+  buildLogWindowHtml,
+  buildLogWindowPreload,
+  подписьШагов,
+  следуетЗаНизом,
+  СЛОВА_ШАГОВ,
+} from './logWindow';
 
 /**
  * Страница окна целиком лежит внутри шаблонной строки.
@@ -12,10 +20,30 @@ import { buildLogWindowHtml, подписьШагов, СЛОВА_ШАГОВ } f
 describe('buildLogWindowHtml', () => {
   const html = buildLogWindowHtml();
 
+  const открывающий = html.indexOf('<script>') + '<script>'.length;
+  const закрывающий = html.indexOf('</script>', открывающий);
+  const тело = html.slice(открывающий, закрывающий);
+
+  it('целиком разбирается как код, а не только начинается похоже', () => {
+    // Поиск подстроки обрыва не видит: имена каналов и теги стоят по краям
+    // страницы и остаются на месте, даже если середину съело. Компиляция
+    // видит — new Script разбирает текст, не выполняя его.
+    expect(() => new Script(тело)).not.toThrow();
+  });
+
   it('доезжает до конца, а не обрывается на середине', () => {
-    expect(html).toContain('jarvis-log:backlog');
-    expect(html).toContain('</script>');
+    // Последнее в порядке исходника — подписка на строки.
+    expect(тело).toContain('window.jarvisLog.onBacklog');
     expect(html).toContain('</html>');
+    // Всё после первого закрывающего тега доедет до браузера текстом.
+    expect(html.slice(закрывающий)).not.toContain('function');
+  });
+
+  it('не просит у страницы прав, которых у неё больше нет', () => {
+    // Окно показывает вывод агента, а агент читает чужие страницы. Права
+    // Node у такого окна — это заряженное ружьё на стене.
+    expect(тело).not.toContain('require(');
+    expect(тело).not.toContain('ipcRenderer');
   });
 
   it('рисует и подпись шага, и подробность', () => {
@@ -25,9 +53,8 @@ describe('buildLogWindowHtml', () => {
     expect(html).toContain("className = 'detail'");
   });
 
-  it('следует за низом ленты, пока человек её не тронул', () => {
-    expect(html).toContain('follow');
-    expect(html).toContain('scrollHeight');
+  it('уносит в страницу проверенное правило прокрутки, а не переписанное', () => {
+    expect(тело).toContain('следуетЗаНизом(feed.scrollHeight, feed.clientHeight, feed.scrollTop)');
   });
 
   it('вставляет текст как текст, а не как разметку', () => {
@@ -78,5 +105,40 @@ describe('подписьШагов', () => {
     expect(подписьШагов(2, en)).toBe('2 steps');
     expect(подписьШагов(21, en)).toBe('21 step');
     expect(подписьШагов(11, en)).toBe('11 steps');
+  });
+});
+
+/**
+ * Прокрутка проверяется числами, а не поиском слова «follow» в тексте
+ * страницы: перевёрнутый знак сравнения ищущий текст не заметит, а числа
+ * заметят сразу.
+ */
+describe('следуетЗаНизом', () => {
+  it('догоняет, пока человек у самого низа', () => {
+    // Ровно внизу: 1000 высоты ленты, 400 видно, прокручено на 600.
+    expect(следуетЗаНизом(1000, 400, 600)).toBe(true);
+    // Почти внизу — дробная прокрутка и масштаб экрана ровного нуля не дают.
+    expect(следуетЗаНизом(1000, 400, 561)).toBe(true);
+  });
+
+  it('стоит, когда человек отлистал назад', () => {
+    expect(следуетЗаНизом(1000, 400, 560)).toBe(false);
+    expect(следуетЗаНизом(1000, 400, 0)).toBe(false);
+  });
+});
+
+describe('buildLogWindowPreload', () => {
+  const preload = buildLogWindowPreload();
+
+  it('разбирается как код', () => {
+    expect(() => new Script(preload)).not.toThrow();
+  });
+
+  it('отдаёт странице подписку, а не сам ipcRenderer', () => {
+    // Отдать ipcRenderer целиком значит вернуть окну всё, что у него отняли:
+    // с ним страница шлёт любое сообщение в главный процесс.
+    expect(preload).toContain("contextBridge.exposeInMainWorld('jarvisLog'");
+    expect(preload).toContain('jarvis-log:backlog');
+    expect(preload).not.toContain("exposeInMainWorld('ipcRenderer'");
   });
 });
