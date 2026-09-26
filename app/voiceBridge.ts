@@ -1097,7 +1097,8 @@ async function поднятьМост(options: {
     wakeWord: { awakeWindowMs: AWAKE_WINDOW_MS },
     acknowledgeWake: () => settings().wakeAck,
     onStatus: (status) => {
-      console.log(`[jarvis] ${status.label}`);
+      // У «покоя» подпись пустая: в лог пошла бы строка без текста.
+      if (status.label) console.log(`[jarvis] ${status.label}`);
       overlay.update(status);
       options.onStatus?.(status);
     },

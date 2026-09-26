@@ -59,8 +59,10 @@ export function startLogFile(file: string, header: readonly string[] = []): stri
         // при этом остаётся выше потолка: дальше КАЖДАЯ строка журнала звала
         // existsSync, rmSync и renameSync на главном процессе Electron, и все
         // три падали снова. Считаем сверху заново и попробуем через 5 МБ.
+        const text = format(args);
+        if (пустаяЗапись(text)) return;
         if (written > MAX_BYTES && !rotate(file, true)) written = 0;
-        append(file, `${stamp()} ${LEVEL[method]} ${format(args)}\n`);
+        append(file, `${stamp()} ${LEVEL[method]} ${text}\n`);
       } catch {
         // Запись в файл не должна мешать работе: потеря строки лога дешевле
         // упавшего ответа.
@@ -111,6 +113,17 @@ function stamp(): string {
     `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ` +
     `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
   );
+}
+
+/**
+ * Запись без содержания: одни метки вроде `[jarvis]` и пробелы.
+ *
+ * Так в лог попадала подпись состояния «покой» — она пустая, и после каждой
+ * прямой команды вставала строка `[jarvis] ` без текста: 73 штуки за вечер
+ * 26.09.2026. Человек открывает лог, чтобы понять, что было, и видит дыры.
+ */
+export function пустаяЗапись(text: string): boolean {
+  return text.replace(/^\s*(?:\[[^\]]*\]\s*)*/u, '').trim() === '';
 }
 
 function format(args: readonly unknown[]): string {
