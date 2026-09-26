@@ -250,7 +250,11 @@ jobs:
         #
         # Приманка — чужой «electron.exe» по другому пути: установщик обязан
         # гасить свои процессы по пути установки, а не всех с этим именем.
-        shell: powershell
+        #
+        # pwsh, а не powershell: 5.1 читает скрипт шага без BOM и рвёт русские
+        # строки — первая версия упала на разборе (4e951e3). Установка под 5.1
+        # проверяется шагом «Установка целиком» выше.
+        shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $src = Join-Path $env:LOCALAPPDATA 'Rujarvis\src'
@@ -278,11 +282,15 @@ jobs:
           elseif ($main.Count -ne 1) { $failed = "после переустановки должен работать ровно один Джарвис, а их $($main.Count)" }
           elseif ($decoy.HasExited) { $failed = 'погашена приманка с тем же именем по чужому пути' }
 
-          # Убираем за собой — только свои: процессы по пути установки и приманку по pid.
-          Get-CimInstance Win32_Process -Filter "Name = 'electron.exe'" |
-            Where-Object { $_.ExecutablePath -ieq $electron } |
-            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+          # Убираем за собой — только свои: процессы по пути установки и приманку
+          # по pid. И дожидаемся выхода: на маке недогашенный Джарвис перехватил
+          # ввод следующей проверки (4e951e3).
+          $own = { @(Get-CimInstance Win32_Process -Filter "Name = 'electron.exe'" | Where-Object { $_.ExecutablePath -ieq $electron }) }
+          & $own | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
           Stop-Process -Id $decoy.Id -Force -ErrorAction SilentlyContinue
+          $deadline = (Get-Date).AddSeconds(20)
+          while ((& $own).Count -gt 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 300 }
+          if ((& $own).Count -gt 0) { throw 'Джарвис не ушёл после проверки' }
           if ($failed) { throw $failed }
           'новый Джарвис запущен вместо старого, приманка цела'
 

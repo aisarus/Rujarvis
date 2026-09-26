@@ -153,8 +153,18 @@ jobs:
           fi
 
           # Убираем за собой — только свои: процессы по пути установки и приманку по pid.
+          #
+          # И ДОЖИДАЕМСЯ выхода. Первая версия шага гасила и сразу шла дальше:
+          # окно настройки ещё жило и перехватило ввод следующей проверки —
+          # cua-check упал на writeInto, который проходил на трёх прогонах до
+          # этого (4e951e3).
           for pid in $(own); do kill "$pid" 2>/dev/null || true; done
           kill "$decoy" 2>/dev/null || true
+          waited=0
+          while [ -n "$(own)" ] && [ "$waited" -lt 20 ]; do sleep 1; waited=$((waited + 1)); done
+          for pid in $(own); do kill -KILL "$pid" 2>/dev/null || true; done
+          sleep 1
+          test -z "$(own)" || { echo "Джарвис не ушёл после проверки: $(own | tr '\n' ' ')"; exit 1; }
           if [ -n "$failed" ]; then echo "$failed"; exit 1; fi
           echo 'новый Джарвис запущен вместо старого, приманка цела'
 
