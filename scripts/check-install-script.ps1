@@ -366,6 +366,42 @@ foreach ($док in $ставитФайлом) {
     Assert-That "$док называет скачивание в файл" ($текстДок -match '-OutFile')
 }
 
+# --- Работающий Джарвис: гасится свой, по пути, а не по имени ---------------
+#
+# Две копии безобидного ping.exe под именем electron.exe в разных «установках».
+# Установщик обязан погасить только ту, что лежит по пути ЕГО установки, и не
+# тронуть вторую с тем же именем: уборка по маске однажды снесла проводник.
+if ($env:OS -eq 'Windows_NT') {
+    $своя = Join-Path ([System.IO.Path]::GetTempPath()) ("jarvis-own-" + [guid]::NewGuid().ToString('N'))
+    $чужая = Join-Path ([System.IO.Path]::GetTempPath()) ("jarvis-other-" + [guid]::NewGuid().ToString('N'))
+    $процессы = @()
+    try {
+        foreach ($корень in @($своя, $чужая)) {
+            $папка = Join-Path $корень 'node_modules\electron\dist'
+            New-Item -ItemType Directory -Path $папка -Force | Out-Null
+            Copy-Item "$env:SystemRoot\System32\PING.EXE" (Join-Path $папка 'electron.exe')
+            $процессы += Start-Process -FilePath (Join-Path $папка 'electron.exe') -ArgumentList '-n', '60', '127.0.0.1' -WindowStyle Hidden -PassThru
+        }
+        Start-Sleep -Milliseconds 500
+        Assert-That 'обе копии «electron.exe» запущены' (@(Get-OwnJarvisProcesses -SourceDir $своя).Count -eq 1 -and @(Get-OwnJarvisProcesses -SourceDir $чужая).Count -eq 1)
+        $был = Stop-RunningJarvis -SourceDir $своя
+        Assert-That 'Stop-RunningJarvis говорит, что Джарвис был запущен' ($был -eq $true)
+        Assert-That 'своя копия погашена' (@(Get-OwnJarvisProcesses -SourceDir $своя).Count -eq 0)
+        Assert-That 'чужая с тем же именем жива' (-not $процессы[1].HasExited)
+        Assert-That 'не запущен — false, и ничего не гасится' ((Stop-RunningJarvis -SourceDir $своя) -eq $false)
+    }
+    finally {
+        # Гасим только свои pid, записанные при запуске.
+        foreach ($p in $процессы) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+        Start-Sleep -Milliseconds 300
+        Remove-Item $своя, $чужая -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+else {
+    Write-Host 'пропуск: процессы установки проверяются на Windows' -ForegroundColor Yellow
+    $skipped += 5
+}
+
 if ($failures -gt 0) {
     Write-Host "Провалено проверок: $failures" -ForegroundColor Red
     exit 1

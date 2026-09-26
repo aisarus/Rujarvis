@@ -86,6 +86,50 @@ parse_args() {
   esac
 }
 
+# --- работающий Джарвис --------------------------------------------------------
+#
+# Запущенный держит свой Electron, и его обновление падало бы на pnpm install.
+# А если файлы и заменились, старый процесс работал бы старым кодом: запуск в
+# конце упирается в одиночный экземпляр и тихо выходит — человек думает, что
+# обновился.
+#
+# Свои процессы — только по точному пути Electron ЭТОЙ установки, не по имени:
+# у человека есть и другие Electron-приложения. Гасим вместе с детьми: иначе
+# MCP-серверы и сессии агента остались бы сиротами.
+
+own_jarvis_pids() {
+  local bin="${1:-$SOURCE_DIR}/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
+  ps -axo pid=,comm= | while read -r pid comm; do
+    if [ "$comm" = "$bin" ]; then echo "$pid"; fi
+  done
+}
+
+kill_tree() {
+  local child
+  for child in $(pgrep -P "$1" 2>/dev/null || true); do kill_tree "$child"; done
+  kill -TERM "$1" 2>/dev/null || true
+}
+
+stop_running_jarvis() {
+  local src="${1:-$SOURCE_DIR}" pids pid parent waited=0
+  pids=" $(own_jarvis_pids "$src" | tr '\n' ' ')"
+  if [ -z "$(printf '%s' "$pids" | tr -d ' ')" ]; then return 1; fi
+  for pid in $pids; do
+    # Главные — те, чей родитель не из этого же списка: остальные уйдут с ними.
+    parent="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+    case "$pids " in *" $parent "*) continue ;; esac
+    note "Закрываю работающий Джарвис (pid $pid): иначе он остаётся на старом коде."
+    kill_tree "$pid"
+  done
+  while [ -n "$(own_jarvis_pids "$src")" ] && [ "$waited" -lt 20 ]; do sleep 1; waited=$((waited + 1)); done
+  for pid in $(own_jarvis_pids "$src"); do kill -KILL "$pid" 2>/dev/null || true; done
+  sleep 1
+  if [ -n "$(own_jarvis_pids "$src")" ]; then
+    die 'Джарвис не закрылся. Закройте его из строки меню и запустите установку снова.'
+  fi
+  return 0
+}
+
 # Отсюда начинается сама установка. Проверке дальше не нужно: она берёт
 # помощников выше и зовёт их сама. Без этой двери тест запустил бы установку.
 if [ "${RUJARVIS_INSTALL_TEST:-}" = "1" ]; then
@@ -183,6 +227,11 @@ fi
 #
 # Сначала исходники, потом проверка версий Node и pnpm: нужные версии написаны
 # в самом проекте (.nvmrc и packageManager), и до загрузки их неоткуда узнать.
+
+if stop_running_jarvis; then
+  if [ "$LAUNCH" = "1" ]; then ok 'Работающий Джарвис закрыт; после установки он запустится заново.'
+  else ok 'Работающий Джарвис закрыт; после установки запустите его ярлыком.'; fi
+fi
 
 step 'Получаю исходники'
 if [ -d "$SOURCE_DIR/.git" ]; then

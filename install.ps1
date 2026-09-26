@@ -546,6 +546,63 @@ function New-Shortcut {
     $shortcut.Save()
 }
 
+function Get-OwnJarvisProcesses {
+    # Процессы именно этой установки: по точному пути её electron.exe, а не по
+    # имени. Chrome, Claude, VS Code и Discord тоже electron-подобны, и уборка
+    # по маске однажды уже снесла человеку проводник.
+    param([Parameter(Mandatory)] [string] $SourceDir)
+    $electron = Join-Path $SourceDir 'node_modules\electron\dist\electron.exe'
+    @(Get-CimInstance Win32_Process -Filter "Name = 'electron.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.ExecutablePath -and ($_.ExecutablePath -ieq $electron) })
+}
+
+function Stop-RunningJarvis {
+    <#
+    Закрыть Джарвиса этой установки, если он запущен.
+
+    Запущенный держит свой electron.exe, и обновление Electron падало бы на
+    `pnpm install`. А если файлы и заменились, старый процесс продолжал
+    работать старым кодом: запуск в конце установки упирается в одиночный
+    экземпляр и тихо выходит — человек думает, что обновился.
+
+    Гасим каждый свой процесс вместе с детьми: с главным уходят его
+    MCP-серверы и живые сессии агента, иначе они остались бы сиротами.
+    Возвращает, был ли он запущен.
+    #>
+    param([Parameter(Mandatory)] [string] $SourceDir)
+    $own = @(Get-OwnJarvisProcesses -SourceDir $SourceDir)
+    if ($own.Count -eq 0) { return $false }
+
+    $all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+    $ids = @($own | ForEach-Object { $_.ProcessId })
+    # Главные — те, чей родитель не из этого же списка: остальные уйдут с ними.
+    $roots = @($own | Where-Object { $ids -notcontains $_.ParentProcessId })
+    foreach ($root in $roots) {
+        Write-Note "Закрываю работающий Джарвис (pid $($root.ProcessId)): иначе он держит файлы и остаётся на старом коде."
+        $tree = New-Object System.Collections.Generic.List[int]
+        $queue = New-Object System.Collections.Generic.Queue[int]
+        $queue.Enqueue([int] $root.ProcessId)
+        while ($queue.Count -gt 0) {
+            $id = $queue.Dequeue()
+            $tree.Add($id)
+            foreach ($child in @($all | Where-Object { $_.ParentProcessId -eq $id })) {
+                $queue.Enqueue([int] $child.ProcessId)
+            }
+        }
+        # Сначала дети: главный, погашенный первым, мог бы успеть поднять их снова.
+        for ($i = $tree.Count - 1; $i -ge 0; $i--) {
+            Stop-Process -Id $tree[$i] -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $deadline = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $deadline) {
+        if (@(Get-OwnJarvisProcesses -SourceDir $SourceDir).Count -eq 0) { return $true }
+        Start-Sleep -Milliseconds 300
+    }
+    throw 'Джарвис не закрылся за 20 секунд. Закройте его из трея и запустите установку снова.'
+}
+
 
 # ---------------------------------------------------------------------------
 
@@ -564,6 +621,11 @@ Install-WithWinget -Id 'OpenJS.NodeJS.LTS' -Command 'node' -DisplayName 'Node.js
 # Исходников ещё нет, версия из package.json неизвестна - ставим ту, что закреплена
 # в проекте. Дальше Assert-PnpmVersion сверится с package.json и поправит.
 if (-not (Test-Command 'pnpm')) { Install-Pnpm -Version '9.15.9' }
+
+if (Stop-RunningJarvis -SourceDir $SourceDir) {
+    if ($NoLaunch) { Write-Ok 'Работающий Джарвис закрыт; после установки запустите его ярлыком.' }
+    else { Write-Ok 'Работающий Джарвис закрыт; после установки он запустится заново.' }
+}
 
 Write-Step 'Получаю исходники'
 if (Test-Path (Join-Path $SourceDir '.git')) {

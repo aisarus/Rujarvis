@@ -241,6 +241,51 @@ jobs:
           $lnk = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Rujarvis.lnk'
           if (-not (Test-Path $lnk)) { throw 'no shortcut after the second run' }
 
+      - name: Повторная установка поверх работающего Джарвиса
+        # Установка → запуск → повторная установка → запуск. Выше установщик
+        # всегда гонялся с -NoLaunch, то есть поверх работающего Джарвиса — а
+        # человек обновляется именно так — ни разу. Запущенный держит свой
+        # electron.exe, а новый запуск в конце упирается в одиночный экземпляр
+        # и тихо выходит: человек остаётся на старом коде.
+        #
+        # Приманка — чужой «electron.exe» по другому пути: установщик обязан
+        # гасить свои процессы по пути установки, а не всех с этим именем.
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $src = Join-Path $env:LOCALAPPDATA 'Rujarvis\src'
+          $electron = Join-Path $src 'node_modules\electron\dist\electron.exe'
+          $entry = Join-Path $src 'dist\app\main.cjs'
+          $decoyDir = Join-Path $env:RUNNER_TEMP 'decoy\node_modules\electron\dist'
+          New-Item -ItemType Directory -Force $decoyDir | Out-Null
+          Copy-Item "$env:SystemRoot\System32\PING.EXE" (Join-Path $decoyDir 'electron.exe')
+          $decoy = Start-Process (Join-Path $decoyDir 'electron.exe') -ArgumentList '-n', '900', '127.0.0.1' -WindowStyle Hidden -PassThru
+          $old = Start-Process -FilePath $electron -ArgumentList "`"$entry`"" -WorkingDirectory $src -PassThru
+          Start-Sleep -Seconds 10
+          if ($old.HasExited) { throw "Джарвис не поднялся: код $($old.ExitCode)" }
+          "запущен Джарвис pid $($old.Id)"
+
+          $branch = if ($env:GITHUB_HEAD_REF) { $env:GITHUB_HEAD_REF } else { $env:GITHUB_REF_NAME }
+          & .\install.ps1 -Branch $branch -WhisperModel tiny *>&1 |
+            Tee-Object -FilePath "$env:TEMP\install3.log"
+          Start-Sleep -Seconds 10
+
+          $main = @(Get-CimInstance Win32_Process -Filter "Name = 'electron.exe'" |
+            Where-Object { $_.ExecutablePath -ieq $electron -and $_.CommandLine -match 'app\\main\.cjs' })
+          "после переустановки главных процессов Джарвиса: $($main.Count) ($(($main | ForEach-Object { $_.ProcessId }) -join ', '))"
+          $failed = $null
+          if (-not $old.HasExited) { $failed = 'старый Джарвис пережил переустановку' }
+          elseif ($main.Count -ne 1) { $failed = "после переустановки должен работать ровно один Джарвис, а их $($main.Count)" }
+          elseif ($decoy.HasExited) { $failed = 'погашена приманка с тем же именем по чужому пути' }
+
+          # Убираем за собой — только свои: процессы по пути установки и приманку по pid.
+          Get-CimInstance Win32_Process -Filter "Name = 'electron.exe'" |
+            Where-Object { $_.ExecutablePath -ieq $electron } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+          Stop-Process -Id $decoy.Id -Force -ErrorAction SilentlyContinue
+          if ($failed) { throw $failed }
+          'новый Джарвис запущен вместо старого, приманка цела'
+
       - name: 'Компьютер-юз: шесть инструментов против живого окна'
         # Тот же замер, что на маке, и теми же словами: на Windows шесть
         # действий делает cua-driver, на маке System Events и CoreGraphics, а

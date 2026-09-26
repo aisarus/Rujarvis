@@ -206,6 +206,42 @@ check 'проверке кириллицы досталось что прове�
 check 'в оболочке нет имён кириллицей: bash отвечает на них 127'   "$([ -z "$cyrillic_names" ] && printf 'да')"
 [ -z "$cyrillic_names" ] || printf '%s' "$cyrillic_names"
 
+# --- работающий Джарвис: гасится свой, по пути, а не по имени -----------------
+#
+# Две копии безобидного sleep под именем Electron в разных «установках».
+# Установщик обязан погасить только ту, что лежит по пути ЕГО установки, и не
+# тронуть вторую с тем же именем. Только на маке: установщик маковский, а на
+# Linux ps обрезает имя до пятнадцати знаков.
+if [ "$(uname -s)" = "Darwin" ]; then
+  own_dir="$(mktemp -d)"
+  other_dir="$(mktemp -d)"
+  started=""
+  for root in "$own_dir" "$other_dir"; do
+    bin_dir="$root/node_modules/electron/dist/Electron.app/Contents/MacOS"
+    mkdir -p "$bin_dir"
+    cp /bin/sleep "$bin_dir/Electron"
+    "$bin_dir/Electron" 300 &
+    started="$started $!"
+  done
+  other_pid="${started##* }"
+  sleep 1
+  check 'своя копия «Electron» найдена по пути'     "$([ -n "$(own_jarvis_pids "$own_dir")" ] && printf 'да')"
+  stop_running_jarvis "$own_dir" >/dev/null 2>&1
+  stopped=$?
+  check 'stop_running_jarvis говорит, что Джарвис был запущен'     "$([ "$stopped" -eq 0 ] && printf 'да')"
+  check 'своя копия погашена'     "$([ -z "$(own_jarvis_pids "$own_dir")" ] && printf 'да')"
+  check 'чужая с тем же именем жива'     "$(kill -0 "$other_pid" 2>/dev/null && printf 'да')"
+  stop_running_jarvis "$own_dir" >/dev/null 2>&1
+  again=$?
+  check 'не запущен — ответ «нет», и ничего не гасится'     "$([ "$again" -eq 1 ] && printf 'да')"
+  # Гасим только свои pid, записанные при запуске.
+  for pid in $started; do kill "$pid" 2>/dev/null || true; done
+  wait 2>/dev/null || true
+  rm -rf "$own_dir" "$other_dir"
+else
+  printf '  пропуск: процессы установки проверяются на маке\n'
+fi
+
 if [ "$failures" -gt 0 ]; then
   printf 'Провалено проверок: %s\n' "$failures" >&2
   exit 1
