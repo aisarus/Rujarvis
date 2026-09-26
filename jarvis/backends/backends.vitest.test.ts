@@ -741,6 +741,23 @@ describe('Claude Code adapter', () => {
   });
 });
 
+/** Флаги `codex exec --help`, codex-cli 0.153.4. */
+const CODEX_EXEC_FLAGS = [
+  '-c', '--config', '--enable', '--disable', '--strict-config', '-i', '--image', '-m', '--model', '--oss',
+  '--local-provider', '-p', '--profile', '-s', '--sandbox', '--approve-for-me',
+  '--dangerously-bypass-approvals-and-sandbox', '--dangerously-bypass-hook-trust', '-C', '--cd', '--add-dir',
+  '--thread-source', '--skip-git-repo-check', '--ephemeral', '--ignore-user-config', '--ignore-rules',
+  '--output-schema', '--color', '--json', '-o', '--output-last-message',
+] as const;
+
+/** Флаги `codex exec resume --help`, codex-cli 0.153.4: без --sandbox и --cd. */
+const CODEX_RESUME_FLAGS = [
+  '-c', '--config', '--last', '--all', '--enable', '--disable', '-i', '--image', '--strict-config', '-m', '--model',
+  '--dangerously-bypass-approvals-and-sandbox', '--dangerously-bypass-hook-trust', '--thread-source',
+  '--skip-git-repo-check', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--output-schema', '--json',
+  '-o', '--output-last-message',
+] as const;
+
 describe('Codex adapter', () => {
   it('maps the permission envelope onto a sandbox level', () => {
     expect(selectSandbox(request({ permissions: READ_ONLY_PERMISSIONS }), true)).toBe('read-only');
@@ -749,14 +766,40 @@ describe('Codex adapter', () => {
     expect(selectSandbox(request({ risk: 'safe' }), true)).toBe('danger-full-access');
   });
 
-  it('builds exec arguments, resumes a thread and reads the prompt from stdin', () => {
+  it('builds exec arguments for a new thread and reads the prompt from stdin', () => {
+    const args = buildCodexArgs(request({ cwd: 'D:\\Projects\\aegis' }), { sandbox: 'workspace-write' });
+    expect(args[0]).toBe('exec');
+    expect(args).toEqual(expect.arrayContaining(['--sandbox', 'workspace-write']));
+    expect(args).toEqual(expect.arrayContaining(['--cd', 'D:\\Projects\\aegis']));
+    expect(args.at(-1)).toBe('-');
+  });
+
+  it('продолжение задаёт песочницу настройкой: флагов --sandbox и --cd у resume нет', () => {
+    // Прежний тест требовал здесь `--sandbox` и `--cd` — то есть закреплял
+    // ошибку: настоящий codex отвечал «unexpected argument '--sandbox'», и
+    // любое продолжение сессии падало, не начав.
     const args = buildCodexArgs(request({ sessionId: 'thread-9', cwd: 'D:\\Projects\\aegis' }), {
       sandbox: 'workspace-write',
     });
     expect(args.slice(0, 3)).toEqual(['exec', 'resume', 'thread-9']);
-    expect(args).toEqual(expect.arrayContaining(['--sandbox', 'workspace-write']));
-    expect(args).toEqual(expect.arrayContaining(['--cd', 'D:\\Projects\\aegis']));
+    expect(args).toEqual(expect.arrayContaining(['-c', 'sandbox_mode="workspace-write"']));
     expect(args.at(-1)).toBe('-');
+  });
+
+  it.each([
+    ['новая сессия', undefined, CODEX_EXEC_FLAGS],
+    ['продолжение', 'thread-9', CODEX_RESUME_FLAGS],
+  ] as const)('%s: только флаги, которые codex правда принимает', (_имя, sessionId, можно) => {
+    // Списки сняты с `codex exec --help` и `codex exec resume --help`
+    // (codex-cli 0.153.4). Лишний флаг — не мелочь: CLI падает на разборе
+    // аргументов, и задача не начинается вовсе.
+    const args = buildCodexArgs(request({ sessionId, cwd: 'D:\\Projects\\aegis' }), {
+      sandbox: 'workspace-write',
+      model: 'gpt-x',
+      mcpOverrides: ['mcp_servers.a={command="x"}'],
+    });
+    const флаги = args.filter((арг) => арг.startsWith('-') && арг !== '-');
+    expect(флаги.filter((ф) => !(можно as readonly string[]).includes(ф))).toEqual([]);
   });
 
   it('reads the thread-event schema', () => {

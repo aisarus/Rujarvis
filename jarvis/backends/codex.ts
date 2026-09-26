@@ -135,11 +135,18 @@ export function buildCodexArgs(
 ): string[] {
   const args = ['exec'];
   if (request.sessionId) {
-    args.push('resume', request.sessionId);
-  }
-  args.push('--json', '--skip-git-repo-check', '--sandbox', options.sandbox);
-  if (request.cwd) {
-    args.push('--cd', request.cwd);
+    // У продолжения нет ни `--sandbox`, ни `--cd`: codex-cli 0.153.4 отвечает
+    // «unexpected argument '--sandbox'» и падает, не начав. Так падало каждое
+    // «продолжай» после паузы и каждая следующая реплика разговора с Codex.
+    // Песочница задаётся настройкой — замер 27.09.2026: resume соблюдает её в
+    // обе стороны. Папка — рабочая папка процесса, её ставит запуск.
+    args.push('resume', request.sessionId, '--json', '--skip-git-repo-check');
+    args.push('-c', `sandbox_mode="${options.sandbox}"`);
+  } else {
+    args.push('--json', '--skip-git-repo-check', '--sandbox', options.sandbox);
+    if (request.cwd) {
+      args.push('--cd', request.cwd);
+    }
   }
   if (options.model) {
     args.push('--model', options.model);
