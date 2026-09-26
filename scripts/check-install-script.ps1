@@ -346,7 +346,7 @@ foreach ($док in $ставитФайлом) {
     $путьДок = Join-Path (Split-Path -Parent $PSScriptRoot) $док
     if (-not (Test-Path $путьДок)) { continue }
     $текстДок = Get-Content $путьДок -Raw
-    $строкой = $текстДок -match 'install\.ps1[^
+    $строкой = $текстДок -match 'install\.ps1[^
 ]*\|\s*iex' -or $текстДок -match 'scriptblock\]::Create\(\(irm'
     Assert-That "$док ставит через файл, а не строкой: BOM ломает iex" (-not $строкой)
     Assert-That "$док называет скачивание в файл" ($текстДок -match '-OutFile')

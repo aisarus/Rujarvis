@@ -422,20 +422,27 @@ function Invoke-Command2($message) {
                 } | Sort-Object { $_.width * $_.height } -Descending | Select-Object -First 1
             }
             if (-not $target) {
-                # Govorim, chto est, a ne prosto «net».
+                # Говорим, что есть, а не просто «нет».
                 #
-                # «Ne poluchilos» ne govorit cheloveku nichego: ni chto
-                # iskali, ni chto ryadom. Spisok togo, chto na ekrane, delaet
-                # sleduyushchuyu popytku osmyslennoy.
+                # «Не получилось» не говорит человеку ничего: ни что искали, ни
+                # что рядом. Список того, что на экране, делает следующую
+                # попытку осмысленной.
+                #
+                # Показываем ЗАГОЛОВКИ, а не имена процессов. Живой прогон
+                # 26.09.2026 выдал «Na ekrane: electron, blender, claude,
+                # msedge» — по такому списку человек не назовёт окно заново,
+                # потому что вслух он говорит «блендер» или «Личный — Edge», а
+                # не «msedge». Имя процесса остаётся запасным, когда заголовка
+                # нет вовсе.
                 $nearby = ($windows | Where-Object { $_.title -ne 'Program Manager' } |
                     ForEach-Object {
-                        $proc = (Get-Process -Id $_.pid -ErrorAction SilentlyContinue).ProcessName
-                        if ($proc) { $proc } else { $_.title }
-                    } | Select-Object -Unique -First 8) -join ', '
-                throw "Okno ne naydeno: $needle. Na ekrane: $nearby"
+                        if ($_.title) { $_.title }
+                        else { (Get-Process -Id $_.pid -ErrorAction SilentlyContinue).ProcessName }
+                    } | Where-Object { $_ } | Select-Object -Unique -First 8) -join ', '
+                throw "Не нашёл окно «$needle». На экране: $nearby"
             }
             $handle = [IntPtr][int64]$target.handle
-            if ($handle -eq [IntPtr]::Zero) { throw "U okna net deskriptora: $($target.title)" }
+            if ($handle -eq [IntPtr]::Zero) { throw "У окна «$($target.title)» нет дескриптора" }
 
             # Otchityvaemsya tem, chto vperedi na samom dele, a ne tem, chto
             # prosili. Ranshe drayver govoril "pereklyuchilsya" dazhe togda,
@@ -448,7 +455,7 @@ function Invoke-Command2($message) {
             $nowFront = [Desk]::Raise($handle)
             $frontHandle = [Desk]::GetForegroundWindow()
             if ($frontHandle -ne $handle) {
-                throw "Ne vyshlo podnyat okno. Prosili: $($target.title). Vperedi: $nowFront"
+                throw "Не вышло поднять окно. Просили «$($target.title)», впереди «$nowFront»"
             }
             return @{ ok = $true; title = $nowFront }
         }

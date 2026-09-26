@@ -97,7 +97,7 @@ import { ЭХО_РАЗГОВОРА } from '../jarvis/dialogue/workDelta';
 import { RunLogStore } from '../jarvis/observe/runLogStore';
 import { Storyline } from '../jarvis/observe/storyline';
 import { StartupTiming } from '../jarvis/observe/timing';
-import { parseLiveEdit } from '../jarvis/live/edits';
+import { parseLiveEdit, нечегоПравить } from '../jarvis/live/edits';
 import { isLive, sendLive } from '../jarvis/desktop/blenderLive';
 import { NoteStore } from '../jarvis/dialogue/noteStore';
 import { describeLessons, lessonsFrom } from '../jarvis/memory/lessons';
@@ -1260,7 +1260,14 @@ async function поднятьМост(options: {
     drainSpeech();
   });
 
-  async function handleUtterance(payload: RecordedAudio): Promise<void> {
+  /** Первая строка сообщения: остальное — стек, человеку он ни к чему. */
+function первая_строка(текст: string): string {
+  const перевод = String.fromCharCode(10);
+  const возврат = String.fromCharCode(13);
+  return текст.split(перевод)[0].split(возврат)[0].trim();
+}
+
+async function handleUtterance(payload: RecordedAudio): Promise<void> {
     // Немой режим — раньше всего, даже раньше распознавания: тратить на
     // выключенный микрофон секунду работы видеокарты незачем.
     if (muted) return;
@@ -1461,19 +1468,44 @@ async function поднятьМост(options: {
         // Без живого окна фраза уходит дальше — агенту, который разберётся.
         const edit = isLive() ? parseLiveEdit(command ?? '') : null;
         if (edit) {
+          // Промах по имени — не отказ, а повод посмотреть на сцену, как и с
+          // кликом по названию выше. Живая правка знает только имена объектов;
+          // агент умеет их перечислить и разобраться, что человек имел в виду.
+          //
+          // «Подходит несколько» сюда не относится: это честный вопрос
+          // человеку, и подменять его догадкой агента нельзя.
+          let промах = false;
           await runAction(edit.said, async () => {
             const answer = await sendLive(edit.code);
-            if (!answer.ok) throw new Error(answer.error ?? 'не вышло');
+            if (!answer.ok) {
+              const причина = answer.error ?? 'не вышло';
+              if (нечегоПравить(причина)) {
+                промах = true;
+                return;
+              }
+              throw new Error(причина);
+            }
             note('command', `правка: ${edit.said}`);
           });
-          session.keepAwake();
-          return;
+          if (!промах) {
+            session.keepAwake();
+            return;
+          }
+          console.log(`[jarvis] живая правка не нашла объект по «${edit.said}» — отдаю агенту`);
         }
 
         // Closing is asked for as often as opening, and going through the
         // agent costs the same minutes for the same trivial action.
         const toClose = command ? spokenCloseTarget(command) : null;
-        if (toClose) {
+        // Поиск отделён от закрытия нарочно. «Закрой вкладку PDFDIR» искало
+        // среди запущенных ПРОГРАММ, не находило и обрывало фразу словами «не
+        // вижу запущенного вкладку pdfdir» — а вкладка была, и закрыть её умеет
+        // агент через браузер. Ненайденное теперь уходит дальше.
+        const closeTarget = toClose ? await resolveCloseTarget(toClose) : null;
+        if (toClose && !closeTarget) {
+          console.log(`[jarvis] «${toClose}» среди запущенных не найдено — отдаю агенту`);
+        }
+        if (toClose && closeTarget) {
           // Принудительное закрытие теряет несохранённое, а имя процесса
           // подобрано по расслышанному слову — поэтому только с согласия.
           const confirm = (summary: string) =>
@@ -1483,7 +1515,7 @@ async function поднятьМост(options: {
           // Не ждём здесь: фразы разбираются по одной, и ответ «да» встал бы
           // в очередь за этим же вопросом.
           void runAction(`закрыть ${toClose}`, () =>
-            closeApplication(toClose, /убей/u.test(command ?? ''), session, confirm),
+            closeApplication(toClose, closeTarget, /убей/u.test(command ?? ''), session, confirm),
           ).catch((error: unknown) => {
             console.error('[jarvis] закрытие не удалось:', error);
           });
@@ -1552,7 +1584,29 @@ async function поднятьМост(options: {
 
         await session.acceptAmbientTranscript(text);
       } catch (error) {
-        console.error('[jarvis] не удалось распознать:', error);
+        // «Не удалось распознать» здесь было неправдой и молчанием сразу.
+        //
+        // Этот catch обнимает ВЕСЬ разбор сказанного, а не только слух: сюда
+        // попадают провалы живой правки Блендера, запуска программ, маршрута.
+        // Живой прогон 26.09.2026: «Покрась сферу в зелёный» услышалось
+        // отлично, правка в Блендере вернула «не нашёл, что править» — и
+        // человек увидел в журнале «не удалось распознать», а вслух не услышал
+        // НИЧЕГО. Для него команда просто не сработала, и он решил, что
+        // Джарвис его не слышит.
+        //
+        // Теперь причина названа своим именем и произносится. Первая строка
+        // ошибки для этого годится: «не нашёл, что править» — уже объяснение,
+        // а не код.
+        const целиком = error instanceof Error ? error.message : String(error);
+        const причина = первая_строка(целиком);
+        console.error(`[jarvis] не смог выполнить сказанное: ${причина}`, error);
+        await session
+          .speak(
+            причина
+              ? tr(`Не получилось: ${причина}`, `Did not work: ${причина}`)
+              : tr('Не получилось это сделать.', 'That did not work.'),
+          )
+          .catch(() => {});
       }
     }
   }
@@ -2001,12 +2055,14 @@ async function listRunningProcesses(): Promise<RunningProcess[]> {
   return rows;
 }
 
-async function closeApplication(
-  spoken: string,
-  force: boolean,
-  session: VoiceSession,
-  confirm: (summary: string) => Promise<boolean>,
-): Promise<void> {
+/**
+ * Какая запущенная программа отзывается на сказанное имя, или ничего.
+ *
+ * Отделено от самого закрытия, потому что от ответа зависит, кто ведёт фразу
+ * дальше: закрывать программу или отдавать сказанное агенту. Ничего не гасит и
+ * ни о чём не спрашивает — только смотрит.
+ */
+async function resolveCloseTarget(spoken: string): Promise<string | null> {
   // The alias is what bridges «хром» to the process called chrome: the
   // transliteration of the spoken word is "hrom", which matches nothing.
   const searchable = [windowAlias(spoken), aliasTarget(spoken), spoken]
@@ -2031,15 +2087,18 @@ async function closeApplication(
     }
   }
 
-  if (!found) {
-    console.log(`[jarvis] «${spoken}» среди запущенных не найдено`);
-    await session.speak(tr(`Не вижу запущенного ${spoken}.`, `${spoken} is not running.`));
-    return;
-  }
-
   // Every window of that program, not just the one that matched: a browser is
   // several processes and closing one of them achieves nothing.
-  const target = found.item.name;
+  return found ? found.item.name : null;
+}
+
+async function closeApplication(
+  spoken: string,
+  target: string,
+  force: boolean,
+  session: VoiceSession,
+  confirm: (summary: string) => Promise<boolean>,
+): Promise<void> {
   const image = `${target}.exe`;
 
   const kill = async (hard: boolean): Promise<boolean> => {
