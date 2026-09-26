@@ -193,7 +193,23 @@ if [ -d "$SOURCE_DIR/.git" ]; then
   # ветку без удаления папки было нельзя. Refspec заводит ссылку явно, а
   # `checkout -B` переводит на неё; отдельный `pull` после этого не нужен.
   git -C "$SOURCE_DIR" fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"     || die 'Не удалось выполнить: git fetch'
+  # Повторный запуск обязан довести до вершины ветки, а не умереть на полпути.
+  #
+  # `checkout -B` падает с «would be overwritten», если в папке остались чужие
+  # правки — а они там появляются сами: сборка, скачанные модели, случайно
+  # тронутый файл. Установщик — не место для разбора чужих изменений, но и
+  # молчать нельзя: если человек правил код сам, он должен узнать, куда это
+  # уехало, а не обнаружить потерю потом.
+  if ! git -C "$SOURCE_DIR" diff --quiet || ! git -C "$SOURCE_DIR" diff --cached --quiet; then
+    stash_name="rujarvis-install-$(date +%Y%m%d-%H%M%S)"
+    warn "В $SOURCE_DIR есть изменения. Убираю их в git stash: $stash_name"
+    warn 'Вернуть: git -C "'"$SOURCE_DIR"'" stash list, затем git stash pop.'
+    git -C "$SOURCE_DIR" stash push -m "$stash_name" >/dev/null 2>&1 || true
+  fi
   git -C "$SOURCE_DIR" checkout -B "$BRANCH" "origin/$BRANCH"     || die 'Не удалось выполнить: git checkout'
+  # Вершина ветки, а не «что-то из неё»: между fetch и checkout ничего не
+  # пропало, и человек получает ровно то, что лежит в origin сейчас.
+  git -C "$SOURCE_DIR" reset --hard "origin/$BRANCH" >/dev/null     || die 'Не удалось выполнить: git reset'
 else
   mkdir -p "$INSTALL_ROOT"
   git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$SOURCE_DIR" || die 'Не удалось выполнить: git clone'
@@ -347,6 +363,16 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <key>LSUIElement</key><true/>
   <key>NSMicrophoneUsageDescription</key>
   <string>Rujarvis слушает голосовые команды.</string>
+  <!--
+    Apple Events — это весь драйвер рабочего стола на маке.
+    Список окон, подъём, нажатия, ввод, чтение элементов и вождение Safari идут
+    через osascript, а это Apple Events. Без объяснения в Info.plist macOS
+    отказывает и делает это тихо: ни окна, ни ошибки — просто ничего не
+    происходит. Строку человек увидит в системном запросе, и она должна
+    объяснять, зачем это нужно.
+  -->
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Rujarvis управляет окнами и программами по вашим голосовым командам.</string>
 </dict>
 </plist>
 PLIST
@@ -408,6 +434,34 @@ printf '\n'
 note 'Микрофон macOS спросит один раз — разрешение будет записано на Electron:'
 note 'приложение запускается его двоичным файлом, своей подписи у сборки пока нет.'
 printf '\n'
+
+# Ярлык на Рабочий стол.
+#
+# Папку ~/Applications маковод открывает не каждый день, а первый запуск должен
+# быть очевидным: человек только что поставил программу и ищет её глазами.
+# Псевдоним (alias) через Finder, а не symlink: symlink на .app Finder
+# показывает файлом со сломанным значком, а alias — настоящей программой.
+desktop_dir="$HOME/Desktop"
+if [ -d "$desktop_dir" ]; then
+  if osascript -e 'on run {appPath, deskPath}' \
+    -e 'tell application "Finder"' \
+    -e 'set src to POSIX file appPath as alias' \
+    -e 'set dst to POSIX file deskPath as alias' \
+    -e 'if exists (file "Rujarvis" of dst) then delete (file "Rujarvis" of dst)' \
+    -e 'make new alias file at dst to src with properties {name:"Rujarvis"}' \
+    -e 'end tell' \
+    -e 'end run' "$APP_DIR" "$desktop_dir" >/dev/null 2>&1; then
+    ok "Ярлык на Рабочем столе: $desktop_dir/Rujarvis"
+  else
+    # Finder мог быть не запущен или отказать в Apple Events. Тогда symlink:
+    # выглядит хуже, но открывает то же самое.
+    if ln -sfn "$APP_DIR" "$desktop_dir/Rujarvis.app"; then
+      ok "Ярлык на Рабочем столе: $desktop_dir/Rujarvis.app"
+    else
+      warn "Не вышло положить ярлык на Рабочий стол. Программа здесь: $APP_DIR"
+    fi
+  fi
+fi
 
 if [ "$LAUNCH" = "1" ]; then
   open "$APP_DIR" || true

@@ -33,6 +33,13 @@
  * в кавычках живут нормально.
  */
 
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+import { appleScriptArgs } from './darwinDriver';
+
+const запустить = promisify(execFile);
+
 /** Как обратиться к Safari. `null` — эта машина не мак, и говорить не о чем. */
 export function safariДоступен(platform: NodeJS.Platform = process.platform): boolean {
   return platform === 'darwin';
@@ -169,3 +176,61 @@ export const КАК_РАЗРЕШИТЬ_JS =
   'Safari не пускает к тексту страницы. Включите один раз: Safari → Настройки → ' +
   'Дополнения → «Показывать меню "Разработка"», затем Разработка → ' +
   '«Разрешить JavaScript из Apple Events».';
+
+/**
+ * Живая часть: тот же вид, что у `browser.ts`, но через Safari.
+ *
+ * Названия и порядок полей совпадают нарочно — наверху, в инструментах,
+ * которые читает модель, различия быть не должно: она не обязана знать, чем
+ * именно водят вкладки на этой машине.
+ */
+
+
+/** Сколько ждать ответа от Safari. Он бывает занят своим окном входа. */
+const ОТВЕТ_МС = 20_000;
+
+async function осаскрипт(скрипт: string): Promise<string> {
+  const { stdout } = await запустить('osascript', appleScriptArgs(скрипт), {
+    timeout: ОТВЕТ_МС,
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  return stdout;
+}
+
+/** Открыть адрес в текущей вкладке Safari и вывести его вперёд. */
+export async function safariOpenUrl(url: string): Promise<{ title: string; url: string }> {
+  return разобратьПереход(await осаскрипт(перейтиScript(url)));
+}
+
+/** Новая вкладка, она же рабочая. */
+export async function safariOpenTab(url?: string): Promise<{ title: string; url: string }> {
+  return разобратьПереход(await осаскрипт(открытьВкладкуScript(url ?? 'about:blank')));
+}
+
+export async function safariListTabs(): Promise<SafariВкладка[]> {
+  return разобратьВкладки(await осаскрипт(ВКЛАДКИ_SCRIPT));
+}
+
+/**
+ * Текст страницы: сначала скриптом, при запрете — через дерево доступности.
+ *
+ * `do JavaScript` в Safari выключен по умолчанию. Запрет и пустая страница —
+ * разные беды: первую человек чинит одной галкой, вторую не чинит никак.
+ * Поэтому запрет не выдаётся за пустоту, а называется своими словами.
+ */
+export async function safariReadPage(
+  предел = 8_000,
+  черезДерево?: () => Promise<string>,
+): Promise<string> {
+  try {
+    const текст = (await осаскрипт(текстСтраницыScript(предел))).trim();
+    if (текст) return текст;
+  } catch (беда) {
+    if (!javaScriptЗапрещён(беда)) throw беда;
+    if (!черезДерево) throw new Error(КАК_РАЗРЕШИТЬ_JS);
+  }
+  if (!черезДерево) return '';
+  // Дерево доступности разрешения на Apple Events к странице не требует, и у
+  // Safari оно настоящее — в отличие от Chromium, которому его надо просить.
+  return черезДерево();
+}

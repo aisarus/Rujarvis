@@ -254,9 +254,20 @@ jobs:
           set -o pipefail
           cd "$HOME/Library/Application Support/Rujarvis/src"
           set +e
-          pnpm jarvis:browser-check 2>&1 | tee /tmp/browser.log | tail -30
+          # Safari первым: на маке он теперь движок по умолчанию, и именно он
+          # у тестера будет вести вкладки. Проверять только Chromium значит
+          # проверять не то, что работает.
+          JARVIS_BROWSER=safari pnpm jarvis:browser-check 2>&1 | tee /tmp/browser-safari.log | tail -30
+          safari_code=$?
+          JARVIS_BROWSER=chromium pnpm jarvis:browser-check 2>&1 | tee /tmp/browser.log | tail -30
           br_code=$?
           set -e
+          echo "--- Safari: код $safari_code, Chromium: код $br_code ---"
+          grep -a 'Всего' /tmp/browser-safari.log || {
+            echo 'Замер Safari не дошёл до итога: судить не по чему.'
+            exit 1
+          }
+          test "$safari_code" -ne 1 || { echo 'Вкладки в Safari не работают'; exit 1; }
           if [ "$br_code" -eq 2 ]; then
             echo 'Вкладки: нечем мерить — на раннере нет ни одного браузера.'
             exit 0
