@@ -342,6 +342,20 @@ $ставитФайлом = @('README.md', 'README.en.md', 'docs/jarvis/install.
 $сБом = [IO.File]::ReadAllBytes($scriptPath)[0..2] -join ' ' -eq '239 187 191'
 Assert-That 'у install.ps1 есть BOM: без него 5.1 не разберёт кириллицу' $сБом
 
+# Ярлык на рабочем столе.
+#
+# Первый живой человек прошёл установку целиком и сказал: «ярлык на рабочем
+# столе установщик ещё не создал». Он и не создавал — только в меню «Пуск» и
+# в автозапуске, хотя на маке алиас на столе кладётся давно. Меню человек
+# ищет, стол он видит.
+#
+# Сторожим две вещи: что ярлык вообще делается и что папку спрашивают у
+# Windows. Склейка $env:USERPROFILE + 'Desktop' врёт при папке, перенесённой
+# в OneDrive, и при нерусской локали — ярлык лёг бы туда, где его не увидят.
+$текст = [IO.File]::ReadAllText($scriptPath)
+Assert-That 'install.ps1 кладёт ярлык на рабочий стол' ($текст -match "Join-Path \`$desktopDir 'Rujarvis\.lnk'")
+Assert-That 'папка рабочего стола спрошена у Windows, а не склеена' ($текст -match "GetFolderPath\('Desktop'\)")
+
 foreach ($док in $ставитФайлом) {
     $путьДок = Join-Path (Split-Path -Parent $PSScriptRoot) $док
     if (-not (Test-Path $путьДок)) { continue }

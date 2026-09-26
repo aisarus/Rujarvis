@@ -624,6 +624,26 @@ $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Rujar
 New-Shortcut -Path $startMenu -Target $electron -Arguments "`"$entry`"" -WorkingDirectory $SourceDir -Icon $icon
 Write-Ok 'Ярлык в меню «Пуск»: Rujarvis'
 
+# Ярлык на рабочем столе, как на маке.
+#
+# Меню «Пуск» человек ищет — рабочий стол он видит. На маке алиас установщик
+# кладёт давно, на Windows его просто забыли, и первый живой человек это
+# заметил сразу: «ярлык на рабочем столе установщик ещё не создал».
+#
+# Путь берём у самой Windows, а не из $env:USERPROFILE\Desktop: при
+# перенесённой в OneDrive папке или нерусской локали склейка даёт папку,
+# которой нет, и ярлык лёг бы в пустоту.
+$desktopDir = [Environment]::GetFolderPath('Desktop')
+if ($desktopDir -and (Test-Path $desktopDir)) {
+    $desktop = Join-Path $desktopDir 'Rujarvis.lnk'
+    New-Shortcut -Path $desktop -Target $electron -Arguments "`"$entry`"" -WorkingDirectory $SourceDir -Icon $icon
+    Write-Ok "Ярлык на рабочем столе: $desktop"
+} else {
+    # Не находим — говорим об этом, а не молчим: установка от этого не
+    # ломается, но человек должен знать, почему на столе пусто.
+    Write-Note 'Папку рабочего стола найти не удалось — ярлык только в меню «Пуск».'
+}
+
 $startup = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\Rujarvis.lnk'
 if ($Autostart) {
     New-Shortcut -Path $startup -Target $electron -Arguments "`"$entry`"" -WorkingDirectory $SourceDir -Icon $icon

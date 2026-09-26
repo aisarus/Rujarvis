@@ -1288,15 +1288,26 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
           typeof payload.speechShare === 'number'
             ? `, речи ${Math.round(payload.speechShare * 100)}%`
             : '';
+        // Через unlogged, а не сырым: здесь ещё НЕИЗВЕСТНО, обращались ли к
+        // Джарвису. Замеры (сколько думал, сколько речи, какая доля) приватности
+        // не касаются и остаются всегда — именно по ним видно, слышит ли он.
+        //
+        // Живой прогон 26.09.2026: при настройке «только команды» в журнал
+        // построчно писалась аудиокнига, игравшая в комнате, — «Анка
+        // повернулась к ним спиной», «сказал Пашка». Это прямо запрещено:
+        // не адресованная Джарвису речь пишется только по выбору «всё».
+        // Сама команда никуда не девается — её печатает строка разбора ниже.
         console.log(
-          `[jarvis] услышал за ${Date.now() - started} мс (${seconds} с речи${cut}${share}): ${text}`,
+          `[jarvis] услышал за ${Date.now() - started} мс (${seconds} с речи${cut}${share}): ${unlogged(text)}`,
         );
         overlay.note(session.status, tr(`Услышал: ${short(text)}`, `Heard: ${short(text)}`));
 
         // Свой же голос из колонок. Слова перебивания сюда не попадают — они
         // должны доходить всегда.
         if (echoGuard.isOwnVoice(text)) {
-          console.log(`[jarvis] это моя собственная фраза, пропускаю: ${text}`);
+          // Тоже через unlogged: опознание своего голоса — примета, а не
+          // истина, и на промахе сюда попадёт речь человека.
+          console.log(`[jarvis] это моя собственная фраза, пропускаю: ${unlogged(text)}`);
           overlay.note(session.status, tr('Это был мой голос', 'That was my own voice'));
           return;
         }
@@ -1396,7 +1407,7 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
           return;
         }
         console.log(
-          `[jarvis] разбор: awake=${awake} command=${JSON.stringify(command ?? null)}` +
+          `[jarvis] разбор: awake=${awake} command=${command === null || command === undefined ? 'null' : JSON.stringify(logged(command))}` +
             ` close=${JSON.stringify(command ? spokenCloseTarget(command) : null)}` +
             ` open=${JSON.stringify(command ? spokenTarget(command) : null)}`,
         );
@@ -1417,7 +1428,7 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
         // половиной секунды — ровно тогда, когда человек хочет прекратить
         // происходящее немедленно.
         if (command && matchVoiceControl(command)) {
-          console.log(`[jarvis] слово остановки: ${command}`);
+          console.log(`[jarvis] слово остановки: ${logged(command)}`);
           thought.take();
           if (thoughtTimer) {
             clearTimeout(thoughtTimer);
