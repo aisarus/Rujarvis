@@ -125,7 +125,10 @@ function modelRow(kind, model, selectedId, onSelect) {
   let status;
   if (p && p.stage !== 'complete' && p.stage !== 'error') {
     const label = p.stage === 'downloading' ? s.downloading : s.extracting;
-    status = `<div class="row" style="min-width:200px"><span class="pill">${label}</span><div class="bar"><i style="width:${Math.round((p.ratio ?? 1) * 100)}%"></i></div></div>`;
+    // Сообщение и во время загрузки: «связь оборвалась, продолжаю через 4 с»
+    // человек должен видеть, иначе замершая полоска выглядит зависанием.
+    const пояснение = p.message ? `<div class="desc">${escapeHtml(p.message)}</div>` : '';
+    status = `<div style="min-width:200px"><div class="row"><span class="pill">${label}</span><div class="bar"><i style="width:${Math.round((p.ratio ?? 1) * 100)}%"></i></div></div>${пояснение}</div>`;
   } else if (model.installed) {
     status = `<div class="row" style="gap:6px"><span class="pill ok">${s.installed}</span>${
       selected ? '' : `<button class="btn" data-act="select">${s.change}</button>`

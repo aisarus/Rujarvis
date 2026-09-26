@@ -11,7 +11,8 @@ import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { finished, pipeline } from 'node:stream/promises';
+import { once } from 'node:events';
 import tar, { type Headers as TarHeader } from 'tar-stream';
 import unbzip2Stream from 'unbzip2-stream';
 
@@ -42,6 +43,41 @@ export interface ArchiveInstall {
    * проверках, чтобы показать оборванную распаковку без архива на 2 ГБ.
    */
   extractImpl?(archivePath: string, destinationDir: string): Promise<void>;
+  /** Сколько тишины считать зависанием. Подменяется в проверках. */
+  stallMs?: number;
+  /** Пауза перед повтором номер `попытка` (с единицы). Подменяется в проверках. */
+  retryDelayMs?(попытка: number): number;
+}
+
+/**
+ * Сколько тишины считать зависшей связью.
+ *
+ * На мобильной раздаче связь чаще не рвётся, а замирает: байты перестают идти,
+ * а ошибки нет. Без срока полоска прогресса стояла бы вечно. Полминуты — с
+ * запасом на паузы сотовой сети и без вечного ожидания.
+ */
+const ЗАВИСАНИЕ_МС = 30_000;
+
+/**
+ * Сколько провалов ПОДРЯД без продвижения — и сдаёмся.
+ *
+ * Считаются только попытки, не принёсшие ни байта. Большую модель по раздаче с
+ * телефона может рвать много раз, но если каждый раз что-то докачивается, она
+ * доедет, и бросать её на пятом обрыве было бы глупо.
+ */
+const ПРОВАЛОВ_БЕЗ_ПРОДВИЖЕНИЯ = 5;
+
+function паузаПередПовтором(попытка: number): number {
+  return Math.min(15_000, 1_000 * 2 ** (попытка - 1));
+}
+
+/** Сколько байт уже лежит в недокачанном файле. */
+async function размер(путь: string): Promise<number> {
+  try {
+    return (await stat(путь)).size;
+  } catch {
+    return 0;
+  }
 }
 
 /**
@@ -125,34 +161,168 @@ export async function extractTarBz2(archivePath: string, destinationDir: string)
   await Promise.all([pipeline(createReadStream(archivePath), unbzip2Stream(), extract), extractDone]);
 }
 
-async function download(options: ArchiveInstall, target: string): Promise<void> {
+/**
+ * Одна попытка: докачать с того места, где лежит недокачанное.
+ *
+ * Возвращает, сколько байт должно быть в файле целиком, — по ответу сервера.
+ * Бросает, если связь оборвалась, замерла или сервер ответил отказом.
+ */
+async function попытка(
+  options: ArchiveInstall,
+  target: string,
+  уже: number,
+  прогресс: (получено: number, всего: number) => void,
+): Promise<number> {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const response = await fetchImpl(options.url, { redirect: 'follow', signal: options.signal });
+  const стояние = options.stallMs ?? ЗАВИСАНИЕ_МС;
 
-  if (!response.ok || !response.body) {
-    // Эти строки уходят прямо в окно настроек, под строку модели.
-    throw new Error(
-      tr(`Не удалось скачать модель: HTTP ${response.status}`, `Could not download the model: HTTP ${response.status}`),
-    );
-  }
+  // Своя отмена для зависания и отмена человека — вместе. Отмену человека
+  // различаем снаружи: на неё не повторяют.
+  const своя = new AbortController();
+  const сигнал = options.signal ? AbortSignal.any([options.signal, своя.signal]) : своя.signal;
+  let таймер: ReturnType<typeof setTimeout> | null = null;
+  const завести = () => {
+    if (таймер) clearTimeout(таймер);
+    таймер = setTimeout(() => своя.abort(new Error(tr('связь замерла', 'the connection stalled'))), стояние);
+  };
 
-  const declared = Number(response.headers.get('content-length') ?? 0);
-  const totalBytes = declared > 0 ? declared : options.expectedBytes;
-  let receivedBytes = 0;
-
-  const writeStream = createWriteStream(target);
-  const source = Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]);
-  source.on('data', (chunk: Buffer) => {
-    receivedBytes += chunk.length;
-    options.onProgress?.({
-      stage: 'downloading',
-      ratio: totalBytes > 0 ? Math.min(1, receivedBytes / totalBytes) : undefined,
-      receivedBytes,
-      totalBytes,
+  try {
+    // Таймер — и на ожидание ответа: сервер, который молчит до заголовков,
+    // ничем не лучше замершей середины.
+    завести();
+    const response = await fetchImpl(options.url, {
+      redirect: 'follow',
+      signal: сигнал,
+      ...(уже > 0 ? { headers: { Range: `bytes=${уже}-` } } : {}),
     });
-  });
 
-  await pipeline(source, writeStream);
+    // 416: просили с места, которого в файле нет. Значит, лежащее недокачанное
+    // не от этого файла или уже целое; решает сверка размера снаружи.
+    if (response.status === 416) {
+      const всего = Number(/[/](\d+)$/u.exec(response.headers.get('content-range') ?? '')?.[1] ?? 0);
+      return всего > 0 ? всего : уже;
+    }
+
+    if (!response.ok || !response.body) {
+      // Эти строки уходят прямо в окно настроек, под строку модели.
+      throw new Error(
+        tr(`Не удалось скачать модель: HTTP ${response.status}`, `Could not download the model: HTTP ${response.status}`),
+      );
+    }
+
+    // 206 — сервер продолжает с нашего места. 200 — отдаёт файл целиком, Range
+    // он не услышал: тогда пишем заново, иначе приклеили бы файл к куску.
+    const продолжает = response.status === 206;
+    let начало = 0;
+    let всего = options.expectedBytes;
+    if (продолжает) {
+      const м = /bytes (\d+)-\d+[/](\d+)/u.exec(response.headers.get('content-range') ?? '');
+      начало = Number(м?.[1] ?? уже);
+      if (м?.[2]) всего = Number(м[2]);
+      if (начало !== уже) {
+        throw new Error(`сервер продолжил не с того места: ${начало} вместо ${уже}`);
+      }
+    } else {
+      const длина = Number(response.headers.get('content-length') ?? 0);
+      if (длина > 0) всего = длина;
+    }
+
+    const writeStream = createWriteStream(target, { flags: продолжает ? 'a' : 'w' });
+    // Читаем сами, без упреждения, и каждый прочитанный кусок сразу пишем.
+    //
+    // Раньше стоял pipeline из Readable.fromWeb: тот читает наперёд, и при
+    // обрыве ошибка выбрасывала уже полученный, но ещё не записанный кусок —
+    // вместе с недописанным буфером записи. Тест поймал: до обрыва принято
+    // 400 000 байт, а к следующей попытке на диске 393 216. Докачка шла с
+    // правильного места — с размера файла, — но оборванное скачивалось заново.
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+    let получено = начало;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        завести();
+        получено += value.length;
+        прогресс(получено, всего);
+        if (!writeStream.write(value)) await once(writeStream, 'drain');
+      }
+    } finally {
+      // Принятое — на диск до следующей попытки, и при обрыве тоже.
+      writeStream.end();
+      await finished(writeStream);
+    }
+    return всего;
+  } finally {
+    if (таймер) clearTimeout(таймер);
+  }
+}
+
+/**
+ * Скачать архив так, чтобы это пережила связь с телефона.
+ *
+ * Недокачанное не стирается: каждая попытка просит у сервера продолжение с
+ * того места, где оборвалась прошлая (`Range`). Сервер релизов это умеет —
+ * замерено 26.09.2026: на кусок из середины он ответил 206 и
+ * `Content-Range: bytes 1000000-1000999/116204861`.
+ *
+ * Раньше недокачанное стиралось и в начале, и при любой ошибке, повтора не было,
+ * а замершая связь не ловилась вовсе. На раздаче с телефона модель в 208 МБ,
+ * оборвавшаяся на 180-м, качалась заново руками, а замершая стояла с
+ * неподвижной полоской без конца.
+ */
+async function download(options: ArchiveInstall, target: string): Promise<void> {
+  const задержка = options.retryDelayMs ?? паузаПередПовтором;
+  let провалов = 0;
+  let всего = options.expectedBytes;
+
+  for (let номер = 1; ; номер++) {
+    const уже = await размер(target);
+    if (уже > 0 && уже === всего) return;
+
+    try {
+      всего = await попытка(options, target, уже, (получено, из) => {
+        options.onProgress?.({
+          stage: 'downloading',
+          ratio: из > 0 ? Math.min(1, получено / из) : undefined,
+          receivedBytes: получено,
+          totalBytes: из,
+        });
+      });
+      const есть = await размер(target);
+      if (есть === всего) return;
+      // Больше, чем весь файл, — лежавшее недокачанное было чужим. С нуля.
+      if (есть > всего) await rm(target, { force: true });
+      throw new Error(
+        tr(`Архив скачан не целиком: ${есть} из ${всего} байт.`, `The archive is incomplete: ${есть} of ${всего} bytes.`),
+      );
+    } catch (error) {
+      // Отмена человеком — не обрыв. На неё не повторяют.
+      if (options.signal?.aborted) throw error;
+
+      const продвинулись = (await размер(target)) > уже;
+      провалов = продвинулись ? 1 : провалов + 1;
+      if (провалов >= ПРОВАЛОВ_БЕЗ_ПРОДВИЖЕНИЯ) {
+        const причина = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          tr(
+            `Связь не даёт скачать модель: ${причина}. Скачанное сохранено — повторите, и загрузка продолжится с того же места.`,
+            `The connection keeps failing: ${причина}. What was downloaded is kept — try again and it will continue from there.`,
+          ),
+        );
+      }
+
+      const ждём = задержка(номер);
+      options.onProgress?.({
+        stage: 'downloading',
+        ratio: всего > 0 ? Math.min(1, (await размер(target)) / всего) : undefined,
+        message: tr(
+          `Связь оборвалась, продолжаю через ${Math.round(ждём / 1000)} с`,
+          `Connection lost, resuming in ${Math.round(ждём / 1000)} s`,
+        ),
+      });
+      await new Promise((resolve) => setTimeout(resolve, ждём));
+    }
+  }
 }
 
 /** Есть ли такая папка. Отсутствие — не ошибка, а ответ. */
@@ -177,19 +347,12 @@ export async function installArchive(options: ArchiveInstall): Promise<string> {
   const archivePath = path.join(options.installRoot, `${options.rootDirName}.tar.bz2.partial`);
   const перевалка = path.join(options.installRoot, `${options.rootDirName}.unpacking`);
 
+  // Докачанное не трогаем: с него и продолжим. Стирается оно только когда
+  // своё дело сделало или оказалось испорченным — см. ниже.
+  let архивЦел = false;
   try {
-    await rm(archivePath, { force: true });
     await download(options, archivePath);
-
-    const downloaded = await stat(archivePath);
-    if (downloaded.size < 1_000_000) {
-      throw new Error(
-        tr(
-          'Скачанный архив слишком мал — вероятно, загрузка прервалась.',
-          'The downloaded archive is too small — the download was probably cut off.',
-        ),
-      );
-    }
+    архивЦел = true;
 
     options.onProgress?.({ stage: 'extracting' });
     // Распаковываем В СТОРОНУ, а въезжаем на место переименованием.
@@ -202,7 +365,14 @@ export async function installArchive(options: ArchiveInstall): Promise<string> {
     // «прерванная установка не оставляет полузаписанного»; теперь так и есть:
     // переименование на одной файловой системе либо случилось, либо нет.
     await rm(перевалка, { recursive: true, force: true });
-    await (options.extractImpl ?? extractTarBz2)(archivePath, перевалка);
+    try {
+      await (options.extractImpl ?? extractTarBz2)(archivePath, перевалка);
+    } catch (беда) {
+      // Не распаковался — значит, испорчен. Такой докачивать нельзя: следующая
+      // попытка приклеила бы новое к порче. Только с нуля.
+      await rm(archivePath, { force: true }).catch(() => undefined);
+      throw беда;
+    }
 
     const распакованное = path.join(перевалка, options.rootDirName);
     if (!(await существует(распакованное))) {
@@ -235,7 +405,10 @@ export async function installArchive(options: ArchiveInstall): Promise<string> {
     options.onProgress?.({ stage: 'error', message });
     throw error;
   } finally {
-    await rm(archivePath, { force: true }).catch(() => undefined);
+    // Скачан целиком — архив своё отслужил (или испорчен и уже стёрт выше).
+    // Оборвалась загрузка — архив остаётся недокачанным, и следующая попытка
+    // продолжит с того же места, хоть после перезапуска Джарвиса.
+    if (архивЦел) await rm(archivePath, { force: true }).catch(() => undefined);
     await rm(перевалка, { recursive: true, force: true }).catch(() => undefined);
   }
 }
