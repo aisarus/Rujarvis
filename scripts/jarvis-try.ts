@@ -12,6 +12,9 @@
  *   pnpm run jarvis:try -- --dry "почини билд"   # только разбор, без запуска
  */
 
+import { mkdtempSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import readline from 'node:readline/promises';
 import process from 'node:process';
 import { DEFAULT_JARVIS_SETTINGS, type JarvisSettings } from '../jarvis/core';
@@ -19,6 +22,11 @@ import type { BackendResult } from '../jarvis/backends/types';
 import { buildProgress, renderProgress } from '../jarvis/tasks/progress';
 import { route } from '../jarvis/router/router';
 import { createJarvis } from '../jarvis/createJarvis';
+import { writeDesktopMcpConfig } from '../jarvis/desktop/mcpConfig';
+import { currentLanguage } from '../jarvis/locale/language';
+import { GateBridge } from '../jarvis/risk/gateBridge';
+import { prepareGate } from '../jarvis/risk/gateSetup';
+import { jarvisPaths } from '../jarvis/setup/paths';
 
 const DIM = '\u001b[2m';
 const BOLD = '\u001b[1m';
@@ -66,8 +74,42 @@ async function main(): Promise<void> {
     return консоль.открытая.question(вопрос);
   };
 
+  // Руки и красные линии — как в приложении, иначе здесь проверяется не тот
+  // Джарвис. До 27.09.2026 `jarvis:try` собирал его без MCP-сервера рабочего
+  // стола и без хука: агент не видел ни окон, ни вопросов хука, и путь, на
+  // котором у человека «управление окнами отказывало», отсюда не повторить.
+  const paths = jarvisPaths();
+  const mcp = args.dry
+    ? null
+    : writeDesktopMcpConfig({ appRoot: process.cwd(), dataDir: paths.data, language: currentLanguage() });
+  if (mcp && !mcp.ok) {
+    console.log(
+      `${YELLOW}управление экраном выключено: ${'missing' in mcp ? `не найден ${mcp.missing} — сначала pnpm build` : String(mcp.error)}${RESET}`,
+    );
+  }
+  // Мост хука — свой, во временной папке: общий с запущенным приложением
+  // отдал бы вопрос ему, и тот прозвучал бы голосом, а не здесь.
+  const gate = args.dry
+    ? null
+    : prepareGate({
+        appRoot: process.cwd(),
+        dataDir: mkdtempSync(path.join(os.tmpdir(), 'jarvis-try-gate-')),
+        homeDir: paths.home,
+        language: currentLanguage(),
+      });
+  if (gate && !gate.ok) console.log(`${YELLOW}красные линии только на фразах: ${gate.reason}${RESET}`);
+  const гасиМост = gate?.ok
+    ? new GateBridge(gate.bridgeDir).serve(async (вопрос) => {
+        const answer = await спросить(`${YELLOW}! хук: ${вопрос.summary} [y/N] ${RESET}`);
+        return answer.trim().toLowerCase().startsWith('y');
+      })
+    : () => undefined;
+
   const jarvis = createJarvis({
     workspace: args.workspace,
+    desktopMcpConfig: mcp?.ok ? mcp.file : undefined,
+    gateSettings: gate?.ok ? gate.settings : undefined,
+    homeDir: paths.home,
     settings: () => settings,
     speak: (text) => {
       if (text) console.log(`${GREEN}[голос] ${text}${RESET}`);
@@ -163,6 +205,9 @@ async function main(): Promise<void> {
     const result = await runOne(args.utterance);
     if (!result) console.log(`${DIM}(результата нет)${RESET}`);
     if (result?.ok !== true) process.exitCode = 1;
+    гасиМост();
+    // Живые сессии агента держат процесс — и без уборки остаются сиротами.
+    jarvis.dispose();
     консоль.открытая?.close();
     return;
   }
@@ -180,6 +225,8 @@ async function main(): Promise<void> {
     }
     console.log('');
   }
+  гасиМост();
+  jarvis.dispose();
   консоль.открытая?.close();
 }
 
