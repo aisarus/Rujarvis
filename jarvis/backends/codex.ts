@@ -172,6 +172,22 @@ export function isRetryNotice(message: string): boolean {
 }
 
 /**
+ * Уведомления Codex, которые приходят как ошибка, но ошибкой не являются.
+ *
+ * Замер 26.09.2026, живой запуск через Джарвиса: элемент
+ * `{"type":"error","message":"Skill descriptions were shortened to fit the
+ * skills context budget. Codex can still see every skill…"}`. Codex сам пишет,
+ * что всё видит, — а Джарвис объявлял задачу проваленной с этим текстом вместо
+ * ответа, хотя ответ был. У любого, у кого много скилов, провал был бы на
+ * каждой задаче, а у тестера будет Codex.
+ */
+const ADVISORY_NOTICE_PATTERNS = [/skill descriptions were shortened/i, /skills context budget/i];
+
+export function isAdvisoryNotice(message: string): boolean {
+  return ADVISORY_NOTICE_PATTERNS.some((pattern) => pattern.test(message.trim()));
+}
+
+/**
  * How many retry notices in a row mean the network is simply unavailable.
  *
  * Observed against the real CLI with a blocked endpoint: it retries five
@@ -252,6 +268,8 @@ function consumeCodexItem(
       emit({ type: 'status', backend: BACKEND_ID, text: 'Переподключаюсь…' });
       return;
     }
+    // Уведомление, а не ошибка: задачу из-за него не проваливаем.
+    if (isAdvisoryNotice(message)) return;
     state.errorMessage = message;
     if (looksUsageLimited(message)) state.usageLimited = true;
     emit({ type: 'error', backend: BACKEND_ID, message, retryable: true });
@@ -298,6 +316,8 @@ export function consumeCodexStreamLine(
       emit({ type: 'status', backend: BACKEND_ID, text: 'Переподключаюсь…' });
       return;
     }
+    // Уведомление, а не ошибка: задачу из-за него не проваливаем.
+    if (isAdvisoryNotice(message)) return;
 
     state.errorMessage = message;
     if (looksUsageLimited(message)) state.usageLimited = true;
@@ -353,6 +373,8 @@ export function consumeCodexStreamLine(
       emit({ type: 'status', backend: BACKEND_ID, text: 'Переподключаюсь…' });
       return;
     }
+    // Уведомление, а не ошибка: задачу из-за него не проваливаем.
+    if (isAdvisoryNotice(message)) return;
     state.errorMessage = message;
     if (looksUsageLimited(message)) state.usageLimited = true;
     emit({ type: 'error', backend: BACKEND_ID, message, retryable: true });

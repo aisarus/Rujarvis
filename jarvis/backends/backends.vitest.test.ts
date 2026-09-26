@@ -21,6 +21,7 @@ import {
   buildCodexArgs,
   consumeCodexStreamLine,
   createCodexLineConsumer,
+  isAdvisoryNotice,
   isRetryNotice,
   selectSandbox,
 } from './codex';
@@ -867,6 +868,39 @@ describe('Codex adapter', () => {
       { type: 'status', backend: 'codex', text: 'Переподключаюсь…' },
     ]);
     expect(state.errorMessage).toBeUndefined();
+  });
+
+  it('уведомление о бюджете скилов — не провал задачи, в какой обёртке ни приди', () => {
+    // Строка снята с живого запуска Codex через Джарвиса, 26.09.2026: задача
+    // была выполнена, а Джарвис показал вместо ответа это уведомление и
+    // объявил провал.
+    const notice =
+      'Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, ' +
+      'but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.';
+    expect(isAdvisoryNotice(notice)).toBe(true);
+    for (const line of [
+      { type: 'item.completed', item: { id: 'item_0', type: 'error', message: notice } },
+      { type: 'error', message: notice },
+      { id: '1', msg: { type: 'error', message: notice } },
+    ]) {
+      const state = createStreamState();
+      const events: BackendEvent[] = [];
+      consumeCodexStreamLine(line, state, (event) => events.push(event));
+      expect(state.errorMessage).toBeUndefined();
+      expect(events.filter((event) => event.type === 'error')).toEqual([]);
+    }
+  });
+
+  it('настоящая ошибка по-прежнему проваливает задачу', () => {
+    // Уведомления узнаются по словам, а не глушатся все подряд.
+    expect(isAdvisoryNotice('You have hit your usage limit')).toBe(false);
+    const state = createStreamState();
+    consumeCodexStreamLine(
+      { type: 'item.completed', item: { id: 'item_0', type: 'error', message: 'unexpected status 401 Unauthorized' } },
+      state,
+      () => undefined,
+    );
+    expect(state.errorMessage).toBe('unexpected status 401 Unauthorized');
   });
 
   it('classifies a retry notice the same way whichever schema carries it', () => {
