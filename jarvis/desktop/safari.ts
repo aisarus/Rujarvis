@@ -37,6 +37,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import { appleScriptArgs } from './darwinDriver';
+import { readShowWork } from './showWork';
 
 const запустить = promisify(execFile);
 
@@ -57,10 +58,10 @@ function BSx2(): string {
 }
 
 /** Открыть адрес новой вкладкой в текущем окне и вывести её вперёд. */
-export function открытьВкладкуScript(url: string): string {
+export function открытьВкладкуScript(url: string, вперёд = true): string {
   return `
 tell application "Safari"
-  activate
+  ${вперёд ? 'activate' : '-- в фоне: человек просил не лезть на экран'}
   if (count of windows) is 0 then
     make new document with properties {URL:${вКавычки(url)}}
   else
@@ -76,10 +77,10 @@ end tell
 }
 
 /** Перейти по адресу в ТЕКУЩЕЙ вкладке, не плодя новых. */
-export function перейтиScript(url: string): string {
+export function перейтиScript(url: string, вперёд = true): string {
   return `
 tell application "Safari"
-  activate
+  ${вперёд ? 'activate' : '-- в фоне: человек просил не лезть на экран'}
   if (count of windows) is 0 then
     make new document with properties {URL:${вКавычки(url)}}
   else
@@ -226,12 +227,12 @@ async function осаскрипт(скрипт: string): Promise<string> {
 
 /** Открыть адрес в текущей вкладке Safari и вывести его вперёд. */
 export async function safariOpenUrl(url: string): Promise<{ title: string; url: string }> {
-  return разобратьПереход(await осаскрипт(перейтиScript(url)));
+  return разобратьПереход(await осаскрипт(перейтиScript(url, readShowWork())));
 }
 
 /** Новая вкладка, она же рабочая. */
 export async function safariOpenTab(url?: string): Promise<{ title: string; url: string }> {
-  return разобратьПереход(await осаскрипт(открытьВкладкуScript(url ?? 'about:blank')));
+  return разобратьПереход(await осаскрипт(открытьВкладкуScript(url ?? 'about:blank', readShowWork())));
 }
 
 export async function safariListTabs(): Promise<SafariВкладка[]> {

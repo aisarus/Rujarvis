@@ -40,9 +40,9 @@ const ru = {
 
   stepLanguage: 'Язык',
   stepLanguageHint: 'На каком языке вы будете говорить с Джарвисом. Сменить можно в любой момент.',
-  stepAgent: 'Claude Code',
+  stepAgent: 'Claude Code или Codex',
   stepAgentHint:
-    'Работу — код, файлы, экран, браузер — делает Claude Code по вашей подписке. Джарвис не хранит ключей и не читает токены: вход выполняется в самом Claude Code.',
+    'Работу — код, файлы, экран, браузер — делает агент по вашей подписке: Claude Code или Codex, на выбор. Хватит одного, можно оба: тогда второй подхватит, если у первого кончится квота. Джарвис не хранит ключей и не читает токены — вход выполняется в самом агенте.',
   stepModels: 'Слух и голос',
   stepModelsHint: 'Распознавание и синтез речи работают на вашем компьютере. Модели скачиваются один раз.',
   stepModelsNeeded:
@@ -61,7 +61,15 @@ const ru = {
   agentInstallPage: 'Открыть claude.ai/code',
   agentSignIn: 'Войти',
   agentSignInHint: 'Откроется окно терминала. Войдите в аккаунт и вернитесь сюда.',
-  codexOptional: 'Codex (необязательно)',
+  codexOptional: 'Codex',
+  /**
+   * Установка Codex — своей строкой, а не общей с Клодом.
+   *
+   * Раньше про Codex писалось только «npm i -g @openai/codex», а кнопки
+   * «открыть страницу» у него не было вовсе: человек, выбравший Codex,
+   * оставался с командой в подсказке и без объяснения, что это и куда идти.
+   */
+  codexInstallHint: 'Установите Codex: npm i -g @openai/codex — затем нажмите «Проверить».',
 
   whisperModel: 'Модель распознавания',
   voice: 'Голос',
@@ -153,9 +161,9 @@ const en: UiStrings = {
 
   stepLanguage: 'Language',
   stepLanguageHint: 'The language you will speak to Jarvis in. You can change it any time.',
-  stepAgent: 'Claude Code',
+  stepAgent: 'Claude Code or Codex',
   stepAgentHint:
-    'The work — code, files, screen, browser — is done by Claude Code on your subscription. Jarvis stores no keys and reads no tokens: you sign in inside Claude Code itself.',
+    'The work — code, files, screen, browser — is done by an agent on your subscription: Claude Code or Codex, your choice. One is enough, both is fine: then the second takes over when the first runs out of quota. Jarvis stores no keys and reads no tokens — you sign in inside the agent itself.',
   stepModels: 'Hearing and voice',
   stepModelsHint: 'Speech recognition and synthesis run on your computer. Models are downloaded once.',
   stepModelsNeeded:
@@ -174,7 +182,8 @@ const en: UiStrings = {
   agentInstallPage: 'Open claude.ai/code',
   agentSignIn: 'Sign in',
   agentSignInHint: 'A terminal window opens. Sign in there and come back.',
-  codexOptional: 'Codex (optional)',
+  codexOptional: 'Codex',
+  codexInstallHint: 'Install Codex: npm i -g @openai/codex — then press "Check".',
 
   whisperModel: 'Recognition model',
   voice: 'Voice',
