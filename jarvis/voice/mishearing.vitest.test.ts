@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { parseDirectCommand } from '../control/commands';
 import { fixMishearings } from './mishearing';
+import { findWakeWord } from './wakeWord';
 
 describe('fixMishearings', () => {
   it.each([
@@ -154,5 +156,65 @@ describe('ослышки, замеренные 26.09.2026 синтезом Piper
 
   it('«загрой» — не слово, чинится везде', () => {
     expect(fixMishearings('Загрой спатифы')).toBe('Закрой спатифы');
+  });
+});
+
+describe('«switch to» с потерянным началом', () => {
+  // Замер 27.09.2026: «Switch to Telegram» у Whisper small — «which / witch /
+  // Pitch / Twitch / Pwych to Telegram»; запас тишины и смена голоса не помогают.
+  it.each([
+    ['Which to telegram.', 'Switch to telegram.'],
+    ['Pwych to Telegram.', 'Switch to Telegram.'],
+    ['twitch to Telegram', 'switch to Telegram'],
+    ['Pitch to Telegram', 'Switch to Telegram'],
+    ['Jarvis, which to Telegram', 'Jarvis, switch to Telegram'],
+  ])('«%s» → «%s»', (heard, fixed) => {
+    expect(fixMishearings(heard)).toBe(fixed);
+  });
+
+  it.each([
+    ['Troll down.', 'Scroll down.'],
+    ['Prol down', 'Scroll down'],
+    ['Jarvis, troll up', 'Jarvis, scroll up'],
+  ])('прокрутка по звучанию: «%s» → «%s»', (heard, fixed) => {
+    expect(fixMishearings(heard)).toBe(fixed);
+  });
+
+  it.each(['Calm down', 'Roll down the window please now', 'Hold down', 'Troll'])(
+    'прокрутка не выдумывается: «%s»',
+    (phrase) => {
+      expect(fixMishearings(phrase)).toBe(phrase);
+    },
+  );
+
+  it('исправленное разбирается как переключение окна', () => {
+    expect(parseDirectCommand(fixMishearings('Which to telegram.'))).toEqual({ kind: 'focus', title: 'telegram' });
+  });
+
+  it.each([
+    'Which to choose between these two options',
+    'which one to pick',
+    'Which is better',
+    'switch to Telegram',
+    'Pitch to the investors right now',
+    'Переключись на телеграм',
+    'Kitchen to go',
+  ])('«%s» не трогается', (phrase) => {
+    expect(fixMishearings(phrase)).toBe(phrase);
+  });
+});
+
+describe('правила по звучанию не будят и не выдумывают команд', () => {
+  it.each([
+    'Which to choose between these two options',
+    'which one to pick',
+    'good job today',
+    'low battery warning',
+    'Calm down',
+    'the kitchen is to the left',
+  ])('«%s» — ни побудки, ни команды', (phrase) => {
+    const fixed = fixMishearings(phrase);
+    expect(findWakeWord(fixed)).toBeNull();
+    expect(parseDirectCommand(fixed)).toBeNull();
   });
 });

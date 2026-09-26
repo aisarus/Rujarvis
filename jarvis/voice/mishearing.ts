@@ -163,6 +163,62 @@ const SPLITS: Array<[RegExp, string]> = [
   [/(?<!\p{L})кликдесять(?!\p{L})/giu, 'клик десять'],
 ];
 
+/**
+ * «Switch to …» с потерянным началом.
+ *
+ * Whisper small глотает стечение согласных в начале короткой английской
+ * команды. Замер 27.09.2026 (круг синтеза, пять синтезов на фразу, два
+ * голоса): «Switch to Telegram» — «which / witch / Pitch / Twitch / Pwych to
+ * Telegram», у lessac ни разу из трёх прогонов не распозналось верно. Запас
+ * тишины перед речью и смена голоса этого не меняют — значит, не список
+ * ослышек, а правило по звучанию, как у «тишины»: слово, у которого после
+ * начальных согласных остаётся «-itch/-ich», а следом идёт «to».
+ *
+ * Только для «switch»: переключение окна безвредно, в худшем случае
+ * прозвучит «не нашёл окно». «Close» так не читается — «low battery» стало бы
+ * закрытием программы. И только в короткой фразе, до четырёх слов, как
+ * говорят команды: длинный вопрос вроде «which to choose between these two»
+ * остаётся вопросом.
+ */
+function switchПоЗвучанию(text: string): string {
+  const слова = text.trim().split(/\s+/u);
+  if (слова.length > 4) return text;
+  return scrollПоЗвучанию(text).replace(
+    /^(\s*)(?:(\p{L}+)([\s,]+))?(\p{L}+)(\s+to\b)/u,
+    (целиком, пробелы: string, имя: string | undefined, между: string | undefined, глагол: string, дальше: string) => {
+      if (имя && !matchesWakeToken(имя.toLowerCase())) return целиком;
+      const хвост = глагол
+        .toLowerCase()
+        .replace(/^[bcdfghjklmnpqrstvwxz]+/u, '')
+        .replace(/^y/u, 'i')
+        .replace(/tch$/u, 'ch');
+      if (хвост !== 'ich' || глагол.toLowerCase() === 'switch') return целиком;
+      const switched = /^\p{Lu}/u.test(глагол) ? 'Switch' : 'switch';
+      return `${пробелы}${имя ? имя + (между ?? ' ') : ''}${switched}${дальше}`;
+    },
+  );
+}
+
+/**
+ * «Scroll down/up» с потерянным началом — по тому же звучанию.
+ *
+ * Тот же замер: «Scroll down» — «Troll down», «Prol down». После начальных
+ * согласных остаётся «-oll/-ol», следом «down» или «up». Прокрутка безвредна.
+ * Зовётся из `switchПоЗвучанию`, под тем же пределом в четыре слова.
+ */
+function scrollПоЗвучанию(text: string): string {
+  return text.replace(
+    /^(\s*)(?:(\p{L}+)([\s,]+))?(\p{L}+)(\s+(?:down|up)\b)/iu,
+    (целиком, пробелы: string, имя: string | undefined, между: string | undefined, глагол: string, дальше: string) => {
+      if (имя && !matchesWakeToken(имя.toLowerCase())) return целиком;
+      const хвост = глагол.toLowerCase().replace(/^[bcdfghjklmnpqrstvwxz]+/u, '');
+      if (!/^ol+$/u.test(хвост) || глагол.toLowerCase() === 'scroll') return целиком;
+      const scrolled = /^\p{Lu}/u.test(глагол) ? 'Scroll' : 'scroll';
+      return `${пробелы}${имя ? имя + (между ?? ' ') : ''}${scrolled}${дальше}`;
+    },
+  );
+}
+
 export function fixMishearings(input: string): string {
   if (!input.trim()) return input;
   const text = collapseRepeats(input);
@@ -201,6 +257,7 @@ export function fixMishearings(input: string): string {
     const fixed = вНачале(слово);
     return fixed ? пробелы + fixed : целиком;
   });
+  result = switchПоЗвучанию(result);
 
   // Пословно, с сохранением знаков препинания вокруг слова.
   return result.replace(/\p{L}+/gu, (word) => {
