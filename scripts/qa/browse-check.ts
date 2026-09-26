@@ -1,0 +1,135 @@
+/**
+ * Браузер по делу, без агента: цепочка инструментов через настоящий MCP-сервер.
+ *
+ * Своя страница-магазин на 127.0.0.1: поле поиска, кнопка, результаты
+ * появляются через полторы секунды, как на живом сайте. Цепочка та, которой
+ * агент делает «найди и сложи в таблицу»: открыть → ввести запрос → «Найти» →
+ * дождаться результатов → прочитать. Прошло — если прочитаны ровно три
+ * ноутбука и не прочитано лишнего.
+ *
+ * Сам агент в CI не запустится — там нет подписки; его путь проверяется у
+ * владельца (план в autopilot.md). Здесь — всё, что под ним.
+ *
+ * Сервер MCP поднимается со своим JARVIS_HOME во временной папке: профиль
+ * браузера человека не задевается. Окно браузера открывается — поэтому
+ * гоняется в CI, а не на машине человека. На обеих системах.
+ *
+ * Три ответа: прошло, не прошло, нечем мерить (нет браузера или сборки).
+ */
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+
+import { Сервер } from './mcpClient';
+
+const СТРАНИЦА = [
+  '<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Проба поиска Джарвиса</title></head><body>',
+  '<main>',
+  '<h1>Магазин пробы</h1>',
+  '<form id="f"><label for="q">Поиск товаров</label>',
+  '<input id="q" name="q" placeholder="Поиск товаров"><button type="submit">Найти</button></form>',
+  '<p id="itog"></p>',
+  '<table id="t"></table>',
+  '</main>',
+  '<script>',
+  'var goods = [["Ноутбук Лёгкий", 54990], ["Ноутбук Мощный", 129990], ["Ноутбук Школьный", 32990],',
+  '  ["Мышь беспроводная", 1490], ["Клавиатура тихая", 2990]];',
+  'document.getElementById("f").addEventListener("submit", function (e) {',
+  '  e.preventDefault();',
+  '  var q = document.getElementById("q").value.trim().toLowerCase();',
+  '  setTimeout(function () {',
+  '    var found = goods.filter(function (g) { return g[0].toLowerCase().indexOf(q) >= 0; });',
+  '    document.getElementById("t").innerHTML = found.map(function (g) {',
+  '      return "<tr><td>" + g[0] + "</td><td>" + g[1] + " руб.</td></tr>"; }).join("");',
+  '    document.getElementById("itog").textContent = "Найдено: " + found.length;',
+  '  }, 1500);',
+  '});',
+  '</script></body></html>',
+].join('');
+
+type Итог = { вид: 'прошло' | 'не прошло' | 'нечем мерить'; что: string };
+
+async function main(): Promise<void> {
+  console.log('');
+  console.log('Браузер по делу: цепочка инструментов без агента');
+  if (!existsSync('dist/jarvis/desktop/mcp.cjs')) {
+    console.log('НЕЧЕМ МЕРИТЬ: нет dist/jarvis/desktop/mcp.cjs — сначала pnpm build');
+    process.exit(2);
+  }
+
+  const http = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(СТРАНИЦА);
+  });
+  await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
+  const адрес = `http://127.0.0.1:${(http.address() as AddressInfo).port}/`;
+
+  const дом = mkdtempSync(path.join(os.tmpdir(), 'jarvis-browse-'));
+  const s = new Сервер({ JARVIS_HOME: дом });
+  const итоги: Array<{ имя: string; итог: Итог }> = [];
+  const шаг = async (имя: string, делать: () => Promise<Итог>): Promise<void> => {
+    if (итоги.some((и) => и.итог.вид !== 'прошло')) {
+      итоги.push({ имя, итог: { вид: 'нечем мерить', что: 'шаг выше не прошёл' } });
+      return;
+    }
+    try {
+      итоги.push({ имя, итог: await делать() });
+    } catch (беда) {
+      const текст = беда instanceof Error ? беда.message : String(беда);
+      const нетБраузера = /не нашёл ни одного браузера/iu.test(текст);
+      итоги.push({ имя, итог: { вид: нетБраузера ? 'нечем мерить' : 'не прошло', что: текст.slice(0, 240) } });
+    }
+  };
+
+  try {
+    await s.поднять();
+    await шаг('открыть свою страницу', async () => {
+      const ответ = await s.инструмент('browser_open', { url: адрес });
+      return /Проба поиска/u.test(ответ)
+        ? { вид: 'прошло', что: ответ.slice(0, 80) }
+        : { вид: 'не прошло', что: ответ.slice(0, 160) };
+    });
+    await шаг('ввести запрос в поле по его подписи', async () => {
+      await s.инструмент('browser_fill', { label: 'Поиск товаров', value: 'ноутбук' });
+      return { вид: 'прошло', что: 'ноутбук' };
+    });
+    await шаг('нажать «Найти»', async () => {
+      await s.инструмент('browser_click', { text: 'Найти' });
+      return { вид: 'прошло', что: 'нажато' };
+    });
+    await шаг('дождаться результатов', async () => {
+      const ответ = await s.инструмент('browser_wait_for', { text: 'Найдено:', seconds: 20 });
+      return { вид: 'прошло', что: ответ.replace(/\s+/gu, ' ').slice(0, 80) };
+    });
+    await шаг('прочитать ровно найденное', async () => {
+      const текст = await s.инструмент('browser_read', {});
+      const нужные = ['Ноутбук Лёгкий', 'Ноутбук Мощный', 'Ноутбук Школьный', 'Найдено: 3'];
+      const нет = нужные.filter((н) => !текст.includes(н));
+      const лишнее = ['Мышь беспроводная', 'Клавиатура тихая'].filter((л) => текст.includes(л));
+      return нет.length === 0 && лишнее.length === 0
+        ? { вид: 'прошло', что: 'три ноутбука, ничего лишнего' }
+        : { вид: 'не прошло', что: `нет: ${нет.join(', ') || '—'}; лишнее: ${лишнее.join(', ') || '—'}` };
+    });
+  } finally {
+    s.закрыть();
+    http.close();
+    rmSync(дом, { recursive: true, force: true, maxRetries: 3 });
+  }
+
+  let прошло = 0;
+  let неПрошло = 0;
+  let нечем = 0;
+  for (const { имя, итог } of итоги) {
+    if (итог.вид === 'прошло') прошло++;
+    else if (итог.вид === 'не прошло') неПрошло++;
+    else нечем++;
+    const метка = итог.вид === 'прошло' ? 'прошло      ' : итог.вид === 'не прошло' ? 'НЕ ПРОШЛО   ' : 'нечем мерить';
+    console.log(`  ${метка} ${имя} — ${итог.что}`);
+  }
+  console.log(`Всего ${итоги.length}: прошло ${прошло}, не прошло ${неПрошло}, нечем мерить ${нечем}`);
+  process.exit(неПрошло > 0 ? 1 : нечем > 0 ? 2 : 0);
+}
+
+void main();
