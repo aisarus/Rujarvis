@@ -78,6 +78,14 @@ const TERMINAL_STATES: ReadonlySet<TaskState> = new Set<TaskState>([
 export class TaskManager {
   private readonly tasks = new Map<string, JarvisTask>();
   private readonly runs = new Map<string, BackendRun>();
+  /**
+   * Задачи, которым уже сказано остановиться, а процесс ещё не вышел.
+   *
+   * Отмена асинхронная: CLI гасится не мгновенно, и всё это время задача
+   * числится идущей и передней. Вторая остановка через разговор попадала в
+   * неё же и снова докладывала «Остановил», а соседняя работа шла дальше.
+   */
+  private readonly останавливаются = new Set<string>();
   private readonly listeners = new Set<(event: TaskManagerEvent) => void>();
   private foregroundId: string | null = null;
   private readonly now: () => number;
@@ -196,6 +204,7 @@ export class TaskManager {
       }
 
       this.runs.delete(task.id);
+      this.останавливаются.delete(task.id);
       task.result = result;
       task.finishedAt = this.now();
       if (result.sessionId) {
@@ -217,6 +226,7 @@ export class TaskManager {
       // Чужую беду на новый запуск не переносим.
       if (this.runs.get(task.id) !== run) return;
       this.runs.delete(task.id);
+      this.останавливаются.delete(task.id);
 
       // Причину не теряем: без неё человек слышит «не получилось» без единого
       // слова о том, что случилось, и в журнал прогона тоже ничего не идёт.
@@ -255,6 +265,7 @@ export class TaskManager {
 
     const run = this.runs.get(id);
     if (run) {
+      this.останавливаются.add(id);
       run.cancel('user');
       return true;
     }
@@ -269,6 +280,11 @@ export class TaskManager {
     this.emit({ type: 'task-state', task });
     this.emit({ type: 'task-finished', task });
     return true;
+  }
+
+  /** Сказано ли задаче остановиться, пока её процесс ещё не вышел. */
+  stopping(id: string): boolean {
+    return this.останавливаются.has(id);
   }
 
   /** Stops the foreground task only, leaving background work alone. */

@@ -64,6 +64,7 @@ import { resolveDesktopMcpLaunch } from '../jarvis/desktop/launch';
 import { writeDesktopMcpConfig as writeDesktopMcpConfigFile } from '../jarvis/desktop/mcpConfig';
 import { GateBridge } from '../jarvis/risk/gateBridge';
 import { prepareGate } from '../jarvis/risk/gateSetup';
+import { applyWorkControl } from '../jarvis/dialogue/workControls';
 import { EchoGuard } from '../jarvis/voice/echo';
 import { StandingInstructions } from '../jarvis/backends/standingInstructions';
 import { ProgressVoice } from '../jarvis/voice/progress';
@@ -1178,38 +1179,13 @@ async function поднятьМост(options: {
   // Просьба, пережившая перезапуск, — не память, а неожиданность.
   talkBridge.clear();
   stopTalkBridge = talkBridge.serve((request) => {
-    if (request.kind === 'stop') {
-      const работа = jarvis.tasks.foreground();
-      if (!работа) return { ok: false, text: 'Сейчас ничего не идёт.' };
-      jarvis.tasks.cancel(работа.id);
-      note('command', `разговор остановил: ${работа.title}`);
-      console.log(`[jarvis] разговор остановил работу: ${работа.title}`);
-      return { ok: true, text: `Остановил: ${работа.title}` };
-    }
-
-    if (request.kind === 'pause') {
-      // Отложить — не то же, что погасить: сессия агента остаётся, и он
-      // продолжит с того места, а не начнёт заново.
-      const работа = jarvis.tasks.foreground();
-      if (!работа) return { ok: false, text: 'Сейчас ничего не идёт.' };
-      if (!jarvis.tasks.pause(работа.id)) {
-        return { ok: false, text: `«${работа.title}» отложить не вышло.` };
+    if (request.kind !== 'start') {
+      const ответ = applyWorkControl(request.kind, jarvis.tasks);
+      if (ответ.done) {
+        note('command', `разговор ${ответ.done}`);
+        console.log(`[jarvis] разговор ${ответ.done}`);
       }
-      note('command', `разговор отложил: ${работа.title}`);
-      console.log(`[jarvis] разговор отложил работу: ${работа.title}`);
-      return { ok: true, text: `Отложил: ${работа.title}` };
-    }
-
-    if (request.kind === 'resume') {
-      const отложенная = jarvis.tasks.resumableTask();
-      if (!отложенная) return { ok: false, text: 'Продолжать нечего.' };
-      if (!jarvis.tasks.resume(отложенная.id)) {
-        // Законченную работу продолжить нечем: она не отложена, а прожита.
-        return { ok: false, text: `«${отложенная.title}» уже не продолжить.` };
-      }
-      note('command', `разговор продолжил: ${отложенная.title}`);
-      console.log(`[jarvis] разговор продолжил работу: ${отложенная.title}`);
-      return { ok: true, text: `Продолжаю: ${отложенная.title}` };
+      return { ok: ответ.ok, text: ответ.text };
     }
 
     const задача = request.text?.trim();
