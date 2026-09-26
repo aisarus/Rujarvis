@@ -161,11 +161,23 @@ function страница(): string {
  * браузера, какое бы оно ни было, — человек так и хочет. Но проверке нельзя
  * нажать Ctrl+W в окне человека и закрыть ему вкладку. Поэтому перед каждым
  * нажатием: выбрано ли наше окно. Нет — «нечем мерить», и ничего не жмём.
+ *
+ * Своё окно узнаётся по pid, а не по названию профиля. Первая версия искала
+ * «Профиль 1» — и на английском раннере не нашла «Profile 1», объявив своё
+ * окно чужим. А узнавай она «Profile 1», у человека с английским Edge, чей
+ * основной профиль так и называется, она приняла бы ЕГО окно за своё и
+ * нажала бы в нём Ctrl+W. Браузер Джарвиса — отдельный процесс со своим
+ * профилем, и его pid другим не бывает.
  */
-async function выбраноНаше(desktop: ReturnType<typeof createDesktopDriver>): Promise<string | null> {
+async function выбраноНаше(
+  desktop: ReturnType<typeof createDesktopDriver>,
+  нашPid: number,
+): Promise<string | null> {
   const выбор = окноБраузера(await desktop.windows());
   if (!выбор) return 'окна браузера нет вовсе';
-  return /Проба ссылок|Профиль 1/u.test(выбор.title) ? null : `сверху браузер человека «${выбор.title.slice(0, 50)}» — жать туда нельзя`;
+  return выбор.pid === нашPid
+    ? null
+    : `сверху чужой браузер «${выбор.title.slice(0, 50)}», pid ${выбор.pid} — жать туда нельзя`;
 }
 
 async function впереди(desktop: ReturnType<typeof createDesktopDriver>): Promise<string> {
@@ -182,8 +194,11 @@ async function впереди(desktop: ReturnType<typeof createDesktopDriver>): 
  * проверка объявила провалом то, что сделано. Заголовок — то, что видит
  * человек, и Edge пишет в него счёт: «… и еще N страниц» — это N+1 вкладок.
  */
-async function вкладокВОкне(desktop: ReturnType<typeof createDesktopDriver>): Promise<number | null> {
-  const наше = (await desktop.windows()).find((о) => /Профиль 1/u.test(о.title));
+async function вкладокВОкне(
+  desktop: ReturnType<typeof createDesktopDriver>,
+  нашPid: number,
+): Promise<number | null> {
+  const наше = (await desktop.windows()).find((о) => о.pid === нашPid && этоОкноБраузера(о));
   if (!наше) return null;
   const м = /(?:и ещ[её]|and) (\d+) (?:страниц|more page)/iu.exec(наше.title);
   return м ? Number(м[1]) + 1 : 1;
@@ -263,6 +278,18 @@ async function main(): Promise<void> {
       await s.инструмент('browser_tabs', { action: 'close', target: номер });
     }
     await s.инструмент('browser_tabs', { action: 'switch', target: 'Проба ссылок' });
+
+    // Pid своего браузера — по окну со своей страницей: заголовок у неё
+    // единственный, и это ещё до всяких нажатий.
+    let нашPid = 0;
+    await ждать(async () => {
+      нашPid = (await desktop.windows()).find((о) => /Проба ссылок/u.test(о.title))?.pid ?? 0;
+      return нашPid > 0;
+    }, 10_000);
+    if (!нашPid) {
+      запиши('окно браузера проверки', { вид: 'нечем мерить', почему: 'окно со своей страницей не появилось за 10 с' });
+      return;
+    }
 
     // Блокнот — впереди. Запускаем сами и берём ТОЛЬКО новый процесс.
     //
@@ -395,16 +422,16 @@ async function main(): Promise<void> {
     if (!(await блокнотВперёд(desktop, блокнот.title))) {
       запиши('«новая вкладка» открывается в браузере, а не в блокноте', { вид: 'нечем мерить', почему: 'фокус не отдали' });
     } else {
-      const нельзя = await выбраноНаше(desktop);
+      const нельзя = await выбраноНаше(desktop, нашPid);
       if (нельзя) {
         запиши('«новая вкладка» открывается в браузере, а не в блокноте', { вид: 'нечем мерить', почему: нельзя });
       } else {
-        const было = await вкладокВОкне(desktop);
+        const было = await вкладокВОкне(desktop, нашPid);
         const до = await впереди(desktop);
         const к = parseDirectCommand('новая вкладка');
         if (к?.kind === 'key') await нажать(desktop, к.keys);
         const после = await впереди(desktop);
-        const стало = было !== null && (await ждать(async () => (await вкладокВОкне(desktop)) === было + 1, 6_000));
+        const стало = было !== null && (await ждать(async () => (await вкладокВОкне(desktop, нашPid)) === было + 1, 6_000));
         запиши(
           '«новая вкладка» открывается в браузере, а не в блокноте',
           было === null
@@ -413,7 +440,7 @@ async function main(): Promise<void> {
               ? { вид: 'прошло', чем: `вкладок было ${было}, стало ${было + 1}; впереди до «${до}», после «${после}»` }
               : {
                   вид: 'не прошло',
-                  почему: `вкладок было ${было}, стало ${String(await вкладокВОкне(desktop))}; впереди до «${до}», после «${после}»`,
+                  почему: `вкладок было ${было}, стало ${String(await вкладокВОкне(desktop, нашPid))}; впереди до «${до}», после «${после}»`,
                 },
         );
       }
@@ -423,17 +450,17 @@ async function main(): Promise<void> {
     if (!(await блокнотВперёд(desktop, блокнот.title))) {
       запиши('«закрой вкладку» закрывает вкладку браузера, а блокнот не трогает', { вид: 'нечем мерить', почему: 'фокус не отдали' });
     } else {
-      const нельзя = await выбраноНаше(desktop);
+      const нельзя = await выбраноНаше(desktop, нашPid);
       if (нельзя) {
         запиши('«закрой вкладку» закрывает вкладку браузера, а блокнот не трогает', { вид: 'нечем мерить', почему: нельзя });
         return;
       }
-      const было = await вкладокВОкне(desktop);
+      const было = await вкладокВОкне(desktop, нашPid);
       const до = await впереди(desktop);
       const к = parseDirectCommand('закрой вкладку');
       if (к?.kind === 'key') await нажать(desktop, к.keys);
-      const закрылась = было !== null && (await ждать(async () => (await вкладокВОкне(desktop)) === было - 1, 6_000));
-      console.log(`    закрой вкладку: впереди до «${до}», после «${await впереди(desktop)}», вкладок ${String(было)} → ${String(await вкладокВОкне(desktop))}`);
+      const закрылась = было !== null && (await ждать(async () => (await вкладокВОкне(desktop, нашPid)) === было - 1, 6_000));
+      console.log(`    закрой вкладку: впереди до «${до}», после «${await впереди(desktop)}», вкладок ${String(было)} → ${String(await вкладокВОкне(desktop, нашPid))}`);
       const блокнотЖив = окнаИз(await s.инструмент('window_list', {})).some((о) => о.pid === блокнотPid);
       запиши(
         '«закрой вкладку» закрывает вкладку браузера, а блокнот не трогает',
