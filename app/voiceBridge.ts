@@ -1268,6 +1268,7 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
         const samples = toFloat32(payload.samples);
         const started = Date.now();
         const { text } = await transcriber.transcribe(samples, payload.sampleRate);
+        const распознано = Date.now();
         const seconds = (samples.length / payload.sampleRate).toFixed(1);
 
         if (!text) return;
@@ -1456,9 +1457,18 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
         }
 
         if (direct) {
+          const начато = Date.now();
           await runAction(describeDirect(direct), async () => {
             await runDirectCommand(direct, session);
           });
+          // Путь «конец речи → действие»: к этому числу прибавляются 700 мс
+          // тишины, после которых страница звука закрывает фразу. Цель — меньше
+          // секунды на small; без замера по живым фразам спорить не о чем.
+          const готово = Date.now();
+          console.log(
+            `[jarvis] прямая команда «${describeDirect(direct)}»: ${готово - started} мс после закрытия фразы ` +
+              `(распознавание ${распознано - started}, разбор ${начато - распознано}, выполнение ${готово - начато})`,
+          );
           session.keepAwake();
           return;
         }
