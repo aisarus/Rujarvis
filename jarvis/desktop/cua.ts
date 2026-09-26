@@ -316,6 +316,7 @@ export class CuaDriver {
   private async деревоОкна(pid: number, windowId: number, wanted: string): Promise<string> {
     let ответ = '';
     let прежде = -1;
+    let росло = false;
     const конец = Date.now() + ДЕРЕВО_ЖДЁМ_МС;
     do {
       ответ = await this.call('get_window_state', {
@@ -326,7 +327,13 @@ export class CuaDriver {
         query: wanted,
       });
       const сейчас = countedElements(ответ);
-      if (сейчас === null || сейчас === прежде) break;
+      if (сейчас === null) break;
+      // Выходим только после того, как дерево ХОТЬ РАЗ выросло: пока Chromium
+      // его не построил, оно одинаково коротко, и «две подряд совпали»
+      // означает не готовность, а раму окна. Та же гонка поймана на маке
+      // 26.09.2026 — там она и вскрылась.
+      if (сейчас > прежде && прежде >= 0) росло = true;
+      if (росло && сейчас === прежде) break;
       прежде = сейчас;
     } while (Date.now() < конец);
     return ответ;
