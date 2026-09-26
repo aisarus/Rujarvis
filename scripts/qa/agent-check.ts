@@ -286,6 +286,8 @@ async function main(): Promise<void> {
   }
 
   гасиМост();
+  // Живые сессии агента — дочерние процессы: process.exit ниже их не гасит.
+  jarvis.dispose();
 
   let прошло = 0;
   let неПрошло = 0;
