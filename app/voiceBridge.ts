@@ -61,6 +61,7 @@ import { chooseElement } from '../jarvis/control/elements';
 import { cellCenter, subCellCenter } from '../jarvis/control/grid';
 import { createDesktopDriver, desktopStamp } from '../jarvis/desktop/platform';
 import { resolveDesktopMcpLaunch } from '../jarvis/desktop/launch';
+import { writeDesktopMcpConfig as writeDesktopMcpConfigFile } from '../jarvis/desktop/mcpConfig';
 import { GateBridge } from '../jarvis/risk/gateBridge';
 import { prepareGate } from '../jarvis/risk/gateSetup';
 import { EchoGuard } from '../jarvis/voice/echo';
@@ -2287,65 +2288,28 @@ async function launchApplication(
 }
 
 /**
- * Writes the MCP config that gives the agent the screen and the mouse.
+ * Конфиг MCP, дающий агенту экран, мышь и файлы.
  *
- * Generated rather than shipped because it has to name an absolute path, and
- * returned as undefined when the launcher did not provide a server — computer
- * use is then simply absent instead of failing halfway through a task.
+ * Сам конфиг собирает `jarvis/desktop/mcpConfig.ts` — тот же, что зовёт живая
+ * проверка агента. Здесь только журнал: включено, выключено или почему нет.
  */
 function writeDesktopMcpConfig(outputDir?: string): string | undefined {
-  const server = resolveDesktopMcpLaunch({ appRoot: APP_ROOT });
-  if (!server.ok) {
-    console.log(`[jarvis] управление экраном выключено: не найден ${server.missing}`);
-    return undefined;
+  const итог = writeDesktopMcpConfigFile({
+    appRoot: APP_ROOT,
+    dataDir: path.dirname(journalFile()),
+    outputDir,
+    language: settings().language,
+  });
+  if (итог.ok) {
+    console.log(`[jarvis] управление экраном включено: ${итог.server}`);
+    return итог.file;
   }
-
-  try {
-    const dir = mkdtempSync(path.join(os.tmpdir(), 'jarvis-mcp-'));
-    const file = path.join(dir, 'desktop.json');
-    writeFileSync(
-      file,
-      JSON.stringify({
-        mcpServers: {
-          'jarvis-desktop': {
-            type: 'stdio',
-            command: server.launch.command,
-            args: server.launch.args,
-            // Сервер — отдельный процесс и сам рабочего стола не знает. Без
-            // этой переменной его файловые инструменты складывали бы результат
-            // не туда, где человек его ищет.
-            env: {
-              ...server.launch.env,
-              ...(outputDir ? { JARVIS_OUTPUT_DIR: outputDir } : {}),
-              JARVIS_LANGUAGE: settings().language,
-              // Движок браузера — явно, а не «авось доедет».
-              //
-              // Промт собирает это приложение, а выбирает движок MCP-сервер:
-              // два процесса, и если переменная до второго не дойдёт, промт
-              // расскажет модели про Safari, а руки поведут Chromium. Правило
-              // то же, что у языка и журнала: общее передаётся, а не
-              // угадывается.
-              ...(process.env.JARVIS_BROWSER ? { JARVIS_BROWSER: process.env.JARVIS_BROWSER } : {}),
-              // Журнал тот же самый: агент должен видеть ровно то, что помнит
-              // сам Джарвис, а не собственную отдельную.
-              JARVIS_JOURNAL: journalFile(),
-              // Ящик правок: сюда мост кладёт сказанное во время работы, отсюда
-              // агент забирает его инструментом check_notes.
-              JARVIS_NOTES: notesFile(),
-              // План работы: агент его пишет, окно его показывает.
-              JARVIS_PLAN: planFile(),
-            },
-          },
-        },
-      }),
-      'utf8',
-    );
-    console.log(`[jarvis] управление экраном включено: ${server.launch.args[0] ?? server.launch.command}`);
-    return file;
-  } catch (error) {
-    console.error('[jarvis] не удалось подготовить управление экраном:', error);
-    return undefined;
+  if ('missing' in итог) {
+    console.log(`[jarvis] управление экраном выключено: не найден ${итог.missing}`);
+  } else {
+    console.error('[jarvis] не удалось подготовить управление экраном:', итог.error);
   }
+  return undefined;
 }
 
 /**
