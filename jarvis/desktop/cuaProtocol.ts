@@ -29,6 +29,66 @@ export interface CuaElement {
   index: number;
   role: string;
   name: string;
+  /**
+   * Опознавательный знак элемента внутри одного снимка дерева.
+   *
+   * Голого номера драйверу НЕ ХВАТАЕТ: «click: bare element_index is not
+   * accepted; pass element_token, or snapshot_id together with element_index».
+   * Живой прогон 26.09.2026 упирался в это на каждом нажатии и на каждом вводе
+   * текста — то есть ввод в браузере не работал вовсе.
+   *
+   * Знак выдаётся вместе со снимком (`s00000001:7`) и перестаёт годиться,
+   * когда появляется снимок новее. Это не недостаток, а защита: окно успевает
+   * измениться между «посмотрел» и «нажал», и лучше явный отказ, чем нажатие
+   * по тому, что уже съехало.
+   *
+   * Необязательный, потому что разметка дерева знака не несёт, а мак
+   * адресует свои элементы иначе.
+   */
+  token?: string;
+}
+
+/** Снимок дерева: его знак и элементы, которые в нём нашлись. */
+export interface CuaSnapshot {
+  snapshotId: string | null;
+  elements: CuaElement[];
+}
+
+interface СтруктураЭлемента {
+  element_index?: unknown;
+  element_token?: unknown;
+  label?: unknown;
+  role?: unknown;
+}
+
+/**
+ * Элементы из структурной части ответа драйвера, а не из разметки.
+ *
+ * Сам драйвер об этом и просит: «Prefer `elements` — `tree_markdown` will
+ * continue to work but new fields will only be added to the structured side».
+ * Знак элемента — как раз такое новое поле, и в разметке его нет.
+ */
+export function snapshotFromStructured(structured: unknown): CuaSnapshot {
+  const корень = (structured ?? {}) as { snapshot_id?: unknown; elements?: unknown };
+  const снимок = typeof корень.snapshot_id === 'string' ? корень.snapshot_id : null;
+  const сырые = Array.isArray(корень.elements) ? (корень.elements as СтруктураЭлемента[]) : [];
+
+  const элементы: CuaElement[] = [];
+  for (const э of сырые) {
+    const номер = typeof э.element_index === 'number' ? э.element_index : null;
+    // Без номера элемент нечем назвать, без имени — незачем показывать.
+    if (номер === null) continue;
+    const имя = typeof э.label === 'string' ? э.label : '';
+    if (!имя) continue;
+    элементы.push({
+      index: номер,
+      role: typeof э.role === 'string' ? э.role : '',
+      name: имя,
+      ...(typeof э.element_token === 'string' ? { token: э.element_token } : {}),
+    });
+  }
+
+  return { snapshotId: снимок, elements: элементы };
 }
 
 /**
@@ -121,9 +181,22 @@ export function findElement(tree: string, wanted: string): CuaElement | null {
  * список, нажмёт на предка и решит, что сделала дело.
  */
 export function matchingElements(tree: string, wanted: string): CuaElement[] {
+  return matchingAmong(namedElements(tree), wanted);
+}
+
+/**
+ * То же правило отбора, но по готовому списку элементов.
+ *
+ * Нужно отдельно, потому что структурная часть ответа приходит списком, а не
+ * разметкой, — а правило должно остаться ОДНО. Раньше оно жило только внутри
+ * разбора разметки, и любой второй источник элементов получил бы свой
+ * собственный, слегка иной отбор: именно так и появляются расхождения, когда
+ * `find` по разметке и `find` по структуре отвечают разное на одну фразу.
+ */
+export function matchingAmong(elements: readonly CuaElement[], wanted: string): CuaElement[] {
   const needle = wanted.trim().toLowerCase();
   if (!needle) return [];
-  const hits = namedElements(tree).filter((e) => e.name.toLowerCase().includes(needle));
+  const hits = elements.filter((e) => e.name.toLowerCase().includes(needle));
   const exact = hits.filter((e) => e.name.toLowerCase() === needle);
   return [...exact, ...hits.filter((e) => !exact.includes(e))];
 }

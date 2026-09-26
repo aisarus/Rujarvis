@@ -31,6 +31,53 @@ export interface InstalledProgram {
   folder?: string;
 }
 
+/**
+ * Имя, которое человек мог бы произнести, из имени пакета магазина.
+ *
+ * Нужно потому, что настоящее `DisplayName` у приложений магазина — ссылка на
+ * ресурс (`ms-resource:AppName`), и без её разворачивания Windows отдаёт
+ * пустоту. Замер 26.09.2026: у ВСЕХ 257 приложений на этой машине имя пустое.
+ *
+ * Издателя отбрасываем, остальное разбираем по горбам: «Microsoft.WindowsNotepad»
+ * → «Windows Notepad». Человек говорит «блокнот», и псевдоним ведёт к «notepad»
+ * — а совпасть ему нужно со СЛОВОМ, не с куском слова: «windowsnotepad» одним
+ * словом не совпадает и программа не находится.
+ *
+ * `null` для служебных пакетов: их имена — идентификаторы вида
+ * «1527c705-839a-4832-9118-54d4Bd6a0c89» или «Microsoft.549981C3F5F10», и
+ * произнести их нельзя. Показывать их значит добавить в список сотни имён,
+ * которые могут случайно совпасть со сказанным.
+ */
+export function nameFromPackage(пакет: string): string | null {
+  const части = пакет.split('.');
+  // Одна часть — это не «издатель.имя», а сам идентификатор.
+  const остаток = части.length > 1 ? части.slice(1).join(' ') : пакет;
+  const поГорбам = остаток
+    .replace(/([a-zа-я0-9])([A-ZА-Я])/gu, '$1 $2')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  if (!поГорбам) return null;
+  // Хотя бы одно настоящее слово: три буквы подряд и ни одной цифры внутри.
+  const есть = поГорбам.split(' ').some((слово) => /^[A-Za-zА-Яа-я]{3,}$/u.test(слово));
+  return есть ? поГорбам : null;
+}
+
+/**
+ * Можно ли это имя сказать Джарвису вслух.
+ *
+ * Джарвис слушает по-русски и по-английски, поэтому имя без единой буквы этих
+ * двух алфавитов он не услышит НИКОГДА — ни на слух, ни через псевдоним.
+ *
+ * Не придумано: Windows отдаёт имена приложений магазина на языке их
+ * интерфейса, и на живой машине 26.09.2026 это оказался иврит. «Открой
+ * калькулятор» не находило ничего, потому что калькулятор в списке звался
+ * «מחשבון», а блокнот — «פנקס רשימות». Списку это не мешало считать себя
+ * полным: программы в нём были, назвать их было нельзя.
+ */
+export function произносимо(имя: string): boolean {
+  return /[A-Za-zА-Яа-яЁё]/u.test(имя);
+}
+
 /** Как запускать то, что вернул Windows. */
 export function startKind(target: string): 'path' | 'aumid' | 'url' {
   if (target.includes('://')) return 'url';
@@ -75,6 +122,65 @@ async function walkShortcuts(dir: string, depth: number, into: InstalledProgram[
 export const START_APPS_COMMAND =
   '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ' +
   'Get-StartApps | ConvertTo-Json -Compress';
+
+/**
+ * Приложения магазина, УСТАНОВЛЕННЫЕ на машине.
+ *
+ * Третий источник, и он оказался обязательным. `Get-StartApps` перечисляет то,
+ * что лежит в списке приложений меню «Пуск», — а это не то же самое, что
+ * установлено. Замер 26.09.2026 на живой машине: `Get-StartApps` вернул 377
+ * записей, и среди них НЕ БЫЛО ни калькулятора, ни блокнота, при том что оба
+ * стоят пакетами (`Microsoft.WindowsCalculator`, `Microsoft.WindowsNotepad`).
+ * То есть «открой калькулятор» и «открой блокнот» не работали вовсе, а список
+ * при этом считал себя полным.
+ *
+ * Идентификатор запуска — `PackageFamilyName!Id` из манифеста, а не догадка
+ * «!App»: у части приложений идентификатор другой (`Microsoft.Windows.FilePicker`).
+ * Обход манифестов стоит полторы секунды на 257 пакетов и делается один раз:
+ * список кешируется вызывающим.
+ */
+export const APPX_APPS_COMMAND =
+  '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ' +
+  '$out = foreach ($p in Get-AppxPackage) { ' +
+  'if ($p.IsFramework -or $p.IsResourcePackage) { continue } ' +
+  'try { $m = Get-AppxPackageManifest $p -ErrorAction Stop } catch { continue } ' +
+  'foreach ($a in @($m.Package.Applications.Application)) { ' +
+  'if (-not $a.Id) { continue } ' +
+  '$name = $a.VisualElements.DisplayName; ' +
+  "if (-not $name -or $name -like 'ms-resource*') { $name = '' } " +
+  '[pscustomobject]@{ Name = $name; Package = $p.Name; AppID = ($p.PackageFamilyName + ' +
+  "'!' + $a.Id) } } }; " +
+  '$out | ConvertTo-Json -Compress';
+
+async function listAppxApps(): Promise<Array<{ name: string; appId: string }> | null> {
+  try {
+    const { stdout } = await run(
+      'powershell',
+      ['-NoProfile', '-NonInteractive', '-Command', APPX_APPS_COMMAND],
+      { windowsHide: true, maxBuffer: 16 * 1024 * 1024 },
+    );
+    if (!stdout.trim()) throw new Error('Get-AppxPackage ничего не ответил');
+    const parsed = JSON.parse(stdout) as unknown;
+    const список = (Array.isArray(parsed) ? parsed : [parsed]) as Array<{
+      Name?: string;
+      Package?: string;
+      AppID?: string;
+    }>;
+    const итог: Array<{ name: string; appId: string }> = [];
+    for (const запись of список) {
+      if (!запись?.AppID) continue;
+      // Настоящее имя, если Windows его отдал; иначе выводим из имени пакета.
+      const имя = запись.Name?.trim() || nameFromPackage(запись.Package ?? '');
+      if (!имя) continue;
+      итог.push({ name: имя, appId: запись.AppID });
+    }
+    return итог;
+  } catch (error) {
+    // Как и с магазином: молчать нельзя, а пустой список — неправда.
+    console.error('[jarvis] установленные приложения магазина не получены:', error);
+    return null;
+  }
+}
 
 /**
  * То, что Windows считает запускаемым: магазин, игры, ярлыки без .lnk.
@@ -148,12 +254,37 @@ export async function listInstalledPrograms(): Promise<InstalledList> {
   const found: InstalledProgram[] = [];
   for (const root of roots) await walkShortcuts(root, 0, found);
 
-  const изМагазина = await listShellApps();
-  for (const app of изМагазина ?? []) {
-    if (found.some((item) => item.name.toLowerCase() === app.name.toLowerCase())) continue;
+  // Оба запроса к PowerShell разом: они не зависят друг от друга, а вместе
+  // стоят столько же, сколько самый долгий из них.
+  const [изМагазина, установленные] = await Promise.all([listShellApps(), listAppxApps()]);
+
+  const занято = new Set(found.map((item) => item.name.toLowerCase()));
+  const цели = new Set(found.map((item) => item.target.toLowerCase()));
+  const добавить = (app: { name: string; appId: string }): void => {
+    if (занято.has(app.name.toLowerCase()) || цели.has(app.appId.toLowerCase())) return;
+    занято.add(app.name.toLowerCase());
+    цели.add(app.appId.toLowerCase());
     found.push({ name: app.name, target: app.appId, kind: startKind(app.appId) });
+  };
+
+  // Чем звать программу, если Windows назвал её неудобоваримо: выведенным из
+  // имени пакета. Ключ — идентификатор запуска, он у обоих источников общий.
+  const поИдентификатору = new Map<string, string>();
+  for (const app of установленные ?? []) поИдентификатору.set(app.appId.toLowerCase(), app.name);
+
+  // Меню «Пуск» впереди: там имена такие, какими их видит человек — если он
+  // вообще может их произнести. Иначе берём выведенное имя: «Windows
+  // Calculator» вместо «מחשבון». Имя идёт и человеку в ответ («Открываю …»),
+  // так что подменять его на произносимое правильно дважды.
+  for (const app of изМагазина ?? []) {
+    const выведенное = произносимо(app.name) ? null : поИдентификатору.get(app.appId.toLowerCase());
+    добавить(выведенное ? { name: выведенное, appId: app.appId } : app);
   }
-  return { programs: found, полный: изМагазина !== null };
+  for (const app of установленные ?? []) добавить(app);
+
+  // Полон — значит ОБА источника ответили. Раньше полнота означала только
+  // `Get-StartApps`, и список без калькулятора с блокнотом считал себя полным.
+  return { programs: found, полный: изМагазина !== null && установленные !== null };
 }
 
 /**

@@ -91,7 +91,9 @@ import { matchAppLaunch, spokenCloseTarget, spokenTarget } from '../apps/launch'
 describe('English app launching and closing', () => {
   it('opens known apps by their English names', () => {
     expect(matchAppLaunch('open chrome')).toEqual({ target: 'chrome', spokenName: 'chrome' });
-    expect(matchAppLaunch('launch the calculator')).toEqual({ target: 'calc', spokenName: 'calculator' });
+    // 'calculator', а не 'calc': 'calc' ТОЧНО совпадало со словом «Calc» в
+    // «LibreOffice Calc» и «открой калькулятор» открывало таблицу.
+    expect(matchAppLaunch('launch the calculator')).toEqual({ target: 'calculator', spokenName: 'calculator' });
     expect(matchAppLaunch('can you open telegram please')?.target).toBe('telegram');
   });
 

@@ -19,8 +19,13 @@ describe('matchAppLaunch', () => {
 
   it('takes the spellings recognition actually returns', () => {
     // All of these came back from a live microphone for the same two words.
-    expect(matchAppLaunch('Открой Edge')?.target).toBe('msedge');
-    expect(matchAppLaunch('открой эдж')?.target).toBe('msedge');
+    //
+    // 'edge', а не 'msedge': это ПУСКОВАЯ таблица, и совпадать надо с
+    // названием программы («Microsoft Edge»). Слова «msedge» нет ни в одном
+    // названии, и «открой эдж» не находило ничего. Поймано живым прогоном
+    // 26.09.2026; имя процесса осталось в оконной таблице, где оно и нужно.
+    expect(matchAppLaunch('Открой Edge')?.target).toBe('edge');
+    expect(matchAppLaunch('открой эдж')?.target).toBe('edge');
     expect(matchAppLaunch('Открой Chrome.')?.target).toBe('chrome');
   });
 
@@ -90,9 +95,10 @@ describe('spokenCloseTarget', () => {
   });
 
   it('resolves a spoken name to the executable, which no transliteration would', () => {
-    // «хром» transliterates to "hrom"; the process is called chrome.exe.
+    // «хром» transliterates to "hrom"; the program is called Google Chrome.
     expect(aliasTarget('хром')).toBe('chrome');
-    expect(aliasTarget('эдж')).toBe('msedge');
+    // Пусковая таблица ведёт к СЛОВУ из названия, а не к имени процесса.
+    expect(aliasTarget('эдж')).toBe('edge');
   });
 });
 
@@ -137,12 +143,23 @@ describe('две таблицы, а не одна', () => {
     // Перебор выше берёт ожидаемое значение из той же таблицы, по которой и
     // ищет: впиши в неё «хром → firefox» — и он останется зелёным. Здесь
     // значения записаны отдельно и сверяются с таблицей, а не с собой.
+    // Замеры 26.09.2026 на живой машине изменили два из этих значений, и оба
+    // прежних были ошибкой, которую эта проверка поймать не могла: она сверяет
+    // таблицу с записанным здесь, а записано здесь было то же неверное.
+    //
+    //   «эдж» → 'msedge'  — слова «msedge» нет ни в одном НАЗВАНИИ программы,
+    //                       и «открой эдж» не находило ничего.
+    //   «калькулятор» → 'calc' — ТОЧНО совпадало со словом «Calc» в
+    //                       «LibreOffice Calc» и открывало таблицу.
+    //
+    // Что найдено в итоге правда то, проверяет storeNames.vitest.test.ts: он
+    // смотрит на выбранную программу, а не на значение псевдонима.
     const ЖДЁМ: ReadonlyArray<readonly [string, string]> = [
       ['хром', 'chrome'],
       ['телеграм', 'telegram'],
       ['блокнот', 'notepad'],
-      ['эдж', 'msedge'],
-      ['калькулятор', 'calc'],
+      ['эдж', 'edge'],
+      ['калькулятор', 'calculator'],
     ];
     for (const [сказано, цель] of ЖДЁМ) {
       expect(aliasTarget(сказано), сказано).toBe(цель);

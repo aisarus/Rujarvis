@@ -11,6 +11,8 @@ import {
   matchingElements,
   namedElements,
   tooBigToRead,
+  matchingAmong,
+  snapshotFromStructured,
 } from './cuaProtocol';
 
 describe('разбор списка окон', () => {
@@ -156,3 +158,77 @@ describe('только настоящие находки', () => {
     expect(matchingElements(withAncestors, 'ЗАКРЫТЬ').map((e) => e.index)).toEqual([2]);
   });
 });
+
+describe('snapshotFromStructured', () => {
+  // Форма снята с живого драйвера 26.09.2026, а не придумана: до этого замера
+  // press и type_text получали голый номер и отвечали «bare element_index is
+  // not accepted», то есть ввод в браузере не работал вовсе.
+  const живойОтвет = {
+    snapshot_id: 's00000001',
+    element_count: 197,
+    elements: [
+      {
+        actions: ['invoke'],
+        depth: 5,
+        element_index: 2,
+        element_token: 's00000001:2',
+        enabled: true,
+        frame: { h: 49, w: 58, x: 1489, y: 24 },
+        label: 'Закрыть',
+        role: 'Button',
+      },
+      {
+        element_index: 7,
+        element_token: 's00000001:7',
+        label: 'Адресная строка и панель поиска',
+        role: 'Edit',
+      },
+    ],
+  };
+
+  it('несёт знак снимка и знак каждого элемента', () => {
+    const снимок = snapshotFromStructured(живойОтвет);
+
+    expect(снимок.snapshotId).toBe('s00000001');
+    expect(снимок.elements.map((э) => э.token)).toEqual(['s00000001:2', 's00000001:7']);
+    expect(снимок.elements.map((э) => э.index)).toEqual([2, 7]);
+    expect(снимок.elements[1]?.name).toBe('Адресная строка и панель поиска');
+  });
+
+  it('пропускает элементы без номера и без имени', () => {
+    // Безымянный элемент нечем назвать человеку, а без номера его нечем нажать:
+    // показать такой значит обещать действие, которого нет.
+    const снимок = snapshotFromStructured({
+      snapshot_id: 's1',
+      elements: [
+        { element_index: 1, label: '', role: 'Pane' },
+        { label: 'Без номера', role: 'Button' },
+        { element_index: 3, label: 'Годный', role: 'Button', element_token: 's1:3' },
+      ],
+    });
+
+    expect(снимок.elements.map((э) => э.name)).toEqual(['Годный']);
+  });
+
+  it('не падает на чужом и пустом ответе', () => {
+    // Драйвер старее нашего структурной части может и не прислать — тогда
+    // остаётся разбор разметки, а не исключение посреди нажатия.
+    for (const чужое of [undefined, null, {}, { elements: 'не массив' }, 42]) {
+      const снимок = snapshotFromStructured(чужое);
+      expect(снимок.elements).toEqual([]);
+      expect(снимок.snapshotId).toBeNull();
+    }
+  });
+
+  it('отбор совпавших один и тот же для разметки и для структуры', () => {
+    // Два источника элементов — одно правило. Со своим отбором у каждого
+    // «найди адресную строку» отвечало бы по-разному в зависимости от того,
+    // какой источник ответил, и объяснить это было бы нечем.
+    const снимок = snapshotFromStructured(живойОтвет);
+    const через = matchingAmong(снимок.elements, 'Адресная строка');
+
+    expect(через.map((э) => э.index)).toEqual([7]);
+    expect(через[0]?.token).toBe('s00000001:7');
+  });
+});
+

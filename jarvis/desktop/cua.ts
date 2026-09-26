@@ -30,8 +30,11 @@ import { jarvisPaths } from '../setup/paths';
 import {
   countedElements,
   windowsFromAnswer,
+  matchingAmong,
   matchingElements,
+  snapshotFromStructured,
   type CuaElement,
+  type CuaSnapshot,
   type CuaWindow,
 } from './cuaProtocol';
 
@@ -39,6 +42,11 @@ export type { CuaElement, CuaWindow };
 
 /** Дерево схлопывается, когда окно не отрисовано. Меньше этого — не окно. */
 const TREE_IS_ALIVE = 8;
+
+/** Снимки помним по окну, а не по программе: окон у программы много. */
+function ключСнимка(pid: number, windowId: number): string {
+  return `${pid}:${windowId}`;
+}
 
 /**
  * Сколько ждать, пока Chromium достроит дерево доступности.
@@ -83,10 +91,29 @@ export function driverPath(): string | null {
   return null;
 }
 
+/**
+ * Ответ драйвера целиком: человеческий текст и структурная часть.
+ *
+ * Раньше брали только текст, и этого хватало для всего, кроме нажатий:
+ * опознавательный знак элемента драйвер кладёт ИСКЛЮЧИТЕЛЬНО в структурную
+ * часть, а без знака отказывает и `click`, и `type_text`.
+ */
+interface Ответ {
+  текст: string;
+  структура: unknown;
+}
+
 interface Pending {
-  resolve: (text: string) => void;
+  resolve: (ответ: Ответ) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
+}
+
+/** Последний снимок дерева окна: чем адресовать его элементы. */
+interface ПамятьСнимка {
+  snapshotId: string | null;
+  /** Номер элемента → его знак в этом снимке. */
+  знаки: Map<number, string>;
 }
 
 export class CuaDriver {
@@ -95,6 +122,8 @@ export class CuaDriver {
   private buffer = '';
   private nextId = 10;
   private readonly waiting = new Map<number, Pending>();
+  /** Последний показанный снимок по каждому окну — для перевода номера в знак. */
+  private readonly снимки = new Map<string, ПамятьСнимка>();
 
   /** Поднят ли драйвер. Для проверки здоровья, чтобы она не лгала. */
   isUp(): boolean {
@@ -183,7 +212,11 @@ export class CuaDriver {
 
       let message: {
         id?: number;
-        result?: { content?: { text?: string }[]; isError?: boolean };
+        result?: {
+          content?: { text?: string }[];
+          isError?: boolean;
+          structuredContent?: unknown;
+        };
         error?: unknown;
       };
       try {
@@ -213,13 +246,15 @@ export class CuaDriver {
         continue;
       }
 
-      seat.resolve(текст);
+      // Вместе со структурной частью, а не только текст. Знак элемента живёт
+      // ТОЛЬКО там, и без него драйвер отказывает и нажимать, и печатать.
+      seat.resolve({ текст, структура: message.result?.structuredContent });
     }
   }
 
-  private ask(method: string, params: unknown): Promise<string> {
+  private ask(method: string, params: unknown): Promise<Ответ> {
     const id = this.nextId++;
-    return new Promise<string>((resolve, reject) => {
+    return new Promise<Ответ>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.waiting.delete(id);
         reject(new Error(`Драйвер молчит дольше ${Math.round(ANSWER_MS / 1000)} с`));
@@ -243,14 +278,59 @@ export class CuaDriver {
    * 25.09.2026: на экране стояли Блендер, Клод и браузер.
    */
   private async call(name: string, args: Record<string, unknown>, ещёРаз = true): Promise<string> {
+    return (await this.callFull(name, args, ещёРаз)).текст;
+  }
+
+  /** То же, но с структурной частью — нужна там, где важны знаки элементов. */
+  private async callFull(
+    name: string,
+    args: Record<string, unknown>,
+    ещёРаз = true,
+  ): Promise<Ответ> {
     await this.start();
     const ответ = await this.ask('tools/call', { name, arguments: args });
 
-    if (ещёРаз && /session has ended|call start_session/iu.test(ответ)) {
-      await this.ask('tools/call', { name: 'start_session', arguments: {} }).catch(() => '');
-      return this.call(name, args, false);
+    if (ещёРаз && /session has ended|call start_session/iu.test(ответ.текст)) {
+      await this.ask('tools/call', { name: 'start_session', arguments: {} }).catch(() => undefined);
+      return this.callFull(name, args, false);
     }
     return ответ;
+  }
+
+  /**
+   * Запомнить снимок, который МОДЕЛЬ сейчас увидит.
+   *
+   * Номера элементов человек и модель берут из показанного дерева, а драйверу
+   * нужен знак. Перевод между ними возможен только по тому самому снимку, из
+   * которого номера и взяты, — поэтому помним его здесь, а не спрашиваем
+   * заново перед нажатием: свежий снимок мог бы перенумеровать элементы, и
+   * нажатие ушло бы не туда, о чём никто бы не узнал.
+   */
+  private запомнитьСнимок(pid: number, windowId: number, структура: unknown): CuaSnapshot {
+    const снимок = snapshotFromStructured(структура);
+    const знаки = new Map<number, string>();
+    for (const э of снимок.elements) {
+      if (э.token) знаки.set(э.index, э.token);
+    }
+    // Пустой снимок не запоминаем: он стёр бы годный и превратил бы нажатие в
+    // отказ там, где оно работало.
+    if (снимок.snapshotId || знаки.size > 0) {
+      this.снимки.set(ключСнимка(pid, windowId), { snapshotId: снимок.snapshotId, знаки });
+    }
+    return снимок;
+  }
+
+  /** Чем адресовать элемент по его номеру: знаком, снимком или ничем. */
+  private адрес(pid: number, windowId: number, index: number): Record<string, unknown> {
+    const память = this.снимки.get(ключСнимка(pid, windowId));
+    const знак = память?.знаки.get(index);
+    if (знак) return { element_token: знак };
+    if (память?.snapshotId) return { snapshot_id: память.snapshotId, element_index: index };
+    // Честный отказ вместо запроса, который драйвер всё равно отклонит фразой
+    // про element_token — она человеку не говорит ничего.
+    throw new Error(
+      `Элемент ${index} не из последнего снимка окна. Посмотри окно заново и повтори.`,
+    );
   }
 
   /** Окна, с которыми можно работать. Своё наложение и рабочий стол отсеяны. */
@@ -313,20 +393,20 @@ export class CuaDriver {
    * подряд дали одинаковую длину. Обычно это один лишний вопрос на восемьдесят
    * миллисекунд, а не фиксированная пауза наугад.
    */
-  private async деревоОкна(pid: number, windowId: number, wanted: string): Promise<string> {
-    let ответ = '';
+  private async деревоОкна(pid: number, windowId: number, wanted: string): Promise<Ответ> {
+    let ответ: Ответ = { текст: '', структура: undefined };
     let прежде = -1;
     let росло = false;
     const конец = Date.now() + ДЕРЕВО_ЖДЁМ_МС;
     do {
-      ответ = await this.call('get_window_state', {
+      ответ = await this.callFull('get_window_state', {
         pid,
         window_id: windowId,
         include_accessibility_tree: true,
         include_screenshot: false,
         query: wanted,
       });
-      const сейчас = countedElements(ответ);
+      const сейчас = countedElements(ответ.текст);
       if (сейчас === null) break;
       // Выходим только после того, как дерево ХОТЬ РАЗ выросло: пока Chromium
       // его не построил, оно одинаково коротко, и «две подряд совпали»
@@ -341,25 +421,64 @@ export class CuaDriver {
 
   async find(pid: number, windowId: number, wanted: string): Promise<CuaElement[]> {
     const answer = await this.деревоОкна(pid, windowId, wanted);
-    const counted = countedElements(answer);
+    const counted = countedElements(answer.текст);
     if (counted !== null && counted < TREE_IS_ALIVE) {
       throw new Error(
         `Окно отдало всего ${counted} элементов — похоже, оно не отрисовано. Сделай снимок окна и повтори.`,
       );
     }
+    const снимок = this.запомнитьСнимок(pid, windowId, answer.структура);
     // Только совпавшие по имени, точное вперёд: рядом живут «Terminal» и
     // «Run in terminal», а предков драйвер подмешивает для наглядности.
-    return matchingElements(answer, wanted);
+    //
+    // Структурная часть впереди разметки: правило отбора у них одно
+    // (`matchingAmong`), но только структура несёт знаки элементов. Разметка
+    // остаётся запасом — драйвер старее нашего может её и не прислать.
+    if (снимок.elements.length > 0) return matchingAmong(снимок.elements, wanted);
+    return matchingElements(answer.текст, wanted);
   }
 
-  /** Нажать по номеру элемента, а не по угаданным координатам. */
+  /**
+   * Нажать по элементу, а не по угаданным координатам.
+   *
+   * Голый номер драйвер отклоняет: «bare element_index is not accepted; pass
+   * element_token, or snapshot_id together with element_index». Знак берём из
+   * снимка, по которому номер и был назван.
+   *
+   * Переднему плану, как и клавиши, не отдаём сразу: окна Chromium драйвер
+   * отказывается трогать в фоне и говорит об этом прямо, вот тогда и
+   * поднимаем. Платить фокусом человека заранее незачем.
+   */
   async press(pid: number, windowId: number, index: number): Promise<string> {
-    return this.call('click', { pid, window_id: windowId, element_index: index });
+    const адрес = this.адрес(pid, windowId, index);
+    try {
+      return await this.call('click', { pid, window_id: windowId, ...адрес });
+    } catch (беда) {
+      if (!нуженПереднийПлан(беда)) throw беда;
+      return this.call('click', {
+        pid,
+        window_id: windowId,
+        ...адрес,
+        delivery_mode: 'foreground',
+      });
+    }
   }
 
-  /** Напечатать в элемент по номеру. */
+  /** Напечатать в элемент. Адресация и передний план — как у нажатия. */
   async writeInto(pid: number, windowId: number, index: number, text: string): Promise<string> {
-    return this.call('type_text', { pid, window_id: windowId, element_index: index, text });
+    const адрес = this.адрес(pid, windowId, index);
+    try {
+      return await this.call('type_text', { pid, window_id: windowId, ...адрес, text });
+    } catch (беда) {
+      if (!нуженПереднийПлан(беда)) throw беда;
+      return this.call('type_text', {
+        pid,
+        window_id: windowId,
+        ...адрес,
+        text,
+        delivery_mode: 'foreground',
+      });
+    }
   }
 
   /**
