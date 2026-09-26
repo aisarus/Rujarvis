@@ -40,6 +40,24 @@ export type { CuaElement, CuaWindow };
 /** Дерево схлопывается, когда окно не отрисовано. Меньше этого — не окно. */
 const TREE_IS_ALIVE = 8;
 
+/**
+ * Сколько ждать, пока Chromium достроит дерево доступности.
+ *
+ * Не пауза наугад, а предел ожидания: спрашиваем, пока дерево растёт.
+ */
+const ДЕРЕВО_ЖДЁМ_МС = 3_000;
+
+/**
+ * Отказ ли это «в фон нельзя, отдай переднему плану».
+ *
+ * Отличать обязательно: на этот отказ пробуют иначе, на любой другой —
+ * падают. Иначе настоящая поломка тихо превратилась бы в увод фокуса.
+ */
+export function нуженПереднийПлан(беда: unknown): boolean {
+  const текст = беда instanceof Error ? беда.message : String(беда);
+  return /background delivery is not available/iu.test(текст) || /delivery_mode/iu.test(текст);
+}
+
 /** Первый вызов греет драйвер около двух секунд; остальные укладываются много быстрее. */
 const ANSWER_MS = 30_000;
 
@@ -271,14 +289,51 @@ export class CuaDriver {
    * Отдаёт только то, у чего есть номер: элемент без номера нажать нечем, и
    * показывать его модели — значит обещать действие, которого нет.
    */
+  /**
+   * Дерево окна — спросив столько раз, сколько нужно, чтобы оно достроилось.
+   *
+   * Chromium (Edge, Chrome, Electron, VS Code, Slack, Discord) держит дерево
+   * доступности не всегда: оно стоит памяти, и строится оно ПО ПЕРВОМУ
+   * запросу вспомогательной программы. То есть первый вопрос его заводит, а
+   * видит уже второй.
+   *
+   * Замер на живом Edge 26.09.2026, окно с кнопкой «Нажми меня» и полем:
+   *
+   *   1-й запрос  33 элемента  95 мс  кнопки нет
+   *   2-й запрос  36 элементов 76 мс  кнопка ЕСТЬ, поле ЕСТЬ
+   *   3..6-й      36 элементов        кнопка ЕСТЬ
+   *
+   * Порядок проверен нарочно однообразным: если дело в пределах обхода,
+   * кнопка появилась бы только у опытов с пределом. Она появилась у всех
+   * поздних — значит дело во времени. До этого `find` спрашивал один раз,
+   * получал раму окна и отвечал «окно не отрисовано»: нажать в окне Chromium
+   * было нельзя ни по чему.
+   *
+   * Спрашиваем, пока дерево РАСТЁТ, и останавливаемся, когда два ответа
+   * подряд дали одинаковую длину. Обычно это один лишний вопрос на восемьдесят
+   * миллисекунд, а не фиксированная пауза наугад.
+   */
+  private async деревоОкна(pid: number, windowId: number, wanted: string): Promise<string> {
+    let ответ = '';
+    let прежде = -1;
+    const конец = Date.now() + ДЕРЕВО_ЖДЁМ_МС;
+    do {
+      ответ = await this.call('get_window_state', {
+        pid,
+        window_id: windowId,
+        include_accessibility_tree: true,
+        include_screenshot: false,
+        query: wanted,
+      });
+      const сейчас = countedElements(ответ);
+      if (сейчас === null || сейчас === прежде) break;
+      прежде = сейчас;
+    } while (Date.now() < конец);
+    return ответ;
+  }
+
   async find(pid: number, windowId: number, wanted: string): Promise<CuaElement[]> {
-    const answer = await this.call('get_window_state', {
-      pid,
-      window_id: windowId,
-      include_accessibility_tree: true,
-      include_screenshot: false,
-      query: wanted,
-    });
+    const answer = await this.деревоОкна(pid, windowId, wanted);
     const counted = countedElements(answer);
     if (counted !== null && counted < TREE_IS_ALIVE) {
       throw new Error(
@@ -300,9 +355,25 @@ export class CuaDriver {
     return this.call('type_text', { pid, window_id: windowId, element_index: index, text });
   }
 
-  /** Нажать клавишу в окне: Enter, Escape, Tab и прочее. */
+  /**
+   * Нажать клавишу в окне: Enter, Escape, Tab и прочее.
+   *
+   * Окнам Chromium драйвер отказывается посылать клавиши «в фон» и прямо
+   * говорит, чем это лечится: `delivery_mode: "foreground"` — он сам выведет
+   * окно вперёд и вернёт передний план прежнему хозяину. Замер 26.09.2026:
+   * «Background delivery is not available for target window class
+   * 'Chrome_WidgetWin_1' on this event kind (keystroke)».
+   *
+   * Сразу переднему плану не отдаём: он отнимает фокус у того, в чём человек
+   * печатает, и платить этим на каждой клавише незачем.
+   */
   async key(pid: number, windowId: number, key: string): Promise<string> {
-    return this.call('press_key', { pid, window_id: windowId, key });
+    try {
+      return await this.call('press_key', { pid, window_id: windowId, key });
+    } catch (беда) {
+      if (!нуженПереднийПлан(беда)) throw беда;
+      return this.call('press_key', { pid, window_id: windowId, key, delivery_mode: 'foreground' });
+    }
   }
 
   /** Закрыть драйвер. Вызывается, когда уходит тот, кто его поднял. */
