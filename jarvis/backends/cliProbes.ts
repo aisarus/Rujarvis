@@ -2,9 +2,11 @@
  * Найти `claude` и `codex` на машине и понять, можно ли их запускать.
  *
  * Поиск: явный путь из окружения, обычные места установки, затем PATH.
- * Вход проверяется по наличию файла учётных данных, сами токены не читаются
- * (у Codex — только поле-признак в `auth.json`). Ответ о входе трёхзначный
- * (`authHints.ts`): «не нашёл файл» ещё не значит «не вошёл».
+ * О входе сначала спрашивается сам CLI (`claude auth status`, `codex login
+ * status`) — его ответ главнее. Промолчал — вход проверяется по наличию файла
+ * учётных данных, сами токены не читаются (у Codex — только поле-признак в
+ * `auth.json`). Ответ о входе трёхзначный (`authHints.ts`): «не нашёл файл»
+ * ещё не значит «не вошёл»; «не вошёл» — только словами самого CLI.
  */
 
 import { execFile } from 'node:child_process';
@@ -13,7 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import { hasClaudeEnvironmentAuth, hasCodexEnvironmentAuth, resolveAuthState } from './authHints';
+import { hasClaudeEnvironmentAuth, hasCodexEnvironmentAuth, resolveAuthState, type AuthState } from './authHints';
 import type { ClaudeCliProbe } from './claudeCode';
 import type { CodexCliProbe } from './codex';
 import { localModel } from './localModel';
@@ -112,6 +114,57 @@ async function version(file: string): Promise<string | null> {
   }
 }
 
+/**
+ * Что CLI сам говорит о входе: `true`, `false` или `null` — ответа нет.
+ *
+ * Замер 26.09.2026: `claude auth status` отдаёт JSON с `"loggedIn": false`,
+ * `codex login status` — «Not logged in»; вошедшие — `"loggedIn": true` и
+ * «Logged in using ChatGPT» (27.09.2026). Проба по файлу при этом отвечала
+ * «не знаю», а на маке — всегда: там вход Claude лежит в Связке ключей, а не
+ * в файле. `null` — CLI не ответил или сказал непонятное: тогда решает файл.
+ */
+export function loginFromCli(cli: Cli, output: string): boolean | null {
+  if (cli === 'claude') {
+    const начало = output.indexOf('{');
+    const конец = output.lastIndexOf('}');
+    if (начало < 0 || конец < начало) return null;
+    try {
+      const ответ = JSON.parse(output.slice(начало, конец + 1)) as { loggedIn?: unknown };
+      return typeof ответ.loggedIn === 'boolean' ? ответ.loggedIn : null;
+    } catch {
+      return null;
+    }
+  }
+  if (/^\s*not logged in/imu.test(output)) return false;
+  if (/^\s*logged in/imu.test(output)) return true;
+  return null;
+}
+
+/** Спросить CLI о входе в том окружении, какое он получит в работе. */
+async function askLogin(cli: Cli, file: string, env: NodeJS.ProcessEnv): Promise<boolean | null> {
+  const черезОболочку = /\.(cmd|bat)$/iu.test(file);
+  const args = cli === 'claude' ? ['auth', 'status', '--json'] : ['login', 'status'];
+  try {
+    const { stdout, stderr } = await run(черезОболочку ? `"${file}"` : file, args, {
+      timeout: 10_000,
+      encoding: 'utf8',
+      windowsHide: true,
+      shell: черезОболочку,
+      env,
+    });
+    return loginFromCli(cli, `${stdout}\n${stderr}`);
+  } catch (error) {
+    // Невошедший CLI может выйти с ненулевым кодом — ответ при этом в выводе.
+    const { stdout = '', stderr = '' } = error as { stdout?: string; stderr?: string };
+    return loginFromCli(cli, `${stdout}\n${stderr}`);
+  }
+}
+
+/** Ответ CLI главнее: файл и окружение решают, только когда CLI промолчал. */
+export function decideLogin(cliAnswer: boolean | null, fileCheck: boolean, environmentAuth: boolean): AuthState {
+  return cliAnswer ?? resolveAuthState(fileCheck, environmentAuth);
+}
+
 export async function cliStatus(cli: Cli, env: NodeJS.ProcessEnv = process.env): Promise<CliStatus> {
   const file = resolveCli(cli, env);
   if (!file) return { installed: false, loggedIn: false };
@@ -154,7 +207,8 @@ export function createClaudeProbe(env: NodeJS.ProcessEnv = process.env): ClaudeC
       // человека. Нужен только сам установленный Claude Code.
       if (localModel()) return { ...status, loggedIn: status.installed };
       const какУCli = agentEnv(env);
-      return { ...status, loggedIn: resolveAuthState(status.loggedIn, hasClaudeEnvironmentAuth(какУCli)) };
+      const ответ = status.installed && status.path ? await askLogin('claude', status.path, какУCli) : null;
+      return { ...status, loggedIn: decideLogin(ответ, status.loggedIn, hasClaudeEnvironmentAuth(какУCli)) };
     },
   };
 }
@@ -164,7 +218,8 @@ export function createCodexProbe(env: NodeJS.ProcessEnv = process.env): CodexCli
     async status() {
       const status = await cliStatus('codex', env);
       const какУCli = agentEnv(env);
-      return { ...status, loggedIn: resolveAuthState(status.loggedIn, hasCodexEnvironmentAuth(какУCli)) };
+      const ответ = status.installed && status.path ? await askLogin('codex', status.path, какУCli) : null;
+      return { ...status, loggedIn: decideLogin(ответ, status.loggedIn, hasCodexEnvironmentAuth(какУCli)) };
     },
   };
 }

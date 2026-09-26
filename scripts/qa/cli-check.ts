@@ -24,6 +24,7 @@ import {
   commonCliPaths,
   createClaudeProbe,
   createCodexProbe,
+  loginFromCli,
   resolveCli,
 } from '../../jarvis/backends/cliProbes';
 import { cliLaunch } from '../../jarvis/backends/spawnCli';
@@ -131,17 +132,29 @@ async function проверить(что: Проверяемый): Promise<void>
       : { прошло: false, почему: статус.error ?? 'installed: false' },
   );
 
-  // 4. Вход честно назван неизвестным, а не выдуман.
+  // 4. Вход назван честно, а не выдуман.
   //
-  // Ключей в окружении нет, файла учётных данных нет — и ответ обязан быть
-  // 'unknown', а не true. Ложное «вошёл» отправило бы человека искать поломку
-  // там, где её нет, а ложное «не вошёл» заперло бы рабочий бэкенд навсегда.
+  // С 27.09.2026 проба спрашивает сам CLI, и его ответ главнее файла: «не
+  // вошёл» теперь законный ответ — если так сказал CLI. Здесь CLI спрашивается
+  // отдельно, и проба обязана с ним совпасть. Промолчал CLI — прежнее правило:
+  // только 'unknown' или true, потому что ложное «не вошёл» заперло бы
+  // рабочий бэкенд навсегда.
   const проба = что.cli === 'claude' ? await createClaudeProbe().status() : await createCodexProbe().status();
+  const спросили =
+    путь && статус.installed
+      ? await запуститьКакДжарвис(путь, что.cli === 'claude' ? ['auth', 'status', '--json'] : ['login', 'status'], 30_000)
+      : null;
+  const сказалCli = спросили ? loginFromCli(что.cli, спросили.вывод) : null;
+  console.log(`    CLI о входе: ${сказалCli === null ? 'молчит' : String(сказалCli)}`);
   записать(
     `${что.имя}: вход назван честно, а не выдуман`,
-    проба.loggedIn === 'unknown' || проба.loggedIn === true
-      ? { прошло: true }
-      : { прошло: false, почему: `loggedIn: ${String(проба.loggedIn)}` },
+    сказалCli !== null
+      ? проба.loggedIn === сказалCli
+        ? { прошло: true }
+        : { прошло: false, почему: `CLI говорит ${String(сказалCli)}, а проба — ${String(проба.loggedIn)}` }
+      : проба.loggedIn === 'unknown' || проба.loggedIn === true
+        ? { прошло: true }
+        : { прошло: false, почему: `CLI молчит, а проба выдумала loggedIn: ${String(проба.loggedIn)}` },
   );
   console.log(`    вход: ${String(проба.loggedIn)}, пробовать можно: ${isUsable(проба.loggedIn)}`);
 
