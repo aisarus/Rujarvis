@@ -24,6 +24,11 @@
  *   JARVIS_BROWSER=safari pnpm jarvis:browser-check
  */
 
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
 import { PROFILE_DIR, closeTab, dispose, браузераНет, порядокКаналов } from '../../jarvis/desktop/browser';
 import { вебДвижок, выбратьДвижок } from '../../jarvis/desktop/webDriver';
 import { jarvisHome } from '../../jarvis/setup/paths';
@@ -41,12 +46,21 @@ function записать(имя: string, ответ: Ответ): void {
   console.log(`  ${метка} ${имя}${ответ.прошло === true ? '' : ` — ${ответ.почему}`}`);
 }
 
-/** Своя страница, без сети: чужая однажды ляжет, и красным будет не наш код. */
+/**
+ * Своя страница, без сети: чужая однажды ляжет, и красным будет не наш код.
+ *
+ * Файлом, а не `data:`-адресом. Safari не пускает переход на `data:` верхнего
+ * уровня — это его защита, а не наша поломка, и мерить ею нечестно: проба
+ * падала бы там, где настоящая работа идёт нормально. Chromium через
+ * Playwright `data:` берёт, но пусть у обоих движков будет один стенд.
+ */
 function страница(заголовок: string, текст: string): string {
   const html =
     `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${заголовок}</title></head>` +
     `<body><h1>${заголовок}</h1><p>${текст}</p></body></html>`;
-  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+  const файл = path.join(mkdtempSync(path.join(os.tmpdir(), 'rujarvis-proba-')), 'proba.html');
+  writeFileSync(файл, html, 'utf8');
+  return pathToFileURL(файл).href;
 }
 
 const МЕТКА = 'Проба вкладок Rujarvis';

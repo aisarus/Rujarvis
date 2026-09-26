@@ -190,11 +190,25 @@ export const КАК_РАЗРЕШИТЬ_JS =
 const ОТВЕТ_МС = 20_000;
 
 async function осаскрипт(скрипт: string): Promise<string> {
-  const { stdout } = await запустить('osascript', appleScriptArgs(скрипт), {
-    timeout: ОТВЕТ_МС,
-    maxBuffer: 8 * 1024 * 1024,
-  });
-  return stdout;
+  try {
+    const { stdout } = await запустить('osascript', appleScriptArgs(скрипт), {
+      timeout: ОТВЕТ_МС,
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    return stdout;
+  } catch (беда) {
+    // Причина — в stderr, а не в сообщении.
+    //
+    // `execFile` кладёт в message саму команду, и для AppleScript это
+    // пятнадцать строк скрипта без единого слова о том, что не понравилось.
+    // Настоящий ответ osascript — «Not authorized to send Apple Events»,
+    // «Safari got an error: …» — лежит в stderr, и без него отладка сводится
+    // к гаданию. Поймано первым же живым прогоном Safari 26.09.2026: замер
+    // упал, напечатал весь скрипт и ни слова о причине.
+    const причина = (беда as { stderr?: string }).stderr?.trim();
+    if (причина) throw new Error(причина);
+    throw беда;
+  }
 }
 
 /** Открыть адрес в текущей вкладке Safari и вывести его вперёд. */
