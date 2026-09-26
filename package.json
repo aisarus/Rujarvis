@@ -41,7 +41,8 @@
     "jarvis:cli-check": "tsx scripts/qa/cli-check.ts",
     "jarvis:browser-check": "tsx scripts/qa/browser-check.ts",
     "jarvis:qa": "node build.mjs && electron dist/qa/acceptance.cjs",
-    "jarvis:hands-check": "node build.mjs && tsx scripts/qa/hands-check.ts"
+    "jarvis:hands-check": "node build.mjs && tsx scripts/qa/hands-check.ts",
+    "jarvis:login-check": "tsx scripts/qa/login-window-check.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

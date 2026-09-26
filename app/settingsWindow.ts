@@ -7,11 +7,12 @@
  */
 
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
 
+import { терминалДляВхода } from './loginTerminal';
 import { APP_ROOT } from './root';
 import { cliStatus, createClaudeProbe, createCodexProbe } from '../jarvis/backends/cliProbes';
 import { checkLocalModel, normaliseEndpoint } from '../jarvis/backends/localModel';
@@ -295,8 +296,16 @@ function registerHandlers(): void {
   ipcMain.handle(`${SETTINGS_CHANNEL}:signIn`, async (_event, cli: 'claude' | 'codex') => {
     const status = await cliStatus(cli);
     if (!status.path) return false;
-    openTerminal(status.path, cli === 'claude' ? ['auth', 'login'] : ['login']);
-    return true;
+    const { paths } = current as SettingsWindowOptions;
+    // Подкоманды сверены с самими CLI 26.09.2026: `claude auth login` и
+    // `codex login` — обе существуют.
+    // Сценарий входа лежит в папке Джарвиса: всё на диске живёт под одной
+    // крышей, и мусор в чужих местах не остаётся.
+    return openTerminal(
+      status.path,
+      cli === 'claude' ? ['auth', 'login'] : ['login'],
+      path.join(paths.home, 'data'),
+    );
   });
 
   ipcMain.handle(`${SETTINGS_CHANNEL}:openUrl`, (_event, url: string) => {
@@ -304,23 +313,46 @@ function registerHandlers(): void {
   });
 }
 
-/** Открыть CLI во внешнем окне терминала: вход в аккаунт интерактивный. */
-function openTerminal(command: string, args: string[]): void {
-  if (process.platform === 'win32') {
-    spawn('cmd.exe', ['/c', 'start', '""', 'cmd', '/k', `"${command}"`, ...args], {
+/**
+/**
+ * Открыть CLI во внешнем окне терминала: вход в аккаунт интерактивный.
+ *
+ * Сборка живёт в `loginTerminal.ts` и проверяется тестами на обе платформы:
+ * поломка была ровно в кавычках, и увидеть её можно было только на живой
+ * машине.
+ *
+ * Отказ больше не глотается. Раньше стояло `stdio: 'ignore'` и ничего сверх, и
+ * на маке без разрешения на автоматизацию Терминала вход просто НЕ ПРОИСХОДИЛ
+ * молча: окно не открывалось, ошибка уходила в никуда, а человек оставался на
+ * шаге, который обойти нельзя.
+ */
+function openTerminal(command: string, args: string[], папка: string): boolean {
+  const запуск = терминалДляВхода(command, args, папка);
+  try {
+    if (запуск.сценарий) {
+      mkdirSync(path.dirname(запуск.сценарий.файл), { recursive: true });
+      writeFileSync(запуск.сценарий.файл, запуск.сценарий.текст, 'utf8');
+    }
+    const дитя = spawn(запуск.file, запуск.args, {
       detached: true,
-      stdio: 'ignore',
+      // stderr читаем: на маке именно туда приезжает «not authorized to send
+      // Apple events», и это единственный след отказа.
+      stdio: ['ignore', 'ignore', 'pipe'],
       windowsHide: false,
-    }).unref();
-    return;
+    });
+    дитя.stderr?.on('data', (кусок: Buffer) => {
+      const текст = кусок.toString('utf8').trim();
+      if (текст) console.error(`[jarvis] окно входа отказало: ${текст.slice(0, 400)}`);
+    });
+    дитя.on('error', (беда: Error) => {
+      console.error(`[jarvis] окно входа не запустилось: ${беда.message}`);
+    });
+    дитя.unref();
+    return true;
+  } catch (беда) {
+    console.error(
+      `[jarvis] окно входа не запустилось: ${беда instanceof Error ? беда.message : String(беда)}`,
+    );
+    return false;
   }
-  if (process.platform === 'darwin') {
-    const line = [command, ...args].map((part) => `'${part.replace(/'/gu, "'\\''")}'`).join(' ');
-    spawn('osascript', ['-e', `tell application "Terminal" to do script "${line.replace(/"/gu, '\\"')}"`], {
-      detached: true,
-      stdio: 'ignore',
-    }).unref();
-    return;
-  }
-  spawn('x-terminal-emulator', ['-e', command, ...args], { detached: true, stdio: 'ignore' }).unref();
 }
