@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { UiElement } from './elements';
+import type { DesktopControl } from '../desktop/driver';
 import {
+  открытьСсылку,
+  ЖДАТЬ_ДЕРЕВО_МС,
   номерСсылки,
   окноБраузера,
   разобратьСсылку,
@@ -185,5 +188,62 @@ describe('этоКлавишаВкладки', () => {
     for (const клавиши of ['ctrl+c', 'ctrl+v', 'enter', 'alt+f4', 'ctrl+s']) {
       expect(этоКлавишаВкладки(клавиши)).toBe(false);
     }
+  });
+});
+
+describe('открытьСсылку на медленной машине', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('ждёт, пока Chromium достроит дерево, а не сдаётся через три секунды', async () => {
+    // В CI на Windows первая «открой третью ссылку» ответила «не вижу ни одной
+    // ссылки», а следующие прошли: дерево строится по первому запросу, и
+    // трёх секунд раннеру не хватило. Здесь драйвер отвечает по секунде на
+    // запрос, а ссылки появляются только на четвёртом — со старым сроком это
+    // падало.
+    vi.useFakeTimers();
+    let запросов = 0;
+    const нажато: Array<{ x?: number; y?: number }> = [];
+    const desktop = {
+      windows: async () => [
+        { title: 'Проба — Microsoft Edge', focused: true, minimized: false, x: 0, y: 0, width: 1200, height: 900, pid: 1 },
+      ],
+      focus: async (title: string) => ({ title }),
+      elements: async () => {
+        запросов++;
+        await new Promise((r) => setTimeout(r, 1_000));
+        return { title: 'Проба — Microsoft Edge', elements: запросов >= 4 ? ДЕРЕВО_EDGE : [] };
+      },
+      click: async (где: { x?: number; y?: number }) => {
+        нажато.push(где);
+      },
+    } as unknown as DesktopControl;
+
+    const итог = открытьСсылку(desktop, 3);
+    await vi.advanceTimersByTimeAsync(ЖДАТЬ_ДЕРЕВО_МС + 2_000);
+    const ссылка = await итог;
+
+    expect(ссылка.name).toBe('Третья ссылка');
+    expect(нажато).toEqual([{ x: 149, y: 372 }]);
+  });
+
+  it('если ссылок нет совсем — честный отказ со временем ожидания', async () => {
+    vi.useFakeTimers();
+    const desktop = {
+      windows: async () => [
+        { title: 'Пусто — Microsoft Edge', focused: true, minimized: false, x: 0, y: 0, width: 1200, height: 900, pid: 1 },
+      ],
+      focus: async (title: string) => ({ title }),
+      elements: async () => ({ title: 'Пусто — Microsoft Edge', elements: [] }),
+      click: async () => undefined,
+    } as unknown as DesktopControl;
+
+    const итог = открытьСсылку(desktop, 1).catch((беда: Error) => беда);
+    await vi.advanceTimersByTimeAsync(ЖДАТЬ_ДЕРЕВО_МС + 2_000);
+    const беда = await итог;
+
+    expect(беда).toBeInstanceOf(Error);
+    expect((беда as Error).message).toMatch(/не вижу ни одной ссылки \(ждал \d+ с\)/u);
   });
 });

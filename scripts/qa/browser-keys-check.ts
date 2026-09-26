@@ -354,7 +354,9 @@ async function main(): Promise<void> {
       const к = parseDirectCommand('открой третью ссылку');
       try {
         if (к?.kind !== 'openLink') throw new Error('фраза не разобралась');
-        const нажата = await открытьСсылку(desktop, к.index);
+        const замер = { ждалиМс: 0 };
+        const нажата = await открытьСсылку(desktop, к.index, замер);
+        console.log(`    ${к.index}-я ссылка: дерево страницы ждали ${замер.ждалиМс} мс`);
         const дошло = await ждать(async () => /#three/u.test(активная(await s.инструмент('browser_tabs', { action: 'list' }))), 5_000);
         запиши(
           '«открой третью ссылку» при блокноте впереди',
@@ -379,7 +381,9 @@ async function main(): Promise<void> {
       const к = parseDirectCommand('открой первую ссылку');
       try {
         if (к?.kind !== 'openLink') throw new Error('фраза не разобралась');
-        const нажата = await открытьСсылку(desktop, к.index);
+        const замер = { ждалиМс: 0 };
+        const нажата = await открытьСсылку(desktop, к.index, замер);
+        console.log(`    ${к.index}-я ссылка: дерево страницы ждали ${замер.ждалиМс} мс`);
         const дошло = await ждать(async () => /#one/u.test(активная(await s.инструмент('browser_tabs', { action: 'list' }))), 5_000);
         запиши(
           '«открой первую ссылку» — первая страницы, а не кнопка браузера',
@@ -402,7 +406,9 @@ async function main(): Promise<void> {
       const к = parseDirectCommand('открой последнюю ссылку');
       try {
         if (к?.kind !== 'openLink') throw new Error('фраза не разобралась');
-        const нажата = await открытьСсылку(desktop, к.index);
+        const замер = { ждалиМс: 0 };
+        const нажата = await открытьСсылку(desktop, к.index, замер);
+        console.log(`    ${к.index}-я ссылка: дерево страницы ждали ${замер.ждалиМс} мс`);
         const дошло = await ждать(async () => /#five/u.test(активная(await s.инструмент('browser_tabs', { action: 'list' }))), 5_000);
         запиши(
           '«открой последнюю ссылку» берёт последнюю страницы, а не браузера',
