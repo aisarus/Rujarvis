@@ -267,7 +267,14 @@ jobs:
             echo 'Замер Safari не дошёл до итога: судить не по чему.'
             exit 1
           }
-          test "$safari_code" -ne 1 || { echo 'Вкладки в Safari не работают'; exit 1; }
+          # Код 2 у замера — «нечем мерить»: у раннера GitHub нет ни выданных
+          # Apple Events, ни живого Safari, и это про машину, а не про
+          # Джарвиса. Код 1 — настоящий провал, его не прощаем.
+          if [ "$safari_code" -eq 2 ]; then
+            echo 'Safari: нечем мерить — раннер не пускает к нему Apple Events.'
+          else
+            test "$safari_code" -ne 1 || { echo 'Вкладки в Safari не работают'; exit 1; }
+          fi
           if [ "$br_code" -eq 2 ]; then
             echo 'Вкладки: нечем мерить — на раннере нет ни одного браузера.'
             exit 0

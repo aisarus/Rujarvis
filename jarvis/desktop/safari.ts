@@ -205,8 +205,21 @@ async function осаскрипт(скрипт: string): Promise<string> {
     // «Safari got an error: …» — лежит в stderr, и без него отладка сводится
     // к гаданию. Поймано первым же живым прогоном Safari 26.09.2026: замер
     // упал, напечатал весь скрипт и ни слова о причине.
-    const причина = (беда as { stderr?: string }).stderr?.trim();
+    const свод = беда as { stderr?: string; code?: unknown; signal?: unknown; killed?: boolean };
+    const причина = свод.stderr?.trim();
     if (причина) throw new Error(причина);
+    // Пустой stderr — не «без причины».
+    //
+    // Так выглядит убитый по тайм-ауту osascript: Safari не ответил вовсе.
+    // Первый прогон на раннере GitHub дал именно это, и по сообщению
+    // «Command failed» отличить тайм-аут от отказа было нельзя. Разница
+    // важна: на тайм-аут говорят «нечем мерить», на отказ — «не работает».
+    if (свод.killed === true || свод.signal) {
+      throw new Error(
+        `Safari не ответил за ${Math.round(ОТВЕТ_МС / 1000)} с (${String(свод.signal ?? 'убит по тайм-ауту')}). ` +
+          'Он либо не запущен и не поднимается, либо система не пускает к нему Apple Events.',
+      );
+    }
     throw беда;
   }
 }
