@@ -117,57 +117,6 @@ jobs:
           test "$after" -ge "$before" || { echo 'модели после повторного запуска поредели'; exit 1; }
           grep -q 'уже установлено' /tmp/install2.log             || echo 'предупреждение: модели, похоже, качались заново'
 
-      - name: Повторная установка поверх работающего Джарвиса
-        # Установка → запуск → повторная установка → запуск. Выше установщик
-        # всегда гонялся с --no-launch, то есть поверх работающего Джарвиса —
-        # а человек обновляется именно так — ни разу. Новый запуск в конце
-        # упирается в одиночный экземпляр и тихо выходит: человек остаётся на
-        # старом коде.
-        #
-        # Приманка — чужой «Electron» по другому пути: установщик обязан гасить
-        # свои процессы по пути установки, а не всех с этим именем.
-        run: |
-          set -o pipefail
-          src="$HOME/Library/Application Support/Rujarvis/src"
-          bin="$src/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
-          own() { ps -axo pid=,comm= | while read -r pid comm; do if [ "$comm" = "$bin" ]; then echo "$pid"; fi; done; }
-          decoy_dir="$RUNNER_TEMP/decoy/node_modules/electron/dist/Electron.app/Contents/MacOS"
-          mkdir -p "$decoy_dir" && cp /bin/sleep "$decoy_dir/Electron"
-          "$decoy_dir/Electron" 900 &
-          decoy=$!
-          "$bin" "$src/dist/app/main.cjs" >/tmp/jarvis-before.log 2>&1 &
-          old=$!
-          sleep 10
-          kill -0 "$old" 2>/dev/null || { echo 'Джарвис не поднялся'; tail -30 /tmp/jarvis-before.log; exit 1; }
-          echo "запущен Джарвис pid $old"
-
-          bash install.sh --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" --whisper-model tiny 2>&1 | tee /tmp/install3.log | tail -20
-          sleep 10
-
-          now="$(own | tr '\n' ' ')"
-          echo "после переустановки процессы Джарвиса: ${now:-нет}"
-          failed=''
-          if kill -0 "$old" 2>/dev/null; then failed='старый Джарвис пережил переустановку'
-          elif [ "$(own | grep -c .)" -ne 1 ]; then failed="после переустановки должен работать ровно один Джарвис: ${now:-нет}"
-          elif ! kill -0 "$decoy" 2>/dev/null; then failed='погашена приманка с тем же именем по чужому пути'
-          fi
-
-          # Убираем за собой — только свои: процессы по пути установки и приманку по pid.
-          #
-          # И ДОЖИДАЕМСЯ выхода. Первая версия шага гасила и сразу шла дальше:
-          # окно настройки ещё жило и перехватило ввод следующей проверки —
-          # cua-check упал на writeInto, который проходил на трёх прогонах до
-          # этого (4e951e3).
-          for pid in $(own); do kill "$pid" 2>/dev/null || true; done
-          kill "$decoy" 2>/dev/null || true
-          waited=0
-          while [ -n "$(own)" ] && [ "$waited" -lt 20 ]; do sleep 1; waited=$((waited + 1)); done
-          for pid in $(own); do kill -KILL "$pid" 2>/dev/null || true; done
-          sleep 1
-          test -z "$(own)" || { echo "Джарвис не ушёл после проверки: $(own | tr '\n' ' ')"; exit 1; }
-          if [ -n "$failed" ]; then echo "$failed"; exit 1; fi
-          echo 'новый Джарвис запущен вместо старого, приманка цела'
-
       - name: Речь работает по кругу
         # Синтез своим голосом и распознавание своим же слухом: это отвечает
         # на «будет ли он говорить и слышать», не требуя микрофона.
@@ -402,6 +351,63 @@ jobs:
             exit 0
           fi
           test "$cli_code" -eq 0 || { echo "Claude Code на маке не работает (код $cli_code)"; exit 1; }
+
+      - name: Повторная установка поверх работающего Джарвиса
+        # Установка → запуск → повторная установка → запуск. Выше установщик
+        # всегда гонялся с --no-launch, то есть поверх работающего Джарвиса —
+        # а человек обновляется именно так — ни разу. Новый запуск в конце
+        # упирается в одиночный экземпляр и тихо выходит: человек остаётся на
+        # старом коде.
+        #
+        # Приманка — чужой «Electron» по другому пути: установщик обязан гасить
+        # свои процессы по пути установки, а не всех с этим именем.
+        #
+        # Последним нарочно: на маке Джарвис при старте сам спрашивает микрофон и
+        # «Универсальный доступ», и окна этих вопросов остаются висеть и после его
+        # выхода. Шаг, стоявший раньше, отнимал ими ввод у cua-check: writeInto
+        # падал на 4e951e3 и 48ce89f, хотя Джарвис к тому времени уже вышел.
+        run: |
+          set -o pipefail
+          src="$HOME/Library/Application Support/Rujarvis/src"
+          bin="$src/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
+          own() { ps -axo pid=,comm= | while read -r pid comm; do if [ "$comm" = "$bin" ]; then echo "$pid"; fi; done; }
+          decoy_dir="$RUNNER_TEMP/decoy/node_modules/electron/dist/Electron.app/Contents/MacOS"
+          mkdir -p "$decoy_dir" && cp /bin/sleep "$decoy_dir/Electron"
+          "$decoy_dir/Electron" 900 &
+          decoy=$!
+          "$bin" "$src/dist/app/main.cjs" >/tmp/jarvis-before.log 2>&1 &
+          old=$!
+          sleep 10
+          kill -0 "$old" 2>/dev/null || { echo 'Джарвис не поднялся'; tail -30 /tmp/jarvis-before.log; exit 1; }
+          echo "запущен Джарвис pid $old"
+
+          bash install.sh --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" --whisper-model tiny 2>&1 | tee /tmp/install3.log | tail -20
+          sleep 10
+
+          now="$(own | tr '\n' ' ')"
+          echo "после переустановки процессы Джарвиса: ${now:-нет}"
+          failed=''
+          if kill -0 "$old" 2>/dev/null; then failed='старый Джарвис пережил переустановку'
+          elif [ "$(own | grep -c .)" -ne 1 ]; then failed="после переустановки должен работать ровно один Джарвис: ${now:-нет}"
+          elif ! kill -0 "$decoy" 2>/dev/null; then failed='погашена приманка с тем же именем по чужому пути'
+          fi
+
+          # Убираем за собой — только свои: процессы по пути установки и приманку по pid.
+          #
+          # И ДОЖИДАЕМСЯ выхода. Первая версия шага гасила и сразу шла дальше:
+          # окно настройки ещё жило и перехватило ввод следующей проверки —
+          # cua-check упал на writeInto, который проходил на трёх прогонах до
+          # этого (4e951e3).
+          for pid in $(own); do kill "$pid" 2>/dev/null || true; done
+          kill "$decoy" 2>/dev/null || true
+          waited=0
+          while [ -n "$(own)" ] && [ "$waited" -lt 20 ]; do sleep 1; waited=$((waited + 1)); done
+          for pid in $(own); do kill -KILL "$pid" 2>/dev/null || true; done
+          sleep 1
+          test -z "$(own)" || { echo "Джарвис не ушёл после проверки: $(own | tr '\n' ' ')"; exit 1; }
+          if [ -n "$failed" ]; then echo "$failed"; exit 1; fi
+          echo 'новый Джарвис запущен вместо старого, приманка цела'
+
 
       - name: Журнал установки, если что-то упало
         if: failure()
