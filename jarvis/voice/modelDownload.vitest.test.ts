@@ -94,7 +94,11 @@ function поставить(installRoot: string, fetchImpl: typeof fetch, ещё
     isInstalled: async () => existsSync(path.join(installRoot, КОРЕНЬ, 'ok')),
     fetchImpl,
     retryDelayMs: () => 1,
-    stallMs: 200,
+    // Щедро: короткий срок нужен только тесту на замирание, он просит свой.
+    // При 200 мс для всех медленный Windows-раннер CI (антивирус проверяет
+    // каждую запись во временный файл) ловил ложное «замирание» между кусками:
+    // обрыв «на 400 000» случался на 65 536, и тест падал на 9dcaa6f.
+    stallMs: 10_000,
     extractImpl: async (архив, куда) => {
       скачано = new Uint8Array(readFileSync(архив));
       const { mkdirSync } = await import('node:fs');
@@ -126,7 +130,7 @@ describe('загрузка модели по плохой связи', () => {
     // Без срока полоска прогресса стояла бы вечно.
     const { installRoot } = стенд();
     const журнал: string[] = [];
-    const { итог, скачано } = поставить(installRoot, сервер(['замереть', 'цело'], журнал));
+    const { итог, скачано } = поставить(installRoot, сервер(['замереть', 'цело'], журнал), { stallMs: 1_000 });
 
     await итог;
     expect(журнал).toEqual(['', 'bytes=1000-']);
