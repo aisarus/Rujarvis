@@ -97,7 +97,8 @@ const APP_ALIASES: ReadonlyArray<readonly [readonly string[], string]> = [
   [['проводник', 'эксплорер', 'explorer', 'file explorer', 'files'], 'explorer'],
   [['терминал', 'консоль', 'командную строку', 'cmd', 'terminal', 'command prompt', 'console'], 'wt'],
   [['код', 'вскод', 'вс код', 'вижуал студио код', 'vscode', 'code', 'vs code', 'visual studio code'], 'code'],
-  [['спотифай', 'спотик', 'spotify'], 'spotify'],
+  // «Спотифы» — Whisper small, «спатифы» — base: замер синтезом, 26.09.2026.
+  [['спотифай', 'спотик', 'спотифы', 'спатифы', 'spotify'], 'spotify'],
   // Дискорда здесь нет намеренно, хотя он установлен.
   //
   // `start discord` не работает: Discord не кладёт себя ни в PATH, ни в «App

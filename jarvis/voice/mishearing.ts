@@ -24,6 +24,8 @@
  * будет не найти.
  */
 
+import { matchesWakeToken } from './wakeWord';
+
 /**
  * Замены по отдельному слову.
  *
@@ -41,6 +43,10 @@ const WORDS_AT_START: Record<string, string> = {
   // которого правило и завели, показывает эти слова только первыми.
   'закрою': 'закрой',
   'открою': 'открой',
+  // Прошедшее время вместо повелительного: «Джарвис, открыл хром» — замер
+  // синтезом Piper → Whisper base, 26.09.2026. Тоже настоящее слово, поэтому
+  // тоже только в начале команды.
+  'открыл': 'открой',
 };
 
 const WORDS: Record<string, string> = {
@@ -58,6 +64,9 @@ const WORDS: Record<string, string> = {
   'хрум': 'хром',
   'хроум': 'хром',
 
+
+  // Закрытие: «Загрой спатифы» — замер синтезом Piper → Whisper base.
+  'загрой': 'закрой',
 
   // Громкость.
   'уромче': 'громче',
@@ -90,6 +99,8 @@ const WHOLE: Record<string, string> = {
   'тешина': 'тишина',
   'тишена': 'тишина',
   'тешена': 'тишина',
+  // Замер синтезом Piper (Ирина) → Whisper small, 26.09.2026: «Дишина».
+  'дишина': 'тишина',
   // «Молкин» — один раз, и это явно «молчи»: самостоятельным словом не бывает.
   'молкин': 'молчи',
 
@@ -99,6 +110,17 @@ const WHOLE: Record<string, string> = {
   // Только целой фразой: одно слово «top» помощнику не говорят, а «stop» —
   // красная линия.
   'top': 'stop',
+  // Пауза — тоже красная линия. Замер синтезом Piper (Lessac) → Whisper base,
+  // 26.09.2026: на «Pause» распознаватель выдал «4s». Целой фразой: так
+  // человек Джарвису не говорит никогда.
+  '4s': 'pause',
+  // Там же: «Pro down» вместо «Scroll down».
+  'pro down': 'scroll down',
+  // Сдвиг границы слов: «прокрути вниз» → «прокрутив низ», замер base.
+  //
+  // Зеркальных «pro up» и «прокрутив верх» здесь нет нарочно: они не
+  // наблюдались, а этот слой держит только замеренное.
+  'прокрутив низ': 'прокрути вниз',
   'crawl down': 'scroll down',
   'roll down': 'scroll down',
   'crawl up': 'scroll up',
@@ -156,11 +178,28 @@ export function fixMishearings(input: string): string {
     result = result.replace(pattern, replacement);
   }
 
-  // Сначала — то, что чиним ТОЛЬКО в начале фразы.
-  result = result.replace(/^(\s*)(\p{L}+)/u, (целиком, пробелы: string, слово: string) => {
+  // Сначала — то, что чиним ТОЛЬКО в начале команды.
+  //
+  // Начало команды — первое слово, а если первым идёт имя, то первое ПОСЛЕ
+  // имени. Прежде бралось буквально первое слово, и «Закрою Steam» правилось,
+  // а «Джарвис, закрою Steam» — нет. Хотя второе и есть то, как говорят, пока
+  // окно слушания закрыто.
+  const вНачале = (слово: string): string | null => {
     const fixed = WORDS_AT_START[слово.toLowerCase()];
-    if (!fixed) return целиком;
-    return пробелы + (/^\p{Lu}/u.test(слово) ? fixed.charAt(0).toUpperCase() + fixed.slice(1) : fixed);
+    if (!fixed) return null;
+    return /^\p{Lu}/u.test(слово) ? fixed.charAt(0).toUpperCase() + fixed.slice(1) : fixed;
+  };
+  result = result.replace(
+    /^(\s*)(\p{L}+)([\s,]+)(\p{L}+)/u,
+    (целиком, пробелы: string, первое: string, между: string, второе: string) => {
+      if (!matchesWakeToken(первое.toLowerCase())) return целиком;
+      const fixed = вНачале(второе);
+      return fixed ? пробелы + первое + между + fixed : целиком;
+    },
+  );
+  result = result.replace(/^(\s*)(\p{L}+)/u, (целиком, пробелы: string, слово: string) => {
+    const fixed = вНачале(слово);
+    return fixed ? пробелы + fixed : целиком;
   });
 
   // Пословно, с сохранением знаков препинания вокруг слова.

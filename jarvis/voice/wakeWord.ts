@@ -109,7 +109,7 @@ function matchesLatinWakeToken(token: string): boolean {
   return editDistance(token, 'jarvis', 1) <= 1;
 }
 
-function matchesWakeToken(token: string): boolean {
+export function matchesWakeToken(token: string): boolean {
   if (WAKE_WORD_VARIANTS.includes(token)) return true;
   if (/^[a-z]+$/u.test(token)) return matchesLatinWakeToken(token);
   // Only test tokens of a plausible length — «да» must never wake Jarvis.

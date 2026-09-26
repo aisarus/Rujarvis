@@ -12,7 +12,7 @@
  * character is treated as noise too — no Russian command is one letter.
  */
 
-import { matchVoiceControl } from './interrupts';
+import { главноеСловоПоЗвучанию, matchVoiceControl } from './interrupts';
 import { stripFiller } from './filler';
 
 /** Bracketed narration, including the unbalanced form Whisper often emits. */
@@ -352,5 +352,8 @@ export function isSilenceRequest(text: string): boolean {
   // Тот же список, что у команд и прерываний. Свой здесь был третьим, и он не
   // знал «быстро замолчи» и «а теперь тишина».
   const words = stripFiller(wordsOf(text), SILENCE_FILLER);
-  return SILENCE_PHRASES.includes(words.join(' '));
+  if (SILENCE_PHRASES.includes(words.join(' '))) return true;
+  // «Дышина», «Дишина» — тишина по звучанию. Одно узнавание на обоих путях,
+  // а не своё здесь: третий список уже однажды отстал от двух других.
+  return words.length === 1 && главноеСловоПоЗвучанию(words[0] as string) === 'mute';
 }
