@@ -44,8 +44,14 @@ $f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/ais
 macOS, одна строка в терминале:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.sh | bash
+f=/tmp/rujarvis-install.sh; curl -fsSL https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.sh -o "$f" && bash "$f"
 ```
+
+Тоже через файл, а не через `curl | bash`. Причина замерена: у скрипта,
+пришедшего по конвейеру, `stdin` уже пуст, и он не может ничего спросить —
+вопрос от Homebrew, corepack или pnpm молча провалится вместо того, чтобы
+дойти до вас. Файлом `stdin` остаётся вашим терминалом, и ключи пишутся
+обычным способом, без `-s --`.
 
 Тот же порядок: Homebrew, Git и Node.js ставятся сами, если их нет, приложение
 собирается, модели речи скачиваются, **Rujarvis** появляется в `~/Applications`.

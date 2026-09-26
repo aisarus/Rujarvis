@@ -39,8 +39,14 @@ compiler, no Rust. Running it again updates the install.
 macOS, one line in the terminal:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.sh | bash -s -- --language en
+f=/tmp/rujarvis-install.sh; curl -fsSL https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.sh -o "$f" && bash "$f" --language en
 ```
+
+Through a file as well, not `curl | bash`. The reason is measured: a script
+arriving through a pipe has an already-empty `stdin` and cannot ask you
+anything — a prompt from Homebrew, corepack or pnpm fails silently instead of
+reaching you. Run from a file, `stdin` stays your terminal, and flags read
+normally, without `-s --`.
 
 Same order: Homebrew, Git and Node.js are installed if missing, the app is
 built, the speech models are downloaded, **Rujarvis** lands in `~/Applications`.
