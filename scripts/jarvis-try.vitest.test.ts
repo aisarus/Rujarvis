@@ -5,6 +5,7 @@ describe('jarvis:try arguments', () => {
   it('defaults to interactive mode in the current directory', () => {
     expect(parseArgs([], '/work')).toEqual({
       dry: false,
+      probe: false,
       utterance: undefined,
       workspace: '/work',
     });
@@ -32,6 +33,12 @@ describe('jarvis:try arguments', () => {
     const args = parseArgs(['--workspace', String.raw`D:\Projects\aegis`, 'почини', 'билд'], '/work');
     expect(args.workspace).toBe(String.raw`D:\Projects\aegis`);
     expect(args.utterance).toBe('почини билд');
+  });
+
+  it('--probe уводит данные во временную папку и не попадает в реплику', () => {
+    const args = parseArgs(['--probe', 'что', 'на', 'экране'], '/work');
+    expect(args.probe).toBe(true);
+    expect(args.utterance).toBe('что на экране');
   });
 
   it('falls back to the current directory when --workspace has no value', () => {

@@ -10,6 +10,12 @@
  *   pnpm run jarvis:try                          # интерактивно
  *   pnpm run jarvis:try -- "открой хром"         # одна реплика
  *   pnpm run jarvis:try -- --dry "почини билд"   # только разбор, без запуска
+ *   pnpm run jarvis:try -- --probe "что на экране"  # проба: память и данные во временной папке
+ *
+ * `--probe` — для проверок на машине человека. Без него реплики ложатся в
+ * его настоящую память, и после перезапуска Джарвис может принять его
+ * короткую фразу за продолжение чужой пробы: 27.09.2026 так легло восемь
+ * проверочных задач.
  */
 
 import { mkdtempSync } from 'node:fs';
@@ -37,12 +43,15 @@ const RESET = '\u001b[0m';
 
 export interface TryArgs {
   dry: boolean;
+  /** Память и данные — во временной папке, а не в настоящих. */
+  probe: boolean;
   utterance?: string;
   workspace: string;
 }
 
 export function parseArgs(argv: readonly string[], cwd: string): TryArgs {
   const dry = argv.includes('--dry');
+  const probe = argv.includes('--probe');
   const workspaceFlag = argv.indexOf('--workspace');
   const hasWorkspace = workspaceFlag !== -1;
   const workspace = hasWorkspace ? (argv[workspaceFlag + 1] ?? cwd) : cwd;
@@ -52,9 +61,9 @@ export function parseArgs(argv: readonly string[], cwd: string): TryArgs {
   const workspaceValueIndex = hasWorkspace ? workspaceFlag + 1 : -1;
   const rest = argv.filter(
     (arg, index) =>
-      arg !== '--dry' && arg !== '--workspace' && index !== workspaceValueIndex,
+      arg !== '--dry' && arg !== '--probe' && arg !== '--workspace' && index !== workspaceValueIndex,
   );
-  return { dry, utterance: rest.join(' ').trim() || undefined, workspace };
+  return { dry, probe, utterance: rest.join(' ').trim() || undefined, workspace };
 }
 
 async function main(): Promise<void> {
@@ -79,9 +88,10 @@ async function main(): Promise<void> {
   // стола и без хука: агент не видел ни окон, ни вопросов хука, и путь, на
   // котором у человека «управление окнами отказывало», отсюда не повторить.
   const paths = jarvisPaths();
+  const проба = args.probe ? mkdtempSync(path.join(os.tmpdir(), 'jarvis-try-probe-')) : null;
   const mcp = args.dry
     ? null
-    : writeDesktopMcpConfig({ appRoot: process.cwd(), dataDir: paths.data, language: currentLanguage() });
+    : writeDesktopMcpConfig({ appRoot: process.cwd(), dataDir: проба ?? paths.data, language: currentLanguage() });
   if (mcp && !mcp.ok) {
     console.log(
       `${YELLOW}управление экраном выключено: ${'missing' in mcp ? `не найден ${mcp.missing} — сначала pnpm build` : String(mcp.error)}${RESET}`,
@@ -110,6 +120,7 @@ async function main(): Promise<void> {
     desktopMcpConfig: mcp?.ok ? mcp.file : undefined,
     gateSettings: gate?.ok ? gate.settings : undefined,
     homeDir: paths.home,
+    memoryFile: проба ? path.join(проба, 'memory.json') : undefined,
     settings: () => settings,
     speak: (text) => {
       if (text) console.log(`${GREEN}[голос] ${text}${RESET}`);

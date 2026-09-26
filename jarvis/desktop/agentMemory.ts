@@ -22,9 +22,16 @@ export interface Note {
   updatedAt: number;
 }
 
-/** Заметки агента — в папке данных Джарвиса, рядом с журналом. */
+/**
+ * Заметки агента — в папке данных Джарвиса, рядом с журналом.
+ *
+ * Путь приходит из конфига MCP, как у журнала, ящика правок и плана. Раньше
+ * он брался только отсюда, и проверка с временной папкой данных всё равно
+ * писала заметки в настоящие: 27.09.2026 живой прогон положил владельцу
+ * «Список окон с pid».
+ */
 function memoryFile(): string {
-  return path.join(jarvisPaths().data, 'agent-notes.json');
+  return process.env.JARVIS_AGENT_NOTES?.trim() || path.join(jarvisPaths().data, 'agent-notes.json');
 }
 
 function read(): Note[] {

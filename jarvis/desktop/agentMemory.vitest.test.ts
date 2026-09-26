@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -18,6 +18,21 @@ describe('память агента между запусками', () => {
   afterEach(() => {
     if (previous === undefined) delete process.env.JARVIS_HOME;
     else process.env.JARVIS_HOME = previous;
+  });
+
+  it('пишет туда, куда указал конфиг MCP, а не в папку данных по умолчанию', () => {
+    // Проверка с временной папкой данных писала заметки в настоящие.
+    const свой = path.join(mkdtempSync(path.join(os.tmpdir(), 'jarvis-own-notes-')), 'agent-notes.json');
+    const было = process.env.JARVIS_AGENT_NOTES;
+    process.env.JARVIS_AGENT_NOTES = свой;
+    try {
+      remember('проба', 'значение');
+      expect(existsSync(свой)).toBe(true);
+      expect(existsSync(path.join(home, 'data', 'agent-notes.json'))).toBe(false);
+    } finally {
+      if (было === undefined) delete process.env.JARVIS_AGENT_NOTES;
+      else process.env.JARVIS_AGENT_NOTES = было;
+    }
   });
 
   it('помнит записанное после перезапуска', () => {

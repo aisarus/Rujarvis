@@ -74,6 +74,8 @@ export function writeDesktopMcpConfig(options: DesktopMcpConfigOptions): Desktop
               JARVIS_NOTES: path.join(options.dataDir, 'notes.json'),
               // План работы: агент его пишет, окно его показывает.
               JARVIS_PLAN: path.join(options.dataDir, 'plan.json'),
+              // Заметки агента между запусками — там же, где всё остальное.
+              JARVIS_AGENT_NOTES: path.join(options.dataDir, 'agent-notes.json'),
             },
           },
         },
