@@ -240,6 +240,17 @@ pnpm typecheck && pnpm typecheck:tests && pnpm test && pnpm build
   «тишины» в `interrupts.ts`); `pnpm jarvis:roundtrip -- --en --model small`
   три прогона подряд — не ниже 11/12; ни одной ложной побудки на обычных словах
   (тест).
+  **Замеры 27.09.2026.** Исходно small, три прогона: 11, 10, 10 из 12;
+  «Switch to Telegram» — 0 из 3 («which/Pwych/Twitch to Telegram»), «Close
+  Spotify» → «Low Spotify» и «Stop» → «job» — по разу. Запас тишины перед
+  речью ни при чём: при 0, 400 и 1000 мс и с шумом вместо нуля — те же
+  потери (круг и так подкладывает 400 мс, живой путь — 300 мс). Голос тоже ни
+  при чём: lessac теряет первое слово 14 раз из 25, LibriTTS — 13 из 25
+  («Wish/which to Telegram», «Low/Glow/Flow Spotify»). Это Whisper small на
+  коротких фразах со стечением согласных в начале (sw, cl, st, scr).
+  Начальной подсказки у sherpa-onnx Whisper нет. Остаётся правило по
+  звучанию для глагола в начале команды — с тестом на ложные побудки
+  («which to choose», «good job», «low battery»).
 - [ ] **Голос по кругу — только голосом Ирины.** Остальные голоса не мерились.
   **Приёмка:** поставить Дмитрия, Руслана, Дениса; `jarvis:roundtrip` на small с
   каждым — все красные линии «ОК»; цифры в `docs/jarvis/voice-ru.md`.
