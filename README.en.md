@@ -22,13 +22,13 @@ Interpreter.
 Windows 10/11, one line in PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 | iex
+$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; & $f
 ```
 
 English by default instead of Russian:
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1))) -Language en
+$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; & $f -Language en
 ```
 
 The installer puts Git and Node.js in place if they are missing, builds the

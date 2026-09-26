@@ -20,14 +20,21 @@ Voice Access. Не нужен облачный сервис для распоз�
 Windows 10/11, одна строка в PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 | iex
+$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; & $f
 ```
 
 Английский по умолчанию:
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1))) -Language en
+$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; & $f -Language en
 ```
+
+Скрипт сначала скачивается в файл, а не выполняется из строки. Причина
+прикладная: у него BOM, без которого Windows PowerShell 5.1 читает русские
+сообщения как ANSI и не разбирает файл вовсе. Но `irm | iex` получает файл
+СТРОКОЙ, и BOM попадает в её начало — открывающий комментарий перестаёт
+распознаваться, и установка падает с «Непредвиденная лексема». Через файл BOM
+работает как задуман, и параметры пишутся обычным способом.
 
 Установщик сам поставит Git и Node.js, если их нет, соберёт приложение, скачает
 модель распознавания под ваш компьютер и голос, добавит **Rujarvis** в меню

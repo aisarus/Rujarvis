@@ -326,6 +326,32 @@ $arm = Get-CuaDriverAsset -Architecture 'ARM64'
 Assert-That 'cua-driver: у ARM64 своя сумма' ($arm.Sha256 -match '^[0-9A-F]{64}$' -and $arm.Sha256 -ne $x64.Sha256)
 Assert-That 'cua-driver: 32-битной сборки нет — и не выдумываем' ($null -eq (Get-CuaDriverAsset -Architecture 'x86'))
 
+# BOM и `irm | iex` вместе не живут.
+#
+# Файлу BOM НУЖЕН: без него Windows PowerShell 5.1 читает русские сообщения как
+# ANSI, и байт 0x94 из «—», «Д», «Б» закрывает строку раньше времени — скрипт
+# не разбирается вовсе. А `irm | iex` получает файл СТРОКОЙ, и BOM попадает в её
+# начало: открывающий `<#` перестаёт распознаваться, и установка падает с
+# «Непредвиденная лексема "ставит"».
+#
+# Эти две правды сошлись 26.09.2026 на живой машине человека: BOM я добавил
+# вчера, команду в README не тронул, и установка перестала работать у всех.
+# Поэтому теперь их сторожат ВМЕСТЕ: пока у файла есть BOM, в документации не
+# должно быть ни `| iex`, ни `scriptblock::Create` от скачанной строки.
+$ставитФайлом = @('README.md', 'README.en.md', 'docs/jarvis/install.md')
+$сБом = [IO.File]::ReadAllBytes($scriptPath)[0..2] -join ' ' -eq '239 187 191'
+Assert-That 'у install.ps1 есть BOM: без него 5.1 не разберёт кириллицу' $сБом
+
+foreach ($док in $ставитФайлом) {
+    $путьДок = Join-Path (Split-Path -Parent $PSScriptRoot) $док
+    if (-not (Test-Path $путьДок)) { continue }
+    $текстДок = Get-Content $путьДок -Raw
+    $строкой = $текстДок -match 'install\.ps1[^
+]*\|\s*iex' -or $текстДок -match 'scriptblock\]::Create\(\(irm'
+    Assert-That "$док ставит через файл, а не строкой: BOM ломает iex" (-not $строкой)
+    Assert-That "$док называет скачивание в файл" ($текстДок -match '-OutFile')
+}
+
 if ($failures -gt 0) {
     Write-Host "Провалено проверок: $failures" -ForegroundColor Red
     exit 1
