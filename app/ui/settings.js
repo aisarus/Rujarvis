@@ -86,7 +86,7 @@ function agentCard(key, name, optional) {
       ${!installed ? `<button class="btn primary" data-act="page">${s.agentInstallPage}</button>` : ''}
       <button class="btn" data-act="check">${s.check}</button>
     </div>
-    ${installed && !signed ? `<p class="hint" style="margin:8px 0 0">${s.agentSignInHint}</p>` : ''}
+    ${installed && !signed ? `<p class="hint" style="margin:8px 0 0">${data.platform === 'darwin' ? s.agentSignInHintMac : s.agentSignInHint}</p>` : ''}
   </div>`);
   // Пока идёт проба, кнопка серая: она запускает CLI и думает секунды, а
   // молчащая кнопка неотличима от сломанной.

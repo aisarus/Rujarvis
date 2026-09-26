@@ -61,6 +61,15 @@ const ru = {
   agentInstallPage: 'Открыть claude.ai/code',
   agentSignIn: 'Войти',
   agentSignInHint: 'Откроется окно терминала. Войдите в аккаунт и вернитесь сюда.',
+  /**
+   * На маке окно входа открывается через Apple Events, и macOS сначала
+   * спрашивает, можно ли Rujarvis управлять Терминалом. «Не разрешать» — и окно
+   * не откроется вовсе, а отказ до 27.09.2026 уходил только в лог. Поэтому
+   * подсказка говорит и что нажать, и как войти без этого окна.
+   */
+  agentSignInHintMac:
+    'Откроется Терминал. macOS может спросить, можно ли Rujarvis управлять «Терминалом», — нажмите «Разрешить» (или «ОК»). ' +
+    'Окно не открылось? Откройте Терминал сами (Cmd+Пробел → «Терминал») и введите claude auth login — для Codex: codex login. Потом нажмите «Проверить».',
   codexOptional: 'Codex',
   /**
    * Установка Codex — своей строкой, а не общей с Клодом.
@@ -182,6 +191,9 @@ const en: UiStrings = {
   agentInstallPage: 'Open claude.ai/code',
   agentSignIn: 'Sign in',
   agentSignInHint: 'A terminal window opens. Sign in there and come back.',
+  agentSignInHintMac:
+    'Terminal opens. macOS may ask whether Rujarvis can control "Terminal" — press "Allow" (or "OK"). ' +
+    'No window? Open Terminal yourself (Cmd+Space → "Terminal") and type claude auth login — for Codex: codex login. Then press "Check".',
   codexOptional: 'Codex',
   codexInstallHint: 'Install Codex: npm i -g @openai/codex — then press "Check".',
 
