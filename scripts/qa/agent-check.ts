@@ -16,9 +16,21 @@
  * ответу: в нём должен быть кусок настоящего заголовка окна с этого экрана.
  * Такой не угадать.
  *
+ * Для Codex ещё две вещи: он не должен звать свой компьютер-юз (`cua_*` из
+ * плагинов OpenAI — 27.09.2026 так ушло 333 541 входной токен на неверный
+ * ответ) и не должен съедать больше 100 тысяч входных токенов на такой
+ * вопрос.
+ *
+ * И продолжение сессии: «пауза → продолжай» и каждая следующая реплика
+ * разговора идут через прошлую сессию агента. 27.09.2026 у Codex оно падало
+ * на разборе аргументов, и ни одна проверка этого не видела — все запускали
+ * только новые сессии.
+ *
  * Нужны вход в Claude Code и Codex на подписке, поэтому гоняется на машине
- * человека, а не в CI. Данные и результаты — во временных папках: журнал и
- * план человека проверка не трогает.
+ * человека, а не в CI. Данные, память и результаты — во временных папках:
+ * журнал, память и план человека проверка не трогает. (Память трогала: до
+ * 27.09.2026 здесь не был задан её файл, и две проверочные задачи легли в
+ * настоящую память владельца.)
  */
 import { mkdtempSync } from 'node:fs';
 import os from 'node:os';
@@ -30,6 +42,7 @@ import { createDesktopDriver } from '../../jarvis/desktop/platform';
 import { GateBridge } from '../../jarvis/risk/gateBridge';
 import { prepareGate } from '../../jarvis/risk/gateSetup';
 import { jarvisPaths } from '../../jarvis/setup/paths';
+import type { JarvisTask } from '../../jarvis/tasks/manager';
 
 type Итог =
   | { вид: 'прошло'; чем: string }
@@ -52,6 +65,23 @@ function приметы(заголовки: readonly string[]): string[] {
     }
   }
   return [...все];
+}
+
+/** Свой компьютер-юз OpenAI в Codex: `cua_repl` и соседи из его плагинов. */
+const СВОЙ_КОМПЬЮТЕР_ЮЗ = /^cua_|computer[-_]use/iu;
+
+/**
+ * Сколько входных токенов разумно на «какие окна открыты».
+ *
+ * Замер 27.09.2026: без плагинов владельца Codex тратит 15–70 тысяч, с ними —
+ * 333 тысячи. Предел между этими мирами.
+ */
+const ПРЕДЕЛ_ТОКЕНОВ = 100_000;
+
+/** Какие инструменты звал агент и сколько входных токенов съел. */
+function расход(task: JarvisTask): { инструменты: string[]; токены?: number } {
+  const инструменты = task.events.flatMap((событие) => (событие.type === 'tool' ? [событие.name] : []));
+  return { инструменты: [...new Set(инструменты)], токены: task.result?.inputTokens };
 }
 
 /** Признаки того самого отказа: агент просит разрешить то, что ему не дали. */
@@ -115,6 +145,7 @@ async function main(): Promise<void> {
 
   const jarvis = createJarvis({
     workspace: результаты,
+    memoryFile: path.join(данные, 'memory.json'),
     desktopMcpConfig: mcp.file,
     gateSettings: gate.settings,
     homeDir: paths.home,
@@ -123,6 +154,24 @@ async function main(): Promise<void> {
   });
   await jarvis.ready();
   const готовы = new Map((await jarvis.backends.availability(true)).map((b) => [b.id, b.ready]));
+
+  /** Дождаться конца задачи; не кончилась за 4 минуты — отменить и false. */
+  const дождаться = (task: JarvisTask): Promise<boolean> =>
+    new Promise<boolean>((resolve) => {
+      if (task.state !== 'running' && task.state !== 'queued') return resolve(true);
+      const таймер = setTimeout(() => {
+        стоп();
+        jarvis.tasks.cancel(task.id);
+        resolve(false);
+      }, 240_000);
+      const стоп = jarvis.tasks.subscribe((событие) => {
+        if (событие.type === 'task-finished' && событие.task.id === task.id) {
+          clearTimeout(таймер);
+          стоп();
+          resolve(true);
+        }
+      });
+    });
 
   const случаи: Array<{ имя: string; фраза: string; бэкенд: string }> = [
     { имя: 'Claude Code видит окна через инструменты', фраза: 'Какие окна сейчас открыты на экране? Перечисли их заголовки.', бэкенд: 'claude-code' },
@@ -153,25 +202,12 @@ async function main(): Promise<void> {
     }
     console.log(`    ${случай.бэкенд}: умения ${turn.decision.needs.join(', ')}`);
 
-    const закончилась = await new Promise<boolean>((resolve) => {
-      if (turn.task.state !== 'running' && turn.task.state !== 'queued') return resolve(true);
-      const таймер = setTimeout(() => {
-        стоп();
-        resolve(false);
-      }, 240_000);
-      const стоп = jarvis.tasks.subscribe((событие) => {
-        if (событие.type === 'task-finished' && событие.task.id === turn.task.id) {
-          clearTimeout(таймер);
-          стоп();
-          resolve(true);
-        }
-      });
-    });
-    if (!закончилась) {
-      jarvis.tasks.cancel(turn.task.id);
+    if (!(await дождаться(turn.task))) {
       итоги.push({ имя: случай.имя, итог: { вид: 'не прошло', почему: 'задача не кончилась за 4 минуты' } });
       continue;
     }
+    const { инструменты, токены } = расход(turn.task);
+    console.log(`    ${случай.бэкенд}: инструменты ${инструменты.join(', ') || 'нет'}; входных токенов ${токены ?? 'не сообщает'}`);
 
     const текст = (turn.task.result?.text ?? '').toLowerCase();
     // Числа ответа целыми словами: pid 2036 не должен найтись внутри 20368.
@@ -181,8 +217,13 @@ async function main(): Promise<void> {
       ...признаки.filter((п) => текст.includes(п)),
     ];
     const вопросы = вопросыХука.slice(было);
+    const своё = инструменты.filter((и) => СВОЙ_КОМПЬЮТЕР_ЮЗ.test(и));
     const итог: Итог = !turn.decision.needs.includes('computer')
       ? { вид: 'не прошло', почему: `задача не получила умения computer: ${turn.decision.needs.join(', ')}` }
+      : своё.length > 0
+        ? { вид: 'не прошло', почему: `агент работал своим компьютер-юзом, а не инструментами Джарвиса: ${своё.join(', ')}` }
+      : токены !== undefined && токены > ПРЕДЕЛ_ТОКЕНОВ
+        ? { вид: 'не прошло', почему: `съел ${токены} входных токенов — больше ${ПРЕДЕЛ_ТОКЕНОВ}` }
       : ОТКАЗ.test(текст)
         ? { вид: 'не прошло', почему: `агент упёрся в запрет: ${текст.replace(/\s+/gu, ' ').slice(0, 220)}` }
         : turn.task.result?.ok !== true
@@ -197,6 +238,51 @@ async function main(): Promise<void> {
                 чем: `назвал настоящие окна (${совпало.slice(0, 3).join(', ')})${вопросы.length ? `; хук спрашивал: ${вопросы.join(' | ')}` : ''}`,
               };
     итоги.push({ имя: случай.имя, итог });
+  }
+
+  // Продолжение своей сессии — тем же путём, что «пауза → продолжай» и
+  // следующая реплика разговора. Доказательство не в словах ответа: вторая
+  // задача прошла у того же агента, и он вернул тот же поток, что вёл первую.
+  for (const [бэкенд, через] of [
+    ['claude-code', 'через Claude Code'],
+    ['codex', 'через Codex'],
+  ] as const) {
+    const имя = `${бэкенд === 'codex' ? 'Codex' : 'Claude Code'} продолжает свою сессию`;
+    if (!готовы.get(бэкенд)) {
+      итоги.push({ имя, итог: { вид: 'нечем мерить', почему: `${бэкенд} не готов: нет входа или не установлен` } });
+      continue;
+    }
+    const первая = await jarvis.core.handleUtterance(`Придумай любое пятизначное число и назови только его. Сделай это ${через}.`);
+    if (первая.kind !== 'task' || !(await дождаться(первая.task))) {
+      итоги.push({ имя, итог: { вид: 'не прошло', почему: `первая просьба не стала задачей или не кончилась (${первая.kind})` } });
+      continue;
+    }
+    const было = первая.task.result;
+    if (было?.ok !== true || было.backend !== бэкенд || !первая.task.sessionId) {
+      итоги.push({
+        имя,
+        итог: { вид: 'не прошло', почему: `первая задача: ${было?.backend} ok=${было?.ok}, сессия ${первая.task.sessionId ?? 'нет'}; ${было?.error ?? ''}` },
+      });
+      continue;
+    }
+    const вторая = await jarvis.core.handleUtterance('Сделай его на единицу больше');
+    if (вторая.kind !== 'task' || !(await дождаться(вторая.task))) {
+      итоги.push({ имя, итог: { вид: 'не прошло', почему: `продолжение не стало задачей или не кончилось (${вторая.kind})` } });
+      continue;
+    }
+    const стало = вторая.task.result;
+    console.log(
+      `    ${бэкенд}: «${было.text.trim().slice(0, 20)}» → «${(стало?.text ?? '').trim().slice(0, 20)}»; поток ${первая.task.sessionId} → ${вторая.task.sessionId}`,
+    );
+    итоги.push({
+      имя,
+      итог:
+        стало?.ok !== true || стало.backend !== бэкенд
+          ? { вид: 'не прошло', почему: `продолжение: ${стало?.backend} ok=${стало?.ok}; ${стало?.error ?? ''}` }
+          : вторая.task.request.sessionId !== первая.task.sessionId || вторая.task.sessionId !== первая.task.sessionId
+            ? { вид: 'не прошло', почему: `продолжение ушло не в тот поток: ${вторая.task.sessionId ?? 'нет'}` }
+            : { вид: 'прошло', чем: `тот же поток ${первая.task.sessionId}` },
+    });
   }
 
   гасиМост();

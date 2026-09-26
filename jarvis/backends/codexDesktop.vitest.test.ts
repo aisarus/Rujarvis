@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildCodexArgs, codexMcpOverride, readDesktopMcpServers, selectSandbox } from './codex';
+import { buildCodexArgs, codexMcpOverride, codexOwnerChoices, readDesktopMcpServers, selectSandbox } from './codex';
 import { DEFAULT_PERMISSIONS } from '../types';
 import type { BackendRequest } from './types';
 
@@ -110,5 +110,100 @@ describe('buildCodexArgs с рабочим столом', () => {
     // Приглашение читается со stdin: длинная русская фраза иначе упирается в
     // предел длины командной строки Windows.
     expect(args.at(-1)).toBe('-');
+  });
+});
+
+/**
+ * Настройки Codex владельца, как они лежат у него (27.09.2026), без путей
+ * его проектов: ровно то, от чего зависит разбор.
+ */
+const НАСТРОЙКИ_ВЛАДЕЛЬЦА = [
+  'model = "gpt-reserve"',
+  'model_reasoning_effort = "medium"',
+  'approval_policy = "never"',
+  'approvals_reviewer = "user"',
+  'sandbox_mode = "danger-full-access"',
+  'service_tier = "priority"',
+  'notify = ["powershell.exe", "-File", "C:\\Users\\x\\notify.ps1"]',
+  "[projects.'C:\\Windows\\System32']",
+  'trust_level = "trusted"',
+  '[windows]',
+  'sandbox = "elevated"',
+  '[plugins."computer-use@openai-bundled"]',
+  'enabled = true',
+  '[mcp_servers.node_repl]',
+  'args = []',
+  'command = "C:\\Program Files\\node.exe"',
+].join('\r\n');
+
+describe('codexOwnerChoices', () => {
+  it('переносит выбор модели и песочницу Windows, а плагины и одобрения — нет', () => {
+    expect(codexOwnerChoices(НАСТРОЙКИ_ВЛАДЕЛЬЦА)).toEqual({
+      ignoreUserConfig: true,
+      values: {
+        model: 'gpt-reserve',
+        model_reasoning_effort: 'medium',
+        service_tier: 'priority',
+        'windows.sandbox': 'elevated',
+      },
+    });
+  });
+
+  it('нет файла настроек — запуск без них, переносить нечего', () => {
+    expect(codexOwnerChoices(null)).toEqual({ ignoreUserConfig: true, values: {} });
+  });
+
+  it('ключ из чужого раздела не выдаётся за общий', () => {
+    // `sandbox` из [windows] — это не `sandbox_mode`, а `model` внутри
+    // профиля — не модель человека по умолчанию.
+    const choices = codexOwnerChoices('[profiles.fast]\nmodel = "gpt-mini"\n[windows]\nsandbox = "unelevated"');
+    expect(choices.values).toEqual({ 'windows.sandbox': 'unelevated' });
+  });
+
+  it('свой провайдер модели одной строкой не перенести — настройки остаются', () => {
+    const свой = 'model_provider = "domashniy"\nmodel = "qwen"\n[model_providers.domashniy]\nbase_url = "http://192.168.1.5:8080/v1"';
+    expect(codexOwnerChoices(свой).ignoreUserConfig).toBe(false);
+    // Встроенный провайдер таблицы не требует — его можно перенести.
+    expect(codexOwnerChoices('model_provider = "ollama"').values).toEqual({ model_provider: 'ollama' });
+  });
+
+  it('выбранный профиль тоже держит настройки', () => {
+    expect(codexOwnerChoices('profile = "fast"\n[profiles.fast]\nmodel = "gpt-mini"').ignoreUserConfig).toBe(false);
+  });
+});
+
+describe('buildCodexArgs с выбором человека', () => {
+  it('без его настроек, но с его моделью, уровнем рассуждений и тарифом', () => {
+    const args = buildCodexArgs(запрос(), {
+      sandbox: 'workspace-write',
+      ownerChoices: codexOwnerChoices(НАСТРОЙКИ_ВЛАДЕЛЬЦА),
+    });
+    expect(args).toContain('--ignore-user-config');
+    for (const значение of [
+      'model="gpt-reserve"',
+      'model_reasoning_effort="medium"',
+      'service_tier="priority"',
+      'windows.sandbox="elevated"',
+    ]) {
+      expect(args).toEqual(expect.arrayContaining(['-c', значение]));
+    }
+  });
+
+  it('модель, выбранная в Джарвисе, главнее модели из настроек', () => {
+    const args = buildCodexArgs(запрос(), {
+      sandbox: 'workspace-write',
+      model: 'gpt-5-codex',
+      ownerChoices: codexOwnerChoices(НАСТРОЙКИ_ВЛАДЕЛЬЦА),
+    });
+    expect(args).toEqual(expect.arrayContaining(['--model', 'gpt-5-codex']));
+    expect(args).not.toContain('model="gpt-reserve"');
+  });
+
+  it('настройки, которые не перенести, остаются как есть', () => {
+    const args = buildCodexArgs(запрос(), {
+      sandbox: 'workspace-write',
+      ownerChoices: { ignoreUserConfig: false, values: {} },
+    });
+    expect(args).not.toContain('--ignore-user-config');
   });
 });

@@ -41,6 +41,8 @@ export interface StreamState {
    * timeout, so the manager can fall back to another backend promptly.
    */
   fatalMessage?: string;
+  /** Входные токены по отчётам CLI, сумма за все ходы. */
+  inputTokens?: number;
 }
 
 export function createStreamState(sessionId?: string): StreamState {
@@ -143,6 +145,7 @@ export function createCliRun(spec: CliRunSpec): BackendRun {
     durationMs: now() - startedAt,
     filesChanged: state.filesChanged,
     commands: state.commands,
+    inputTokens: state.inputTokens,
   });
 
   void (async () => {

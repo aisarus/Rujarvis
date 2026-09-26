@@ -797,6 +797,7 @@ describe('Codex adapter', () => {
       sandbox: 'workspace-write',
       model: 'gpt-x',
       mcpOverrides: ['mcp_servers.a={command="x"}'],
+      ownerChoices: { ignoreUserConfig: true, values: { model: 'gpt-reserve', 'windows.sandbox': 'elevated' } },
     });
     const флаги = args.filter((арг) => арг.startsWith('-') && арг !== '-');
     expect(флаги.filter((ф) => !(можно as readonly string[]).includes(ф))).toEqual([]);
@@ -884,6 +885,38 @@ describe('Codex adapter', () => {
     expect(result.ok).toBe(true);
     expect(result.text).toBe('Сделал.');
     expect(result.sessionId).toBe('t7');
+  });
+
+  it('запускается без настроек человека, но с его выбором модели, и считает токены', async () => {
+    // Настройки тащили плагины человека, а с ними свой компьютер-юз OpenAI:
+    // 333 541 входной токен и неверный ответ на «какие окна открыты».
+    const { spawn, calls } = fakeSpawn([
+      '{"type":"thread.started","thread_id":"t8"}',
+      '{"type":"item.completed","item":{"type":"agent_message","text":"Готово."}}',
+      '{"type":"turn.completed","usage":{"input_tokens":14277,"output_tokens":5}}',
+    ]);
+    const backend = new CodexBackend({
+      probe: readyProbe,
+      spawnCli: spawn,
+      userConfig: () =>
+        [
+          'model = "gpt-reserve"',
+          'model_reasoning_effort = "medium"',
+          'approval_policy = "never"',
+          '[windows]',
+          'sandbox = "elevated"',
+          '[plugins."computer-use@openai-bundled"]',
+          'enabled = true',
+        ].join('\n'),
+    });
+
+    const result = await backend.run(request()).result();
+    const args = calls[0]?.options.args ?? [];
+    expect(args).toContain('--ignore-user-config');
+    expect(args).toEqual(expect.arrayContaining(['-c', 'model="gpt-reserve"']));
+    expect(args).toEqual(expect.arrayContaining(['-c', 'windows.sandbox="elevated"']));
+    expect(args.some((арг) => арг.startsWith('approval_policy'))).toBe(false);
+    expect(result.inputTokens).toBe(14277);
   });
 
   it('tells a retry notice apart from a real failure', () => {

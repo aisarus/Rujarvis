@@ -7,6 +7,8 @@
  */
 
 import { readFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import type { AuthState } from './authHints';
 import type { JarvisCapability } from '../types';
@@ -65,6 +67,8 @@ export interface CodexBackendOptions {
    * user setting turns it on, never model output.
    */
   allowFullAccess?: boolean;
+  /** Настройки Codex человека (`config.toml`); по умолчанию читаются с диска. */
+  userConfig?: () => string | null;
   defaultTimeoutMs?: number;
   availabilityTtlMs?: number;
   spawnCli?: SpawnCli;
@@ -93,8 +97,7 @@ export function selectSandbox(request: BackendRequest, allowFullAccess: boolean)
  * покалеченным.
  */
 export function codexMcpOverride(имя: string, сервер: DesktopMcpServer): string {
-  const строка = (значение: string): string =>
-    `"${значение.split(БС).join(БС + БС).split('"').join(БС + '"')}"`;
+  const строка = tomlСтрока;
   const части = [`command=${строка(сервер.command)}`];
   if (сервер.args && сервер.args.length > 0) {
     части.push(`args=[${сервер.args.map(строка).join(',')}]`);
@@ -129,9 +132,81 @@ export function readDesktopMcpServers(текст: string): Record<string, Deskto
   return разобрано.mcpServers ?? {};
 }
 
+/**
+ * Что из настроек Codex человека переносится в запуск.
+ *
+ * Джарвис запускает Codex без `config.toml` человека (`--ignore-user-config`):
+ * иначе вместе с настройками приезжают все его плагины, а среди них — свой
+ * компьютер-юз OpenAI. Замер 27.09.2026, «какие окна открыты» через Codex: он
+ * прочитал SKILL.md этого плагина, позвал `cua_repl` вместо инструментов
+ * Джарвиса, ответил неправду («0 видимых окон») и съел 333 541 входной
+ * токен. Владелец сказал прямо: свой компьютер-юз Кодексу не отдавать —
+ * съест лимиты.
+ *
+ * Выбор модели при этом остаётся за человеком: модель, уровень рассуждений,
+ * тариф и провайдер переносятся явно. И песочница Windows — без
+ * `windows.sandbox` песочница Codex на Windows становится «только чтение»:
+ * замер, ни одной команды и ни одной записи.
+ *
+ * Свой провайдер модели или профиль — это таблицы, строкой `-c` их не
+ * перенести. Тогда настройки остаются как есть: плагины — меньшее зло, чем
+ * Codex, который не запускается.
+ */
+export interface CodexOwnerChoices {
+  ignoreUserConfig: boolean;
+  /** Что перенести явно: ключ настройки → значение. */
+  values: Record<string, string>;
+}
+
+const ПЕРЕНОСИМЫЕ = new Set(['model', 'model_reasoning_effort', 'service_tier', 'model_provider', 'windows.sandbox']);
+
+export function codexOwnerChoices(config: string | null): CodexOwnerChoices {
+  const values: Record<string, string> = {};
+  const провайдеры = new Set<string>();
+  let профиль = false;
+  let раздел = '';
+  for (const строка of (config ?? '').split(/\r?\n/)) {
+    const заголовок = /^\s*\[([^\]]+)\]/.exec(строка);
+    if (заголовок) {
+      раздел = (заголовок[1] ?? '').trim();
+      const провайдер = /^model_providers\.["']?([^"']+)["']?$/.exec(раздел);
+      if (провайдер?.[1]) провайдеры.add(провайдер[1]);
+      continue;
+    }
+    const пара = /^\s*([A-Za-z_]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/.exec(строка);
+    if (!пара?.[1]) continue;
+    const ключ = раздел ? `${раздел}.${пара[1]}` : пара[1];
+    if (ключ === 'profile') профиль = true;
+    if (ПЕРЕНОСИМЫЕ.has(ключ)) values[ключ] = пара[2] ?? пара[3] ?? '';
+  }
+  const свойПровайдер = values.model_provider !== undefined && провайдеры.has(values.model_provider);
+  if (профиль || свойПровайдер) return { ignoreUserConfig: false, values: {} };
+  return { ignoreUserConfig: true, values };
+}
+
+/** Настройки Codex человека: `$CODEX_HOME/config.toml`, нет файла — null. */
+function readCodexUserConfig(): string | null {
+  const дом = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+  try {
+    return readFileSync(path.join(дом, 'config.toml'), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/** Строка TOML в кавычках: обратные косые удвоены, кавычки экранированы. */
+function tomlСтрока(значение: string): string {
+  return `"${значение.split(БС).join(БС + БС).split('"').join(БС + '"')}"`;
+}
+
 export function buildCodexArgs(
   request: BackendRequest,
-  options: { model?: string; sandbox: CodexSandbox; mcpOverrides?: readonly string[] },
+  options: {
+    model?: string;
+    sandbox: CodexSandbox;
+    mcpOverrides?: readonly string[];
+    ownerChoices?: CodexOwnerChoices;
+  },
 ): string[] {
   const args = ['exec'];
   if (request.sessionId) {
@@ -146,6 +221,14 @@ export function buildCodexArgs(
     args.push('--json', '--skip-git-repo-check', '--sandbox', options.sandbox);
     if (request.cwd) {
       args.push('--cd', request.cwd);
+    }
+  }
+  if (options.ownerChoices?.ignoreUserConfig) {
+    args.push('--ignore-user-config');
+    for (const [ключ, значение] of Object.entries(options.ownerChoices.values)) {
+      // Модель, выбранная в Джарвисе, главнее: она идёт `--model` ниже.
+      if (ключ === 'model' && options.model) continue;
+      args.push('-c', `${ключ}=${tomlСтрока(значение)}`);
     }
   }
   if (options.model) {
@@ -333,6 +416,10 @@ export function consumeCodexStreamLine(
   }
 
   if (type === 'turn.completed') {
+    const usage = asRecord(raw.usage);
+    if (usage && typeof usage.input_tokens === 'number') {
+      state.inputTokens = (state.inputTokens ?? 0) + usage.input_tokens;
+    }
     return;
   }
 
@@ -555,6 +642,7 @@ export class CodexBackend implements AgentBackend {
           model: this.options.model,
           sandbox,
           mcpOverrides: this.перекрытияРабочегоСтола(),
+          ownerChoices: codexOwnerChoices((this.options.userConfig ?? readCodexUserConfig)()),
         }),
       cwd: request.cwd,
       timeoutMs: request.timeoutMs ?? this.options.defaultTimeoutMs ?? WORK_CEILING_MS,
