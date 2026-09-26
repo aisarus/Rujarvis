@@ -45,11 +45,11 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
-    "playwright": "1.56.1",
-    "sherpa-onnx": "1.12.29",
-    "tar-stream": "3.1.8",
+    "playwright": "1.63.0",
+    "sherpa-onnx": "1.13.8",
+    "tar-stream": "3.2.1",
     "unbzip2-stream": "1.4.3",
-    "zod": "4.1.12"
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/node": "24.9.1",
