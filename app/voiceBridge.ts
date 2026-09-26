@@ -2234,6 +2234,14 @@ function writeDesktopMcpConfig(outputDir?: string): string | undefined {
               ...server.launch.env,
               ...(outputDir ? { JARVIS_OUTPUT_DIR: outputDir } : {}),
               JARVIS_LANGUAGE: settings().language,
+              // Движок браузера — явно, а не «авось доедет».
+              //
+              // Промт собирает это приложение, а выбирает движок MCP-сервер:
+              // два процесса, и если переменная до второго не дойдёт, промт
+              // расскажет модели про Safari, а руки поведут Chromium. Правило
+              // то же, что у языка и журнала: общее передаётся, а не
+              // угадывается.
+              ...(process.env.JARVIS_BROWSER ? { JARVIS_BROWSER: process.env.JARVIS_BROWSER } : {}),
               // Журнал тот же самый: агент должен видеть ровно то, что помнит
               // сам Джарвис, а не собственную отдельную.
               JARVIS_JOURNAL: journalFile(),

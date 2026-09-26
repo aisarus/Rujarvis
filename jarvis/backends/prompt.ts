@@ -8,6 +8,7 @@
 
 import type { BackendRequest } from './types';
 import { outputSectionNames } from '../desktop/files';
+import { выбратьДвижок, чемВодим } from '../desktop/browserChoice';
 
 /** Перевод строки постоянной: обратный слеш тут не переживает переписываний. */
 const NEWLINE = String.fromCharCode(10);
@@ -116,8 +117,7 @@ const TOOL_NAMES = [
   '  Замер: задача «выбери вторую вкладку» заняла 103 секунды, из них 60 —',
   '  семь снимков подряд. Снимай, когда не знаешь, что на экране; ищи по имени,',
   '  когда знаешь. Второй снимок того же окна почти всегда лишний.',
-  '- browser_* и page_* — это НАШ браузер Playwright, отдельное окно.',
-  '  К окну Chrome или Edge человека они отношения не имеют: туда — window_*.',
+  `- browser_* и page_* — ${чемВодим(выбратьДвижок())}`,
   '- Экран целиком: screenshot, click, type_text, press_key, list_windows, focus, run.',
   '- Файлы: output_folder, move_to_output, show_file, list_files.',
   '- Работа: set_plan, mark_step, show_plan, check_notes.',
