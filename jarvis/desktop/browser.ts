@@ -17,6 +17,7 @@ import path from 'node:path';
 import os from 'node:os';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { jarvisHome } from '../setup/paths';
+import { readShowWork } from './showWork';
 
 /**
  * Какой браузер вести.
@@ -474,7 +475,13 @@ export async function openTab(url?: string): Promise<{ title: string; url: strin
     const target = адресДляПерехода(url);
     await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   }
-  await page.bringToFront().catch(() => undefined);
+  // Вперёд — только если человек не просил тишины.
+  //
+  // «Работай в фоне» до сих пор было советом модели: браузер выводил окно
+  // всегда, и человек, сказавший «работай тихо», получал вкладку под руки.
+  // Режим лежит в файле, потому что MCP-сервер — отдельный процесс, а
+  // переключается он посреди работы.
+  if (readShowWork()) await page.bringToFront().catch(() => undefined);
   return { title: await page.title().catch(() => ''), url: page.url() };
 }
 

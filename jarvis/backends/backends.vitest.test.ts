@@ -1155,6 +1155,44 @@ describe('BackendManager', () => {
     expect(final.ok).toBe(false);
     expect(final.error).toContain('Нет доступных backend');
   });
+
+  it('Кодексу с рабочим столом задачу про экран отдают, а без него — нет', async () => {
+    // Раньше Кодекс исключался из задач про экран навсегда. Это было верно,
+    // пока рук у него не было; теперь рабочий стол даётся ему тем же
+    // MCP-сервером, что и Клоду, и спрашивать надо агента, а не платформу.
+    const сРуками = stubBackend('codex', result({ ok: true, backend: 'codex', text: 'ок' }));
+    (сРуками as { capabilities: ReadonlySet<string> }).capabilities = new Set(['computer']);
+    const менеджер = managerWith(сРуками);
+    expect(менеджер.plan(request({ capabilities: ['computer'] })).order).toEqual(['codex']);
+
+    const безРук = stubBackend('codex', result({ ok: true, backend: 'codex', text: 'ок' }));
+    expect(managerWith(безРук).plan(request({ capabilities: ['computer'] })).order).toEqual([]);
+  });
+
+  it('с одним Кодексом отказ по экрану называет причину, а не шлёт в настройки', async () => {
+    // У человека с одним Кодексом настройки В ПОРЯДКЕ: Кодекс зелёный и
+    // работает. Экран ему недоступен потому, что инструменты рабочего стола
+    // есть только у Claude Code. «Проверьте настройки AI-аккаунтов» на это
+    // отправляло чинить не туда — человек открывал настройки, видел зелёный
+    // Кодекс и не понимал ничего.
+    const менеджер = managerWith(stubBackend('codex', result({ ok: true, backend: 'codex', text: 'ок' })));
+    const итог = await менеджер.run(request({ capabilities: ['computer'] })).result();
+    expect(итог.ok).toBe(false);
+    expect(итог.error).toContain('только Claude Code');
+    expect(итог.error).toContain('песочнице');
+    expect(итог.error).not.toContain('Проверьте настройки');
+  });
+
+  it('без единого бэкенда причина прежняя: чинить правда настройки', () => {
+    // Обратная сторона: когда не вошли НИКУДА, «проверьте настройки» — верный
+    // совет, и подменять его рассказом про Кодекс нельзя.
+    return new BackendManager()
+      .run(request({ capabilities: ['computer'] }))
+      .result()
+      .then((итог) => {
+        expect(итог.error).toContain('Проверьте настройки');
+      });
+  });
 });
 
 describe('isBackendLevelFailure', () => {

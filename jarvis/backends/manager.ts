@@ -141,6 +141,31 @@ export class BackendManager {
    * Codex cannot click a window. A task that needs code goes to the preferred
    * coding backend first, with the other one behind it and the runtime last.
    */
+  /**
+   * Почему работать некому — словами, по которым понятно, что чинить.
+   *
+   * «Проверьте настройки AI-аккаунтов» на всё подряд отправляло чинить не
+   * туда: у человека с одним Кодексом настройки В ПОРЯДКЕ, а экран ему
+   * недоступен потому, что инструменты рабочего стола есть только у Claude
+   * Code. Он открывал настройки, видел зелёный Кодекс и не понимал ничего.
+   */
+  /** Есть ли у этого агента руки прямо сейчас. */
+  private умеетЭкран(id: BackendId): boolean {
+    return this.backends.get(id)?.capabilities.has('computer') === true;
+  }
+
+  private почемуНекому(request: BackendRequest): string {
+    const экран = needsScreen(request.capabilities) || needsCommunication(request.capabilities);
+    if (экран && !this.backends.has('claude-code')) {
+      // Кодекс с рабочим столом сюда не попадёт: его бы уже взяли выше.
+      return this.backends.has('codex')
+        ? 'Это умеет только Claude Code: инструменты рабочего стола есть у него одного. ' +
+            'Кодекс работает в своей песочнице и окна нажимать не может. Войдите в Claude Code.'
+        : 'Нет доступных backend. Проверьте настройки AI-аккаунтов.';
+    }
+    return 'Нет доступных backend. Проверьте настройки AI-аккаунтов.';
+  }
+
   plan(request: BackendRequest, preference: BackendPreference = {}): BackendPlan {
     const excluded = new Set(preference.excluded ?? []);
     const order: BackendId[] = [];
@@ -184,7 +209,12 @@ export class BackendManager {
       // изображать её другим способом. Работу без мыши (файлы, браузер без
       // окна человека) может подхватить Codex.
       push('claude-code');
-      if (!request.capabilities.includes('computer')) push('codex');
+      // Кодексу — если ему есть чем. Раньше он исключался из задач про экран
+      // навсегда, и это было верно, пока рук у него не было вовсе. Теперь
+      // рабочий стол даётся ему тем же MCP-сервером, что и Клоду (`-c
+      // mcp_servers…` на один запуск), и спрашивать надо не платформу, а
+      // самого агента: есть у него «computer» — берём, нет — не обещаем.
+      if (!request.capabilities.includes('computer') || this.умеетЭкран('codex')) push('codex');
       rationale = 'Задача про экран, файлы, программы или переписку — там, где инструменты';
     } else {
       const preferred = preference.mainPreference;
@@ -252,7 +282,7 @@ export class BackendManager {
           durationMs: Date.now() - startedAt,
           filesChanged: [],
           commands: [],
-          error: 'Нет доступных backend. Проверьте настройки AI-аккаунтов.',
+          error: this.почемуНекому(request),
         });
         return;
       }

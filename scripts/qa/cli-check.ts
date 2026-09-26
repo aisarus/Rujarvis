@@ -19,7 +19,13 @@
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 
-import { createClaudeProbe, cliStatus, commonCliPaths, resolveCli } from '../../jarvis/backends/cliProbes';
+import {
+  cliStatus,
+  commonCliPaths,
+  createClaudeProbe,
+  createCodexProbe,
+  resolveCli,
+} from '../../jarvis/backends/cliProbes';
 import { cliLaunch } from '../../jarvis/backends/spawnCli';
 import { isUsable } from '../../jarvis/backends/authHints';
 
@@ -67,19 +73,38 @@ function запуститьКакДжарвис(
   });
 }
 
-async function main(): Promise<void> {
-  console.log(`Claude Code на ${process.platform}: путь до подписки\n`);
+interface Проверяемый {
+  cli: 'claude' | 'codex';
+  имя: string;
+  /** Аргументы одного настоящего хода — у каждого CLI свои. */
+  ходАргументы: string[];
+}
+
+const ПРОВЕРЯЕМЫЕ: Проверяемый[] = [
+  { cli: 'claude', имя: 'Claude Code', ходАргументы: ['--print', 'Ответь одним словом: готов'] },
+  // `exec` — неинтерактивный ход Кодекса. `--skip-git-repo-check`, потому что
+  // замер идёт не обязательно в репозитории, и `--sandbox read-only`, потому
+  // что писать на диск ему незачем.
+  {
+    cli: 'codex',
+    имя: 'Codex',
+    ходАргументы: ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', 'Ответь одним словом: готов'],
+  },
+];
+
+async function проверить(что: Проверяемый): Promise<void> {
+  console.log(`\n${что.имя} на ${process.platform}: путь до подписки\n`);
 
   // 1. Файл находится там, где его кладут менеджеры пакетов.
-  const путь = resolveCli('claude');
+  const путь = resolveCli(что.cli);
   if (!путь) {
-    const где = commonCliPaths('claude', os.homedir()).slice(0, 6).join('\n      ');
-    записать('проба находит исполняемый файл', {
+    const где = commonCliPaths(что.cli, os.homedir()).slice(0, 6).join('\n      ');
+    записать(`${что.имя}: проба находит исполняемый файл`, {
       прошло: false,
       почему: `не нашёл ни в PATH, ни в известных местах:\n      ${где}`,
     });
   } else {
-    записать('проба находит исполняемый файл', { прошло: true });
+    записать(`${что.имя}: проба находит исполняемый файл`, { прошло: true });
     console.log(`    путь: ${путь}`);
   }
 
@@ -89,7 +114,7 @@ async function main(): Promise<void> {
   if (путь) {
     const ответ = await запуститьКакДжарвис(путь, ['--version'], 60_000);
     записать(
-      'файл запускается тем же способом, каким его запускает Джарвис',
+      `${что.имя}: файл запускается тем же способом, каким его запускает Джарвис`,
       ответ.код === 0
         ? { прошло: true }
         : { прошло: false, почему: ответ.беда ?? `код ${ответ.код}: ${ответ.вывод.trim().slice(0, 200)}` },
@@ -98,9 +123,9 @@ async function main(): Promise<void> {
   }
 
   // 3. Статус, который увидит человек в настройках.
-  const статус = await cliStatus('claude');
+  const статус = await cliStatus(что.cli);
   записать(
-    'статус говорит «установлен», а не «не запускается»',
+    `${что.имя}: статус говорит «установлен», а не «не запускается»`,
     статус.installed
       ? { прошло: true }
       : { прошло: false, почему: статус.error ?? 'installed: false' },
@@ -111,9 +136,9 @@ async function main(): Promise<void> {
   // Ключей в окружении нет, файла учётных данных нет — и ответ обязан быть
   // 'unknown', а не true. Ложное «вошёл» отправило бы человека искать поломку
   // там, где её нет, а ложное «не вошёл» заперло бы рабочий бэкенд навсегда.
-  const проба = await createClaudeProbe().status();
+  const проба = что.cli === 'claude' ? await createClaudeProbe().status() : await createCodexProbe().status();
   записать(
-    'вход назван честно, а не выдуман',
+    `${что.имя}: вход назван честно, а не выдуман`,
     проба.loggedIn === 'unknown' || проба.loggedIn === true
       ? { прошло: true }
       : { прошло: false, почему: `loggedIn: ${String(проба.loggedIn)}` },
@@ -127,11 +152,7 @@ async function main(): Promise<void> {
   // «ответил по делу» обязательно, иначе прогон зеленеет при нерабочем
   // Джарвисе — именно такие зелёные прогоны этот проект и ловит весь день.
   if (путь && статус.installed) {
-    const ход = await запуститьКакДжарвис(
-      путь,
-      ['--print', 'Ответь одним словом: готов', '--output-format', 'json'],
-      120_000,
-    );
+    const ход = await запуститьКакДжарвис(путь, что.ходАргументы, 120_000);
     const текст = ход.вывод.toLowerCase();
     const проситВойти =
       текст.includes('login') ||
@@ -142,19 +163,23 @@ async function main(): Promise<void> {
       текст.includes('subscription');
 
     if (ход.код === 0) {
-      записать('ход целиком: агент ответил', { прошло: true });
+      записать(`${что.имя}: ход целиком, агент ответил`, { прошло: true });
     } else if (проситВойти) {
-      записать('ход целиком: агент ответил', {
+      записать(`${что.имя}: ход целиком, агент ответил`, {
         прошло: null,
         почему: 'CLI просит войти в аккаунт — подписки в прогоне нет, и это ожидаемо',
       });
     } else {
-      записать('ход целиком: агент ответил', {
+      записать(`${что.имя}: ход целиком, агент ответил`, {
         прошло: false,
         почему: `код ${String(ход.код)}${ход.беда ? `, ${ход.беда}` : ''}: ${ход.вывод.trim().slice(0, 300)}`,
       });
     }
   }
+}
+
+async function main(): Promise<void> {
+  for (const что of ПРОВЕРЯЕМЫЕ) await проверить(что);
 
   const прошло = итоги.filter((и) => и.ответ.прошло === true).length;
   const провал = итоги.filter((и) => и.ответ.прошло === false).length;

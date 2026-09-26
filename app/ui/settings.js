@@ -80,10 +80,10 @@ function agentCard(key, name, optional) {
     : `<span class="pill ${optional ? '' : 'bad'}">${s.agentMissing}</span>`;
   const node = el(`<div class="card">
     <div class="row"><h2>${escapeHtml(name)}</h2><div class="row" style="gap:6px">${pills}</div></div>
-    ${installed ? '' : `<p class="hint" style="margin:8px 0 0">${escapeHtml(key === 'claude' ? s.agentInstallHint : 'npm i -g @openai/codex')}</p>`}
+    ${installed ? '' : `<p class="hint" style="margin:8px 0 0">${escapeHtml(key === 'claude' ? s.agentInstallHint : s.codexInstallHint)}</p>`}
     <div class="row" style="justify-content:flex-start;margin-top:12px">
       ${installed && !signed ? `<button class="btn primary" data-act="signin">${s.agentSignIn}</button>` : ''}
-      ${!installed && key === 'claude' ? `<button class="btn primary" data-act="page">${s.agentInstallPage}</button>` : ''}
+      ${!installed ? `<button class="btn primary" data-act="page">${s.agentInstallPage}</button>` : ''}
       <button class="btn" data-act="check">${s.check}</button>
     </div>
     ${installed && !signed ? `<p class="hint" style="margin:8px 0 0">${s.agentSignInHint}</p>` : ''}
@@ -103,8 +103,17 @@ function agentCard(key, name, optional) {
   if (signIn) signIn.onclick = () => api.signIn(key);
   // Адрес установки был написан словами в подсказке, а открыть его было
   // нечем: мост `openUrl` существовал и не вызывался ниоткуда.
+  // Страница у каждого своя.
+  //
+  // Кнопка была только у Клода, и человек, выбравший Codex, оставался с
+  // командой в подсказке и без объяснения, что это и куда идти. Адрес пакета
+  // на npm — не выдумка: именно оттуда его и ставят той самой командой.
   const openPage = node.querySelector('[data-act=page]');
-  if (openPage) openPage.onclick = () => api.openUrl('https://claude.ai/code');
+  if (openPage) {
+    const адрес =
+      key === 'claude' ? 'https://claude.ai/code' : 'https://www.npmjs.com/package/@openai/codex';
+    openPage.onclick = () => api.openUrl(адрес);
+  }
   return node;
 }
 

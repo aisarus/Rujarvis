@@ -6,6 +6,8 @@
  * ChatGPT web app and never reads or reuses ChatGPT credentials itself.
  */
 
+import { readFileSync } from 'node:fs';
+
 import type { AuthState } from './authHints';
 import type { JarvisCapability } from '../types';
 import { buildBackendPrompt } from './prompt';
@@ -52,6 +54,13 @@ export interface CodexBackendOptions {
   probe: CodexCliProbe;
   model?: string;
   /**
+   * Тот же файл MCP-конфига, что получает Claude Code.
+   *
+   * Даётся и Кодексу: рабочий стол у Джарвиса один, и делать для второго
+   * агента вторую его копию — верный способ развести их поведение.
+   */
+  desktopMcpConfig?: string;
+  /**
    * Permits `--sandbox danger-full-access`. Off by default; only an explicit
    * user setting turns it on, never model output.
    */
@@ -69,9 +78,60 @@ export function selectSandbox(request: BackendRequest, allowFullAccess: boolean)
   return 'workspace-write';
 }
 
+/**
+ * Описание MCP-сервера для Кодекса — строкой TOML, на один запуск.
+ *
+ * Кодекс берёт серверы из `~/.codex/config.toml`, но `-c ключ=значение`
+ * перекрывает конфиг для ОДНОГО вызова, а значение разбирается как TOML.
+ * Это и нужно: трогать чужой файл настроек ради своей задачи нельзя —
+ * человек ставил Кодекс не для нас, и оставлять там следы после себя мы не
+ * вправе. Проверено на codex-cli 0.153.4: сервер, переданный так, появляется
+ * в `codex mcp list` и пропадает после запуска.
+ *
+ * Значения в кавычках, а обратные косые удвоены: пути Windows иначе
+ * разбираются TOML как escape-последовательности, и `C:\Users\…` приезжает
+ * покалеченным.
+ */
+export function codexMcpOverride(имя: string, сервер: DesktopMcpServer): string {
+  const строка = (значение: string): string =>
+    `"${значение.split(БС).join(БС + БС).split('"').join(БС + '"')}"`;
+  const части = [`command=${строка(сервер.command)}`];
+  if (сервер.args && сервер.args.length > 0) {
+    части.push(`args=[${сервер.args.map(строка).join(',')}]`);
+  }
+  const окружение = Object.entries(сервер.env ?? {}).filter(([, значение]) => значение !== undefined);
+  if (окружение.length > 0) {
+    части.push(`env={${окружение.map(([ключ, значение]) => `${ключ}=${строка(String(значение))}`).join(',')}}`);
+  }
+  return `mcp_servers.${имя}={${части.join(',')}}`;
+}
+
+/** Обратная косая одним символом: в шаблонной строке её не написать. */
+const БС = String.fromCharCode(92);
+
+/** Запуск MCP-сервера, как его описывает файл конфига Claude Code. */
+export interface DesktopMcpServer {
+  command: string;
+  args?: string[];
+  env?: Record<string, string | undefined>;
+}
+
+/**
+ * Прочитать файл MCP-конфига и достать оттуда серверы.
+ *
+ * Файл пишет сам Джарвис (`writeDesktopMcpConfig`), и формат у него
+ * клодовский: `{ mcpServers: { имя: { command, args, env } } }`. Разбираем
+ * его здесь, а не заводим второй источник правды: два описания одного
+ * сервера однажды разойдутся, и разойдутся тихо.
+ */
+export function readDesktopMcpServers(текст: string): Record<string, DesktopMcpServer> {
+  const разобрано = JSON.parse(текст) as { mcpServers?: Record<string, DesktopMcpServer> };
+  return разобрано.mcpServers ?? {};
+}
+
 export function buildCodexArgs(
   request: BackendRequest,
-  options: { model?: string; sandbox: CodexSandbox },
+  options: { model?: string; sandbox: CodexSandbox; mcpOverrides?: readonly string[] },
 ): string[] {
   const args = ['exec'];
   if (request.sessionId) {
@@ -83,6 +143,10 @@ export function buildCodexArgs(
   }
   if (options.model) {
     args.push('--model', options.model);
+  }
+  // Рабочий стол Кодексу — на один запуск, без следов в его настройках.
+  for (const перекрытие of options.mcpOverrides ?? []) {
+    args.push('-c', перекрытие);
   }
   // `-` makes Codex read the prompt from stdin, which keeps long Russian
   // prompts off the Windows command line and its length limit.
@@ -330,13 +394,59 @@ export function createCodexLineConsumer(): (
 export class CodexBackend implements AgentBackend {
   readonly id = BACKEND_ID;
   readonly name = 'Codex';
-  readonly capabilities = CAPABILITIES;
+
+  /**
+   * Что Кодекс умеет — с рабочим столом или без него.
+   *
+   * Набор не постоянный, и это не вольность: руки у Кодекса появляются
+   * ровно тогда, когда ему есть что передать в `-c mcp_servers…`. Без
+   * конфига он по-прежнему сидит в песочнице и окна нажимать не может, а
+   * обещать обратное значит отправить к нему задачу, которую он провалит
+   * молча.
+   */
+  get capabilities(): ReadonlySet<JarvisCapability> {
+    if (!this.options.desktopMcpConfig) return CAPABILITIES;
+    return new Set<JarvisCapability>([...CAPABILITIES, 'computer']);
+  }
+
+  /**
+   * Рабочий стол для Кодекса, собранный один раз за жизнь процесса.
+   *
+   * Файл конфига пишется при старте и не меняется, а читать его на каждую
+   * задачу — лишний ввод-вывод в самом горячем месте.
+   */
+  private столСобран = false;
+  private столПерекрытия: string[] = [];
 
   private cached: BackendAvailability | null = null;
   private readonly now: () => number;
 
   constructor(private readonly options: CodexBackendOptions) {
     this.now = options.now ?? Date.now;
+  }
+
+  /**
+   * Перекрытия `-c` с рабочим столом — или пусто, если его нет.
+   *
+   * Пусто это законное состояние: хука красных линий может не быть, сервер
+   * может не собраться. Тогда Кодекс работает как раньше, без экрана, и врать
+   * об этом не надо — менеджер об этом знает и задачи про экран ему не даёт.
+   */
+  private перекрытияРабочегоСтола(): string[] {
+    if (this.столСобран) return this.столПерекрытия;
+    this.столСобран = true;
+    const файл = this.options.desktopMcpConfig;
+    if (!файл) return this.столПерекрытия;
+    try {
+      const серверы = readDesktopMcpServers(readFileSync(файл, 'utf8'));
+      this.столПерекрытия = Object.entries(серверы).map(([имя, сервер]) => codexMcpOverride(имя, сервер));
+      console.log(`[codex] рабочий стол: ${Object.keys(серверы).join(', ') || 'пусто'}`);
+    } catch (error) {
+      // Молчать нельзя: без этого Кодекс тихо останется без рук, и разница
+      // будет видна только по тому, что задачи «не получаются».
+      console.error('[codex] не удалось прочитать конфиг рабочего стола:', error);
+    }
+    return this.столПерекрытия;
   }
 
   async checkAvailability(force = false): Promise<BackendAvailability> {
@@ -411,7 +521,12 @@ export class CodexBackend implements AgentBackend {
     return createCliRun({
       backend: BACKEND_ID,
       availability: () => this.checkAvailability(),
-      buildArgs: () => buildCodexArgs(request, { model: this.options.model, sandbox }),
+      buildArgs: () =>
+        buildCodexArgs(request, {
+          model: this.options.model,
+          sandbox,
+          mcpOverrides: this.перекрытияРабочегоСтола(),
+        }),
       cwd: request.cwd,
       timeoutMs: request.timeoutMs ?? this.options.defaultTimeoutMs ?? WORK_CEILING_MS,
       // Предел на молчание, а не на работу: долгий шаг — это не зависание.

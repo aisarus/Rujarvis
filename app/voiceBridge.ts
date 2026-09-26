@@ -105,6 +105,7 @@ import { PlanStore } from '../jarvis/agent/planStore';
 import { planSummary, renderPlan } from '../jarvis/agent/plan';
 import { SpeechQueue } from '../jarvis/voice/speechQueue';
 import { createStatusOverlay, type StatusOverlay } from './statusOverlay';
+import { writeShowWork } from '../jarvis/desktop/showWork';
 
 /** Ctrl+Space is what `jarvis:setup` tells the user to press. */
 const PUSH_TO_TALK_ACCELERATOR = 'Control+Space';
@@ -457,8 +458,21 @@ export async function runDirectCommand(
         // «в фоне» не на одну задачу, а потому что сейчас занят.
         showWork = command.show;
         console.log(`[jarvis] режим: ${showWork ? 'на виду' : 'в фоне'}`);
+        // Режим — не только совет модели, но и правило для рук: MCP-сервер
+        // отдельный процесс и читает его из файла перед каждым действием.
+        // Если запись не вышла, человек услышит правду, а не «ухожу в фон».
+        const режимЗаписан = writeShowWork(showWork);
         overlayRef?.note(session.status, showWork ? 'Работаю на виду' : 'Работаю в фоне');
-        await session.speak(showWork ? tr('Буду показывать.', 'I will work in view.') : tr('Ухожу в фон.', 'Working in the background.'));
+        await session.speak(
+          режимЗаписан
+            ? showWork
+              ? tr('Буду показывать.', 'I will work in view.')
+              : tr('Ухожу в фон.', 'Working in the background.')
+            : tr(
+                'Не смог запомнить режим — окна могут открываться по-прежнему.',
+                'Could not remember the mode — windows may still open.',
+              ),
+        );
         break;
       case 'where': {
         // План уже записан на диск. Спрашивать о нём агента значило бы ждать
@@ -2220,6 +2234,14 @@ function writeDesktopMcpConfig(outputDir?: string): string | undefined {
               ...server.launch.env,
               ...(outputDir ? { JARVIS_OUTPUT_DIR: outputDir } : {}),
               JARVIS_LANGUAGE: settings().language,
+              // Движок браузера — явно, а не «авось доедет».
+              //
+              // Промт собирает это приложение, а выбирает движок MCP-сервер:
+              // два процесса, и если переменная до второго не дойдёт, промт
+              // расскажет модели про Safari, а руки поведут Chromium. Правило
+              // то же, что у языка и журнала: общее передаётся, а не
+              // угадывается.
+              ...(process.env.JARVIS_BROWSER ? { JARVIS_BROWSER: process.env.JARVIS_BROWSER } : {}),
               // Журнал тот же самый: агент должен видеть ровно то, что помнит
               // сам Джарвис, а не собственную отдельную.
               JARVIS_JOURNAL: journalFile(),

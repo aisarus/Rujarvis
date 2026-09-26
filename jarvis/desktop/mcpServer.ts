@@ -22,6 +22,7 @@ import { z } from 'zod';
 import { forget, recall, remember } from './agentMemory';
 import * as blender from './blender';
 import * as browser from './browser';
+import { вебДвижок, выбратьДвижок, чемВодим } from './webDriver';
 import * as files from './files';
 import { JournalStore } from '../memory/journalStore';
 import { NoteStore } from '../dialogue/noteStore';
@@ -85,6 +86,36 @@ function skillsRoot(): string {
  * Тот же файл, в который их кладёт голосовой мост. Путь приходит из окружения
  * по той же причине, что и путь журнала: сервер — отдельный процесс.
  */
+/**
+ * Чем водим вкладки — один выбор на весь сервер.
+ *
+ * На маке это Safari: человек просит «включи сериал», «посмотри почту»,
+ * «найди в моих заказах», и всё это про его входы. Chromium из Playwright
+ * поднимает свой профиль, где он не вошёл никуда, и на такие просьбы отвечает
+ * формой входа. На Windows наоборот: Safari там нет, Edge есть всегда.
+ *
+ * Выбор один и вычисляется один раз: два места выбора однажды разойдутся, и
+ * тогда чтение пойдёт в одну вкладку, а нажатия в другую.
+ */
+const ДВИЖОК = выбратьДвижок();
+
+/**
+ * Читать страницу деревом доступности.
+ *
+ * Запасной путь для Safari: `do JavaScript` в нём выключен по умолчанию, а
+ * дерево он отдаёт без просьб — в отличие от Chromium. Отдельных разрешений
+ * сверх уже выданных это не требует.
+ */
+async function текстПереднегоОкна(): Promise<string> {
+  const { elements } = await driver.elements();
+  const слова = elements
+    .map((э) => э.name.trim())
+    .filter((имя) => имя.length > 1);
+  return слова.join('\n');
+}
+
+const веб = вебДвижок(текстПереднегоОкна, ДВИЖОК);
+
 function openNotes(): NoteStore {
   // Домашняя папка — из paths.ts: собранная здесь руками, она была виндовой
   // на любой машине, и на маке заметки уезжали в ~/AppData/Local/Rujarvis.
@@ -476,14 +507,12 @@ export function createDesktopMcpServer(): McpServer {
     'browser_open',
     {
       title: 'Открыть страницу',
-      description:
-        'Открывает адрес в браузере и возвращает заголовок. Браузер работает в отдельном ' +
-        'профиле: входы в нём сохраняются между запусками, но окна пользователя не трогаются.',
+      description: `Открывает адрес в браузере и возвращает заголовок. ${чемВодим(ДВИЖОК)}`,
       inputSchema: { url: z.string().describe('Адрес, можно без https://') },
     },
     async ({ url }) => {
       try {
-        const page = await browser.openUrl(url);
+        const page = await веб.openUrl(url);
         return say(`Открыл «${page.title}» — ${page.url}`);
       } catch (error) {
         return failed(error);
@@ -497,12 +526,13 @@ export function createDesktopMcpServer(): McpServer {
       title: 'Прочитать страницу',
       description:
         'Возвращает видимый текст страницы. Бери его вместо снимка экрана: текст точнее ' +
-        'и дешевле, чем разглядывание картинки.',
+        'и дешевле, чем разглядывание картинки. В Safari, если он не пускает скрипты к ' +
+        'странице, текст берётся из дерева доступности — его меньше, но он настоящий.',
       inputSchema: {},
     },
     async () => {
       try {
-        return say(await browser.readPage());
+        return say(await веб.readPage());
       } catch (error) {
         return failed(error);
       }
@@ -600,16 +630,24 @@ export function createDesktopMcpServer(): McpServer {
     async ({ action, url, target }) => {
       try {
         if (action === 'open') {
-          const tab = await browser.openTab(url);
+          const tab = await веб.openTab(url);
           return say(`Открыл вкладку: ${tab.title} — ${tab.url}`);
         }
         if (action === 'switch' || action === 'close') {
           if (!target) return say(`Для ${action} нужен target: номер вкладки или кусок заголовка.`);
+          if (ДВИЖОК === 'safari') {
+            // Молчаливого «сделал» тут быть не должно: переключение и закрытие
+            // вкладок Safari ещё не написаны, и делать вид — хуже, чем сказать.
+            return say(
+              `Вкладки Safari я пока умею только перечислять и открывать. ` +
+                `Переключиться можно голосом через окно: window_find по заголовку, потом window_press.`,
+            );
+          }
           const tab = action === 'switch' ? await browser.switchTab(target) : await browser.closeTab(target);
           return say(`${action === 'switch' ? 'Переключился на' : 'Закрыл'}: ${tab.title} — ${tab.url}`);
         }
 
-        const tabs = await browser.listTabs();
+        const tabs = await веб.listTabs();
         if (!tabs.length) return say('Вкладок нет.');
         return say(tabs.map((t, i) => `${t.active ? '→' : ' '} ${i + 1}. ${t.title} — ${t.url}`).join('\n'));
       } catch (error) {
