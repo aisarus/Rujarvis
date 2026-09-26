@@ -152,6 +152,30 @@ export function spokenCloseTarget(utterance: string): string | null {
  */
 const NEGATIONS = ['не', 'dont', 'don', 'not', 'never', 'no'];
 
+/**
+ * Слова, после которых речь идёт не о программе, а о вебе или о вкладке.
+ *
+ * Живой прогон 26.09.2026: «Открой мне сайт inbar» → «сайт inbar» ушло
+ * искать среди ярлыков «Пуска», а там установщик PDFgear оставил ссылку
+ * «Сайт PDFgear в Интернете». Слово «сайт» совпало ТОЧНО, «inbar» — ни с чем,
+ * но одного слова хватило, и любая просьба открыть сайт открывала pdfgear.com.
+ * Тот же приём на закрытии: «Закрой вкладку» искало запущенную программу по
+ * имени «вкладку».
+ *
+ * Сайт и вкладка — это браузер, а не программа из меню «Пуск». Такую фразу
+ * должен разбирать агент: у него есть браузер, и словарь маршрутизатора уже
+ * даёт ей `browser`. Проверяется по основе, чтобы ловить падежи: «сайте»,
+ * «сайта», «вкладки».
+ */
+function проВебИлиВкладку(слово: string): boolean {
+  return (
+    слово.startsWith('сайт') ||
+    слово.endsWith('-сайт') ||
+    слово.startsWith('вкладк') ||
+    ['site', 'website', 'tab', 'tabs'].includes(слово)
+  );
+}
+
 function targetAfterVerb(utterance: string, verbs: readonly string[]): string | null {
   const normalised = normalise(utterance);
   if (!normalised) return null;
@@ -178,6 +202,10 @@ function targetAfterVerb(utterance: string, verbs: readonly string[]): string | 
   // Остались одни указательные слова — программы с таким названием не бывает.
   // Нечёткий поиск по ярлыкам всё равно что-нибудь найдёт, и запустит не то.
   if (rest.every((word) => REFERENTIAL.includes(word))) return null;
+
+  // Сайт или вкладка — не программа. Нечёткий поиск по ярлыкам и тут что-нибудь
+  // найдёт: ссылку на сайт производителя, которую оставил чей-то установщик.
+  if (rest.some(проВебИлиВкладку)) return null;
 
   return rest.join(' ');
 }
