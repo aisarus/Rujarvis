@@ -13,6 +13,7 @@ import {
   buildClaudeArgs,
   consumeClaudeStreamLine,
   isVendorInternalPath,
+  shellByNameArgs,
   selectPermissionMode,
 } from './claudeCode';
 import {
@@ -488,8 +489,39 @@ describe('Claude Code adapter', () => {
     expect(args).not.toContain('--add-dir');
     expect(args).not.toContain('--settings');
     expect(allowed).not.toContain('Bash');
+    expect(allowed).not.toContain('PowerShell');
     expect(allowed).not.toContain('mcp__jarvis-desktop__write_skill');
     expect(allowed).toContain('Read');
+  });
+
+  it('с хуком PowerShell разрешён по имени — и в задаче с экраном, и без него', () => {
+    // Без имени Claude Code сам разбирает каждую команду PowerShell, и на
+    // машине владельца разбор падает на любой: «pwsh exited with code 1:
+    // Слишком длинная командная строка». Хук при этом видит каждый вызов —
+    // замерено хуком, запрещающим всё.
+    const сЭкраном = buildClaudeArgs(request({ capabilities: ['computer'] }), {
+      permissionMode: 'acceptEdits',
+      desktopMcpConfig: 'C:/jarvis/desktop.json',
+      gateSettings: 'C:/jarvis/gate.json',
+    });
+    expect((сЭкраном[сЭкраном.indexOf('--allowedTools') + 1] ?? '').split(',')).toContain('PowerShell');
+
+    const безЭкрана = buildClaudeArgs(request({ capabilities: ['shell'] }), {
+      permissionMode: 'acceptEdits',
+      gateSettings: 'C:/jarvis/gate.json',
+    });
+    expect(безЭкрана).toEqual(expect.arrayContaining(['--allowedTools', 'PowerShell']));
+
+    // Без хука — ни оболочки, ни имени.
+    const безХука = buildClaudeArgs(request({ capabilities: ['shell'] }), { permissionMode: 'acceptEdits' });
+    expect(безХука).not.toContain('--allowedTools');
+  });
+
+  it('живая сессия со списком инструментов не получает второго --allowedTools', () => {
+    // PowerShell уже в списке; второй флаг дал бы два источника правды.
+    expect(shellByNameArgs('C:/jarvis/gate.json', true)).toEqual([]);
+    expect(shellByNameArgs('C:/jarvis/gate.json', false)).toEqual(['--allowedTools', 'PowerShell']);
+    expect(shellByNameArgs(undefined, false)).toEqual([]);
   });
 
   it('не добавляет папку, которой не назвали', () => {

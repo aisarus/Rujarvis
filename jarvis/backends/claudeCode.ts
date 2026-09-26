@@ -203,6 +203,8 @@ export function buildClaudeArgs(
     // commands unless they are named. Naming them is the difference between an
     // agent that can look something up mid-task and one that can only guess.
     args.push('--allowedTools', toolsFor(request.capabilities, Boolean(options.gateSettings)).join(','));
+  } else {
+    args.push(...shellByNameArgs(options.gateSettings, false));
   }
   return args;
 }
@@ -341,7 +343,28 @@ const BROWSER_TOOLS = [
  * выполняет что угодно, навык ложится во все сессии Claude Code человека.
  * Без хука красных линий (`risk/gateHook.ts`) они не выдаются.
  */
-const UNGATED_FORBIDDEN = new Set(['Bash', 'mcp__jarvis-desktop__write_skill']);
+const UNGATED_FORBIDDEN = new Set(['Bash', 'PowerShell', 'mcp__jarvis-desktop__write_skill']);
+
+/**
+ * PowerShell — по имени, когда стоит хук.
+ *
+ * Без разрешения по имени Claude Code сам разбирает каждую команду
+ * PowerShell, чтобы сверить её с правилами прав, и на машине владельца этот
+ * разбор падает на любой команде, даже на `echo ok`: «Command contains
+ * malformed syntax that cannot be parsed: pwsh exited with code 1: Слишком
+ * длинная командная строка» (замер 27.09.2026 голым `claude -p`, вне
+ * Джарвиса). Агент уходил в Bash, где русский вывод приходит в cp866.
+ *
+ * С разрешением по имени разбора нет, а хук красных линий по-прежнему видит
+ * каждый вызов, и его запрет соблюдается — замерено тем же днём хуком,
+ * запрещающим всё. Без хука оболочки у агента нет — и имени тоже.
+ */
+const SHELL_BY_NAME = 'PowerShell';
+
+/** `--allowedTools PowerShell` для работы без списка инструментов рабочего стола. */
+export function shellByNameArgs(gateSettings: string | undefined, withToolList: boolean): string[] {
+  return gateSettings && !withToolList ? ['--allowedTools', SHELL_BY_NAME] : [];
+}
 
 /** Что агенту дать под эту задачу. */
 export function toolsFor(capabilities: readonly JarvisCapability[], gated = true): string[] {
@@ -353,6 +376,7 @@ export function toolsFor(capabilities: readonly JarvisCapability[], gated = true
   if (has('coding')) wanted.add('MultiEdit').add('NotebookEdit');
   // Ни одного признака — значит разговор; хватает памяти и чтения.
   if (wanted.size === ALWAYS.length) for (const t of WINDOW_TOOLS) wanted.add(t);
+  if (gated) wanted.add(SHELL_BY_NAME);
 
   return [...wanted].filter((tool) => gated || !UNGATED_FORBIDDEN.has(tool));
 }
@@ -642,6 +666,7 @@ export class ClaudeCodeBackend implements AgentBackend {
       extraArgs: [
         ...gateArgs(this.options.gateSettings),
         ...homeArgs(this.options.homeDir, request.cwd, this.options.gateSettings),
+        ...shellByNameArgs(this.options.gateSettings, Boolean(key.mcpConfig)),
       ],
       consumeLine: (raw, emit) => consumeClaudeStreamLine(raw, createStreamState(), emit),
       env: agentEnv(),
