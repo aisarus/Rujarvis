@@ -17,7 +17,11 @@ Voice Access. Не нужен облачный сервис для распоз�
 
 ## Установка
 
-Windows 10/11, одна строка в PowerShell:
+Windows 10/11, одна строка в PowerShell.
+
+Где его взять: нажмите **Win**, наберите `PowerShell`, откройте «Windows
+PowerShell». Права администратора не нужны. Скопируйте строку целиком, вставьте
+(**Ctrl+V** или правой кнопкой) и нажмите Enter.
 
 ```powershell
 $f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; & $f
@@ -41,7 +45,12 @@ $f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/ais
 «Пуск» и запустит его. Права администратора, компилятор C++ и Rust не нужны.
 Повторный запуск обновляет установку.
 
-macOS, одна строка в терминале:
+macOS, одна строка в Терминале.
+
+Где его взять: нажмите **Cmd+Space**, наберите `Терминал` (или `Terminal`),
+Enter. Он встроен в macOS — ставить нечего. Скопируйте строку целиком, вставьте
+(**Cmd+V**) и нажмите Enter. Пароль система спросит один раз, если понадобится
+Homebrew.
 
 ```bash
 f=/tmp/rujarvis-install.sh; curl -fsSL https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.sh -o "$f" && bash "$f"

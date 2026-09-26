@@ -19,7 +19,11 @@ Interpreter.
 
 ## Install
 
-Windows 10/11, one line in PowerShell:
+Windows 10/11, one line in PowerShell.
+
+Where to find it: press **Win**, type `PowerShell`, open "Windows PowerShell".
+Administrator rights are not needed. Copy the whole line, paste it (**Ctrl+V**
+or right-click) and press Enter.
 
 ```powershell
 $f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; & $f
@@ -36,7 +40,11 @@ app, downloads a speech model sized to your machine and a voice, adds
 **Rujarvis** to the Start menu and starts it. No administrator rights, no C++
 compiler, no Rust. Running it again updates the install.
 
-macOS, one line in the terminal:
+macOS, one line in Terminal.
+
+Where to find it: press **Cmd+Space**, type `Terminal`, press Enter. It ships
+with macOS — nothing to install. Copy the whole line, paste it (**Cmd+V**) and
+press Enter. The system asks for your password once if Homebrew is needed.
 
 ```bash
 f=/tmp/rujarvis-install.sh; curl -fsSL https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.sh -o "$f" && bash "$f" --language en
