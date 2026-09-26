@@ -60,6 +60,10 @@ function spyTarget(): { target: ControlTarget; calls: string[] } {
         calls.push('cancelForeground');
         return true;
       },
+      cancelAll: () => {
+        calls.push('cancelAll');
+        return true;
+      },
       pauseForeground: () => {
         calls.push('pauseForeground');
         return true;
@@ -87,7 +91,11 @@ const RED_LINES: RedLine[] = [
   { said: 'стоп', control: 'stop', must: ['stopSpeaking', 'cancelForeground'] },
   { said: 'стой', control: 'stop', must: ['stopSpeaking', 'cancelForeground'] },
   { said: 'хватит', control: 'stop', must: ['stopSpeaking', 'cancelForeground'] },
-  { said: 'останови всё', control: 'stop', must: ['stopSpeaking', 'cancelForeground'] },
+  // «Всё» после глагола — вся работа. Прежде здесь ждали cancelForeground, то
+  // есть тест закреплял ошибку: фраза говорит «всё», а гасилась одна работа.
+  { said: 'останови всё', control: 'stop', must: ['stopSpeaking', 'cancelAll'] },
+  // «Всё» ПЕРЕД глаголом — «хватит», и гасится только передняя работа.
+  { said: 'всё, останови', control: 'stop', must: ['stopSpeaking', 'cancelForeground'] },
   { said: 'тишина', control: 'mute', must: ['stopSpeaking'] },
   { said: 'тихо', control: 'mute', must: ['stopSpeaking'] },
   { said: 'помолчи', control: 'mute', must: ['stopSpeaking'] },
@@ -388,12 +396,14 @@ describe('Джарвис не должен перебивать сам себя'
     // Оба исхода: и когда останавливать было что, и когда нечего.
     const было: ControlTarget = {
       cancelForeground: () => true,
+      cancelAll: () => true,
       pauseForeground: () => true,
       resumeLast: () => true,
       stopSpeaking: () => undefined,
     };
     const нечего: ControlTarget = {
       cancelForeground: () => false,
+      cancelAll: () => false,
       pauseForeground: () => false,
       resumeLast: () => false,
       stopSpeaking: () => undefined,

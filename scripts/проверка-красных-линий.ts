@@ -64,6 +64,10 @@ function spyTarget(): { target: ControlTarget; calls: string[] } {
         calls.push('cancelForeground');
         return true;
       },
+      cancelAll: () => {
+        calls.push('cancelAll');
+        return true;
+      },
       pauseForeground: () => {
         calls.push('pauseForeground');
         return true;

@@ -334,6 +334,7 @@ export class JarvisCore {
     if (control) {
       const outcome = applyVoiceControl(control, {
         cancelForeground: () => this.options.tasks.cancelForeground(),
+        cancelAll: () => this.options.tasks.cancelAll() > 0,
         pauseForeground: () => {
           const foreground = this.options.tasks.foreground();
           return foreground ? this.options.tasks.pause(foreground.id) : false;

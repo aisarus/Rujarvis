@@ -179,6 +179,10 @@ describe('voice controls', () => {
         calls.push('cancel');
         return true;
       },
+      cancelAll: () => {
+        calls.push('cancelAll');
+        return true;
+      },
       pauseForeground: () => false,
       resumeLast: () => false,
       stopSpeaking: () => calls.push('stopSpeaking'),
@@ -192,6 +196,7 @@ describe('voice controls', () => {
   it('says plainly when there was nothing to stop', () => {
     const target: ControlTarget = {
       cancelForeground: () => false,
+      cancelAll: () => false,
       pauseForeground: () => false,
       resumeLast: () => false,
       stopSpeaking: () => {},

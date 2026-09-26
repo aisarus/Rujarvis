@@ -369,6 +369,47 @@ describe('Test H — «Стоп» during a running task', () => {
     expect(desktop.task.state).toBe('cancelled');
     expect(coding.task.state).toBe('running');
   });
+
+  it('«Останови всё» гасит и фоновую работу — так сказано', async () => {
+    // Прежде «всё» отбрасывалось как слово-вставка, фраза становилась обычным
+    // «стоп», и фоновая работа шла дальше. Человек сказал «всё».
+    const h = harness({
+      respond: { 'claude-code': () => 'hang', 'openai-compatible': () => 'hang' },
+    });
+
+    const coding = await h.core.handleUtterance('Почини билд через Клод Код');
+    await tick();
+    const desktop = await h.core.handleUtterance('Открой Телеграм');
+    await tick();
+
+    const turn = await h.core.handleUtterance('Останови всё');
+    await tick();
+
+    if (coding.kind !== 'task' || desktop.kind !== 'task') throw new Error('expected tasks');
+    expect(desktop.task.state).toBe('cancelled');
+    expect(coding.task.state).toBe('cancelled');
+    if (turn.kind === 'control') expect(turn.outcome.spoken).toBe('Остановил всё.');
+  });
+
+  it('«Всё, останови» — это «хватит, останови», фоновая работа остаётся', async () => {
+    // «Всё» перед глаголом значит «хватит», а не «всё подряд». Гасить из-за
+    // него работу, которую человек не называл, нельзя.
+    const h = harness({
+      respond: { 'claude-code': () => 'hang', 'openai-compatible': () => 'hang' },
+    });
+
+    const coding = await h.core.handleUtterance('Почини билд через Клод Код');
+    await tick();
+    const desktop = await h.core.handleUtterance('Открой Телеграм');
+    await tick();
+
+    await h.core.handleUtterance('Всё, останови');
+    await tick();
+
+    if (coding.kind !== 'task' || desktop.kind !== 'task') throw new Error('expected tasks');
+    expect(desktop.task.state).toBe('cancelled');
+    expect(coding.task.state).toBe('running');
+  });
 });
 
 describe('pause and continue', () => {

@@ -20,6 +20,15 @@ import { editDistance } from './wakeWord';
 export type VoiceControl = 'stop' | 'cancel' | 'pause' | 'resume' | 'mute';
 
 export interface ControlMatch {
+  /**
+   * Просили остановить ВСЁ, а не только то, что на переднем плане.
+   *
+   * «Останови всё», «stop everything». Прежде «всё» при сопоставлении
+   * отбрасывалось как слово-вставка, и фраза становилась обычным «стоп», а
+   * тот гасит только переднюю работу: человек говорил «останови всё», а
+   * фоновая работа шла дальше.
+   */
+  всё?: boolean;
   control: VoiceControl;
   /** The phrase that matched, for the UI. */
   phrase: string;
@@ -105,6 +114,20 @@ const CONTROL_PHRASES: Array<{ control: VoiceControl; phrases: string[] }> = [
 const IGNORABLE_HERE = ['так', 'ладно', 'okay', 'ок', 'окей', 'да', 'нет', 'все', 'ok', 'yes', 'no', 'right', 'please'];
 
 const MAX_CONTROL_TOKENS = 4;
+
+const ВСЁ = ['все', 'всё', 'everything', 'all'];
+
+/**
+ * «Всё» ПОСЛЕ глагола — это «всё», а ДО — это «хватит».
+ *
+ * «Останови всё» и «stop everything» просят погасить всю работу. «Всё,
+ * останови» и «all right, stop» — просто остановка: там «всё» значит «хватит»,
+ * и гасить из-за него фоновую работу, которую человек не называл, нельзя.
+ */
+function проВсё(tokens: readonly string[]): boolean {
+  const глагол = tokens.findIndex((t) => !ВСЁ.includes(t) && !IGNORABLE_HERE.includes(t));
+  return глагол >= 0 && tokens.slice(глагол + 1).some((t) => ВСЁ.includes(t));
+}
 
 /**
  * Главные слова красных линий — для узнавания по ЗВУЧАНИЮ.
@@ -198,7 +221,8 @@ export function matchVoiceControl(transcript: string): ControlMatch | null {
   for (const { control, phrases } of CONTROL_PHRASES) {
     for (const phrase of phrases) {
       if (candidates.includes(phrase)) {
-        return { control, phrase };
+        const остановка = control === 'stop' || control === 'cancel';
+        return остановка && проВсё(tokens) ? { control, phrase, всё: true } : { control, phrase };
       }
     }
   }
@@ -231,6 +255,8 @@ export type ControlOutcome =
 export interface ControlTarget {
   /** Stops the foreground task. Returns whether anything was stopped. */
   cancelForeground(): boolean;
+  /** Stops every active task, foreground and background. Whether any was. */
+  cancelAll(): boolean;
   /** Pauses the foreground task, keeping its session. */
   pauseForeground(): boolean;
   /** Resumes the most recently paused task. */
@@ -251,10 +277,14 @@ export function applyVoiceControl(match: ControlMatch, target: ControlTarget): C
     case 'stop':
     case 'cancel': {
       target.stopSpeaking();
-      const stopped = target.cancelForeground();
-      return stopped
-        ? { action: 'stopped', spoken: tr('Остановил.', 'Stopped.') }
-        : { action: 'nothing', spoken: tr('Нечего останавливать.', 'Nothing to stop.') };
+      // Голое «стоп» гасит переднюю работу и не трогает убранную в фон — так
+      // задумано в диспетчере задач. «Останови всё» гасит всё: так сказано.
+      const stopped = match.всё ? target.cancelAll() : target.cancelForeground();
+      if (!stopped) return { action: 'nothing', spoken: tr('Нечего останавливать.', 'Nothing to stop.') };
+      return {
+        action: 'stopped',
+        spoken: match.всё ? tr('Остановил всё.', 'Stopped everything.') : tr('Остановил.', 'Stopped.'),
+      };
     }
     case 'pause': {
       target.stopSpeaking();
