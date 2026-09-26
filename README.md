@@ -155,6 +155,24 @@ Claude Code: он смотрит на конкретную команду, фа�
 разговоры вокруг. Если он плохо слышит, в **Настройки → Папки и лог** можно
 включить «писать всё».
 
+### Удалить
+
+Windows, в PowerShell:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Rujarvis\src\uninstall.ps1"
+```
+
+macOS, в Терминале:
+
+```bash
+bash "$HOME/Library/Application Support/Rujarvis/src/uninstall.sh"
+```
+
+Удаление закрывает Джарвиса, убирает ярлыки, автозапуск и всю его папку.
+Папку результатов **Джарвис** на рабочем столе и вход в Claude Code и Codex не
+трогает.
+
 ## Приватность
 
 Речь распознаётся и синтезируется локально. С компьютера уходит только то, что

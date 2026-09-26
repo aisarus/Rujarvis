@@ -366,6 +366,51 @@ foreach ($док in $ставитФайлом) {
     Assert-That "$док называет скачивание в файл" ($текстДок -match '-OutFile')
 }
 
+# --- Удаление: uninstall.ps1 -----------------------------------------------
+$uninstallPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'uninstall.ps1'
+$uErrors = $null
+$uTokens = $null
+$uAst = [System.Management.Automation.Language.Parser]::ParseFile($uninstallPath, [ref]$uTokens, [ref]$uErrors)
+Assert-That 'uninstall.ps1: синтаксис в порядке' (-not ($uErrors -and $uErrors.Count -gt 0))
+Assert-That 'uninstall.ps1 с BOM: иначе 5.1 рвёт русские строки' (
+    [System.IO.File]::ReadAllBytes($uninstallPath)[0] -eq 0xEF)
+$uFunctions = $uAst.FindAll(
+    { param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)
+# Копии гашения процессов обязаны совпадать слово в слово: скрипты запускаются
+# поодиночке, и разъехавшаяся копия гасила бы при удалении не то, что при установке.
+foreach ($name in @('Get-OwnJarvisProcesses', 'Stop-RunningJarvis')) {
+    $a = @($functions | Where-Object { $_.Name -eq $name })[0]
+    $b = @($uFunctions | Where-Object { $_.Name -eq $name })[0]
+    Assert-That "$name в uninstall.ps1 — та же, что в install.ps1" (
+        $a -and $b -and (($a.Extent.Text -replace "`r", '') -eq ($b.Extent.Text -replace "`r", '')))
+}
+Invoke-Expression (($uFunctions | Where-Object { $_.Name -in @('Test-JarvisInstallRoot', 'Remove-Tree') } |
+    ForEach-Object { $_.Extent.Text }) -join "`n")
+
+$пробник = Join-Path ([System.IO.Path]::GetTempPath()) ("jarvis-uninstall-" + [guid]::NewGuid().ToString('N'))
+try {
+    $наш = Join-Path $пробник 'Rujarvis'
+    New-Item -ItemType Directory -Path (Join-Path $наш 'data') -Force | Out-Null
+    $пустой = Join-Path $пробник 'empty\Rujarvis'
+    New-Item -ItemType Directory -Path $пустой -Force | Out-Null
+    $чужой = Join-Path $пробник 'Other'
+    New-Item -ItemType Directory -Path (Join-Path $чужой 'data') -Force | Out-Null
+    Assert-That 'папка Rujarvis с данными — Джарвис' (Test-JarvisInstallRoot -Path $наш)
+    Assert-That 'пустая Rujarvis — не Джарвис: удалять не по чему судить' (-not (Test-JarvisInstallRoot -Path $пустой))
+    Assert-That 'чужое имя с данными — не Джарвис' (-not (Test-JarvisInstallRoot -Path $чужой))
+    Assert-That 'несуществующая — не Джарвис' (-not (Test-JarvisInstallRoot -Path (Join-Path $пробник 'nope\Rujarvis')))
+
+    # Дерево глубже 260 знаков, как node_modules под pnpm.
+    $глубоко = $наш
+    while ($глубоко.Length -lt 320) { $глубоко = Join-Path $глубоко 'node_modules_pnpm_deep' }
+    [void][System.IO.Directory]::CreateDirectory("\\?\$глубоко")
+    [System.IO.File]::WriteAllText("\\?\$глубоко\x.txt", 'x')
+    Assert-That 'Remove-Tree удаляет дерево глубже 260 знаков' (Remove-Tree -Path $наш)
+}
+finally {
+    if (Test-Path -LiteralPath $пробник) { & cmd.exe /d /c "rd /s /q `"\\?\$пробник`"" 2>&1 | Out-Null }
+}
+
 # --- Работающий Джарвис: гасится свой, по пути, а не по имени ---------------
 #
 # Две копии безобидного ping.exe под именем electron.exe в разных «установках».

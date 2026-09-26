@@ -148,6 +148,24 @@ The log records commands addressed to Jarvis, never your dictation or
 conversations around you — unless you choose *everything* in **Settings →
 Folders and log**, which helps when it mishears.
 
+### Uninstall
+
+Windows, in PowerShell:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Rujarvis\src\uninstall.ps1"
+```
+
+macOS, in Terminal:
+
+```bash
+bash "$HOME/Library/Application Support/Rujarvis/src/uninstall.sh"
+```
+
+Uninstalling closes Jarvis and removes its shortcuts, autostart and its whole
+folder. It leaves your results folder on the desktop and your Claude Code and
+Codex sign-ins alone.
+
 ## Privacy
 
 Speech is recognised and synthesised locally. The only things that leave your

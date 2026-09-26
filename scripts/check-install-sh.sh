@@ -206,6 +206,27 @@ check 'проверке кириллицы досталось что прове�
 check 'в оболочке нет имён кириллицей: bash отвечает на них 127'   "$([ -z "$cyrillic_names" ] && printf 'да')"
 [ -z "$cyrillic_names" ] || printf '%s' "$cyrillic_names"
 
+# --- удаление: uninstall.sh ---------------------------------------------------
+UNINSTALL="$ROOT/uninstall.sh"
+check 'uninstall.sh: синтаксис в порядке' "$(bash -n "$UNINSTALL" 2>/dev/null && printf 'да')"
+# Копии гашения процессов обязаны совпадать слово в слово: скрипты запускаются
+# поодиночке, и разъехавшаяся копия гасила бы при удалении не то, что при установке.
+for fn in own_jarvis_pids kill_tree stop_running_jarvis; do
+  a="$(awk "/^${fn}\\(\\) \\{/,/^\\}/" "$SCRIPT")"
+  b="$(awk "/^${fn}\\(\\) \\{/,/^\\}/" "$UNINSTALL")"
+  check "$fn в uninstall.sh — та же, что в install.sh" "$([ -n "$a" ] && [ "$a" = "$b" ] && printf 'да')"
+done
+# shellcheck source=/dev/null
+. "$UNINSTALL"
+set +e
+probe="$(mktemp -d)"
+mkdir -p "$probe/Rujarvis/data" "$probe/empty/Rujarvis" "$probe/Other/data"
+check 'папка Rujarvis с данными — Джарвис' "$(is_jarvis_root "$probe/Rujarvis" && printf 'да')"
+check 'пустая Rujarvis — не Джарвис: удалять не по чему судить' "$(is_jarvis_root "$probe/empty/Rujarvis" || printf 'да')"
+check 'чужое имя с данными — не Джарвис' "$(is_jarvis_root "$probe/Other" || printf 'да')"
+check 'несуществующая — не Джарвис' "$(is_jarvis_root "$probe/nope/Rujarvis" || printf 'да')"
+rm -rf "$probe"
+
 # --- работающий Джарвис: гасится свой, по пути, а не по имени -----------------
 #
 # Две копии безобидного sleep под именем Electron в разных «установках».

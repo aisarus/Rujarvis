@@ -477,6 +477,46 @@ jobs:
           fi
           test "$cli_code" -eq 0 || { echo "Claude Code на Windows не работает (код $cli_code)"; exit 1; }
 
+      - name: Удаление начисто
+        # Установка → удаление → не осталось ничего, кроме названного: папки
+        # результатов на рабочем столе и входа в Claude Code и Codex. Их
+        # помечаем заранее и проверяем, что метки на месте.
+        #
+        # uninstall.ps1 запускается так, как его запустит человек: через
+        # Windows PowerShell 5.1 и прямо из папки, которую он удаляет. Сам шаг —
+        # pwsh: 5.1 читает скрипт шага без BOM и рвёт русские имена.
+        #
+        # Последним: после него ставить и проверять не на что.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:LOCALAPPDATA 'Rujarvis'
+          $desktop = [Environment]::GetFolderPath('Desktop')
+          $marks = @(
+            (Join-Path $desktop 'Джарвис\keep.txt'),
+            (Join-Path $HOME '.claude\jarvis-keep.txt'),
+            (Join-Path $HOME '.codex\jarvis-keep.txt')
+          )
+          foreach ($m in $marks) {
+            New-Item -ItemType Directory -Force (Split-Path -Parent $m) | Out-Null
+            Set-Content -LiteralPath $m -Value 'keep'
+          }
+
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass `
+            -File (Join-Path $root 'src\uninstall.ps1')
+          if ($LASTEXITCODE -ne 0) { throw "uninstall.ps1 вернул $LASTEXITCODE" }
+
+          $left = @(
+            $root,
+            (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Rujarvis.lnk'),
+            (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\Rujarvis.lnk'),
+            (Join-Path $desktop 'Rujarvis.lnk')
+          ) | Where-Object { Test-Path -LiteralPath $_ }
+          if ($left) { throw "после удаления осталось: $($left -join '; ')" }
+          $lost = @($marks | Where-Object { -not (Test-Path -LiteralPath $_) })
+          if ($lost) { throw "удаление задело чужое: $($lost -join '; ')" }
+          'удалено начисто; результаты и вход в Claude Code и Codex на месте'
+
       - name: Журнал установки, если что-то упало
         if: failure()
         shell: powershell

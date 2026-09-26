@@ -409,6 +409,30 @@ jobs:
           echo 'новый Джарвис запущен вместо старого, приманка цела'
 
 
+      - name: Удаление начисто
+        # Установка → удаление → не осталось ничего, кроме названного: папки
+        # результатов на Рабочем столе и входа в Claude Code и Codex. Их
+        # помечаем заранее и проверяем, что метки на месте. uninstall.sh
+        # запускается из папки, которую удаляет, — как у человека.
+        #
+        # Последним: после него ставить и проверять не на что.
+        run: |
+          set -o pipefail
+          root="$HOME/Library/Application Support/Rujarvis"
+          marks=("$HOME/Desktop/Джарвис/keep.txt" "$HOME/.claude/jarvis-keep.txt" "$HOME/.codex/jarvis-keep.txt")
+          for m in "${marks[@]}"; do mkdir -p "$(dirname "$m")"; echo keep > "$m"; done
+
+          bash "$root/src/uninstall.sh" 2>&1 | tee /tmp/uninstall.log
+
+          left=''
+          for p in "$root" "$HOME/Applications/Rujarvis.app" "$HOME/Library/LaunchAgents/com.rujarvis.app.plist" \
+                   "$HOME/Desktop/Rujarvis" "$HOME/Desktop/Rujarvis.app"; do
+            if [ -e "$p" ] || [ -L "$p" ]; then left="$left $p;"; fi
+          done
+          test -z "$left" || { echo "после удаления осталось:$left"; exit 1; }
+          for m in "${marks[@]}"; do test -f "$m" || { echo "удаление задело чужое: $m"; exit 1; }; done
+          echo 'удалено начисто; результаты и вход в Claude Code и Codex на месте'
+
       - name: Журнал установки, если что-то упало
         if: failure()
         run: tail -100 /tmp/install.log || true
