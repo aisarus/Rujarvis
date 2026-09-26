@@ -13,6 +13,7 @@
  *     pnpm jarvis:roundtrip                        # русский
  *     pnpm jarvis:roundtrip -- --en                # английский
  *     pnpm jarvis:roundtrip -- --en --model base   # конкретная модель
+ *     pnpm jarvis:roundtrip -- --voice Дмитрий     # другой голос
  */
 
 import { matchAppLaunch, spokenCloseTarget } from '../jarvis/apps/launch';
@@ -22,7 +23,7 @@ import { jarvisPaths } from '../jarvis/setup/paths';
 import { matchVoiceControl } from '../jarvis/voice/interrupts';
 import { fixMishearings } from '../jarvis/voice/mishearing';
 import { isSilenceRequest, meaningfulSpeech } from '../jarvis/voice/noise';
-import { DEFAULT_VOICE, isVoiceInstalled, Speaker } from '../jarvis/voice/tts';
+import { DEFAULT_VOICE, isVoiceInstalled, Speaker, VOICES } from '../jarvis/voice/tts';
 import { WHISPER_MODEL_IDS, type WhisperModelId } from '../jarvis/voice/sttModels';
 import { findWakeWord } from '../jarvis/voice/wakeWord';
 import { isWhisperModelInstalled, WhisperRecognizer } from '../jarvis/voice/whisperRecognizer';
@@ -92,7 +93,18 @@ async function main(): Promise<void> {
   setLanguage(language);
   const paths = jarvisPaths();
 
-  const voiceId = DEFAULT_VOICE[language];
+  // `--voice Дмитрий` (или id) — мерить другим голосом. До 27.09.2026 круг
+  // знал только голос по умолчанию, и остальные голоса не мерились вовсе.
+  const asked = process.argv.includes('--voice') ? process.argv[process.argv.indexOf('--voice') + 1] : undefined;
+  const found = asked
+    ? VOICES.find((v) => v.language === language && (v.id === asked || v.label.toLowerCase() === asked.toLowerCase()))
+    : undefined;
+  if (asked && !found) {
+    const есть = VOICES.filter((v) => v.language === language).map((v) => v.label).join(', ');
+    console.log(`Нет голоса «${asked}» для ${language}. Есть: ${есть}`);
+    process.exit(2);
+  }
+  const voiceId = found?.id ?? DEFAULT_VOICE[language];
   if (!isVoiceInstalled(paths.voiceModels, voiceId)) {
     console.log(`НЕЧЕМ МЕРИТЬ: голос ${voiceId} не скачан в ${paths.voiceModels}`);
     process.exit(2);
