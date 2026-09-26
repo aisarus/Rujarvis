@@ -123,6 +123,33 @@ export function windowsFromAnswer(answer: string): CuaWindow[] {
   return окна;
 }
 
+/**
+ * Строки ответа `window_list`: окна драйвера и свёрнутые сверх них.
+ *
+ * cua-driver свёрнутых окон не отдаёт вовсе — ни с `on_screen_only`, ни без
+ * (замер 27.09.2026: ответ одинаковый). Агент видел 3 окна из 6, и
+ * «переключись на Edge» при свёрнутом Edge не находило его. Свёрнутые берутся
+ * у драйвера рабочего стола, который их видит, — без номера окна: пока окно
+ * свёрнуто, смотреть в него и нажимать нельзя, сначала его поднимает
+ * `focus_window`. Не удалось спросить — так и сказано, а не молча пропущено.
+ */
+export function windowListLines(
+  окна: readonly CuaWindow[],
+  рабочийСтол: ReadonlyArray<{ title: string; pid: number; minimized?: boolean }> | Error,
+): string[] {
+  const строки = окна.map((w) => `${w.title} — ${w.app}, pid ${w.pid}, окно ${w.windowId}`);
+  if (рабочийСтол instanceof Error) {
+    строки.push(`(свёрнутые окна не проверены: ${рабочийСтол.message})`);
+    return строки;
+  }
+  for (const w of рабочийСтол) {
+    if (!w.minimized || !w.title) continue;
+    if (окна.some((о) => о.pid === w.pid && о.title === w.title)) continue;
+    строки.push(`${w.title} — свёрнуто, pid ${w.pid}: сначала подними его focus_window, тогда появится номер окна`);
+  }
+  return строки;
+}
+
 export function listedWindows(answer: string): CuaWindow[] {
   const found: CuaWindow[] = [];
   for (const [, app, pid, title, windowId] of answer.matchAll(WINDOW_LINE)) {

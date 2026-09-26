@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { windowsFromAnswer } from './cuaProtocol';
+import { windowListLines, windowsFromAnswer } from './cuaProtocol';
 
 /**
  * Молчание драйвера окон нельзя выдавать за пустой экран.
@@ -51,5 +51,35 @@ describe('ответ драйвера окон', () => {
       '- explorer.exe (pid 2) "Program Manager" [window_id: 2]',
     ].join('\n');
     expect(windowsFromAnswer(ответ)).toEqual([]);
+  });
+});
+
+describe('список окон со свёрнутыми', () => {
+  // Замер 27.09.2026: на экране 6 окон, агенту — 3. cua-driver свёрнутых не
+  // отдаёт, и «переключись на Edge» при свёрнутом Edge его не находило.
+  const окна = [
+    { app: 'claude.exe', pid: 18076, title: 'Claude', windowId: 328534 },
+    { app: 'msedge.exe', pid: 5100, title: 'Почта — Microsoft Edge', windowId: 77 },
+  ];
+
+  it('свёрнутое окно в списке — с пометкой и без номера окна', () => {
+    const строки = windowListLines(окна, [
+      { title: 'Claude', pid: 18076, minimized: false },
+      { title: 'Новости — Microsoft Edge', pid: 5100, minimized: true },
+    ]);
+    expect(строки).toHaveLength(3);
+    expect(строки[2]).toMatch(/^Новости — Microsoft Edge — свёрнуто, pid 5100: .*focus_window/u);
+    // Номера нет: пока окно свёрнуто, смотреть в него и нажимать нельзя.
+    expect(строки[2]).not.toMatch(/окно \d+/u);
+  });
+
+  it('окно, которое драйвер уже назвал, не повторяется', () => {
+    const строки = windowListLines(окна, [{ title: 'Почта — Microsoft Edge', pid: 5100, minimized: true }]);
+    expect(строки).toHaveLength(2);
+  });
+
+  it('драйвер рабочего стола не ответил — так и сказано, а не молча', () => {
+    const строки = windowListLines(окна, new Error('PowerShell не запустился'));
+    expect(строки.at(-1)).toMatch(/свёрнутые окна не проверены: PowerShell не запустился/u);
   });
 });

@@ -37,6 +37,7 @@ import { makePlan, markStep, renderPlan, type StepState } from '../agent/plan';
 import { buildSkillFile, isSelfAuthored, skillPath } from '../skills/author';
 import { createDesktopDriver } from './platform';
 import { createWindowTools } from './windowTools';
+import { windowListLines } from './cuaProtocol';
 import { jarvisDataRoot } from '../setup/paths';
 
 const driver = createDesktopDriver();
@@ -415,7 +416,7 @@ export function createDesktopMcpServer(): McpServer {
         const windows = await driver.windows();
         const lines = windows.map(
           (w) =>
-            `${w.focused ? '→ ' : '  '}${w.title} — (${w.x}, ${w.y}) ${w.width}×${w.height}`,
+            `${w.focused ? '→ ' : '  '}${w.title} — ${w.minimized ? 'свёрнуто' : `(${w.x}, ${w.y}) ${w.width}×${w.height}`}`,
         );
         return say(lines.length ? lines.join('\n') : 'Видимых окон нет.');
       } catch (error) {
@@ -1463,18 +1464,19 @@ function registerWindowTools(server: McpServer): void {
       title: 'Окна',
       description:
         'Перечисляет окна, с которыми можно работать: программа, заголовок, pid и номер окна. ' +
-        'Номер окна нужен всем остальным инструментам этой четвёрки.',
+        'Номер окна нужен всем остальным инструментам этой четвёрки. Свёрнутые окна тоже ' +
+        'в списке, но без номера: сначала подними окно focus_window.',
       inputSchema: {},
     },
     async () => {
       try {
         const windows = await cua.windows();
-        if (windows.length === 0) return say('Открытых окон нет.');
-        return say(
-          windows
-            .map((w) => `${w.title} — ${w.app}, pid ${w.pid}, окно ${w.windowId}`)
-            .join('\n'),
-        );
+        const рабочийСтол = await driver
+          .windows()
+          .catch((беда: unknown) => (беда instanceof Error ? беда : new Error(String(беда))));
+        const строки = windowListLines(windows, рабочийСтол);
+        if (строки.length === 0) return say('Открытых окон нет.');
+        return say(строки.join('\n'));
       } catch (error) {
         return failed(error);
       }

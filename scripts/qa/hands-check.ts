@@ -11,7 +11,7 @@
  * мерить. Ничего из чужого не гасит и не закрывает: закрывает ровно то, что
  * запустила сама, и по записанному pid.
  */
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -319,6 +319,40 @@ function проверки(s: Сервер): Проверка[] {
           }
           return { вид: 'прошло', чем: текст.replace(/\s+/gu, ' ').slice(0, 140) };
         }
+      },
+    },
+
+    {
+      имя: 'окна: свёрнутое окно видно агенту и поднимается',
+      async запуск() {
+        // Замер 27.09.2026: на экране 6 окон, агенту — 3. cua-driver свёрнутых
+        // не отдаёт, и «переключись на Edge» при свёрнутом Edge не находило его.
+        if (!общее.браузер) return { вид: 'нечем мерить', почему: 'окно браузера не найдено выше' };
+        // Сворачиваем только своё окно — по его номеру у драйвера, это HWND.
+        const свернуть = spawnSync(
+          'powershell',
+          [
+            '-NoProfile',
+            '-Command',
+            `Add-Type -Namespace J -Name W -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int n);'; [void][J.W]::ShowWindow([IntPtr]${общее.браузер.windowId}, 6)`,
+          ],
+          { encoding: 'utf8', timeout: 30_000 },
+        );
+        if (свернуть.status !== 0) {
+          return { вид: 'нечем мерить', почему: `не свернул своё окно: ${(свернуть.stderr ?? '').slice(0, 200)}` };
+        }
+        await new Promise((готово) => setTimeout(готово, 800));
+        const строка = (await s.инструмент('window_list', {})).split('\n').find((с) => /Проба рук Джарвиса/u.test(с));
+        if (!строка) return { вид: 'не прошло', почему: 'свёрнутого окна нет в window_list' };
+        if (!/свёрнуто/u.test(строка)) {
+          return { вид: 'не прошло', почему: `окно в списке без пометки «свёрнуто»: ${строка.slice(0, 160)}` };
+        }
+        const поднял = await s.инструмент('focus_window', { title: 'Проба рук Джарвиса' });
+        await new Promise((готово) => setTimeout(готово, 800));
+        const после = окнаИз(await s.инструмент('window_list', {})).find((о) => /Проба рук Джарвиса/u.test(о.title));
+        if (!после) return { вид: 'не прошло', почему: `focus_window не вернул окно в работу: ${поднял.slice(0, 160)}` };
+        общее.браузер = после;
+        return { вид: 'прошло', чем: `свёрнутое — в списке с пометкой; после focus_window — окно ${после.windowId}` };
       },
     },
 
