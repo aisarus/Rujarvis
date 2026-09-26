@@ -22,7 +22,7 @@ function input(overrides: Partial<OnboardingInput> = {}): OnboardingInput {
 describe('onboarding plan', () => {
   it('picks a speech model that fits the machine', () => {
     expect(buildOnboardingPlan(input({ machine: { platform: 'win32', totalRamMb: 4_000 } })).whisperModel).toBe('tiny');
-    expect(buildOnboardingPlan(input({ machine: { platform: 'win32', totalRamMb: 8_000 } })).whisperModel).toBe('base');
+    expect(buildOnboardingPlan(input({ machine: { platform: 'win32', totalRamMb: 8_000 } })).whisperModel).toBe('small');
     expect(buildOnboardingPlan(input()).whisperModel).toBe('small');
   });
 

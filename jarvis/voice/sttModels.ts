@@ -86,13 +86,24 @@ export const WHISPER_MODELS: readonly WhisperModelDefinition[] = [
 ];
 
 /**
- * The default.
+ * Модель по умолчанию — `small`.
  *
- * `base` rather than `small`: on a CPU-only machine `small` is roughly three
- * times slower for no reliable gain on short commands, and a voice assistant
- * that thinks for nine seconds before acting is not one people keep using.
+ * Прежде здесь стоял `base` с доводом «small втрое медленнее без надёжного
+ * выигрыша на коротких командах». Оба довода опроверг замер 26.09.2026.
+ *
+ * Выигрыш есть, и именно на красных линиях. Голос по кругу (синтез Piper →
+ * Whisper → разбор), по два-четыре прогона: по-русски base дал 12, 9, 9 и 8 из
+ * 12, small — 11, 12 и 11; по-английски base 9, 8, 9, small 9 и 11. Промахи
+ * base приходились на «Тишина», «Пауза» и «Стоп».
+ *
+ * Медленнее — не настолько, чтобы мешать: живой журнал на small у владельца
+ * даёт 0,6–1,2 с на фразу в 2–5,6 с речи. «Девяти секунд» не видно нигде.
+ *
+ * Цена — память (~1,1 ГБ против ~400 МБ) и загрузка (639 МБ против 208 МБ).
+ * Поэтому по памяти решает `recommendWhisperModel`, а это — запас на случай,
+ * когда объём памяти неизвестен.
  */
-export const DEFAULT_WHISPER_MODEL: WhisperModelId = 'base';
+export const DEFAULT_WHISPER_MODEL: WhisperModelId = 'small';
 
 export function getWhisperModel(id: WhisperModelId): WhisperModelDefinition {
   const model = WHISPER_MODELS.find((candidate) => candidate.id === id);
@@ -132,7 +143,8 @@ export function recommendWhisperModel(input: {
   hasGpu?: boolean;
 }): WhisperModelId {
   if (input.hasGpu && input.totalRamMb >= 16_000) return 'turbo';
-  if (input.totalRamMb >= 16_000) return 'small';
-  if (input.totalRamMb >= 8_000) return 'base';
+  // От 8 ГБ — small: ~1,1 ГБ на распознавание такая машина держит, а base
+  // промахивался по красным линиям (см. DEFAULT_WHISPER_MODEL).
+  if (input.totalRamMb >= 8_000) return 'small';
   return 'tiny';
 }

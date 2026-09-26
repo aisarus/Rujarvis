@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import path from 'node:path';
 
 import { isPrivateEndpoint, normaliseEndpoint } from '../backends/localModel';
-import { WHISPER_MODEL_IDS, type WhisperModelId } from '../voice/sttModels';
+import { DEFAULT_WHISPER_MODEL, WHISPER_MODEL_IDS, type WhisperModelId } from '../voice/sttModels';
 import { DEFAULT_VOICE, VOICES } from '../voice/tts';
 
 import type { Language } from '../locale/language';
@@ -72,7 +72,8 @@ export interface AppSettings {
 export const DEFAULT_SETTINGS: AppSettings = {
   language: 'ru',
   voiceId: DEFAULT_VOICE.ru,
-  whisperModel: 'base',
+  // Одно умолчание на всех: своя строка здесь уже разошлась бы с распознаванием.
+  whisperModel: DEFAULT_WHISPER_MODEL,
   workspace: '',
   outputDir: '',
   speechLogging: 'commands',

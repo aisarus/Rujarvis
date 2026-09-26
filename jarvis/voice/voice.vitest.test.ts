@@ -334,13 +334,16 @@ describe('whisper model catalog', () => {
     expect(whisperModelFiles('small', false).encoder).toBe('small-encoder.onnx');
   });
 
-  it('defaults to base — small is three times slower on CPU for no reliable gain', () => {
-    expect(DEFAULT_WHISPER_MODEL).toBe('base');
+  it('по умолчанию small: base промахивался по красным линиям', () => {
+    // Замер 26.09.2026, голос по кругу: base по-русски 12, 9, 9 и 8 из 12 с
+    // промахами на «Тишина», «Пауза» и «Стоп»; small — 11, 12 и 11. Прежний
+    // довод «small втрое медленнее» живой журнал не подтвердил: 0,6–1,2 с.
+    expect(DEFAULT_WHISPER_MODEL).toBe('small');
   });
 
   it('recommends a model that fits the machine', () => {
     expect(recommendWhisperModel({ totalRamMb: 4_000 })).toBe('tiny');
-    expect(recommendWhisperModel({ totalRamMb: 8_000 })).toBe('base');
+    expect(recommendWhisperModel({ totalRamMb: 8_000 })).toBe('small');
     expect(recommendWhisperModel({ totalRamMb: 32_000 })).toBe('small');
     expect(recommendWhisperModel({ totalRamMb: 32_000, hasGpu: true })).toBe('turbo');
   });
