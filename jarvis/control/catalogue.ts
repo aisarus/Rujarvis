@@ -122,6 +122,9 @@ function russianCatalogue(): CatalogueGroup[] {
         { say: 'закрой вкладку', does: 'закрыть вкладку', layer: 'direct' },
         { say: 'верни вкладку', does: 'вернуть закрытую', layer: 'direct' },
         { say: 'следующая вкладка', does: 'перейти к следующей', layer: 'direct' },
+        // Вкладки и ссылки идут в браузер, даже когда впереди другое окно.
+        { say: 'открой третью ссылку', does: 'открыть ссылку страницы по номеру', layer: 'direct' },
+        { say: 'открой последнюю ссылку', does: 'открыть последнюю ссылку страницы', layer: 'direct' },
       ],
     },
     {
@@ -249,6 +252,8 @@ function englishCatalogue(): CatalogueGroup[] {
         { say: 'close tab', does: 'close the tab', layer: 'direct' },
         { say: 'reopen tab', does: 'bring back a closed tab', layer: 'direct' },
         { say: 'next tab', does: 'go to the next tab', layer: 'direct' },
+        { say: 'open the third link', does: 'open a page link by its number', layer: 'direct' },
+        { say: 'open the last link', does: 'open the last link on the page', layer: 'direct' },
       ],
     },
     {

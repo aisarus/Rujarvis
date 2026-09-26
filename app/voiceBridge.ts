@@ -98,6 +98,7 @@ import { RunLogStore } from '../jarvis/observe/runLogStore';
 import { Storyline } from '../jarvis/observe/storyline';
 import { StartupTiming } from '../jarvis/observe/timing';
 import { parseLiveEdit, нечегоПравить } from '../jarvis/live/edits';
+import { нажать, открытьСсылку } from '../jarvis/control/browserCommands';
 import { isLive, sendLive } from '../jarvis/desktop/blenderLive';
 import { NoteStore } from '../jarvis/dialogue/noteStore';
 import { describeLessons, lessonsFrom } from '../jarvis/memory/lessons';
@@ -361,11 +362,22 @@ export async function runDirectCommand(
   try {
     switch (command.kind) {
       case 'key':
-        await desktop.key(command.keys);
+        // Вкладки бывают только в браузере — туда и жмём, а не в то, что впереди.
+        // Живой прогон 26.09.2026: Ctrl+W ушёл в окно Claude, где человек
+        // разговаривал, а вкладка в Edge осталась открытой.
+        await нажать(desktop, command.keys);
         break;
       case 'scroll':
         await desktop.scroll(command.amount);
         break;
+      case 'openLink': {
+        // Номер, а не сказанное: в журнал идёт число и надпись ссылки со
+        // страницы, речь человека сюда не попадает.
+        const номер = command.index;
+        const ссылка = await открытьСсылку(desktop, номер);
+        console.log(`[jarvis] открыл ссылку ${номер}: «${ссылка.name}» в (${ссылка.x}, ${ссылка.y})`);
+        break;
+      }
       case 'click':
         await desktop.click({ button: command.button, double: command.double });
         break;
@@ -690,6 +702,8 @@ function describeDirect(command: DirectCommand): string {
       return command.on ? 'начал диктовку' : 'закончил диктовку';
     case 'clickNamed':
       return `кликнул по «${command.query}»`;
+    case 'openLink':
+      return command.index === -1 ? 'открыл последнюю ссылку' : `открыл ссылку ${command.index}`;
     case 'grid':
       return command.on ? 'показал сетку' : 'убрал сетку';
     case 'gridClick':

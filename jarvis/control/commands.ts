@@ -20,6 +20,7 @@
 
 import { stripFiller } from '../voice/filler';
 import { WAKE_WORD_VARIANTS } from '../voice/wakeWord';
+import { разобратьСсылку } from './browserCommands';
 import { firstMatch, type Rule } from './grammar';
 import { GRID_CELLS, parseSpokenNumber } from './grid';
 
@@ -31,6 +32,8 @@ export type DirectCommand =
   | { kind: 'focus'; title: string }
   | { kind: 'dictation'; on: boolean }
   | { kind: 'clickNamed'; query: string }
+  /** N-я ссылка страницы в браузере; -1 — последняя. */
+  | { kind: 'openLink'; index: number }
   | { kind: 'grid'; on: boolean }
   | { kind: 'gridClick'; cell: number }
   | { kind: 'gridRefine'; sub: number }
@@ -699,6 +702,11 @@ function readDirect(phrase: string): DirectCommand | null {
   // Грамматика раньше таблиц: она покрывает формы, которых в таблице нет.
   const поГрамматике = firstMatch(ПРАВИЛА, phrase);
   if (поГрамматике) return поГрамматике;
+
+  // Ссылка по номеру — раньше «нажми на …». Иначе «нажми на третью ссылку»
+  // искало бы на экране кнопку с надписью «третью ссылку» и не находило.
+  const ссылка = разобратьСсылку(phrase);
+  if (ссылка) return ссылка;
 
   const encore = readEncore(phrase);
   if (encore) return encore;
