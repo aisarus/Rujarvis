@@ -302,9 +302,15 @@ export class BackendManager {
           });
         }
 
+        // Чужую сессию не поднять — этому бэкенду та же просьба без неё.
+        const своя =
+          request.sessionId && request.sessionBackend && request.sessionBackend !== id
+            ? { ...request, sessionId: undefined, sessionBackend: undefined }
+            : request;
+
         let run: BackendRun;
         try {
-          run = backend.run(request);
+          run = backend.run(своя);
         } catch (error) {
           failures.push(`${backend.name}: ${error instanceof Error ? error.message : String(error)}`);
           continue;

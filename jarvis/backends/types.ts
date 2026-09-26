@@ -116,6 +116,16 @@ export interface BackendRequest {
   permissions: TaskPermissions;
   /** Continue a previous backend session instead of starting a new one. */
   sessionId?: string;
+  /**
+   * Чья это сессия — бэкенд, который её завёл.
+   *
+   * Сессия не переносится между агентами: Codex не поднимет поток Claude
+   * Code, и наоборот. Замер 27.09.2026: `claude --resume <поток Codex>` —
+   * «No conversation found», задача падает, не начав. А сессия уезжала к
+   * чужому всякий раз, когда следующая просьба в открытом разговоре шла
+   * другому агенту — или менеджер переключался на запасного.
+   */
+  sessionBackend?: string;
   timeoutMs?: number;
   /** Language the answer should be written in. Jarvis defaults to Russian. */
   language?: string;

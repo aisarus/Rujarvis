@@ -546,7 +546,14 @@ export class JarvisCore {
       risk,
       permissions: normalized.permissions,
       // Та же сессия агента: продолжая свою работу, он помнит её без пересказа.
-      sessionId: resumable?.sessionId ?? continuing?.sessionId ?? conversation?.sessionId,
+      // Вместе с хозяином — чужому агенту её не отдадут.
+      ...(resumable?.sessionId
+        ? { sessionId: resumable.sessionId, sessionBackend: resumable.sessionBackend }
+        : continuing?.sessionId
+          ? { sessionId: continuing.sessionId, sessionBackend: continuing.backend }
+          : conversation
+            ? { sessionId: conversation.sessionId, sessionBackend: conversation.backend }
+            : {}),
       language: currentLanguage(),
       outputDir: this.options.outputDir,
       instructions: this.options.instructions?.(),

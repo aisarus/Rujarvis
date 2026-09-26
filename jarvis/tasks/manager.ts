@@ -41,6 +41,8 @@ export interface JarvisTask {
   finishedAt?: number;
   /** Set once a backend reports one, so the task can be resumed later. */
   sessionId?: string;
+  /** Кто эту сессию завёл: поднять её может только он. */
+  sessionBackend?: string;
   result?: BackendResult;
   /** Events seen so far, bounded so a long task does not grow without limit. */
   events: BackendEvent[];
@@ -144,6 +146,7 @@ export class TaskManager {
       preference: spec.preference ?? {},
       createdAt: this.now(),
       sessionId: spec.request.sessionId,
+      sessionBackend: spec.request.sessionBackend,
       events: [],
     };
 
@@ -168,7 +171,10 @@ export class TaskManager {
         if (event.type === 'completed') break;
         // Id сессии приходит в событии начала — без него «продолжай» начнёт
         // работу с нуля, а обещание паузы было другим.
-        if (event.type === 'started' && event.sessionId) task.sessionId = event.sessionId;
+        if (event.type === 'started' && event.sessionId) {
+          task.sessionId = event.sessionId;
+          task.sessionBackend = event.backend;
+        }
         task.events.push(event);
         if (task.events.length > limit) task.events.splice(0, task.events.length - limit);
         this.emit({ type: 'task-event', task, event });
@@ -192,7 +198,10 @@ export class TaskManager {
       this.runs.delete(task.id);
       task.result = result;
       task.finishedAt = this.now();
-      if (result.sessionId) task.sessionId = result.sessionId;
+      if (result.sessionId) {
+        task.sessionId = result.sessionId;
+        task.sessionBackend = result.backend;
+      }
 
       if (task.state === 'paused') {
         // The pause already moved the task; the cancelled run is expected.
@@ -299,7 +308,9 @@ export class TaskManager {
   resume(id: string): JarvisTask | null {
     const task = this.tasks.get(id);
     if (!task || task.state !== 'paused') return null;
-    task.request = { ...task.request, sessionId: task.sessionId ?? task.request.sessionId };
+    task.request = task.sessionId
+      ? { ...task.request, sessionId: task.sessionId, sessionBackend: task.sessionBackend }
+      : task.request;
     task.result = undefined;
     task.finishedAt = undefined;
     this.launch(task);

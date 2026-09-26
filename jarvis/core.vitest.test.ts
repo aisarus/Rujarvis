@@ -761,6 +761,45 @@ describe('непрерывный разговор', () => {
     expect(h.recorded[0]?.request.sessionId).toBe('сессия-1');
   });
 
+  it('сессию Codex не отдаёт Claude Code: чужой агент её не поднимет', async () => {
+    // Замер 27.09.2026: `claude --resume <поток Codex>` — «No conversation
+    // found», и задача падала, не начав. А новая просьба в открытом разговоре
+    // получала сессию прошлой задачи, кто бы её ни вёл.
+    const h = harness();
+    await h.memory.recordTask({
+      id: 'т1',
+      utterance: 'Создай в блендере красную сферу',
+      outcome: 'Готово',
+      ok: true,
+      backend: 'codex',
+      sessionId: 'поток-codex',
+      finishedAt: Date.now() - 60_000,
+    });
+    await h.core.handleUtterance('Сделай таблицу с расходами');
+    await tick();
+
+    expect(h.recorded[0]?.backend).toBe('claude-code');
+    expect(h.recorded[0]?.request.sessionId).toBeUndefined();
+  });
+
+  it('продолжение разговора с Codex идёт в его же поток', async () => {
+    const h = harness();
+    await h.memory.recordTask({
+      id: 'т1',
+      utterance: 'Создай в блендере красную сферу',
+      outcome: 'Готово',
+      ok: true,
+      backend: 'codex',
+      sessionId: 'поток-codex',
+      finishedAt: Date.now() - 60_000,
+    });
+    await h.core.handleUtterance('Переделай');
+    await tick();
+
+    expect(h.recorded[0]?.backend).toBe('codex');
+    expect(h.recorded[0]?.request.sessionId).toBe('поток-codex');
+  });
+
   it('ведёт продолжение к тому, у кого лежит сессия', async () => {
     // «Сделай её зелёной» маршрутизируется в интерпретатор: сама по себе она
     // ни на что не похожа. Но сессия со сферой — у Claude Code, и продолжать

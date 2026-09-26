@@ -1154,6 +1154,36 @@ describe('BackendManager', () => {
     expect(final.ok).toBe(true);
   });
 
+  it('запасному бэкенду не отдаёт чужую сессию', async () => {
+    // Claude Code исчерпал лимит, работа ушла Codex — а поток-то у Claude
+    // Code. Codex отвечал бы «no rollout found» и падал следом.
+    const запросы: Array<{ backend: string; sessionId?: string }> = [];
+    const записывать = (backend: AgentBackend): AgentBackend => ({
+      ...backend,
+      run: (req: BackendRequest) => {
+        запросы.push({ backend: backend.id, sessionId: req.sessionId });
+        return backend.run(req);
+      },
+    });
+    const claude = stubBackend('claude-code', result({ usageLimited: true, error: 'limit' }));
+    const codex = stubBackend('codex', result({ ok: true, backend: 'codex', text: 'Готово.' }));
+    const manager = managerWith(
+      записывать(claude),
+      записывать(codex),
+      stubBackend('openai-compatible', result({ ok: true })),
+    );
+
+    const final = await manager
+      .run(request({ sessionId: 'поток-claude', sessionBackend: 'claude-code' }), { codingPreference: 'claude-code' })
+      .result();
+
+    expect(final.ok).toBe(true);
+    expect(запросы).toEqual([
+      { backend: 'claude-code', sessionId: 'поток-claude' },
+      { backend: 'codex', sessionId: undefined },
+    ]);
+  });
+
   it('drops an excluded backend from the whole chain', () => {
     const manager = managerWith(
       stubBackend('openai-compatible', result({ ok: true })),
