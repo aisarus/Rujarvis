@@ -634,6 +634,45 @@ export function macCombo(keys: string): string {
     .join('+');
 }
 
+/**
+ * Звук и медиа — не клавиши System Events.
+ *
+ * У «громче», «пауза музыки», «следующий трек» на маке нет кода клавиши:
+ * клавиатура шлёт их системным событием NX_KEYTYPE. Так их и шлём —
+ * NSEvent подтипа 8 через CoreGraphics, как клавиши на клавиатуре мака: с
+ * экранной плашкой громкости и для любого плеера, а не только для Music.
+ * Коды — из IOKit hidsystem/ev_keymap.h.
+ *
+ * Не замерено на настоящем маке: у раннера CI звука нет, а плеер не играет.
+ * До 27.09.2026 этих имён не было вовсе, и фраза кончалась «Неизвестная
+ * клавиша».
+ */
+const MEDIA_KEYS: Record<string, number> = {
+  volumeup: 0,
+  volumedown: 1,
+  volumemute: 7,
+  playpause: 16,
+  nexttrack: 17,
+  prevtrack: 18,
+};
+
+/** Скрипт JXA для медиа-клавиши, или `null`, если это обычная клавиша. */
+export function mediaKeyScript(keys: string): string | null {
+  const code = MEDIA_KEYS[keys.trim().toLowerCase()];
+  if (code === undefined) return null;
+  // Нажатие и отпускание: состояние 0xA и 0xB во флагах и в data1.
+  return `
+  ObjC.import('Cocoa');
+  ObjC.import('CoreGraphics');
+  for (const state of [0xa, 0xb]) {
+    const event = $.NSEvent.otherEventWithTypeLocationModifierFlagsTimestampWindowNumberContextSubtypeData1Data2(
+      14, $.NSMakePoint(0, 0), state << 8, 0, 0, $(), 8, (${code} << 16) | (state << 8), -1);
+    $.CGEventPost($.kCGHIDEventTap, event.CGEvent);
+  }
+  'ok';
+`;
+}
+
 export function keyScript(keys: string): string {
   const parts = macCombo(keys).split('+');
   const modifiers: string[] = [];
@@ -973,7 +1012,8 @@ export class DarwinDriver {
 
   async key(keys: string): Promise<void> {
     await this.access();
-    await this.osascript(appleScriptArgs(keyScript(keys)));
+    const медиа = mediaKeyScript(keys);
+    await this.osascript(медиа ? jxaArgs(медиа) : appleScriptArgs(keyScript(keys)));
   }
 
   /**
