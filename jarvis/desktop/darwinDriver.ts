@@ -786,6 +786,14 @@ return "нет"
 /** Номер процесса переднего окна. */
 export const FRONT_PID_SCRIPT = 'tell application "System Events" to get unix id of first process whose frontmost is true';
 
+/**
+ * Элементы переднего окна.
+ *
+ * Окно — главное окно программы (AXMain), а не «окно 1»: всплывающее окно
+ * Chrome «Translate page from Russian?» становится окном 1, и ссылки страницы
+ * искались в нём (мак CI, 27.09.2026). Комментарий здесь, а не в скрипте:
+ * вне кавычек в AppleScript — только латиница.
+ */
 export const ELEMENTS_SCRIPT = `
 set fieldSep to character id 31
 set rowSep to character id 30
@@ -796,9 +804,6 @@ tell application "System Events"
   set appName to name of p
   try
     set w to window 1 of p
-    -- Главное окно программы, а не первое: всплывающее окно Chrome
-    -- «Translate page from Russian?» становится окном 1, и ссылки страницы
-    -- искались в нём (мак CI, 27.09.2026). У документа AXMain — истина.
     try
       repeat with cand in (windows of p)
         try
