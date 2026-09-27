@@ -428,6 +428,13 @@ async function main(): Promise<void> {
             `    в окне «${title.slice(0, 50)}» ${elements.length} элементов: ` +
               [...виды].sort((а, б) => б[1] - а[1]).map(([вид, n]) => `${вид} ${n}`).join(', '),
           );
+          // Поимённо — один раз: мак CI 27.09.2026 дал 59 элементов с
+          // заголовком страницы, но без области страницы и без единой ссылки.
+          if (имя === ссылки[0]?.[0]) {
+            for (const э of elements.slice(0, 80)) {
+              console.log(`      ${э.type} «${э.name.slice(0, 40)}» ${э.width}×${э.height} @${э.x},${э.y}`);
+            }
+          }
         } catch (сбой) {
           console.log(`    дерево окна не прочиталось: ${сбой instanceof Error ? сбой.message : String(сбой)}`);
         }
