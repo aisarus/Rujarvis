@@ -100,7 +100,9 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cd "$HOME/Library/Application Support/Rujarvis/src"
+          # Здесь установки нет — проверка идёт из рабочей копии. Строка
+          # `cd` в папку установки приехала из install-macos.yml и валила шаг
+          # до замера («No such file or directory», 27.09.2026).
           set +e
           pnpm jarvis:cua-check 2>&1 | tee /tmp/cua.log | tail -30
           cua_code=$?
