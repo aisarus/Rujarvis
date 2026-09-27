@@ -159,6 +159,24 @@ export function toSpokenResponse(
   };
 }
 
+/**
+ * Что сказать, когда задача кончилась.
+ *
+ * Остановленную человеком — ничего: на «стоп» уже прозвучало «Остановил.».
+ * Живой лог владельца 26–27.09.2026: после «Стоп» мост добавлял «Не
+ * получилось. Отменено.» — второй ответ, противоречащий первому, и речь
+ * после слова, которое обязано её прекращать.
+ */
+export function spokenTaskEnd(
+  state: string,
+  result: { ok: boolean; text?: string; error?: string } | undefined,
+): string {
+  if (state === 'cancelled') return '';
+  return result?.ok
+    ? toSpokenResponse(result.text ?? '', { fallback: tr('Готово.', 'Done.') }).spoken
+    : spokenFailure(result?.error ?? tr('Не получилось.', 'That did not work.'));
+}
+
 /** The spoken line for a task that failed. */
 export function spokenFailure(error: string | undefined): string {
   if (!error) return tr('Не получилось. Подробности на экране.', 'That did not work. Details are on screen.');

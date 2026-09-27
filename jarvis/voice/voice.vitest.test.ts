@@ -10,7 +10,7 @@ import {
   matchVoiceControl,
   type ControlTarget,
 } from './interrupts';
-import { spokenFailure, stripUnspeakable, toSpokenResponse } from './spokenResponse';
+import { spokenFailure, spokenTaskEnd, stripUnspeakable, toSpokenResponse } from './spokenResponse';
 import { acknowledgementFor, clarificationFor } from './acknowledgement';
 import {
   DEFAULT_WHISPER_MODEL,
@@ -477,5 +477,21 @@ describe('отклик не обещает сделанного и не пере
     // А неуверенное ПОРУЧЕНИЕ по-прежнему уточняется.
     const поручение = { intent: 'make', confidence: 0.2, asks: false } as never;
     expect(clarificationFor(поручение)).not.toBeNull();
+  });
+});
+
+/**
+ * Живой лог владельца 26–27.09.2026: после «Стоп» мост говорил «Не
+ * получилось. Отменено.» — второй ответ после «Остановил.», и речь после
+ * слова, которое обязано её прекращать.
+ */
+describe('итог задачи вслух', () => {
+  it('остановленная человеком — молча', () => {
+    expect(spokenTaskEnd('cancelled', { ok: false, error: 'Отменено' })).toBe('');
+  });
+
+  it('неудача — «Не получилось» с причиной, удача — ответ', () => {
+    expect(spokenTaskEnd('failed', { ok: false, error: 'Blender не отвечает.' })).toMatch(/^Не получилось\. Blender не отвечает/u);
+    expect(spokenTaskEnd('completed', { ok: true, text: 'Сфера готова.' })).toBe('Сфера готова.');
   });
 });

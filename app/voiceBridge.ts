@@ -71,7 +71,7 @@ import { StandingInstructions } from '../jarvis/backends/standingInstructions';
 import { ProgressVoice } from '../jarvis/voice/progress';
 import { UtteranceBuffer } from '../jarvis/voice/turn';
 import { findWakeWord } from '../jarvis/voice/wakeWord';
-import { spokenFailure, toSpokenResponse } from '../jarvis/voice/spokenResponse';
+import { spokenTaskEnd } from '../jarvis/voice/spokenResponse';
 import { createJarvis, type Jarvis } from '../jarvis/createJarvis';
 import { setLocalModel } from '../jarvis/backends/localModel';
 import { setLanguage, tr } from '../jarvis/locale/language';
@@ -1780,9 +1780,9 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
     session.taskFinished();
 
     const result = event.task.result;
-    const answer = result?.ok
-      ? toSpokenResponse(result.text, { fallback: 'Готово.' }).spoken
-      : spokenFailure(result?.error ?? 'Не получилось.');
+    // Остановленную человеком — молча: «Остановил.» уже сказано на «стоп».
+    const остановлена = event.task.state === 'cancelled';
+    const answer = spokenTaskEnd(event.task.state, result);
 
     // Где лежит результат, знает не ответ модели, а диск. Модель однажды
     // сообщила, что картинка «в чате с Джарвисом», — такого места нет, и
@@ -1831,10 +1831,10 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
     // следует ни одного действия. Уроки строятся именно из причины: «блендер не
     // отвечает на скрипт» меняет поведение, «не смог сделать сферу» — нет.
     const why = result?.ok ? '' : ` — ${result?.error ?? 'без объяснения'}`;
-    note(
-      result?.ok ? 'result' : 'error',
-      `${result?.ok ? 'сделал' : 'не смог'}: ${event.task.title}${why}`,
-    );
+    // Остановленная — не ошибка: из ошибок журнала строятся уроки агенту, и
+    // «не смог: … — Отменено» учило бы его неудаче, которой не было.
+    if (остановлена) note('command', `остановил: ${event.task.title}`);
+    else note(result?.ok ? 'result' : 'error', `${result?.ok ? 'сделал' : 'не смог'}: ${event.task.title}${why}`);
     for (const file of made?.paths ?? []) {
       note('file', `сделал ${path.basename(file)} — ${file}`);
     }
