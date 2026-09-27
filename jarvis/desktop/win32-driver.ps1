@@ -49,6 +49,7 @@ public class Desk {
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
     // CharSet.Unicode обязателен: без него зовётся однобайтовая версия, и
     // заголовки на кириллице и иврите приходят как «??????» — по ним нельзя
     // ни найти окно, ни показать его человеку.
@@ -100,17 +101,20 @@ public class Desk {
         uint target = GetWindowThreadProcessId(h, out dummy);
 
         /*
-            SW_RESTORE (9) - tolko svyornutomu.
+            Razvyornutomu - SW_SHOWMAXIMIZED (3), ostalnym - SW_RESTORE (9).
 
-            Dlya RAZVYORNUTOGO okna SW_RESTORE vozvrashchaet ego k obychnomu
-            razmeru, i "pereklyuchis na edzh" umenshalo by razvyornutyy Edge.
-            SW_SHOW (5) pokazyvaet okno v tom razmere, v kakom ono est.
+            SW_RESTORE vozvrashchaet RAZVYORNUTOE okno k obychnomu razmeru:
+            v CI 1040x736 -> 420x300 posle "pereklyuchis". SW_SHOW (5) razmer
+            ne trogaet, no vidimoe okno im ne aktiviruetsya - v CI okno tak i
+            ne vyshlo vperyod. Poetomu obychnomu i svyornutomu ostavlen
+            proverennyy SW_RESTORE, a razvyornutoe aktiviruetsya razvyornutym.
         */
         bool svyornuto = IsIconic(h);
+        int kak = !svyornuto && IsZoomed(h) ? 3 : 9;
 
         AttachThreadInput(mine, front, true);
         AttachThreadInput(mine, target, true);
-        ShowWindow(h, svyornuto ? 9 : 5);
+        ShowWindow(h, kak);
         BringWindowToTop(h);
         SetForegroundWindow(h);
         AttachThreadInput(mine, target, false);
