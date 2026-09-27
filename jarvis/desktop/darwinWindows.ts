@@ -30,11 +30,11 @@ import { promisify } from 'node:util';
 // одинаковую длину.
 const ШАГ_ОЖИДАНИЯ_МС = 300;
 const ЖДАТЬ_ДЕРЕВО_МС = 3_000;
-const подождать = (мс: number): Promise<void> =>
-  new Promise((готово) => {
-    const таймер = setTimeout(готово, мс);
-    таймер.unref?.();
-  });
+// Таймер без unref: его ЖДУТ. С unref процесс, которого больше ничто не
+// держит, выходил посреди ожидания — проверка драйвера на маке 27.09.2026
+// обрывалась на window_find с «unsettled top-level await» (код 13). В сервере
+// MCP это пряталось: его держит открытый stdin.
+const подождать = (мс: number): Promise<void> => new Promise((готово) => setTimeout(готово, мс));
 
 import { chooseElement, type UiElement } from '../control/elements';
 
