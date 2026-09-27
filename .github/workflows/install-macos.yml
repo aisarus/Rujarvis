@@ -356,9 +356,13 @@ jobs:
           fi
           # Claude Code из npm здесь без postinstall (npm его не пускает), поэтому
           # его ответ только показывается; обязательны node и Codex.
+          # Файлом, а не `source <(…)`: /bin/bash на маке — 3.2, и подстановка
+          # процесса там читается пустой (первый прогон 27.09.2026: PATH не
+          # изменился, «grep: Broken pipe»).
+          grep -v '^exec ' "$launcher" > "$RUNNER_TEMP/launcher-path.sh"
           env -i HOME="$HOME" PATH="$finder" /bin/bash -c "
             set -e
-            source <(grep -v '^exec ' '$launcher')
+            . '$RUNNER_TEMP/launcher-path.sh'
             echo \"PATH ярлыка: \$PATH\"
             node --version
             codex --version
