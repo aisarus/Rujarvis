@@ -12,6 +12,8 @@
  * the process. No model, no shell, no chance of a confident lie.
  */
 
+import { macAppName } from './macApps';
+
 /** Verbs that mean "stop this program". */
 const CLOSE_VERBS = [
   'закрой', 'закройте', 'закрыть',
@@ -272,8 +274,12 @@ export function windowAlias(phrase: string): string | null {
  * Оконное имя впереди пускового: «блендер» как окно — это Blender, а
  * запускать его надо ярлыком из меню «Пуск», и это разные строки.
  */
-export function windowCandidates(title: string): string[] {
-  const первый = windowAlias(title) ?? aliasTarget(title);
+export function windowCandidates(title: string, platform: NodeJS.Platform = process.platform): string[] {
+  const таблица = windowAlias(title) ?? aliasTarget(title);
+  // На маке окно принадлежит программе, и её имя другое: «эдж» — это
+  // Microsoft Edge, а не msedge; «терминал» — Terminal, а не WindowsTerminal.
+  // До 27.09.2026 эти имена на маке не находились никогда.
+  const первый = platform === 'darwin' && таблица ? (macAppName(таблица) ?? таблица) : таблица;
   return [первый, title].filter((имя): имя is string => Boolean(имя));
 }
 

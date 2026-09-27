@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { LAUNCH_NAMES } from './launch';
+import { LAUNCH_NAMES, windowCandidates } from './launch';
 import { listMacApplications, macAppName, parseRunningApps, quitMenuScript } from './macApps';
 
 /**
@@ -40,6 +40,19 @@ describe('программы на маке', () => {
       { name: 'TextEdit', pid: 90 },
     ]);
     expect(parseRunningApps('')).toEqual([]);
+  });
+
+  it('«переключись на …» на маке ищет программу по её имени на маке', () => {
+    // msedge, WindowsTerminal, explorer — имена процессов Windows; на маке
+    // окна принадлежат Microsoft Edge, Terminal и Finder.
+    expect(windowCandidates('эдж', 'darwin')).toEqual(['Microsoft Edge', 'эдж']);
+    expect(windowCandidates('терминал', 'darwin')).toEqual(['Terminal', 'терминал']);
+    expect(windowCandidates('проводник', 'darwin')).toEqual(['Finder', 'проводник']);
+    expect(windowCandidates('настройки', 'darwin')).toEqual(['System Settings', 'настройки']);
+    // На Windows — как было.
+    expect(windowCandidates('эдж', 'win32')).toEqual(['msedge', 'эдж']);
+    // Имени мака нет — остаётся имя таблицы: «blender» совпадает и там.
+    expect(windowCandidates('блендер', 'darwin')).toEqual(['blender', 'блендер']);
   });
 
   it('«Завершить» ищется по ⌘Q, а не по надписи на языке системы', () => {

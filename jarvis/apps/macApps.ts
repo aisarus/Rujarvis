@@ -40,6 +40,12 @@ const MAC_APPS: Readonly<Record<string, string>> = {
   winword: 'Microsoft Word',
   excel: 'Microsoft Excel',
   'ms-settings:': 'System Settings',
+  // Оконные имена Windows — для «переключись на …»: на маке окно
+  // принадлежит программе, и зовётся она иначе.
+  windowsterminal: 'Terminal',
+  systemsettings: 'System Settings',
+  obs64: 'OBS',
+  dota2: 'Dota 2',
 };
 
 /** Имя программы мака для цели из таблицы запуска, или `null`. */
