@@ -26,7 +26,7 @@ const ru = {
   windowTitle: 'Rujarvis — настройки',
   onboardingTitle: 'Добро пожаловать',
   onboardingIntro:
-    'Джарвис — голосовой помощник для Windows. Он слушает, понимает обычную речь и работает руками Claude Code по вашей подписке. Настройка займёт пару минут.',
+    'Джарвис — голосовой помощник для компьютера. Он слушает, понимает обычную речь и работает руками Claude Code или Codex по вашей подписке. Настройка займёт пару минут.',
   next: 'Далее',
   back: 'Назад',
   finish: 'Начать',
@@ -89,6 +89,8 @@ const ru = {
   notInstalled: 'не установлена',
   voiceTest: 'Послушать',
   micDenied: 'Нет доступа к микрофону. Разрешите его в параметрах Windows → Конфиденциальность → Микрофон.',
+  micDeniedMac:
+    'Нет доступа к микрофону. Разрешите его в Системных настройках → Конфиденциальность и безопасность → Микрофон.',
   micLevel: 'Уровень',
 
   tabGeneral: 'Общие',
@@ -156,7 +158,7 @@ const en: UiStrings = {
   windowTitle: 'Rujarvis — settings',
   onboardingTitle: 'Welcome',
   onboardingIntro:
-    'Jarvis is a voice assistant for Windows. It listens, understands plain speech and gets work done with Claude Code on your own subscription. Setup takes a couple of minutes.',
+    'Jarvis is a voice assistant for your computer. It listens, understands plain speech and gets work done with Claude Code or Codex on your own subscription. Setup takes a couple of minutes.',
   next: 'Next',
   back: 'Back',
   finish: 'Start',
@@ -206,6 +208,7 @@ const en: UiStrings = {
   notInstalled: 'not installed',
   voiceTest: 'Listen',
   micDenied: 'No microphone access. Allow it in Windows Settings → Privacy → Microphone.',
+  micDeniedMac: 'No microphone access. Allow it in System Settings → Privacy & Security → Microphone.',
   micLevel: 'Level',
 
   tabGeneral: 'General',

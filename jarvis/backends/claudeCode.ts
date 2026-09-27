@@ -159,6 +159,8 @@ export function buildClaudeArgs(
     homeDir?: string;
     /** Настройки с хуком красных линий. */
     gateSettings?: string;
+    /** Система — от неё зависит, как зовут оболочку. */
+    platform?: NodeJS.Platform;
   },
 ): string[] {
   const args = ['-p', '--output-format', 'stream-json', '--verbose'];
@@ -202,9 +204,9 @@ export function buildClaudeArgs(
     // Headless Claude Code withholds the web tools and anything that runs
     // commands unless they are named. Naming them is the difference between an
     // agent that can look something up mid-task and one that can only guess.
-    args.push('--allowedTools', toolsFor(request.capabilities, Boolean(options.gateSettings)).join(','));
+    args.push('--allowedTools', toolsFor(request.capabilities, Boolean(options.gateSettings), options.platform).join(','));
   } else {
-    args.push(...shellByNameArgs(options.gateSettings, false));
+    args.push(...shellByNameArgs(options.gateSettings, false, options.platform));
   }
   return args;
 }
@@ -358,16 +360,30 @@ const UNGATED_FORBIDDEN = new Set(['Bash', 'PowerShell', 'mcp__jarvis-desktop__w
  * С разрешением по имени разбора нет, а хук красных линий по-прежнему видит
  * каждый вызов, и его запрет соблюдается — замерено тем же днём хуком,
  * запрещающим всё. Без хука оболочки у агента нет — и имени тоже.
+ *
+ * PowerShell у Claude Code — только на Windows. На маке и Linux оболочка —
+ * Bash, и с одним «PowerShell» в списке задача без рабочего стола оставалась
+ * там вовсе без оболочки: безголовый запуск молча отказывает неназванному.
  */
-const SHELL_BY_NAME = 'PowerShell';
+export function shellToolName(platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32' ? 'PowerShell' : 'Bash';
+}
 
-/** `--allowedTools PowerShell` для работы без списка инструментов рабочего стола. */
-export function shellByNameArgs(gateSettings: string | undefined, withToolList: boolean): string[] {
-  return gateSettings && !withToolList ? ['--allowedTools', SHELL_BY_NAME] : [];
+/** `--allowedTools <оболочка>` для работы без списка инструментов рабочего стола. */
+export function shellByNameArgs(
+  gateSettings: string | undefined,
+  withToolList: boolean,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  return gateSettings && !withToolList ? ['--allowedTools', shellToolName(platform)] : [];
 }
 
 /** Что агенту дать под эту задачу. */
-export function toolsFor(capabilities: readonly JarvisCapability[], gated = true): string[] {
+export function toolsFor(
+  capabilities: readonly JarvisCapability[],
+  gated = true,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
   const wanted = new Set(ALWAYS);
   const has = (name: JarvisCapability): boolean => capabilities.includes(name);
 
@@ -376,7 +392,7 @@ export function toolsFor(capabilities: readonly JarvisCapability[], gated = true
   if (has('coding')) wanted.add('MultiEdit').add('NotebookEdit');
   // Ни одного признака — значит разговор; хватает памяти и чтения.
   if (wanted.size === ALWAYS.length) for (const t of WINDOW_TOOLS) wanted.add(t);
-  if (gated) wanted.add(SHELL_BY_NAME);
+  if (gated) wanted.add(shellToolName(platform));
 
   return [...wanted].filter((tool) => gated || !UNGATED_FORBIDDEN.has(tool));
 }

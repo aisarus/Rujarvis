@@ -199,7 +199,7 @@ function modelsCard() {
 function micCard() {
   const s = t();
   const node = el(`<div class="card"><div class="row"><h2>${s.micLevel}</h2><div class="bar" style="max-width:360px"><i id="level"></i></div></div>
-    <p class="error" id="mic-error" hidden>${s.micDenied}</p></div>`);
+    <p class="error" id="mic-error" hidden>${data.platform === 'darwin' ? s.micDeniedMac : s.micDenied}</p></div>`);
   startMic(node);
   return node;
 }

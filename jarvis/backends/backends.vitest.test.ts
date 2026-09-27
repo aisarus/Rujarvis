@@ -162,6 +162,13 @@ describe('looksUsageLimited', () => {
 });
 
 describe('buildBackendPrompt', () => {
+  it('про кириллицу в PowerShell — только на Windows: на маке PowerShell у агента нет', () => {
+    const экран = request({ capabilities: ['computer'] });
+    expect(buildBackendPrompt(экран, 'win32')).toContain('КИРИЛЛИЦА В СКРИПТАХ POWERSHELL');
+    expect(buildBackendPrompt(экран, 'darwin')).not.toContain('POWERSHELL');
+    expect(buildBackendPrompt(экран, 'darwin')).toContain('WORKING ON THE SCREEN');
+  });
+
   it('passes the raw utterance through verbatim, ahead of the normalised goal', () => {
     const prompt = buildBackendPrompt(
       request({ utterance: 'глянь чё с билдом', goal: 'Diagnose the failing build' }),
@@ -507,12 +514,14 @@ describe('Claude Code adapter', () => {
       permissionMode: 'acceptEdits',
       desktopMcpConfig: 'C:/jarvis/desktop.json',
       gateSettings: 'C:/jarvis/gate.json',
+      platform: 'win32',
     });
     expect((сЭкраном[сЭкраном.indexOf('--allowedTools') + 1] ?? '').split(',')).toContain('PowerShell');
 
     const безЭкрана = buildClaudeArgs(request({ capabilities: ['shell'] }), {
       permissionMode: 'acceptEdits',
       gateSettings: 'C:/jarvis/gate.json',
+      platform: 'win32',
     });
     expect(безЭкрана).toEqual(expect.arrayContaining(['--allowedTools', 'PowerShell']));
 
@@ -521,11 +530,34 @@ describe('Claude Code adapter', () => {
     expect(безХука).not.toContain('--allowedTools');
   });
 
+  it('на маке оболочка по имени — Bash: PowerShell у Claude Code только на Windows', () => {
+    // С одним «PowerShell» задача без рабочего стола на маке оставалась без
+    // оболочки вовсе: безголовый запуск молча отказывает неназванному.
+    const безЭкрана = buildClaudeArgs(request({ capabilities: ['shell'] }), {
+      permissionMode: 'acceptEdits',
+      gateSettings: '/Users/x/jarvis/gate.json',
+      platform: 'darwin',
+    });
+    expect(безЭкрана).toEqual(expect.arrayContaining(['--allowedTools', 'Bash']));
+    expect(безЭкрана).not.toContain('PowerShell');
+
+    const сЭкраном = buildClaudeArgs(request({ capabilities: ['computer'] }), {
+      permissionMode: 'acceptEdits',
+      desktopMcpConfig: '/Users/x/jarvis/desktop.json',
+      gateSettings: '/Users/x/jarvis/gate.json',
+      platform: 'darwin',
+    });
+    const список = (сЭкраном[сЭкраном.indexOf('--allowedTools') + 1] ?? '').split(',');
+    expect(список).toContain('Bash');
+    expect(список).not.toContain('PowerShell');
+    expect(shellByNameArgs('/Users/x/gate.json', false, 'linux')).toEqual(['--allowedTools', 'Bash']);
+  });
+
   it('живая сессия со списком инструментов не получает второго --allowedTools', () => {
     // PowerShell уже в списке; второй флаг дал бы два источника правды.
-    expect(shellByNameArgs('C:/jarvis/gate.json', true)).toEqual([]);
-    expect(shellByNameArgs('C:/jarvis/gate.json', false)).toEqual(['--allowedTools', 'PowerShell']);
-    expect(shellByNameArgs(undefined, false)).toEqual([]);
+    expect(shellByNameArgs('C:/jarvis/gate.json', true, 'win32')).toEqual([]);
+    expect(shellByNameArgs('C:/jarvis/gate.json', false, 'win32')).toEqual(['--allowedTools', 'PowerShell']);
+    expect(shellByNameArgs(undefined, false, 'win32')).toEqual([]);
   });
 
   it('не добавляет папку, которой не назвали', () => {

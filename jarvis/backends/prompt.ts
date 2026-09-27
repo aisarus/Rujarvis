@@ -165,16 +165,6 @@ const COMPUTER_USE_GUIDANCE = [
   "- This is the user's live desktop. Do not close their windows, dismiss their dialogs or",
   '  change their settings unless that is what was asked for.',
   '',
-  // Самая тихая ловушка этой машины: скрипт отрабатывает успешно, а в
-  // документе оказывается мусор вместо русского текста.
-  'КИРИЛЛИЦА В СКРИПТАХ POWERSHELL:',
-  '- PowerShell читает .ps1 как ANSI, если нет метки кодировки, а запись файла',
-  '  её не ставит. «Привет» превращается в «РџСЂРёРІРµС‚», и скрипт при этом',
-  '  сообщает об успехе.',
-  '- Запускай скрипт строкой через -Command, либо держи .ps1 латинским, а',
-  '  русский текст читай из отдельного файла с -Encoding UTF8.',
-  '- При записи всегда -Encoding utf8: по умолчанию пишется кодовая страница.',
-  '',
   // Фоновая работа не видна. Человек просил сделать в программе — значит
   // хочет увидеть это в программе, а не прочитать отчёт о сделанном.
   'РАБОТАЙ В ОТКРЫТОМ ОКНЕ, А НЕ ВМЕСТО НЕГО:',
@@ -221,7 +211,24 @@ const COMPUTER_USE_GUIDANCE = [
   '  будут действовать уверенно и неправильно.',
 ].join('\n');
 
-export function buildBackendPrompt(request: BackendRequest): string {
+/**
+ * Самая тихая ловушка Windows: скрипт отрабатывает успешно, а в документе
+ * оказывается мусор вместо русского текста.
+ *
+ * Только на Windows: на маке PowerShell у агента нет, и этот блок был бы
+ * шумом, за который платят входными токенами на каждом шаге.
+ */
+const POWERSHELL_CYRILLIC = [
+  'КИРИЛЛИЦА В СКРИПТАХ POWERSHELL:',
+  '- PowerShell читает .ps1 как ANSI, если нет метки кодировки, а запись файла',
+  '  её не ставит. «Привет» превращается в «РџСЂРёРІРµС‚», и скрипт при этом',
+  '  сообщает об успехе.',
+  '- Запускай скрипт строкой через -Command, либо держи .ps1 латинским, а',
+  '  русский текст читай из отдельного файла с -Encoding UTF8.',
+  '- При записи всегда -Encoding utf8: по умолчанию пишется кодовая страница.',
+].join('\n');
+
+export function buildBackendPrompt(request: BackendRequest, platform: NodeJS.Platform = process.platform): string {
   const language = request.language ?? 'ru';
   const parts: string[] = [];
 
@@ -261,6 +268,7 @@ ${standing}`);
 
   if (request.capabilities.includes('computer')) {
     parts.push(COMPUTER_USE_GUIDANCE);
+    if (platform === 'win32') parts.push(POWERSHELL_CYRILLIC);
   }
 
   // Режим работы человек переключает голосом. По умолчанию — на виду: он
