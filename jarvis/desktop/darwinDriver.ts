@@ -125,13 +125,24 @@ export const AX_TRUSTED_SCRIPT = `
  * всего. Здесь размер вообще ни на что не влияет: в список попадает каждое
  * окно, а свёрнутость едет отдельным полем. У свёрнутого окна macOS отдаёт
  * позицию и размер ошибкой — отсюда `try` вокруг каждого чтения.
+ *
+ * Процессы берутся списком сразу (`get`), а не перебором «каждого процесса,
+ * у которого…»: такой перебор на каждом шаге заново спрашивает i-й процесс,
+ * и если какой-то вышел посреди обхода, индекс съезжает — «Can’t get every
+ * process… Invalid index (-1719)», и список окон падает целиком (мак CI,
+ * e47904d, 27.09.2026). У готового списка вышедший процесс просто не
+ * отвечает внутри своего try.
  */
 export const WINDOW_LIST_SCRIPT = `
 set fieldSep to character id 31
 set rowSep to character id 30
 set out to ""
 tell application "System Events"
-  repeat with p in (every process whose background only is false)
+  set procs to {}
+  try
+    set procs to (get every process whose background only is false)
+  end try
+  repeat with p in procs
     set appName to ""
     try
       set appName to name of p

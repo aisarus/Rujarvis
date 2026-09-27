@@ -74,6 +74,14 @@ describe('перечисление окон', () => {
     expect(WINDOW_LIST_SCRIPT).toContain('AXMinimized');
   });
 
+  it('процессы берутся списком сразу, а не перебором по индексу', () => {
+    // «repeat with p in (every process whose …)» заново спрашивает i-й процесс
+    // на каждом шаге; вышедший посреди обхода процесс ронял весь список:
+    // «Invalid index (-1719)» (мак CI, e47904d, 27.09.2026).
+    expect(WINDOW_LIST_SCRIPT).toContain('get every process whose background only is false');
+    expect(WINDOW_LIST_SCRIPT).not.toMatch(/repeat with p in \(every process/u);
+  });
+
   it('у каждого окна есть программа, номер и признак свёрнутости', () => {
     const [первое] = parseWindows(вывод);
     expect(первое).toMatchObject({ app: 'TextEdit', pid: 501, index: 1, minimized: true, focused: false });
