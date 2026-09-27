@@ -113,7 +113,13 @@ main() {
     rm -f "$HOME/Desktop/Rujarvis.app"
     ok 'Убран ярлык: ~/Desktop/Rujarvis.app'
   fi
-  if [ -f "$HOME/Desktop/Rujarvis" ] && [ "$(mdls -raw -name kMDItemKind "$HOME/Desktop/Rujarvis" 2>/dev/null || true)" = "Alias" ]; then
+  # Псевдоним узнаётся по содержимому: это данные закладки, и начинаются они
+  # с «book». mdls спрашивает Spotlight, а тот свежий файл мог ещё не
+  # проиндексировать — прогон CI 27.09.2026 так и оставил ярлык на столе.
+  if [ -f "$HOME/Desktop/Rujarvis" ] && {
+       [ "$(head -c 4 "$HOME/Desktop/Rujarvis" 2>/dev/null || true)" = "book" ] ||
+       [ "$(mdls -raw -name kMDItemKind "$HOME/Desktop/Rujarvis" 2>/dev/null || true)" = "Alias" ]
+     }; then
     rm -f "$HOME/Desktop/Rujarvis"
     ok 'Убран ярлык: ~/Desktop/Rujarvis'
   fi
