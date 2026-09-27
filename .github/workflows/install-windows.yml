@@ -483,9 +483,11 @@ jobs:
         # «только для macOS». Окон не открывает; без --with-agent подписку не
         # тратит.
         #
-        # Законный провал на раннере один — входа в Codex и Claude Code нет:
-        # подписок в CI не носят. Любой другой валит шаг, а звенья, которые
-        # здесь мерить есть чем, обязаны пройти.
+        # Законные провалы на раннере названы поимённо: входа в Codex и
+        # Claude Code нет — подписок в CI не носят; микрофон закрыт самим
+        # образом раннера (первый прогон 27.09.2026: реестр — Deny). Любой
+        # другой провал валит шаг, а звенья, которые здесь мерить есть чем,
+        # обязаны пройти.
         shell: bash
         run: |
           set -o pipefail
@@ -494,7 +496,7 @@ jobs:
           pnpm jarvis:preflight 2>&1 | tee /tmp/preflight.log
           set -e
           grep -a '^preflight: ' /tmp/preflight.log || { echo 'Проверка не дошла до итога: судить не по чему.'; exit 1; }
-          known=' login-codex login-claude '
+          known=' login-codex login-claude perm-mic '
           fresh=''
           for id in $(grep -a '^preflight-fail:' /tmp/preflight.log | cut -d: -f2- | tr -d '\r'); do
             case "$known" in *" $id "*) ;; *) fresh="$fresh $id" ;; esac
