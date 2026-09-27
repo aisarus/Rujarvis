@@ -812,6 +812,100 @@ export const FRONT_APP_SCRIPT = [
 ].join('\n');
 
 /**
+ * Только ссылки страницы — для «открой третью ссылку».
+ *
+ * ELEMENTS_SCRIPT читает всё окно по элементу, и у Edge на маке CI это 85
+ * элементов за 12 с (27.09.2026): голосовая команда так не живёт. Здесь —
+ * обход вширь до области страницы (панели браузера — десятки элементов, в
+ * страницу не спускаемся) и её собственный список ссылок AXLinkUIElements
+ * одним запросом, в порядке документа. Ответ — в формате ELEMENTS_SCRIPT:
+ * сначала сама область страницы, потом ссылки. Нет области — маркер.
+ */
+export const LINKS_SCRIPT = `
+set fieldSep to character id 31
+set rowSep to character id 30
+set out to ""
+tell application "System Events"
+  set p to first process whose frontmost is true
+  set appName to name of p
+  set w to window 1 of p
+  try
+    repeat with cand in (windows of p)
+      try
+        if (value of attribute "AXMain" of cand) is true then
+          set w to contents of cand
+          exit repeat
+        end if
+      end try
+    end repeat
+  end try
+  set frontName to ""
+  try
+    set frontName to name of w
+  end try
+  if frontName is missing value then set frontName to ""
+  set wa to missing value
+  set queue to {w}
+  set steps to 0
+  repeat while (count of queue) > 0 and steps < 400
+    set node to item 1 of queue
+    set queue to rest of queue
+    set steps to steps + 1
+    set r to ""
+    try
+      set r to role of node
+    end try
+    if r is "AXWebArea" then
+      set wa to node
+      exit repeat
+    end if
+    try
+      set queue to queue & (UI elements of node)
+    end try
+  end repeat
+  if wa is missing value then return appName & fieldSep & frontName & rowSep & "JARVIS_NO_WEBAREA"
+  set found to {wa}
+  try
+    set found to found & (value of attribute "AXLinkUIElements" of wa)
+  end try
+  repeat with e in found
+    set eRole to ""
+    try
+      set eRole to role of e
+    end try
+    if eRole is missing value then set eRole to ""
+    set eName to ""
+    try
+      set eName to name of e
+    end try
+    if eName is missing value then set eName to ""
+    if eName is "" then
+      try
+        set eName to description of e
+      end try
+    end if
+    if eName is missing value then set eName to ""
+    set ex to 0
+    set ey to 0
+    set ew to 0
+    set eh to 0
+    try
+      set pos to position of e
+      set ex to item 1 of pos
+      set ey to item 2 of pos
+      set sz to size of e
+      set ew to item 1 of sz
+      set eh to item 2 of sz
+    end try
+    if ew > 0 and eh > 0 then
+      set out to out & eName & fieldSep & "" & fieldSep & eRole & fieldSep & true & fieldSep & ex & fieldSep & ey & fieldSep & ew & fieldSep & eh & rowSep
+    end if
+  end repeat
+end tell
+return appName & fieldSep & frontName & rowSep & out
+`;
+
+/**
  * Элементы переднего окна.
  *
  * Окно — главное окно программы (AXMain), а не «окно 1»: всплывающее окно
