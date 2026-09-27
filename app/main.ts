@@ -15,6 +15,7 @@ import { app, desktopCapturer, Menu, nativeImage, shell, systemPreferences, Tray
 import { APP_ROOT } from './root';
 import { setLanguage } from '../jarvis/locale/language';
 import { jarvisPaths } from '../jarvis/setup/paths';
+import { файлРазрешений, сохранитьРазрешения } from '../jarvis/setup/preflight';
 import { SettingsStore } from '../jarvis/setup/settings';
 import { запроситьРазрешения, чегоНеХватает, type Система } from './macPermissions';
 import { openSettingsWindow } from './settingsWindow';
@@ -100,6 +101,9 @@ async function askPermissions(): Promise<void> {
       `[main] разрешения macOS: микрофон ${опрос.микрофон}, ` +
         `универсальный доступ ${опрос.доступность}, запись экрана ${опрос.экран}`,
     );
+    // Для `jarvis:preflight`: из Терминала систему не спросить — macOS ответит
+    // про Терминал, а не про Джарвиса. Поэтому ответ записывает сам Джарвис.
+    сохранитьРазрешения(файлРазрешений(PATHS.data), опрос);
     const беда = чегоНеХватает(опрос);
     if (беда) console.log(`[main] ${беда}`);
   } catch (error) {

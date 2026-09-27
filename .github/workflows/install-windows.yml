@@ -477,6 +477,35 @@ jobs:
           fi
           test "$cli_code" -eq 0 || { echo "Claude Code на Windows не работает (код $cli_code)"; exit 1; }
 
+      - name: 'Предполётная проверка тестера: pnpm jarvis:preflight'
+        # Та же команда, что у тестера на маке: по каждому звену — прошло, не
+        # прошло или нечем мерить. Маковские звенья здесь честно отвечают
+        # «только для macOS». Окон не открывает; без --with-agent подписку не
+        # тратит.
+        #
+        # Законный провал на раннере один — входа в Codex и Claude Code нет:
+        # подписок в CI не носят. Любой другой валит шаг, а звенья, которые
+        # здесь мерить есть чем, обязаны пройти.
+        shell: bash
+        run: |
+          set -o pipefail
+          cd "$LOCALAPPDATA/Rujarvis/src"
+          set +e
+          pnpm jarvis:preflight 2>&1 | tee /tmp/preflight.log
+          set -e
+          grep -a '^preflight: ' /tmp/preflight.log || { echo 'Проверка не дошла до итога: судить не по чему.'; exit 1; }
+          known=' login-codex login-claude '
+          fresh=''
+          for id in $(grep -a '^preflight-fail:' /tmp/preflight.log | cut -d: -f2- | tr -d '\r'); do
+            case "$known" in *" $id "*) ;; *) fresh="$fresh $id" ;; esac
+          done
+          test -z "$fresh" || { echo "Новые провалы preflight:$fresh"; exit 1; }
+          passed=" $(grep -a '^preflight-pass:' /tmp/preflight.log | cut -d: -f2- | tr -d '\r') "
+          for id in install models gate mcp; do
+            case "$passed" in *" $id "*) ;; *) echo "Звено $id не прошло, а на раннере его мерить есть чем"; exit 1 ;; esac
+          done
+          echo 'preflight: всё, что на раннере мерить есть чем, прошло'
+
       - name: 'Браузер по делу: цепочка инструментов'
         # Своя страница-магазин на 127.0.0.1: открыть, ввести запрос, «Найти»,
         # дождаться результатов, прочитать ровно найденное — той цепочкой,
