@@ -489,6 +489,12 @@ describe('manualAccessibilityScript', () => {
     expect(manualAccessibilityScript(4242)).toContain('unix id is 4242');
   });
 
+  it('элементы читаются из главного окна программы, а не из первого всплывающего', () => {
+    // Всплывающее «Translate page from Russian?» у Chrome — окно 1, и ссылки
+    // страницы искались в нём (мак CI, 27.09.2026).
+    expect(ELEMENTS_SCRIPT).toContain('AXMain');
+  });
+
   it('говорит, приняла ли программа просьбу: ждать дерево стоит только у Chromium', () => {
     // Голосовой клик по названию ждёт роста дерева лишь после «ok» — иначе
     // TextEdit и все прочие платили бы секундами за каждую первую фразу.

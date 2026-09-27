@@ -796,6 +796,19 @@ tell application "System Events"
   set appName to name of p
   try
     set w to window 1 of p
+    -- Главное окно программы, а не первое: всплывающее окно Chrome
+    -- «Translate page from Russian?» становится окном 1, и ссылки страницы
+    -- искались в нём (мак CI, 27.09.2026). У документа AXMain — истина.
+    try
+      repeat with cand in (windows of p)
+        try
+          if (value of attribute "AXMain" of cand) is true then
+            set w to contents of cand
+            exit repeat
+          end if
+        end try
+      end repeat
+    end try
     try
       set frontName to name of w
     end try
