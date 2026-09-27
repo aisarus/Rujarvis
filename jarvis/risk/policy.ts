@@ -45,6 +45,8 @@ const DESTRUCTIVE_SHELL = [
   /\bgit\s+reset\s+--hard\b/i,
   /\bdrop\s+(database|table)\b/i,
   /\bsudo\s+rm\b/i,
+  // Мак: стереть диск — то же, что format и diskpart.
+  /\bdiskutil\s+(erase\w*|zeroDisk|secureErase|partitionDisk|reformat)\b/i,
 ];
 
 /** Shell patterns that reach outside this machine or change global state. */
@@ -71,6 +73,19 @@ const SENSITIVE_SHELL = [
   // `curl`, который ОТПРАВЛЯЕТ. Скачивание оставляем обычной работой: иначе
   // разрешения начнут спрашивать на каждом шагу, и им перестанут верить.
   /\bcurl\b[^|]*\s(-d|--data\S*|-F|--form|-T|--upload-file)\b/i,
+  // Мак — то, что на Windows уже здесь: настройки системы (как reg), службы,
+  // сеть (как netsh), защита и разрешения (как Set-ExecutionPolicy). До
+  // 27.09.2026 маковских аналогов не было, и внутри проекта они шли как
+  // обычная работа.
+  /\bdefaults\s+(write|delete)\b/i,
+  /\blaunchctl\s+(load|unload|bootstrap|bootout|enable|disable|submit|remove)\b/i,
+  /\bnetworksetup\b/i,
+  /\bspctl\b/i,
+  /\bcsrutil\b/i,
+  /\btccutil\b/i,
+  // Письмо и сообщение другому человеку — красная линия, и на маке для неё
+  // хватает osascript.
+  /\bosascript\b[\s\S]*\b(Messages|Mail)\b/i,
 ];
 
 /** Commands that only build, test or inspect. */

