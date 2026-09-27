@@ -76,6 +76,11 @@ export interface CreateJarvisOptions {
    */
   gateSettings?: string;
   /**
+   * gate.json красных линий — для Codex: их держит сам MCP-сервер (путь «Б»,
+   * `jarvis/risk/serverGate.ts`). Без него у Codex нет рабочего стола.
+   */
+  gateConfig?: string;
+  /**
    * Папка, в которой Джарвис живёт: его код, настройки, журнал, навыки.
    *
    * Агент получает её вместе с хуком красных линий — чтобы на вопрос о себе
@@ -163,6 +168,7 @@ export function createJarvis(options: CreateJarvisOptions = {}): Jarvis {
       // своего config.toml, но `-c` перекрывает его на один запуск — чужой
       // файл настроек мы не трогаем.
       desktopMcpConfig: options.desktopMcpConfig,
+      gateConfig: options.gateConfig,
     }),
   );
 

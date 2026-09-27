@@ -42,7 +42,10 @@ export interface GateSetupOptions {
   tempRoot?: string;
 }
 
-export type GateSetup = { ok: true; settings: string; bridgeDir: string } | { ok: false; reason: string };
+export type GateSetup =
+  /** `config` — gate.json: его же читает проверка внутри сервера для Codex. */
+  | { ok: true; settings: string; bridgeDir: string; config: string }
+  | { ok: false; reason: string };
 
 export function prepareGate(options: GateSetupOptions): GateSetup {
   const exists = options.exists ?? existsSync;
@@ -69,7 +72,7 @@ export function prepareGate(options: GateSetupOptions): GateSetup {
   const settings = path.join(dir, 'settings.json');
   const command = `node "${forward(bundle)}" gate "${forward(configFile)}"`;
   writeFileSync(settings, JSON.stringify(gateSettings(command)), 'utf8');
-  return { ok: true, settings, bridgeDir };
+  return { ok: true, settings, bridgeDir, config: configFile };
 }
 
 function forward(file: string): string {

@@ -16,10 +16,11 @@
  *
  * Три ответа: прошло, не прошло, нечем мерить (нет браузера или сборки).
  */
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { GateBridge } from '../../jarvis/risk/gateBridge';
 import { Сервер } from './mcpClient';
 import { ЛИШНЕЕ, НОУТБУКИ, поднятьМагазин } from './shopPage';
 
@@ -38,6 +39,13 @@ async function main(): Promise<void> {
 
   const дом = mkdtempSync(path.join(os.tmpdir(), 'jarvis-browse-'));
   const s = new Сервер({ JARVIS_HOME: дом });
+  const домСторожа = mkdtempSync(path.join(os.tmpdir(), 'jarvis-browse-gate-'));
+  const мост = path.join(домСторожа, 'gate');
+  const gateJson = path.join(домСторожа, 'gate.json');
+  const s2 = new Сервер({ JARVIS_HOME: path.join(домСторожа, 'home'), JARVIS_TOOL_GATE: gateJson });
+  const вопросы: string[] = [];
+  let разрешить = false;
+  let гасиМост: () => void = () => undefined;
   const итоги: Array<{ имя: string; итог: Итог }> = [];
   const шаг = async (имя: string, делать: () => Promise<Итог>): Promise<void> => {
     if (итоги.some((и) => и.итог.вид !== 'прошло')) {
@@ -82,10 +90,50 @@ async function main(): Promise<void> {
         ? { вид: 'прошло', что: 'три ноутбука, ничего лишнего' }
         : { вид: 'не прошло', что: `нет: ${нет.join(', ') || '—'}; лишнее: ${лишнее.join(', ') || '—'}` };
     });
+
+    // Красные линии внутри сервера — путь «Б», как сервер получает Codex:
+    // с JARVIS_TOOL_GATE. «Человек» на мосту вопросов — сама проверка: сначала
+    // не разрешает (покупки быть не должно), потом разрешает (должна быть).
+    s.закрыть();
+    writeFileSync(gateJson, JSON.stringify({ bridgeDir: мост, language: 'ru', outputDir: домСторожа }), 'utf8');
+    гасиМост = new GateBridge(мост, { stepMs: 50 }).serve((вопрос) => {
+      вопросы.push(вопрос.summary);
+      return разрешить;
+    });
+    await s2.поднять();
+    await шаг('сервер с красными линиями открывает страницу', async () => {
+      const ответ = await s2.инструмент('browser_open', { url: адрес });
+      return /Проба поиска/u.test(ответ) && вопросы.length === 0
+        ? { вид: 'прошло', что: 'без вопроса: открыть страницу — не красная линия' }
+        : { вид: 'не прошло', что: `${ответ.slice(0, 120)}; вопросов: ${вопросы.length}` };
+    });
+    await шаг('«Купить» без разрешения не нажимается', async () => {
+      let отказ = '';
+      try {
+        await s2.инструмент('browser_click', { text: 'Купить ноутбук' });
+      } catch (беда) {
+        отказ = беда instanceof Error ? беда.message : String(беда);
+      }
+      const страница = await s2.инструмент('browser_read', {});
+      return /не разрешил/u.test(отказ) && !страница.includes('Куплено') && вопросы.length === 1
+        ? { вид: 'прошло', что: `спросил «${вопросы[0]?.slice(0, 60)}», отказ, покупки нет` }
+        : { вид: 'не прошло', что: `отказ: «${отказ.slice(0, 80)}»; куплено: ${страница.includes('Куплено')}; вопросов: ${вопросы.length}` };
+    });
+    await шаг('«Купить» с разрешением нажимается', async () => {
+      разрешить = true;
+      await s2.инструмент('browser_click', { text: 'Купить ноутбук' });
+      const страница = await s2.инструмент('browser_read', {});
+      return страница.includes('Куплено')
+        ? { вид: 'прошло', что: 'разрешил — куплено' }
+        : { вид: 'не прошло', что: 'разрешил, а покупки нет' };
+    });
   } finally {
     s.закрыть();
+    s2.закрыть();
+    гасиМост();
     магазин.закрыть();
     rmSync(дом, { recursive: true, force: true, maxRetries: 3 });
+    rmSync(домСторожа, { recursive: true, force: true, maxRetries: 3 });
   }
 
   let прошло = 0;

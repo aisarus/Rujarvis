@@ -1,3 +1,7 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 import {
   EventChannel,
@@ -1449,5 +1453,72 @@ describe('продолжение сессии несёт утверждённы�
     });
 
     expect(текст).toContain('собрать фон');
+  });
+});
+
+describe('Codex и красные линии в сервере (путь «Б»)', () => {
+  /** Конфиг рабочего стола, как его пишет writeDesktopMcpConfig. */
+  function столКонфиг(): string {
+    const файл = path.join(mkdtempSync(path.join(os.tmpdir(), 'jarvis-codex-gate-')), 'desktop.json');
+    writeFileSync(
+      файл,
+      JSON.stringify({ mcpServers: { 'jarvis-desktop': { command: 'node', args: ['mcp.cjs'], env: { JARVIS_LANGUAGE: 'ru' } } } }),
+      'utf8',
+    );
+    return файл;
+  }
+
+  it('экран у Codex — только вместе с проверкой в сервере', () => {
+    // Без неё вызовы Codex отклонял, писал свои скрипты и отвечал «окон нет».
+    const безПроверки = new CodexBackend({ probe: readyProbe, desktopMcpConfig: столКонфиг() });
+    expect(безПроверки.capabilities.has('computer')).toBe(false);
+    const сПроверкой = new CodexBackend({ probe: readyProbe, desktopMcpConfig: столКонфиг(), gateConfig: 'C:/j/gate.json' });
+    expect(сПроверкой.capabilities.has('computer')).toBe(true);
+    expect(сПроверкой.capabilities.has('browser')).toBe(true);
+  });
+
+  it('с проверкой: серверу уходит JARVIS_TOOL_GATE, а его инструменты одобрены на стороне Codex', async () => {
+    const { spawn, calls } = fakeSpawn(['{"type":"turn.completed"}']);
+    const backend = new CodexBackend({
+      probe: readyProbe,
+      spawnCli: spawn,
+      desktopMcpConfig: столКонфиг(),
+      gateConfig: 'C:/j/gate.json',
+      userConfig: () => null,
+    });
+    await backend.run(request()).result();
+    const args = calls[0]?.options.args ?? [];
+    const стол = args.find((a) => a.startsWith('mcp_servers.jarvis-desktop=')) ?? '';
+    expect(стол).toContain('JARVIS_TOOL_GATE="C:/j/gate.json"');
+    // Одобрение — только инструментам этого сервера: их проверяет он сам.
+    // approval_policy=never вызовы MCP не одобряет, а отклоняет (замер).
+    expect(стол).toContain('default_tools_approval_mode="approve"');
+    expect(args.some((a) => a.startsWith('approval_policy'))).toBe(false);
+  });
+
+  it('инструменты сервера — под задачу: для экрана окна есть, браузера нет', async () => {
+    // Codex тащит схемы всех инструментов сервера в каждый шаг модели.
+    const { spawn, calls } = fakeSpawn(['{"type":"turn.completed"}']);
+    const backend = new CodexBackend({
+      probe: readyProbe,
+      spawnCli: spawn,
+      desktopMcpConfig: столКонфиг(),
+      gateConfig: 'C:/j/gate.json',
+      userConfig: () => null,
+    });
+    await backend.run(request({ capabilities: ['computer'] })).result();
+    const стол = (calls[0]?.options.args ?? []).find((a) => a.startsWith('mcp_servers.jarvis-desktop=')) ?? '';
+    expect(стол).toContain('enabled_tools=[');
+    expect(стол).toContain('"window_list"');
+    expect(стол).not.toContain('"browser_open"');
+  });
+
+  it('без проверки — ни переменной, ни одобрения', async () => {
+    const { spawn, calls } = fakeSpawn(['{"type":"turn.completed"}']);
+    const backend = new CodexBackend({ probe: readyProbe, spawnCli: spawn, desktopMcpConfig: столКонфиг(), userConfig: () => null });
+    await backend.run(request()).result();
+    const args = calls[0]?.options.args ?? [];
+    expect(args.some((a) => a.includes('JARVIS_TOOL_GATE'))).toBe(false);
+    expect(args.some((a) => a.includes('default_tools_approval_mode'))).toBe(false);
   });
 });

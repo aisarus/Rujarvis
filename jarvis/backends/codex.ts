@@ -12,6 +12,7 @@ import path from 'node:path';
 
 import type { AuthState } from './authHints';
 import type { JarvisCapability } from '../types';
+import { toolsFor } from './claudeCode';
 import { buildBackendPrompt } from './prompt';
 import { looksUsageLimited } from './process';
 import { createCliRun, type SpawnCli, type StreamState, SILENCE_LIMIT_MS, WORK_CEILING_MS } from './cliRunner';
@@ -69,6 +70,17 @@ export interface CodexBackendOptions {
   allowFullAccess?: boolean;
   /** Настройки Codex человека (`config.toml`); по умолчанию читаются с диска. */
   userConfig?: () => string | null;
+  /**
+   * gate.json красных линий — путь «Б».
+   *
+   * Своего надёжного хука у Codex нет, поэтому красные линии держит сам
+   * MCP-сервер Джарвиса (`jarvis/risk/serverGate.ts`): ему передаётся этот
+   * путь, и каждый вызов проходит ту же проверку, что у Claude Code, с тем
+   * же вопросом голосом. Только тогда Codex получает инструменты без
+   * одобрения на своей стороне и задачи с экраном. Без него — как раньше:
+   * рабочего стола у Codex нет.
+   */
+  gateConfig?: string;
   defaultTimeoutMs?: number;
   availabilityTtlMs?: number;
   spawnCli?: SpawnCli;
@@ -96,7 +108,12 @@ export function selectSandbox(request: BackendRequest, allowFullAccess: boolean)
  * разбираются TOML как escape-последовательности, и `C:\Users\…` приезжает
  * покалеченным.
  */
-export function codexMcpOverride(имя: string, сервер: DesktopMcpServer): string {
+export function codexMcpOverride(
+  имя: string,
+  сервер: DesktopMcpServer,
+  одобрять = false,
+  инструменты?: readonly string[],
+): string {
   const строка = tomlСтрока;
   const части = [`command=${строка(сервер.command)}`];
   if (сервер.args && сервер.args.length > 0) {
@@ -106,6 +123,12 @@ export function codexMcpOverride(имя: string, сервер: DesktopMcpServer)
   if (окружение.length > 0) {
     части.push(`env={${окружение.map(([ключ, значение]) => `${ключ}=${строка(String(значение))}`).join(',')}}`);
   }
+  // Инструменты этого сервера — без одобрения на стороне Codex: их проверяет
+  // сам сервер (путь «Б»). Замер 27.09.2026: `approval_policy="never"` вызовы
+  // MCP не одобряет, а отклоняет («requires approval, but approval policy is
+  // never»); одобрение задаётся серверу, и только ему — остальное в Codex как было.
+  if (одобрять) части.push('default_tools_approval_mode="approve"');
+  if (инструменты && инструменты.length > 0) части.push(`enabled_tools=[${инструменты.map(строка).join(',')}]`);
   return `mcp_servers.${имя}={${части.join(',')}}`;
 }
 
@@ -521,8 +544,11 @@ export class CodexBackend implements AgentBackend {
    * молча.
    */
   get capabilities(): ReadonlySet<JarvisCapability> {
-    if (!this.options.desktopMcpConfig) return CAPABILITIES;
-    return new Set<JarvisCapability>([...CAPABILITIES, 'computer']);
+    // Экран — только вместе с красными линиями в сервере. Раньше хватало
+    // конфига рабочего стола, но без одобрения Codex вызовы отклонял, писал
+    // свои скрипты в песочнице и отвечал неправду («открытых окон нет»).
+    if (!this.options.desktopMcpConfig || !this.options.gateConfig) return CAPABILITIES;
+    return new Set<JarvisCapability>([...CAPABILITIES, 'computer', 'browser']);
   }
 
   /**
@@ -531,8 +557,7 @@ export class CodexBackend implements AgentBackend {
    * Файл конфига пишется при старте и не меняется, а читать его на каждую
    * задачу — лишний ввод-вывод в самом горячем месте.
    */
-  private столСобран = false;
-  private столПерекрытия: string[] = [];
+  private столСерверы: Record<string, DesktopMcpServer> | null = null;
 
   private cached: BackendAvailability | null = null;
   private readonly now: () => number;
@@ -548,21 +573,42 @@ export class CodexBackend implements AgentBackend {
    * может не собраться. Тогда Кодекс работает как раньше, без экрана, и врать
    * об этом не надо — менеджер об этом знает и задачи про экран ему не даёт.
    */
-  private перекрытияРабочегоСтола(): string[] {
-    if (this.столСобран) return this.столПерекрытия;
-    this.столСобран = true;
+  private перекрытияРабочегоСтола(capabilities: readonly JarvisCapability[]): string[] {
+    const серверы = this.серверыСтола();
+    const сторож = this.options.gateConfig;
+    // Инструменты — под задачу, тем же списком, что у Claude Code. Codex
+    // тащит схемы ВСЕХ инструментов сервера в каждый шаг модели; замер
+    // 27.09.2026: «какие окна открыты» — 141 тысяча входных токенов на пять
+    // шагов.
+    const инструменты = toolsFor(capabilities, Boolean(сторож)).flatMap((t) =>
+      t.startsWith('mcp__jarvis-desktop__') ? [t.slice('mcp__jarvis-desktop__'.length)] : [],
+    );
+    return Object.entries(серверы).map(([имя, сервер]) =>
+      codexMcpOverride(
+        имя,
+        // Красные линии — внутри сервера: без хука у Codex держать их больше негде.
+        сторож ? { ...сервер, env: { ...сервер.env, JARVIS_TOOL_GATE: сторож } } : сервер,
+        Boolean(сторож),
+        имя === 'jarvis-desktop' ? инструменты : undefined,
+      ),
+    );
+  }
+
+  /** Серверы рабочего стола из конфига — один раз за жизнь процесса. */
+  private серверыСтола(): Record<string, DesktopMcpServer> {
+    if (this.столСерверы) return this.столСерверы;
+    this.столСерверы = {};
     const файл = this.options.desktopMcpConfig;
-    if (!файл) return this.столПерекрытия;
+    if (!файл) return this.столСерверы;
     try {
-      const серверы = readDesktopMcpServers(readFileSync(файл, 'utf8'));
-      this.столПерекрытия = Object.entries(серверы).map(([имя, сервер]) => codexMcpOverride(имя, сервер));
-      console.log(`[codex] рабочий стол: ${Object.keys(серверы).join(', ') || 'пусто'}`);
+      this.столСерверы = readDesktopMcpServers(readFileSync(файл, 'utf8'));
+      console.log(`[codex] рабочий стол: ${Object.keys(this.столСерверы).join(', ') || 'пусто'}`);
     } catch (error) {
       // Молчать нельзя: без этого Кодекс тихо останется без рук, и разница
       // будет видна только по тому, что задачи «не получаются».
       console.error('[codex] не удалось прочитать конфиг рабочего стола:', error);
     }
-    return this.столПерекрытия;
+    return this.столСерверы;
   }
 
   async checkAvailability(force = false): Promise<BackendAvailability> {
@@ -641,7 +687,7 @@ export class CodexBackend implements AgentBackend {
         buildCodexArgs(request, {
           model: this.options.model,
           sandbox,
-          mcpOverrides: this.перекрытияРабочегоСтола(),
+          mcpOverrides: this.перекрытияРабочегоСтола(request.capabilities),
           ownerChoices: codexOwnerChoices((this.options.userConfig ?? readCodexUserConfig)()),
         }),
       cwd: request.cwd,

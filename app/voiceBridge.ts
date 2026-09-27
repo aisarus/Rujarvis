@@ -1015,6 +1015,7 @@ async function поднятьМост(options: {
     claudeModel: own ? undefined : settings().claudeModel || undefined,
     desktopMcpConfig: writeDesktopMcpConfig(outputDir),
     gateSettings: gate.ok ? gate.settings : undefined,
+    gateConfig: gate.ok ? gate.config : undefined,
     homeDir: jarvisHome(),
     outputDir,
     recentActions: () => journal?.context() ?? [],

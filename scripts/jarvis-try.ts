@@ -119,6 +119,7 @@ async function main(): Promise<void> {
     workspace: args.workspace,
     desktopMcpConfig: mcp?.ok ? mcp.file : undefined,
     gateSettings: gate?.ok ? gate.settings : undefined,
+    gateConfig: gate?.ok ? gate.config : undefined,
     homeDir: paths.home,
     memoryFile: проба ? path.join(проба, 'memory.json') : undefined,
     settings: () => settings,

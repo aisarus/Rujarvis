@@ -37,6 +37,7 @@ import { makePlan, markStep, renderPlan, type StepState } from '../agent/plan';
 import { buildSkillFile, isSelfAuthored, skillPath } from '../skills/author';
 import { createDesktopDriver } from './platform';
 import { createWindowTools } from './windowTools';
+import { guardEveryTool, serverGateFromEnv } from '../risk/serverGate';
 import { windowListLines } from './cuaProtocol';
 import { jarvisDataRoot } from '../setup/paths';
 
@@ -288,6 +289,10 @@ function deliverNotesWithEveryTool(server: McpServer): void {
 export function createDesktopMcpServer(): McpServer {
   const server = new McpServer({ name: 'jarvis-desktop', version: '1.0.0' });
   deliverNotesWithEveryTool(server);
+  // Красные линии внутри сервера — для агента без своего хука (Codex).
+  // Последней обёрткой: отказ раньше любой работы инструмента.
+  const сторож = serverGateFromEnv();
+  if (сторож) guardEveryTool(server, сторож);
 
   server.registerTool(
     'screenshot',

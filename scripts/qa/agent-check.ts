@@ -148,6 +148,7 @@ async function main(): Promise<void> {
     memoryFile: path.join(данные, 'memory.json'),
     desktopMcpConfig: mcp.file,
     gateSettings: gate.settings,
+    gateConfig: gate.config,
     homeDir: paths.home,
     outputDir: результаты,
     speak: () => undefined,
