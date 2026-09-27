@@ -56,6 +56,22 @@ export interface TalkAgent {
   path: string;
 }
 
+/**
+ * Почему вести разговор некому — словами для человека.
+ *
+ * Установлен, но без входа — причина самого агента («вход не выполнен,
+ * запустите codex login»): по ней ясно, что делать. Не установлен ни один —
+ * так и сказать.
+ */
+export function talkUnavailableReason(все: readonly BackendAvailability[]): string {
+  const установленные = все.filter((b) => (b.id === 'claude-code' || b.id === 'codex') && b.installed);
+  const причина = установленные.find((b) => b.reason)?.reason?.replace(/\.$/u, '');
+  if (причина) return причина;
+  return установленные.length === 0
+    ? tr('не нашёл ни Claude Code, ни Codex', 'found neither Claude Code nor Codex')
+    : tr('агент не готов — проверьте вкладку «Агенты» в настройках', 'the agent is not ready — see the Agents tab in settings');
+}
+
 /** Кому вести разговор: первый готовый — Claude Code, потом Codex. */
 export function pickTalkAgent(все: readonly BackendAvailability[]): TalkAgent | null {
   for (const id of ['claude-code', 'codex'] as const) {
@@ -104,7 +120,14 @@ export interface TalkSessionOptions {
   log?: (line: string) => void;
   /** Подмена живой сессии в тестах. */
   createSession?: (key: SessionKey, command: string, agent: TalkAgent['id']) => TalkLive;
+  /** Почему агента нет — словами для человека («вход в Codex не выполнен»). */
+  unavailable?: () => Promise<string | null>;
+  /** Часы — для проверки, что жалоба не звучит чаще раза в минуту. */
+  now?: () => number;
 }
+
+/** Не чаще раза в минуту: чаще — это бубнёж на каждую фразу. */
+const ЖАЛОБА_НЕ_ЧАЩЕ_МС = 60_000;
 
 export class TalkSession {
   private live: TalkLive | null = null;
@@ -133,7 +156,17 @@ export class TalkSession {
    * «игнорирует».
    */
   private думаетНад = new Set<string>();
-  private complained = false;
+  /** Последний подъём не нашёл агента — а не был отменён «забудь». */
+  private нетАгента = false;
+  /**
+   * Когда в последний раз говорили, что агента нет.
+   *
+   * Раньше — один раз за жизнь, и чаще всего при запуске, когда человек ещё
+   * ничего не спрашивал. Живой тест на маке 27.09.2026: Codex не был
+   * подключён, «Разговор недоступен» прозвучало при старте, и дальше каждая
+   * фраза человека глоталась молча — со стороны «ничего не работает».
+   */
+  private жалобаВ = Number.NEGATIVE_INFINITY;
   /**
    * Поколение сессии. Растёт на каждом «забудь» и закрытии.
    *
@@ -193,7 +226,10 @@ export class TalkSession {
     let result: BackendResult;
     try {
       const live = await this.ensure();
-      if (!live) return;
+      if (!live) {
+        if (this.нетАгента) await this.сказатьЧегоНет();
+        return;
+      }
 
       // Опорная точка для «что изменилось» заводится на ПЕРВОЙ фразе, а не
       // при подъёме. С прогревом подъём случается при запуске Джарвиса, и
@@ -279,16 +315,13 @@ export class TalkSession {
     const моё = this.поколение;
     const agent = await this.options.agent();
     if (this.поколение !== моё) return null;
+    // Нет агента — молча: говорить об этом решает `hear`, на фразу человека.
+    this.нетАгента = !agent;
     if (!agent) {
-      if (!this.complained) {
-        this.complained = true;
-        await this.say(
-          tr('Разговор недоступен: не нашёл ни Claude Code, ни Codex.', 'Conversation is unavailable: found neither Claude Code nor Codex.'),
-        );
-      }
+      this.log('агента нет: разговор недоступен');
       return null;
     }
-    this.complained = false;
+    this.жалобаВ = Number.NEGATIVE_INFINITY;
     const command = agent.path;
 
     const key: SessionKey = {
@@ -331,6 +364,26 @@ export class TalkSession {
       await this.say('Нить разговора потерял, начинаю заново.');
     }
     return live;
+  }
+
+  /**
+   * Сказать человеку, почему разговора нет, — на его фразу, не чаще раза в
+   * минуту. Причина конкретная («вход в Codex не выполнен»), а не общая:
+   * по общей человеку нечего делать.
+   */
+  private async сказатьЧегоНет(): Promise<void> {
+    const сейчас = (this.options.now ?? Date.now)();
+    if (сейчас - this.жалобаВ < ЖАЛОБА_НЕ_ЧАЩЕ_МС) return;
+    this.жалобаВ = сейчас;
+    let почему = '';
+    try {
+      почему = (await this.options.unavailable?.())?.trim() ?? '';
+    } catch {
+      // Причину не узнали — скажем общую, но скажем.
+    }
+    почему ||= tr('не нашёл ни Claude Code, ни Codex', 'found neither Claude Code nor Codex');
+    this.log(`разговор недоступен: ${почему}`);
+    await this.say(tr(`Разговор недоступен: ${почему}.`, `Conversation is unavailable: ${почему}.`));
   }
 
   private async say(text: string): Promise<void> {

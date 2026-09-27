@@ -95,7 +95,7 @@ import { createHelpOverlay, type HelpOverlay } from './helpOverlay';
 import { createLogWindow, type LogWindow } from './logWindow';
 import { obviousAside } from '../jarvis/dialogue/aside';
 import { TalkBridge } from '../jarvis/dialogue/talkBridge';
-import { pickTalkAgent, TalkSession } from '../jarvis/dialogue/talkSession';
+import { pickTalkAgent, TalkSession, talkUnavailableReason } from '../jarvis/dialogue/talkSession';
 import { ЭХО_РАЗГОВОРА } from '../jarvis/dialogue/workDelta';
 import { RunLogStore } from '../jarvis/observe/runLogStore';
 import { Storyline } from '../jarvis/observe/storyline';
@@ -1151,6 +1151,8 @@ async function поднятьМост(options: {
     // Claude Code первым: у него живая сессия и прогрев. Codex — когда
     // Claude Code нет, иначе у человека с одним Codex разговора нет вовсе.
     agent: async () => pickTalkAgent(await jarvis.backends.availability()),
+    // Чего не хватает — на фразу человека, а не одним словом при запуске.
+    unavailable: async () => talkUnavailableReason(await jarvis.backends.availability()),
     // Дом Джарвиса, а не рабочая папка: разговору нечего делать в коде.
     cwd: jarvisHome(),
     mcpConfig: writeTalkMcpConfig(talkBridgeDir),

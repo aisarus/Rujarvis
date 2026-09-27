@@ -3,7 +3,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { pickTalkAgent, TALK_TOOLS, TalkSession, talkToolNames, type TalkAgent, type TalkLive } from './talkSession';
+import {
+  pickTalkAgent,
+  TALK_TOOLS,
+  TalkSession,
+  talkToolNames,
+  talkUnavailableReason,
+  type TalkAgent,
+  type TalkLive,
+  type TalkSessionOptions,
+} from './talkSession';
 import type { BackendAvailability, BackendResult } from '../backends/types';
 import type { SessionKey } from '../backends/liveSession';
 
@@ -74,10 +83,12 @@ function завести(
   сессии: Поддельная[],
   agent: () => Promise<TalkAgent | null> = () => Promise.resolve({ id: 'claude-code', path: 'claude' }),
   агенты: Array<TalkAgent['id']> = [],
+  ещё: Partial<TalkSessionOptions> = {},
 ): { разговор: TalkSession; ключи: SessionKey[] } {
   const ключи: SessionKey[] = [];
   let next = 0;
   const разговор = new TalkSession({
+    ...ещё,
     agent,
     cwd: dir,
     mcpConfig: path.join(dir, 'talk.json'),
@@ -178,6 +189,56 @@ describe('TalkSession', () => {
     await разговор.hear('ну привет же');
 
     expect(сказанное).toEqual(['Разговор недоступен: не нашёл ни Claude Code, ни Codex.']);
+  });
+
+  it('без агента молчит при запуске, а на фразу называет причину — и повторяет не чаще раза в минуту', async () => {
+    // Живой тест на маке 27.09.2026: Codex не был подключён, «Разговор
+    // недоступен» прозвучало один раз при старте, и дальше каждая фраза
+    // человека глоталась молча — «ничего не работает».
+    let часы = 1_000_000;
+    const { разговор } = завести([], () => Promise.resolve(null), [], {
+      unavailable: () => Promise.resolve('Codex установлен, но вход не выполнен. Запустите codex login'),
+      now: () => часы,
+    });
+
+    await разговор.warm();
+    expect(сказанное).toEqual([]);
+
+    await разговор.hear('открой почту');
+    expect(сказанное).toEqual(['Разговор недоступен: Codex установлен, но вход не выполнен. Запустите codex login.']);
+
+    часы += 30_000;
+    await разговор.hear('ну открой же');
+    expect(сказанное).toHaveLength(1);
+
+    часы += 31_000;
+    await разговор.hear('ау');
+    expect(сказанное).toHaveLength(2);
+  });
+
+  it('причина словами: нет ни одного агента, или конкретная беда установленного', () => {
+    const нет = (id: 'claude-code' | 'codex'): BackendAvailability => ({
+      id,
+      installed: false,
+      authenticated: false,
+      ready: false,
+      checkedAt: 0,
+      reason: `${id} не установлен`,
+    });
+    expect(talkUnavailableReason([нет('claude-code'), нет('codex')])).toBe('не нашёл ни Claude Code, ни Codex');
+    expect(
+      talkUnavailableReason([
+        нет('claude-code'),
+        {
+          id: 'codex',
+          installed: true,
+          authenticated: false,
+          ready: false,
+          checkedAt: 0,
+          reason: 'Codex установлен, но вход не выполнен. Запустите codex login и войдите через ChatGPT.',
+        },
+      ]),
+    ).toBe('Codex установлен, но вход не выполнен. Запустите codex login и войдите через ChatGPT');
   });
 
   it('кому вести разговор: Claude Code первым, без него — Codex, без обоих — никому', () => {
