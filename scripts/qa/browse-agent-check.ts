@@ -18,6 +18,9 @@
  * Вопросы хука отклоняются и попадают в отчёт.
  *
  * Три ответа: прошло, не прошло, нечем мерить (нет входа или сборки).
+ *
+ *   pnpm jarvis:browse-agent-check              # Claude Code
+ *   pnpm jarvis:browse-agent-check -- --codex   # Codex, красные линии в сервере
  */
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
@@ -70,6 +73,13 @@ function закрытьОткрытоеИз(папка: string, после: Date
   const ответ = spawnSync('powershell', ['-NoProfile', '-Command', скрипт], { encoding: 'utf8', timeout: 30_000 });
   for (const строка of (ответ.stdout ?? '').split(/\r?\n/u).filter(Boolean)) console.log(`    ${строка}`);
 }
+
+/**
+ * Чей путь меряем. `--codex` — Codex с красными линиями в сервере (путь «Б»,
+ * пункт «Codex как полноценный водитель»); по умолчанию — Claude Code.
+ */
+const АГЕНТ = process.argv.includes('--codex') ? 'codex' : 'claude-code';
+const ИМЯ = АГЕНТ === 'codex' ? 'Codex' : 'Claude Code';
 
 async function main(): Promise<void> {
   const началоПроверки = new Date();
@@ -126,13 +136,13 @@ async function main(): Promise<void> {
   let итог: Итог;
   try {
     await jarvis.ready();
-    const готов = (await jarvis.backends.availability(true)).find((b) => b.id === 'claude-code')?.ready;
+    const готов = (await jarvis.backends.availability(true)).find((b) => b.id === АГЕНТ)?.ready;
     if (!готов) {
-      итог = { вид: 'нечем мерить', что: 'Claude Code не готов: нет входа или не установлен' };
+      итог = { вид: 'нечем мерить', что: `${ИМЯ} не готов: нет входа или не установлен` };
     } else {
       const turn = await jarvis.core.handleUtterance(
         `Открой в браузере страницу ${магазин.адрес}, найди там через поиск все ноутбуки ` +
-          'и сложи их с ценами в таблицу CSV в папке результатов. Сделай это через Claude Code.',
+          `и сложи их с ценами в таблицу CSV в папке результатов. Сделай это через ${ИМЯ}.`,
       );
       if (turn.kind !== 'task') {
         итог = { вид: 'не прошло', что: `фраза не стала задачей, а стала «${turn.kind}»` };
@@ -174,6 +184,8 @@ async function main(): Promise<void> {
           ? { вид: 'не прошло', что: 'задача не кончилась за 5 минут' }
           : task.result?.ok !== true
             ? { вид: 'не прошло', что: `задача не удалась: ${task.result?.error ?? task.result?.text?.slice(0, 200) ?? ''}` }
+            : task.result.backend !== АГЕНТ
+              ? { вид: 'не прошло', что: `задачу сделал ${task.result.backend}, а не ${ИМЯ}` }
             : !инструменты.some((и) => /browser_/u.test(и))
               ? { вид: 'не прошло', что: 'агент не звал инструментов браузера Джарвиса' }
               : вОбходБраузера.length > 0
