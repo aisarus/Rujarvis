@@ -419,6 +419,21 @@ jobs:
           if [ "$code" -eq 2 ]; then echo 'Браузер: нечем мерить.'; exit 0; fi
           test "$code" -eq 0 || { echo "Браузерная цепочка не работает (код $code)"; exit 1; }
 
+      - name: 'Онбординг: мастер настоящим окном, от языка до «Начать»'
+        # То же, что на Windows. Ближе к концу нарочно: шаг микрофона просит
+        # доступ, и окно этого вопроса остаётся висеть — шагам, которым нужен
+        # ввод, оно мешало бы (так уже было с cua-check).
+        shell: bash
+        run: |
+          set -o pipefail
+          cd "$HOME/Library/Application Support/Rujarvis/src"
+          set +e
+          pnpm jarvis:onboarding-check 2>&1 | tee /tmp/onboarding.log | tail -14
+          code=$?
+          set -e
+          grep -a 'Всего' /tmp/onboarding.log || { echo 'Замер не дошёл до итога: судить не по чему.'; exit 1; }
+          test "$code" -eq 0 || { echo "Онбординг не проходится (код $code)"; exit 1; }
+
       - name: Повторная установка поверх работающего Джарвиса
         # Установка → запуск → повторная установка → запуск. Выше установщик
         # всегда гонялся с --no-launch, то есть поверх работающего Джарвиса —

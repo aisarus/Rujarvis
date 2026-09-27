@@ -34,6 +34,8 @@ await Promise.all([
   // Замер списка окон на маке: ему нужно настоящее окно Электрона.
   esbuild.build({ ...common, entryPoints: ['scripts/qa/electron-window-check.ts'], outfile: 'dist/qa/window-check.cjs' }),
   esbuild.build({ ...common, entryPoints: ['scripts/qa/electron-cua-check.ts'], outfile: 'dist/qa/cua-check.cjs' }),
+  // Онбординг настоящим окном мастера — на обеих системах, в CI.
+  esbuild.build({ ...common, entryPoints: ['scripts/qa/onboarding-check.ts'], outfile: 'dist/qa/onboarding-check.cjs' }),
 ]);
 
 // Скрипт драйвера мыши и клавиатуры сервер ищет рядом с собой.
