@@ -19,6 +19,8 @@ import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import { listMacApplications } from './macApps';
+
 const run = promisify(execFile);
 
 export interface InstalledProgram {
@@ -244,6 +246,11 @@ export interface InstalledList {
  * ближайшим по звуку оказываются «Источники данных ODBC».
  */
 export async function listInstalledPrograms(): Promise<InstalledList> {
+  // На маке ни меню «Пуск», ни PowerShell: программы — папки .app. До
+  // 27.09.2026 здесь дважды на каждой фразе звался PowerShell, которого нет, и
+  // человек слышал «Windows не ответил про магазин».
+  if (process.platform === 'darwin') return listMacApplications();
+
   // Проверяется сама переменная, а не склеенный путь: path.join('', 'Microsoft',
   // …) возвращает непустую ОТНОСИТЕЛЬНУЮ строку, и старый фильтр по длине не
   // отсекал ничего — обход шёл от текущей рабочей папки.

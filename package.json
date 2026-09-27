@@ -32,6 +32,7 @@
     "jarvis:setup": "tsx scripts/jarvis-setup.ts",
     "jarvis:try": "tsx scripts/jarvis-try.ts",
     "jarvis:talk-check": "tsx scripts/talk-live-check.ts",
+    "jarvis:mac-apps-check": "tsx scripts/qa/mac-apps-check.ts",
     "jarvis:roundtrip": "tsx scripts/voice-roundtrip.ts",
     "jarvis:mac-check": "tsx scripts/probe-darwin-driver.ts",
     "jarvis:health": "node scripts/health.mjs",

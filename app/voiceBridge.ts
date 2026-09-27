@@ -32,6 +32,7 @@ import {
 import { APP_ROOT } from './root';
 import { failed, passed, type Gate } from '../jarvis/measure/gate';
 import { listInstalledPrograms } from '../jarvis/apps/installed';
+import { forceQuitMacApp, launchOnMac, listMacRunningApps, macAppName, quitAndWait } from '../jarvis/apps/macApps';
 import {
   aliasTarget,
   matchAppLaunch,
@@ -2039,6 +2040,9 @@ interface RunningProcess {
 
 /** Running programs, with window titles, as the shell reports them. */
 async function listRunningProcesses(): Promise<RunningProcess[]> {
+  // На маке `tasklist` нет — до 27.09.2026 список был пуст, и «закрой хром»
+  // уходил агенту на минуты. Там программы переднего плана из System Events.
+  if (process.platform === 'darwin') return listMacRunningApps();
   let output: string;
   try {
     // Without /v, and that is not a detail: measured on this machine,
@@ -2077,7 +2081,10 @@ async function listRunningProcesses(): Promise<RunningProcess[]> {
 async function resolveCloseTarget(spoken: string): Promise<string | null> {
   // The alias is what bridges «хром» to the process called chrome: the
   // transliteration of the spoken word is "hrom", which matches nothing.
-  const searchable = [windowAlias(spoken), aliasTarget(spoken), spoken]
+  // На маке процесс зовётся как программа («Google Chrome»), а не как её
+  // файл: к имени из таблицы добавляется имя программы мака.
+  const таблица = aliasTarget(spoken);
+  const searchable = [windowAlias(spoken), таблица, таблица ? macAppName(таблица) : null, spoken]
     .filter(Boolean)
     .join(' ');
 
@@ -2111,6 +2118,10 @@ async function closeApplication(
   session: VoiceSession,
   confirm: (summary: string) => Promise<boolean>,
 ): Promise<void> {
+  if (process.platform === 'darwin') {
+    await closeOnMac(spoken, target, force, session, confirm);
+    return;
+  }
   const image = `${target}.exe`;
 
   const kill = async (hard: boolean): Promise<boolean> => {
@@ -2168,6 +2179,59 @@ async function closeApplication(
   console.log(`[jarvis] ${killed ? 'закрыл принудительно' : 'не смог закрыть'} ${target}`);
   note(killed ? 'close' : 'error', `${killed ? 'закрыл' : 'не смог закрыть'} ${spoken}`);
   await session.speak(killed ? tr(`Закрыл ${spoken}.`, `Closed ${spoken}.`) : tr(`Не смог закрыть ${spoken}.`, `Could not close ${spoken}.`));
+}
+
+/**
+ * Закрыть программу на маке: штатный выход, как Cmd+Q; принудительно — только
+ * по «убей» и с согласия.
+ *
+ * Не вышла после штатной просьбы — почти всегда спрашивает «Сохранить?».
+ * Предлагать тут принудительное, как на Windows, значило бы подсунуть человеку
+ * потерю несохранённого вопросом «да или нет».
+ */
+async function closeOnMac(
+  spoken: string,
+  target: string,
+  force: boolean,
+  session: VoiceSession,
+  confirm: (summary: string) => Promise<boolean>,
+): Promise<void> {
+  if (force) {
+    const можно = await confirm(
+      tr(`Закрою ${target} принудительно, несохранённое в нём пропадёт.`, `I will force-close ${target}; unsaved work in it will be lost.`),
+    );
+    if (!можно) {
+      note('close', `не стал закрывать ${spoken}`);
+      await session.speak(tr('Не закрываю.', 'Leaving it open.'));
+      return;
+    }
+    const убита = await forceQuitMacApp(target);
+    console.log(`[jarvis] ${убита ? 'закрыл принудительно' : 'не нашёл, что закрыть:'} ${target}`);
+    note(убита ? 'close' : 'error', `${убита ? 'закрыл' : 'не смог закрыть'} ${spoken}`);
+    await session.speak(убита ? tr(`Закрыл ${spoken}.`, `Closed ${spoken}.`) : tr(`Не смог закрыть ${spoken}.`, `Could not close ${spoken}.`));
+    return;
+  }
+
+  let вышла = false;
+  try {
+    вышла = await quitAndWait(target);
+  } catch (error) {
+    console.error(`[jarvis] не удалось попросить ${target} выйти:`, error);
+  }
+  if (вышла) {
+    console.log(`[jarvis] закрыл ${target}`);
+    note('close', `закрыл ${spoken}`);
+    await session.speak(tr(`Закрыл ${spoken}.`, `Closed ${spoken}.`));
+    return;
+  }
+  console.log(`[jarvis] ${target} не вышел после штатной просьбы`);
+  note('error', `не закрыл ${spoken}: не вышел`);
+  await session.speak(
+    tr(
+      `${spoken} не закрылся — наверное, спрашивает, сохранить ли. Скажите «убей ${spoken}», если не нужно.`,
+      `${spoken} did not close — it is probably asking whether to save. Say "kill ${spoken}" if you do not need it.`,
+    ),
+  );
 }
 
 /** Programs where a forced close can lose work the user has not saved. */
@@ -2239,7 +2303,10 @@ async function launchApplication(
 ): Promise<void> {
   const started = Date.now();
   try {
-    await new Promise<void>((resolve, reject) => {
+    // На маке — `open`, и он дожидается ответа: до 27.09.2026 здесь на маке
+    // звался cmd.exe, и «открой хром» кончался «Не смог открыть».
+    if (process.platform === 'darwin') await launchOnMac(target, kind);
+    else await new Promise<void>((resolve, reject) => {
       // A Store app is not a file: it is started through the shell's apps
       // folder by its identifier.
       // Three shapes, three ways in: a Store app by its identifier, a game or

@@ -369,6 +369,22 @@ jobs:
             claude --version || echo 'claude не ответил (без postinstall это ожидаемо)'
           " || { echo 'Ярлык не дал приложению node или Codex'; exit 1; }
 
+      - name: 'Программы голосом: «открой калькулятор», «закрой калькулятор»'
+        # Тот же путь, что у голоса: таблица запуска → open → запущена →
+        # «Завершить» в меню через System Events → вышла. До 27.09.2026 на маке
+        # «открой хром» звал cmd.exe, а «закрой» уходил агенту. Окно
+        # калькулятора проверка закрывает сама.
+        shell: bash
+        run: |
+          set -o pipefail
+          cd "$HOME/Library/Application Support/Rujarvis/src"
+          set +e
+          pnpm jarvis:mac-apps-check 2>&1 | tee /tmp/mac-apps.log | tail -20
+          code=$?
+          set -e
+          grep -a 'Всего' /tmp/mac-apps.log || { echo 'Замер не дошёл до итога: судить не по чему.'; exit 1; }
+          test "$code" -eq 0 || { echo "Программы голосом на маке не работают (код $code)"; exit 1; }
+
       - name: 'Claude Code и Codex: путь до подписки'
         shell: bash
         run: |
