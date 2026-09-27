@@ -27,6 +27,7 @@ import path from 'node:path';
 import { app, BrowserWindow } from 'electron';
 
 import { openSettingsWindow } from '../../app/settingsWindow';
+import { createClaudeProbe, createCodexProbe } from '../../jarvis/backends/cliProbes';
 import { UI_STRINGS } from '../../app/ui/strings';
 import { jarvisPaths } from '../../jarvis/setup/paths';
 import { SettingsStore } from '../../jarvis/setup/settings';
@@ -147,6 +148,28 @@ async function main(): Promise<number> {
     if (итог.вид !== 'прошло') return итог;
     const кнопка = await js<string>(`document.querySelector('[data-act=next]')?.textContent ?? ''`);
     return кнопка === ru.finish ? итог : { вид: 'не прошло', что: `на последнем шаге кнопка «${кнопка}», ждали «${ru.finish}»` };
+  });
+  await шаг('без агента — предупреждение и путь назад к агентам', async () => {
+    // Живой тест на маке 27.09.2026: мастер пустил дальше без входа в Codex.
+    // Правда — у тех же проб, что у окна: готов ли хоть один агент.
+    const [claude, codex] = await Promise.all([createClaudeProbe().status(), createCodexProbe().status()]);
+    const готов = [claude, codex].some((a) => a.installed && a.loggedIn !== false);
+    const есть = await js<boolean>(`Boolean(document.getElementById('no-agent'))`);
+    if (готов) {
+      return есть
+        ? { вид: 'не прошло', что: 'агент готов, а мастер пугает «Агент не подключён»' }
+        : { вид: 'прошло', что: 'агент готов — предупреждения нет' };
+    }
+    if (!есть) return { вид: 'не прошло', что: 'ни один агент не готов, а предупреждения нет' };
+    const назад = await нажать('[data-act=to-agents]');
+    if (назад !== 'ok' || !(await дождаться(ru.stepAgent))) {
+      return { вид: 'не прошло', что: `«${ru.noAgentBack}»: ${назад}, заголовок «${await заголовок()}»` };
+    }
+    for (const ждём of [ru.stepModels, ru.stepMic, ru.stepReady]) {
+      const итог = await далее(ждём);
+      if (итог.вид !== 'прошло') return итог;
+    }
+    return { вид: 'прошло', что: 'предупреждение есть, «Вернуться к агентам» ведёт на шаг агентов и обратно' };
   });
   await шаг('«Начать» — онбординг пройден, окно закрыто', async () => {
     const нажато = await нажать('[data-act=next]');

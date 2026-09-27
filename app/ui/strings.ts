@@ -50,6 +50,10 @@ const ru = {
   stepMic: 'Микрофон',
   stepMicHint: 'Скажите что-нибудь: полоска должна двигаться.',
   stepReady: 'Всё готово',
+  noAgentTitle: 'Агент не подключён',
+  noAgentHint:
+    'Без Claude Code или Codex Джарвис выполняет только прямые команды: открыть и закрыть программу, клавиши, вкладки, прокрутку. На остальное он ответит, чего не хватает. Вернитесь к агентам и войдите — или начните так и подключите позже в настройках.',
+  noAgentBack: 'Вернуться к агентам',
   stepReadyHint: 'Нажмите Ctrl + Space, скажите, нажмите ещё раз — или просто скажите «Джарвис». «Стоп» останавливает работу, «тишина» — речь.',
 
   agentInstalled: 'установлен',
@@ -182,6 +186,10 @@ const en: UiStrings = {
   stepMic: 'Microphone',
   stepMicHint: 'Say something: the bar should move.',
   stepReady: 'All set',
+  noAgentTitle: 'No agent connected',
+  noAgentHint:
+    'Without Claude Code or Codex, Jarvis handles only direct commands: opening and closing apps, keys, tabs, scrolling. For anything else it will say what is missing. Go back to the agents and sign in — or start now and connect one later in settings.',
+  noAgentBack: 'Back to agents',
   stepReadyHint: 'Press Ctrl + Space, speak, press it again — or just say "Jarvis". "Stop" stops the work, "silence" stops the talking.',
 
   agentInstalled: 'installed',

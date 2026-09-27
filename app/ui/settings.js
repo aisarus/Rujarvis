@@ -320,6 +320,30 @@ function folderField(label, hint, key, placeholder) {
 
 // ---------- онбординг ----------
 
+/**
+ * Готов ли хоть один агент. «Не знаю» о входе (`unknown`) — не повод пугать:
+ * вход мог прийти через окружение, и проверит его первая же задача.
+ */
+function агентГотов() {
+  const agents = data.agents || {};
+  return ['claude', 'codex'].some((key) => agents[key] && agents[key].installed && agents[key].loggedIn !== false);
+}
+
+function noAgentCard() {
+  const s = t();
+  const node = el(`<div class="card" id="no-agent"><h2>${s.noAgentTitle}</h2>
+    <p class="hint" style="margin:8px 0 0">${s.noAgentHint}</p>
+    <div class="row" style="justify-content:flex-start;margin-top:12px">
+      <button class="btn primary" data-act="to-agents">${s.noAgentBack}</button>
+    </div></div>`);
+  node.querySelector('[data-act=to-agents]').onclick = async () => {
+    step = STEPS.indexOf('agent');
+    await refresh();
+    render();
+  };
+  return node;
+}
+
 const STEPS = ['language', 'agent', 'models', 'mic', 'ready'];
 
 function stepReady() {
@@ -362,6 +386,10 @@ function renderWizard(main) {
   }
   if (name === 'mic') main.append(micCard());
   if (name === 'ready') {
+    // Живой тест на маке 27.09.2026: мастер пустил дальше без входа в Codex,
+    // и после «Начать» Джарвис на всё, кроме прямых команд, молчал. Не запрет
+    // — человек вправе начать так, — а правда о том, что его ждёт.
+    if (!агентГотов()) main.append(noAgentCard());
     main.append(keysCard());
     main.append(redLinesCard());
   }
