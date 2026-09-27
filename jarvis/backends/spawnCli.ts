@@ -29,9 +29,18 @@ export function needsShell(command: string): boolean {
   return process.platform === 'win32' && /\.(cmd|bat)$/iu.test(command);
 }
 
-/** Обернуть в кавычки то, что без них развалится на пробеле. */
+/**
+ * Обернуть в кавычки то, что без них развалится на пробеле — или потеряет
+ * свои кавычки.
+ *
+ * Голая кавычка в аргументе без пробела доезжала до CLI съеденной: разбор
+ * командной строки Windows считает её разметкой. Так ломались строки
+ * `-c mcp_servers.…={command="C:\…"}` у Codex — сервер под Электроном лежит
+ * по пути без пробелов, и Codex получал `{command=C:\…}` («Error loading
+ * config.toml»). Внутри кавычек удвоенная кавычка — буква, а не разметка.
+ */
 function quote(value: string): string {
-  if (!/[\s&|<>^]/u.test(value)) return value;
+  if (!/[\s&|<>^"]/u.test(value)) return value;
   // Внутренние кавычки удваиваются — так их понимает cmd.exe.
   return `"${value.split('"').join('""')}"`;
 }

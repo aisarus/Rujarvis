@@ -1,3 +1,8 @@
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { cliLaunch, needsShell } from './spawnCli';
@@ -64,5 +69,38 @@ describe('cliLaunch', () => {
     vi.stubGlobal('process', { ...process, platform: 'win32' });
     const итог = cliLaunch('claude.cmd', ['--print', 'скажи "привет"']);
     expect(итог.command).toContain('""привет""');
+  });
+});
+
+/**
+ * Настоящий cmd.exe и настоящая обёртка `.cmd`, как у npm.
+ *
+ * Строки выше проверяют, какую строку мы собрали, но не то, что из неё
+ * вынет CLI. 27.09.2026 `pnpm jarvis:preflight -- --with-agent` поймал:
+ * Codex на Windows отвечал «Error loading config.toml: invalid type:
+ * string "{command=C:…» — у `-c mcp_servers.…={command="C:\\…"}` без
+ * пробелов кавычки не ставились, и разбор аргументов их съедал. С путём
+ * «C:\Program Files\…» всё работало — поэтому живые проверки под tsx
+ * проходили, а сервер под Электроном (путь без пробелов) — нет.
+ */
+describe.skipIf(process.platform !== 'win32')('cliLaunch через настоящий cmd.exe', () => {
+  it('CLI получает аргументы ровно такими, какими их собрали', () => {
+    const папка = mkdtempSync(path.join(os.tmpdir(), 'spawncli-'));
+    writeFileSync(path.join(папка, 'echo.cjs'), 'process.stdout.write(JSON.stringify(process.argv.slice(2)))', 'utf8');
+    // Как обёртка npm: node со скриптом рядом и все аргументы — через %*.
+    const обёртка = path.join(папка, 'echo.cmd');
+    writeFileSync(обёртка, `@"${process.execPath}" "%~dp0echo.cjs" %*\r\n`, 'utf8');
+
+    const БС = String.fromCharCode(92);
+    const аргументы = [
+      'exec',
+      `mcp_servers.jarvis-talk={command="C:${БС}${БС}a${БС}${БС}electron.exe",args=["C:${БС}${БС}b${БС}${БС}mcp.cjs"],env={X="1"}}`,
+      'features.shell_tool=false',
+      'скажи "привет" с пробелом',
+    ];
+    const запуск = cliLaunch(обёртка, аргументы);
+    const итог = spawnSync(запуск.command, запуск.args, { shell: запуск.shell, encoding: 'utf8', windowsHide: true });
+    expect(итог.status).toBe(0);
+    expect(JSON.parse(итог.stdout) as string[]).toEqual(аргументы);
   });
 });
