@@ -10,8 +10,24 @@
 f=/tmp/rujarvis-install.sh; curl -fsSL https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.sh -o "$f" && bash "$f"
 ```
 
-Homebrew, Git и Node.js ставятся сами, если их нет. В конце появится
-**Rujarvis** в `~/Applications` и ярлык на Рабочем столе.
+Homebrew, Git и Node.js (с ним npm) ставятся сами, если их нет. В конце
+появится **Rujarvis** в `~/Applications` и ярлык на Рабочем столе.
+
+**Сначала установщик, потом Codex.** На чистом маке нет Node.js, и
+`npm install -g @openai/codex` до установки отвечает «command not found»
+(живой мак тестера, 27.09.2026).
+
+Если Homebrew поставил наш установщик, Терминал его пока не видит — ни в
+этом окне, ни в новых: установщик включает его только внутри себя и в
+`~/.zprofile` не пишет. В конце установки он сам подскажет строку; на маке
+с M1–M4 это
+
+```bash
+eval "$(/opt/homebrew/bin/brew shellenv)"
+```
+
+— в каждом новом окне, где нужны `npm`, `codex` или `pnpm`. На маке с Intel
+не нужно. Самому Rujarvis это не требуется: ярлык находит node и Codex сам.
 
 Агент нужен хотя бы один. Если стоит только Codex — этого достаточно:
 
@@ -59,13 +75,8 @@ Finder (node, Codex, Claude Code с PATH Finder), вход в Codex, модел�
 pnpm jarvis:preflight -- --with-agent
 ```
 
-Пишет `command not found: pnpm` — Homebrew не в PATH этого окна:
-
-```bash
-eval "$(/opt/homebrew/bin/brew shellenv)"
-```
-
-и повторить команду проверки.
+Пишет `command not found: pnpm` — Homebrew не в PATH этого окна: строка
+`eval …` из раздела 1, и повторить команду проверки.
 
 ## 4. Что сказать первым
 
