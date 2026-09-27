@@ -172,9 +172,10 @@ Codex sign-ins alone.
 Speech is recognised and synthesised locally. The only things that leave your
 machine are what you send to the Claude Code or Codex CLI you signed in to —
 the same as using them directly — and your audio, only if you opt into
-recognition off this machine: the cloud (`ELEVENLABS_API_KEY`) or your own
-whisper.cpp server over the network (`JARVIS_GPU_STT` pointing somewhere other
-than `localhost`). There is no telemetry.
+recognition off this machine: the cloud (the "Where speech is recognised"
+switch in settings, Speech tab, plus an `ELEVENLABS_API_KEY`; the key alone turns
+nothing on) or your own whisper.cpp server over the network (`JARVIS_GPU_STT`
+pointing somewhere other than `localhost`). There is no telemetry.
 
 ## Honest status
 

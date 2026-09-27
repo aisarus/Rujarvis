@@ -26,6 +26,7 @@ import path from 'node:path';
 
 import { app, BrowserWindow } from 'electron';
 
+import { cloudSpeechKey } from '../../app/cloudTranscriber';
 import { openSettingsWindow } from '../../app/settingsWindow';
 import { createClaudeProbe, createCodexProbe } from '../../jarvis/backends/cliProbes';
 import { UI_STRINGS } from '../../app/ui/strings';
@@ -73,11 +74,14 @@ async function main(): Promise<number> {
     onSettingsChanged: () => undefined,
   });
 
-  const окно = BrowserWindow.getAllWindows()[0];
-  if (!окно) {
+  const первое = BrowserWindow.getAllWindows()[0];
+  if (!первое) {
     console.log('НЕ ПРОШЛО: окно настройки не открылось');
     return 1;
   }
+  // Переменная: после «Начать» настройки открываются заново, и помощники
+  // ниже должны смотреть уже в новое окно.
+  let окно: BrowserWindow = первое;
   const js = <T>(код: string): Promise<T> => окно.webContents.executeJavaScript(код, true) as Promise<T>;
   const заголовок = (): Promise<string> =>
     окно.isDestroyed() ? Promise.resolve('') : js<string>(`document.querySelector('h1')?.textContent ?? ''`);
@@ -179,6 +183,65 @@ async function main(): Promise<number> {
     return закончен && settings.get().onboarded && окно.isDestroyed()
       ? { вид: 'прошло', что: 'onboarded = true, окно закрыто' }
       : { вид: 'не прошло', что: `закончен: ${закончен}, onboarded: ${settings.get().onboarded}, окно закрыто: ${окно.isDestroyed()}` };
+  });
+
+  // Где распознаётся речь — уже в обычных настройках. До 28.09.2026 облако
+  // включалось само от ключа в системе, и звук уходил наружу без ведома
+  // человека. Теперь это явный выбор, и этот компьютер — первым и по умолчанию.
+  const карточка = (): Promise<{ есть: boolean; первая: boolean; облако: boolean; текст: string }> =>
+    js(`(() => {
+      const c = document.querySelector('#speech-place');
+      const cloud = c && c.querySelector('input[value=cloud]');
+      return { есть: Boolean(c), первая: document.querySelector('#main .card') === c,
+        облако: Boolean(cloud && cloud.checked), текст: c ? c.innerText : '' };
+    })()`);
+  const ждатьНастройку = async (облако: boolean): Promise<boolean> => {
+    const конец = Date.now() + 5_000;
+    while (Date.now() < конец && settings.get().cloudSpeech !== облако) await подождать(100);
+    return settings.get().cloudSpeech === облако;
+  };
+  await шаг('настройки → «Речь»: первой — где распознаётся речь, по умолчанию этот компьютер', async () => {
+    openSettingsWindow({
+      settings,
+      paths: { ...настоящие, settings: файл },
+      onFinished: () => undefined,
+      onSettingsChanged: () => undefined,
+    });
+    const новое = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+    if (!новое) return { вид: 'не прошло', что: 'настройки не открылись' };
+    окно = новое;
+    if (!(await дождаться(ru.tabGeneral))) return { вид: 'не прошло', что: `заголовок «${await заголовок()}», ждали «${ru.tabGeneral}»` };
+    const вкладка = await js<string>(`(() => {
+      const b = [...document.querySelectorAll('#nav button')].find((x) => x.textContent === ${JSON.stringify(ru.tabVoice)});
+      if (!b) return 'нет вкладки';
+      b.click();
+      return 'ok';
+    })()`);
+    if (вкладка !== 'ok' || !(await дождаться(ru.tabVoice))) return { вид: 'не прошло', что: `вкладка «${ru.tabVoice}»: ${вкладка}` };
+    const к = await карточка();
+    if (!к.есть) return { вид: 'не прошло', что: 'карточки «где распознаётся речь» нет' };
+    if (!к.первая) return { вид: 'не прошло', что: 'карточка не первая на вкладке' };
+    if (к.облако || settings.get().cloudSpeech) return { вид: 'не прошло', что: 'по умолчанию выбрано облако' };
+    return к.текст.includes(ru.speechPlaceNowLocal)
+      ? { вид: 'прошло', что: `«${ru.speechPlaceNowLocal} ${settings.get().whisperModel}»` }
+      : { вид: 'не прошло', что: `нет строки «${ru.speechPlaceNowLocal}»: ${к.текст.slice(0, 160)}` };
+  });
+  await шаг('облако включается и выключается только переключателем', async () => {
+    const вКлик = (значение: string): Promise<string> =>
+      нажать(`#speech-place input[value=${значение}]`);
+    if ((await вКлик('cloud')) !== 'ok' || !(await ждатьНастройку(true))) {
+      return { вид: 'не прошло', что: `облако не записалось: cloudSpeech = ${settings.get().cloudSpeech}` };
+    }
+    // Ключа у проверки нет — окно обязано сказать, что облако не заработает.
+    const сКлючом = Boolean(cloudSpeechKey(true));
+    await подождать(300);
+    const после = await карточка();
+    const ждём = сКлючом ? ru.speechPlaceNowCloud : ru.speechPlaceNoKey;
+    if (!после.текст.includes(ждём)) return { вид: 'не прошло', что: `нет «${ждём}»: ${после.текст.slice(0, 160)}` };
+    if ((await вКлик('local')) !== 'ok' || !(await ждатьНастройку(false))) {
+      return { вид: 'не прошло', что: `назад на этот компьютер не переключилось: cloudSpeech = ${settings.get().cloudSpeech}` };
+    }
+    return { вид: 'прошло', что: `облако → ${сКлючом ? 'облако' : '«ключа нет»'} → этот компьютер` };
   });
 
   if (!окно.isDestroyed()) окно.destroy();

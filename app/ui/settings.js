@@ -164,6 +164,28 @@ function modelRow(kind, model, selectedId, onSelect) {
   return node;
 }
 
+// Где распознаётся речь. Переключатель явный: до 28.09.2026 облако включалось
+// само от ключа в системе, и человек не знал, что звук уходит наружу.
+// Локальный вариант первым — он и по умолчанию.
+function speechPlaceCard() {
+  const s = t();
+  const cloud = data.settings.cloudSpeech === true;
+  const now = cloud && data.cloudKey
+    ? s.speechPlaceNowCloud
+    : `${s.speechPlaceNowLocal} ${escapeHtml(data.settings.whisperModel)}`;
+  const card = el(`<div class="card" id="speech-place"><label class="field">${s.speechPlace}</label>
+    <div class="radio">
+      <label><input type="radio" name="speech-place" value="local" ${cloud ? '' : 'checked'}> ${s.speechPlaceLocal}</label>
+      <label><input type="radio" name="speech-place" value="cloud" ${cloud ? 'checked' : ''}> ${s.speechPlaceCloud}</label>
+    </div>
+    <p class="hint" style="margin:10px 0 0"><b>${now}</b></p>
+    ${cloud && !data.cloudKey ? `<p class="hint" style="margin:6px 0 0">${s.speechPlaceNoKey}</p>` : ''}
+    <p class="hint" style="margin:6px 0 0">${s.speechPlaceHint}</p>
+  </div>`);
+  for (const radio of card.querySelectorAll('input')) radio.onchange = () => update({ cloudSpeech: radio.value === 'cloud' });
+  return card;
+}
+
 function modelsCard() {
   const s = t();
   const lang = data.settings.language;
@@ -432,6 +454,7 @@ function renderSettings(main, nav) {
     main.append(el('<div style="height:14px"></div>'), redLinesCard());
   }
   if (tab === 'voice') {
+    main.append(speechPlaceCard());
     main.append(modelsCard());
     main.append(el(`<h2 style="margin-top:8px">${s.stepMic}</h2>`), micCard());
   }

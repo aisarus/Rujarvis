@@ -8,13 +8,28 @@
  * model buys almost nothing — measured, not assumed.
  *
  * A hosted recogniser has neither problem. The trade is real and deliberate:
- * the microphone audio leaves the machine. That is why this is opt-in through
- * an API key rather than the default, and why a failure here falls back to the
- * local recogniser instead of leaving the assistant deaf.
+ * the microphone audio leaves the machine. That is why a failure here falls
+ * back to the local recogniser instead of leaving the assistant deaf.
  */
 
 import type { Transcriber } from '../jarvis/voice/session';
 import { encodeWav16 } from '../jarvis/voice/wav';
+
+/**
+ * Ключ облака — только если облако включено в настройках.
+ *
+ * Раньше «включено» означало «в системе есть ELEVENLABS_API_KEY». Ключ живёт
+ * в переменных среды пользователя и нужен бывает другим программам, так что
+ * облако включалось без ведома человека: 26–27.09.2026 у владельца полтора
+ * дня весь звук с микрофона — около 800 отрезков, 145 из них не Джарвису —
+ * уходил в ElevenLabs, а настройки показывали Whisper на этом компьютере.
+ * Ключ без переключателя теперь ничего не включает.
+ */
+export function cloudSpeechKey(enabled: boolean, env: NodeJS.ProcessEnv = process.env): string | null {
+  if (!enabled) return null;
+  const key = env.ELEVENLABS_API_KEY?.trim();
+  return key ? key : null;
+}
 
 const ENDPOINT = 'https://api.elevenlabs.io/v1/speech-to-text';
 const DEFAULT_MODEL = 'scribe_v2';

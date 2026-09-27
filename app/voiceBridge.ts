@@ -86,7 +86,7 @@ import {
 } from '../jarvis/setup/settings';
 import { installVoice, isVoiceInstalled, Speaker } from '../jarvis/voice/tts';
 import { AUDIO_BRIDGE_CHANNELS, buildAudioBridgeHtml } from './audioBridgePage';
-import { createElevenLabsTranscriber } from './cloudTranscriber';
+import { cloudSpeechKey, createElevenLabsTranscriber } from './cloudTranscriber';
 import { createGpuTranscriber, waitForWhisperServer } from './gpuTranscriber';
 import { createSttProcess } from './sttProcess';
 import { startLogFile } from './logFile';
@@ -802,7 +802,7 @@ async function поднятьМост(options: {
   // Раньше всего остального: если что-то не поднимется, причина должна
   // остаться на диске, а не в закрытом окне консоли.
   const logPath = startLogFile(PATHS.log, [
-    `язык: ${settings().language}, голос: ${settings().voiceId}, распознавание: whisper-${settings().whisperModel}`,
+    `язык: ${settings().language}, голос: ${settings().voiceId}, модель whisper: ${settings().whisperModel}, облако: ${settings().cloudSpeech ? 'включено' : 'выключено'}`,
     `речь в логе: ${settings().speechLogging}`,
     own ? `агент: своя модель ${own.model} на ${own.url}` : `агент: подписка${settings().claudeModel ? `, модель ${settings().claudeModel}` : ''}`,
     `папка Джарвиса: ${PATHS.home}`,
@@ -833,10 +833,16 @@ async function поднятьМост(options: {
   // Three recognisers, in order of preference, each falling back to the next.
   //
   // The graphics card first: measured at 425 ms per phrase here, which matches
-  // the hosted service and costs nothing. The cloud second, for when the local
-  // server is not up. The bundled CPU recogniser last, so the assistant is
-  // never simply deaf — it is slow there, around ten seconds, but it answers.
-  const cloudKey = process.env.ELEVENLABS_API_KEY?.trim();
+  // the hosted service and costs nothing. The cloud second — only when it is
+  // switched on in settings (`cloudSpeech`). The bundled CPU recogniser last,
+  // so the assistant is never simply deaf.
+  const cloudKey = cloudSpeechKey(settings().cloudSpeech);
+  if (!settings().cloudSpeech && cloudSpeechKey(true)) {
+    console.log('[jarvis:stt] ключ ElevenLabs в системе есть, но облако выключено в настройках — звук остаётся на этом компьютере');
+  }
+  if (settings().cloudSpeech && !cloudKey) {
+    console.log('[jarvis:stt] облако включено в настройках, но ключа ELEVENLABS_API_KEY нет — распознаю на этом компьютере');
+  }
   const cloud: Transcriber | null = cloudKey
     ? createElevenLabsTranscriber({ apiKey: cloudKey, language: settings().language, fallback: recogniser })
     : null;
@@ -852,8 +858,8 @@ async function поднятьМост(options: {
       gpuReady
         ? 'видеокарта (large-v3-turbo)'
         : cloud
-          ? 'ElevenLabs Scribe'
-          : 'локальный Whisper на процессоре'
+          ? 'облако ElevenLabs Scribe (включено в настройках; звук уходит в интернет)'
+          : `Whisper ${settings().whisperModel} на этом компьютере`
     }`,
   );
 

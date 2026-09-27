@@ -450,7 +450,7 @@ jobs:
           set -o pipefail
           cd "$HOME/Library/Application Support/Rujarvis/src"
           set +e
-          pnpm jarvis:onboarding-check 2>&1 | tee /tmp/onboarding.log | tail -14
+          pnpm jarvis:onboarding-check 2>&1 | tee /tmp/onboarding.log | tail -16
           code=$?
           set -e
           grep -a 'Всего' /tmp/onboarding.log || { echo 'Замер не дошёл до итога: судить не по чему.'; exit 1; }

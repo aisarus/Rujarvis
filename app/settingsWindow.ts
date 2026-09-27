@@ -12,6 +12,7 @@ import path from 'node:path';
 
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
 
+import { cloudSpeechKey } from './cloudTranscriber';
 import { терминалДляВхода } from './loginTerminal';
 import { APP_ROOT } from './root';
 import { cliStatus, createClaudeProbe, createCodexProbe } from '../jarvis/backends/cliProbes';
@@ -170,6 +171,8 @@ async function state() {
     strings: UI_STRINGS,
     platform: process.platform,
     agents: { claude, codex },
+    // Только «есть ли ключ облака», сам ключ окну не нужен.
+    cloudKey: Boolean(cloudSpeechKey(true)),
   };
 }
 

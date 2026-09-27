@@ -35,6 +35,16 @@ export interface AppSettings {
   /** Папка результатов. Пусто — «Джарвис»/«Jarvis» на рабочем столе. */
   outputDir: string;
   speechLogging: SpeechLogging;
+  /**
+   * Распознавать речь в облаке ElevenLabs вместо Whisper на этом компьютере.
+   *
+   * Выключено по умолчанию и включается только здесь, руками. До 28.09.2026
+   * облако включалось само, стоило в системе оказаться ключу
+   * ELEVENLABS_API_KEY: у владельца так полтора дня каждый отрезок звука из
+   * микрофона — и обращённый к Джарвису, и нет — уходил в ElevenLabs, а
+   * настройки и журнал показывали «whisper-small».
+   */
+  cloudSpeech: boolean;
   /** Модель Claude Code: пусто — выбор самого CLI. */
   claudeModel: string;
   /**
@@ -77,6 +87,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   workspace: '',
   outputDir: '',
   speechLogging: 'commands',
+  cloudSpeech: false,
   claudeModel: '',
   localModelUrl: '',
   localModelName: '',
@@ -127,6 +138,8 @@ export function normaliseSettings(raw: unknown): AppSettings {
     workspace: text('workspace', ''),
     outputDir: text('outputDir', ''),
     speechLogging: logging,
+    // Только явное «да»: что угодно другое — звук остаётся на этом компьютере.
+    cloudSpeech: input.cloudSpeech === true,
     claudeModel: text('claudeModel', ''),
     // Публичный адрес сюда не пройдёт даже руками в settings.json: это был бы
     // чужой шлюз, а Джарвис не ходит в платные API.

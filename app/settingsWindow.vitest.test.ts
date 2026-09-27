@@ -102,6 +102,9 @@ describe('окно настроек', () => {
     const ответ = (await state(null)) as Record<string, unknown>;
     expect(Object.keys(ответ).sort()).toEqual([
       'agents',
+      // Есть ли в системе ключ облака — для переключателя «где распознаётся
+      // речь». Сам ключ окну не отдаётся.
+      'cloudKey',
       'paths',
       'platform',
       'settings',
