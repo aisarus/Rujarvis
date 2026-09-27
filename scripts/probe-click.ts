@@ -14,6 +14,11 @@ const shouldClick = process.argv.includes('--click');
 const driver = new DesktopDriver();
 
 async function main(): Promise<void> {
+  // Драйвер здесь — PowerShell. На маке это «нечем мерить», а не провал.
+  if (process.platform !== 'win32') {
+    console.log('НЕЧЕМ МЕРИТЬ: проба для Windows; на маке — pnpm jarvis:mac-check');
+    process.exit(2);
+  }
   const started = Date.now();
   const window = await driver.elements();
   console.log(`окно «${window.title}»: ${window.elements.length} элементов за ${Date.now() - started} мс`);

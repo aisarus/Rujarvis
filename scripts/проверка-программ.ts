@@ -408,6 +408,12 @@ function short(title: string): string {
 }
 
 async function main(): Promise<void> {
+  // Меню «Пуск», реестр и PowerShell. На маке это «нечем мерить», а не провал:
+  // программы мака меряет pnpm jarvis:mac-apps-check.
+  if (process.platform !== 'win32') {
+    console.log('НЕЧЕМ МЕРИТЬ: проверка для Windows; на маке — pnpm jarvis:mac-apps-check');
+    process.exit(2);
+  }
   const driver = new DesktopDriver();
   const список = await listInstalledPrograms();
   const installed = список.programs;

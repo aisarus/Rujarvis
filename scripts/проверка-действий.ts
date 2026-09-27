@@ -205,6 +205,11 @@ const СЛУЧАИ: Случай[] = [
 ];
 
 async function main(): Promise<void> {
+  // Драйвер здесь — PowerShell. На маке это «нечем мерить», а не провал.
+  if (process.platform !== 'win32') {
+    console.log('НЕЧЕМ МЕРИТЬ: проверка для Windows; на маке — pnpm jarvis:mac-check');
+    process.exit(2);
+  }
   console.log(`Проверка действий: ${СЛУЧАИ.length} случаев${NL}`);
   let плохо = 0;
   let нечем = 0;

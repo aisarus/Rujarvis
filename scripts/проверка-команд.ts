@@ -212,6 +212,11 @@ const CASES: Case[] = [
 ];
 
 async function main(): Promise<void> {
+  // Драйвер здесь — PowerShell. На маке это «нечем мерить», а не провал.
+  if (process.platform !== 'win32') {
+    console.log('НЕЧЕМ МЕРИТЬ: проверка для Windows; на маке — pnpm jarvis:mac-check');
+    process.exit(2);
+  }
   let bad = 0;
   console.log(`Сквозная проверка: ${CASES.length} фраз${String.fromCharCode(10)}`);
 
