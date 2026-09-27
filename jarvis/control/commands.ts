@@ -25,7 +25,8 @@ import { firstMatch, type Rule } from './grammar';
 import { GRID_CELLS, parseSpokenNumber } from './grid';
 
 export type DirectCommand =
-  | { kind: 'key'; keys: string }
+  /** `browser` — названный браузер («закрой вкладку в Brave»): клавиша идёт в него, а не в верхний. */
+  | { kind: 'key'; keys: string; browser?: string }
   | { kind: 'scroll'; amount: number }
   | { kind: 'click'; button: 'left' | 'right' | 'middle'; double?: boolean }
   | { kind: 'type'; text: string }
@@ -601,6 +602,60 @@ export function parseDirectCommand(utterance: string): DirectCommand | null {
 }
 
 /**
+ * Глаголы, с которых начинается команда. С заглавной посреди фразы —
+ * распознаватель так отмечает начало нового предложения и без точки.
+ */
+const ГЛАГОЛЫ_КОМАНД = new Set([
+  'закрой', 'открой', 'переключи', 'переключись', 'перейди', 'вернись', 'нажми', 'кликни', 'щелкни',
+  'прокрути', 'листай', 'сверни', 'разверни', 'покажи', 'убери', 'скопируй', 'вставь', 'выдели', 'обнови',
+  'close', 'open', 'switch', 'go', 'press', 'click', 'scroll', 'minimize', 'maximize', 'show', 'copy',
+  'paste', 'refresh', 'reload',
+]);
+
+/**
+ * Прямая команда — и тогда, когда она последним предложением после
+ * вступления.
+ *
+ * Живой лог владельца 26–27.09.2026: «Ну какой PDF dir? Закрой вкладку»,
+ * «Что ещё умеем? Переключись на Edge», «Ничего ты не закрыл Закрой
+ * последнюю вкладку в Edge» — команда целиком, но после вступления, и разбор
+ * всей фразы её не видел. Фразы уходили в разговор и к агенту: 28–94 с
+ * вместо секунды, одна кончилась «не получилось».
+ *
+ * Хвост берётся только с границы предложения: после «.?!…» или с заглавного
+ * глагола-команды. И не короче двух слов: «Не нажимай Enter» не должно
+ * превратиться в «Enter».
+ */
+export function parseDirectCommandInPhrase(utterance: string): DirectCommand | null {
+  const целиком = parseDirectCommand(utterance);
+  if (целиком) return целиком;
+  const слова = utterance.trim().split(/\s+/u);
+  for (let i = 1; i <= слова.length - 2; i += 1) {
+    const послеТочки = /[.?!…]$/u.test(слова[i - 1] ?? '');
+    const слово = слова[i] ?? '';
+    const глагол = /^\p{Lu}/u.test(слово) && ГЛАГОЛЫ_КОМАНД.has(слово.replace(/[^\p{L}]/gu, '').toLowerCase());
+    if (!послеТочки && !глагол) continue;
+    const хвост = parseDirectCommand(слова.slice(i).join(' '));
+    if (хвост) return хвост;
+  }
+  return null;
+}
+
+/**
+ * Браузеры, как их называют: ключ — то, по чему узнаётся окно
+ * (`окноБраузера`), слова — как их слышит распознаватель на обоих языках.
+ */
+export const БРАУЗЕРЫ_ПО_СЛОВАМ: Readonly<Record<string, readonly string[]>> = {
+  edge: ['edge', 'эдж', 'эдже', 'едж', 'едже'],
+  chrome: ['chrome', 'хром', 'хроме', 'хрома'],
+  brave: ['brave', 'брейв', 'брейве', 'брэйв'],
+  firefox: ['firefox', 'фаерфокс', 'фаерфоксе', 'файрфокс'],
+  opera: ['opera', 'опера', 'опере'],
+  yandex: ['yandex', 'яндекс', 'яндексе'],
+  safari: ['safari', 'сафари'],
+};
+
+/**
  * Грамматика поверх таблицы: форма просьбы вместо точной строки.
  *
  * Стоит ПЕРЕД таблицами и покрывает те семейства, которые ломались чаще
@@ -623,7 +678,26 @@ const ПРАВИЛА: Array<Rule<DirectCommand>> = [
   },
   { pattern: '(переключи|смени) вкладку', make: () => ({ kind: 'key', keys: 'ctrl+tab' }) },
   { pattern: '[открой] новую вкладку', make: () => ({ kind: 'key', keys: 'ctrl+t' }) },
-  { pattern: 'закрой [эту|это] вкладку', make: () => ({ kind: 'key', keys: 'ctrl+w' }) },
+  // «Закрой последнюю/текущую вкладку [в Edge]» — живой лог владельца
+  // 26–27.09.2026: такие фразы уходили в разговор и к агенту на 35–94 с, а
+  // одна кончилась «не получилось». «Последнюю» в них — только что открытую,
+  // то есть текущую: так её понял и агент. Названный браузер — свой вывод
+  // вперёд; незнакомое слово после «вкладку» — название вкладки, ей правила
+  // нет, и фраза идёт агенту, как прежде («закрой вкладку PDFDIR»).
+  ...Object.entries(БРАУЗЕРЫ_ПО_СЛОВАМ).map(
+    ([браузер, слова]): Rule<DirectCommand> => ({
+      pattern: `закрой [эту|это|текущую|активную|последнюю] вкладку [в] [браузере] (${слова.join('|')})`,
+      make: () => ({ kind: 'key', keys: 'ctrl+w', browser: браузер }),
+    }),
+  ),
+  ...Object.entries(БРАУЗЕРЫ_ПО_СЛОВАМ).map(
+    ([браузер, слова]): Rule<DirectCommand> => ({
+      pattern: `close [the] [this|current|active|last] tab [in] [the] [browser] (${слова.join('|')})`,
+      make: () => ({ kind: 'key', keys: 'ctrl+w', browser: браузер }),
+    }),
+  ),
+  { pattern: 'закрой [эту|это|текущую|активную|последнюю] вкладку [в] [браузере]', make: () => ({ kind: 'key', keys: 'ctrl+w' }) },
+  { pattern: 'close [the] [this|current|active|last] tab [in] [the] [browser]', make: () => ({ kind: 'key', keys: 'ctrl+w' }) },
   { pattern: 'верни вкладку', make: () => ({ kind: 'key', keys: 'ctrl+shift+t' }) },
 
   // ВКЛАДКА С НАЗВАНИЕМ — это переход к программе.

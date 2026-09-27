@@ -39,8 +39,8 @@ export function этоКлавишаВкладки(keys: string): boolean {
  * Одна функция на мост и на живую проверку. Проверка, гоняющая свою копию этих
  * двух строк, зеленела бы и тогда, когда мост от них отступил.
  */
-export async function нажать(desktop: DesktopControl, keys: string): Promise<void> {
-  if (этоКлавишаВкладки(keys)) await вывестиБраузер(desktop);
+export async function нажать(desktop: DesktopControl, keys: string, браузер?: string): Promise<void> {
+  if (этоКлавишаВкладки(keys)) await вывестиБраузер(desktop, браузер);
   await desktop.key(keys);
 }
 
@@ -80,6 +80,25 @@ function чистый(текст: string): string {
     .toLowerCase();
 }
 
+/** Как узнать окно названного браузера: по имени программы (мак) или хвосту заголовка (Windows). */
+const ПРИМЕТЫ_БРАУЗЕРА: Readonly<Record<string, readonly string[]>> = {
+  edge: ['microsoft edge'],
+  chrome: ['google chrome', 'chromium'],
+  brave: ['brave'],
+  firefox: ['firefox'],
+  opera: ['opera'],
+  yandex: ['яндекс браузер', 'yandex browser', 'yandex'],
+  safari: ['safari'],
+};
+
+/** Окно ли это названного браузера (`edge`, `brave`…). */
+export function этоБраузер(окно: { title: string; app?: string }, какой: string): boolean {
+  const приметы = ПРИМЕТЫ_БРАУЗЕРА[какой] ?? [какой];
+  const программа = окно.app ? чистый(окно.app) : '';
+  const заголовок = чистый(окно.title);
+  return приметы.some((п) => программа.startsWith(п) || заголовок.endsWith(п));
+}
+
 export function этоОкноБраузера(окно: { title: string; app?: string }): boolean {
   if (окно.app) {
     const программа = чистый(окно.app);
@@ -96,8 +115,8 @@ export function этоОкноБраузера(окно: { title: string; app?: 
  * браузерное по порядку драйвера, а драйверы отдают окна сверху вниз. Свёрнутое
  * — только если несвёрнутых нет: его придётся разворачивать, и это заметно.
  */
-export function окноБраузера<T extends DesktopWindow & { app?: string }>(окна: readonly T[]): T | null {
-  const браузерные = окна.filter(этоОкноБраузера);
+export function окноБраузера<T extends DesktopWindow & { app?: string }>(окна: readonly T[], какой?: string): T | null {
+  const браузерные = окна.filter(этоОкноБраузера).filter((о) => !какой || этоБраузер(о, какой));
   return (
     браузерные.find((о) => о.focused) ??
     браузерные.find((о) => !о.minimized) ??
@@ -112,10 +131,12 @@ export function окноБраузера<T extends DesktopWindow & { app?: strin
  * Отказ — словами для человека: «не вижу открытого браузера» он поймёт, а
  * «окно не найдено» — нет.
  */
-export async function вывестиБраузер(desktop: DesktopControl): Promise<DesktopWindow> {
+export async function вывестиБраузер(desktop: DesktopControl, какой?: string): Promise<DesktopWindow> {
   const окна = (await desktop.windows()) as Array<DesktopWindow & { app?: string }>;
-  const окно = окноБраузера(окна);
-  if (!окно) throw new Error('не вижу открытого браузера');
+  const окно = окноБраузера(окна, какой);
+  // Названный браузер не открыт — отказ, а не нажатие в другой: «закрой
+  // вкладку в Brave» при Edge сверху закрыла бы вкладку Edge.
+  if (!окно) throw new Error(какой ? `не вижу открытого ${какой}` : 'не вижу открытого браузера');
   if (!окно.focused) await desktop.focus(окно.title);
   return окно;
 }

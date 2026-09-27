@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { endsDictation, parseDirectCommand } from './commands';
+import { endsDictation, parseDirectCommand, parseDirectCommandInPhrase } from './commands';
 
 /** Короткая запись: что за действие получилось. */
 function act(phrase: string): string | null {
@@ -714,5 +714,42 @@ describe('настройки голосом', () => {
     // Выключенный микрофон не слышит просьбы включиться. Вместо команды —
     // возврат по времени, пять минут.
     expect(parseDirectCommand('включи микрофон')).not.toMatchObject({ kind: 'setting' });
+  });
+});
+
+/**
+ * Живой лог владельца 26–27.09.2026: команда последним предложением после
+ * вступления и «закрой вкладку <браузер>» уходили в разговор и к агенту —
+ * 28–94 с вместо секунды, одна кончилась «не получилось».
+ */
+describe('команда после вступления и вкладка названного браузера', () => {
+  it('живые фразы из лога — прямые команды', () => {
+    expect(parseDirectCommandInPhrase('Ну какой PDF dir? Закрой вкладку')).toEqual({ kind: 'key', keys: 'ctrl+w' });
+    expect(parseDirectCommandInPhrase('Что еще умеем? Переключись на Edge')).toEqual({ kind: 'focus', title: 'edge' });
+    expect(parseDirectCommandInPhrase('Ничего ты не закрыл Закрой последнюю вкладку в Edge')).toEqual({
+      kind: 'key',
+      keys: 'ctrl+w',
+      browser: 'edge',
+    });
+    expect(parseDirectCommand('Закрой вкладку Brave')).toEqual({ kind: 'key', keys: 'ctrl+w', browser: 'brave' });
+  });
+
+  it('текущая и последняя вкладка — та, что открыта; на обоих языках', () => {
+    expect(parseDirectCommand('закрой текущую вкладку')).toEqual({ kind: 'key', keys: 'ctrl+w' });
+    expect(parseDirectCommand('закрой последнюю вкладку в браузере')).toEqual({ kind: 'key', keys: 'ctrl+w' });
+    expect(parseDirectCommand('close the current tab in chrome')).toEqual({ kind: 'key', keys: 'ctrl+w', browser: 'chrome' });
+    expect(parseDirectCommand('close the last tab')).toEqual({ kind: 'key', keys: 'ctrl+w' });
+  });
+
+  it('название вкладки — не браузер: такая фраза остаётся агенту', () => {
+    // «Закрой вкладку PDFDIR» — это вкладка с таким названием, не текущая.
+    expect(parseDirectCommandInPhrase('закрой вкладку PDFDIR')).toBeNull();
+  });
+
+  it('хвост — только с границы предложения и не короче двух слов', () => {
+    // Иначе «Не нажимай Enter» нажало бы Enter.
+    expect(parseDirectCommandInPhrase('Не нажимай Enter')).toBeNull();
+    expect(parseDirectCommandInPhrase('я говорил закрой вкладку вчера')).toBeNull();
+    expect(parseDirectCommandInPhrase('Что там? Копируй')).toBeNull();
   });
 });

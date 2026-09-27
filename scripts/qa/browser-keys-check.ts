@@ -22,8 +22,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { нажать, окноБраузера, открытьСсылку, этоОкноБраузера } from '../../jarvis/control/browserCommands';
-import { parseDirectCommand } from '../../jarvis/control/commands';
+import { нажать, окноБраузера, открытьСсылку, этоБраузер, этоОкноБраузера } from '../../jarvis/control/browserCommands';
+import { БРАУЗЕРЫ_ПО_СЛОВАМ, parseDirectCommand, parseDirectCommandInPhrase } from '../../jarvis/control/commands';
 import { createDesktopDriver } from '../../jarvis/desktop/platform';
 
 type Итог =
@@ -499,8 +499,14 @@ async function main(): Promise<void> {
       };
       const было = await счёт();
       const до = await впереди(desktop);
-      const к = parseDirectCommand('закрой вкладку');
-      if (к?.kind === 'key') await нажать(desktop, к.keys);
+      // Как сказано в живом логе владельца: вступление, команда последним
+      // предложением и название браузера — того, что открыт у проверки.
+      const наше = (await desktop.windows()).find((о) => о.pid === нашPid);
+      const имя = Object.keys(БРАУЗЕРЫ_ПО_СЛОВАМ).find((б) => наше && этоБраузер(наше, б));
+      const фраза = имя ? `Ничего ты не закрыл Закрой последнюю вкладку в ${имя}` : 'закрой вкладку';
+      console.log(`    закрой вкладку: фраза «${фраза}»`);
+      const к = parseDirectCommandInPhrase(фраза);
+      if (к?.kind === 'key') await нажать(desktop, к.keys, к.browser);
       const закрылась = было !== null && (await ждать(async () => (await счёт()) === было - 1, 6_000));
       console.log(`    закрой вкладку: впереди до «${до}», после «${await впереди(desktop)}», вкладок ${String(было)} → ${String(await счёт())}`);
       const блокнотЖив = окнаИз(await s.инструмент('window_list', {})).some((о) => о.pid === блокнотPid);

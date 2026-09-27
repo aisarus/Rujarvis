@@ -74,6 +74,16 @@ describe('окноБраузера', () => {
   it('браузера нет — null, а не первое попавшееся окно', () => {
     expect(окноБраузера([окно('Claude', true), окно('Блокнот')])).toBeNull();
   });
+
+  it('названный браузер — его окно, даже если сверху другой; не открыт — null', () => {
+    // «Закрой вкладку Brave» при Edge сверху закрыла бы вкладку Edge.
+    const окна = [окно('Почта — Microsoft Edge', true), окно('Inbar — Brave')];
+    expect(окноБраузера(окна, 'brave')?.title).toBe('Inbar — Brave');
+    expect(окноБраузера(окна, 'edge')?.title).toBe('Почта — Microsoft Edge');
+    expect(окноБраузера(окна, 'firefox')).toBeNull();
+    // На маке — по имени программы.
+    expect(окноБраузера([{ ...окно('Inbar'), app: 'Brave Browser' }], 'brave')?.title).toBe('Inbar');
+  });
 });
 
 const элемент = (type: string, name: string, x: number, y: number, width = 100, height = 20): UiElement => ({

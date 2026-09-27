@@ -52,7 +52,7 @@ import { fixMishearings } from '../jarvis/voice/mishearing';
 import { isSilenceRequest, looksLikeChatter, meaningfulSpeech } from '../jarvis/voice/noise';
 import {
   endsDictation,
-  parseDirectCommand,
+  parseDirectCommandInPhrase,
   type DirectCommand,
   type НастройкаГолосом,
 } from '../jarvis/control/commands';
@@ -368,7 +368,7 @@ export async function runDirectCommand(
         // Вкладки бывают только в браузере — туда и жмём, а не в то, что впереди.
         // Живой прогон 26.09.2026: Ctrl+W ушёл в окно Claude, где человек
         // разговаривал, а вкладка в Edge осталась открытой.
-        await нажать(desktop, command.keys);
+        await нажать(desktop, command.keys, command.browser);
         break;
       case 'scroll':
         await desktop.scroll(command.amount);
@@ -1445,7 +1445,9 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
         // инструменты, отвечает. К моменту ответа человек сделал бы сам.
         // Совпадение с таблицей точное, поэтому «найди отчёт за март» сюда не
         // попадает и уходит агенту, как и должно.
-        const direct = command ? parseDirectCommand(command) : null;
+        // И последним предложением после вступления: «Что ещё умеем?
+        // Переключись на Edge» — живой лог 27.09.2026, раньше уходило агенту.
+        const direct = command ? parseDirectCommandInPhrase(command) : null;
 
         if (direct?.kind === 'clickNamed') {
           // Клик по названию — единственная прямая команда, которая может
