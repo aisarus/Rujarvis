@@ -83,6 +83,16 @@ Homebrew, Git и Node.js ставятся сами, если их нет (пар
 Без «Универсального доступа» macOS не падает, а **молча ничего не делает** —
 поэтому Джарвис спрашивает это разрешение сам, до первой операции.
 
+### Проверка после установки
+
+```bash
+cd ~/Library/Application\ Support/Rujarvis/src && pnpm jarvis:preflight
+```
+
+По каждому звену — прошло, не прошло или нечем мерить, и что сделать.
+Разрешения она знает со слов самого Rujarvis, поэтому сначала откройте его
+один раз. Коротко для тестера — [`tester-mac.md`](tester-mac.md).
+
 ## Первый запуск
 
 Джарвис живёт в трее. При первом запуске открывается настройка из пяти шагов:
@@ -175,5 +185,6 @@ pnpm test
 pnpm jarvis:roundtrip               # голос по кругу: синтез → распознавание → команда
 pnpm jarvis:roundtrip -- --en
 pnpm jarvis:health                  # Windows: сборка, данные, MCP-сервер вживую
+pnpm jarvis:preflight               # установка целиком, обе системы; -- --with-agent — плюс ход Codex
 pwsh -NoProfile -File scripts/check-install-script.ps1   # установщик
 ```
