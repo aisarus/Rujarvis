@@ -418,6 +418,19 @@ async function main(): Promise<void> {
         );
       } catch (беда) {
         запиши(имя, { вид: 'не прошло', почему: беда instanceof Error ? беда.message : String(беда) });
+        // Что драйвер видит в окне: без этого «ссылок нет» не отличить от
+        // «страница не прочиталась» и от «её отрезал предел элементов».
+        try {
+          const { title, elements } = await desktop.elements();
+          const виды = new Map<string, number>();
+          for (const э of elements) виды.set(э.type, (виды.get(э.type) ?? 0) + 1);
+          console.log(
+            `    в окне «${title.slice(0, 50)}» ${elements.length} элементов: ` +
+              [...виды].sort((а, б) => б[1] - а[1]).map(([вид, n]) => `${вид} ${n}`).join(', '),
+          );
+        } catch (сбой) {
+          console.log(`    дерево окна не прочиталось: ${сбой instanceof Error ? сбой.message : String(сбой)}`);
+        }
       }
     }
 
