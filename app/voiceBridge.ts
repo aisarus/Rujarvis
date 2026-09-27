@@ -810,6 +810,16 @@ async function поднятьМост(options: {
   ]);
   if (logPath) console.log(`[jarvis] логи пишутся в ${logPath}`);
 
+  // Руки — заранее и параллельно со всем остальным. Первая прямая команда
+  // после запуска платила за запуск драйвера: в живом журнале 27.09.2026
+  // «переключись на blender» — 2052 мс выполнения против 511–671 у следующих.
+  const грелся = Date.now();
+  void desktop.warm().then(
+    () => console.log(`[jarvis] драйвер рабочего стола готов за ${Date.now() - грелся} мс`),
+    (error: unknown) =>
+      console.error(`[jarvis] драйвер рабочего стола не поднялся: ${error instanceof Error ? error.message : String(error)}`),
+  );
+
   const audioWindow = await createAudioWindow();
   незавершённое.push(() => {
     if (!audioWindow.isDestroyed()) audioWindow.destroy();

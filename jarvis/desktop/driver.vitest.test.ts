@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-import { driverScriptPath } from './driver';
+import { DesktopDriver, driverScriptPath } from './driver';
 
 describe('драйвер рабочего стола', () => {
   it('находит свой PowerShell-скрипт', () => {
@@ -31,4 +31,25 @@ describe('драйвер рабочего стола', () => {
     const code = source.replace(/\/\*[\s\S]*?\*\//gu, '').replace(/\/\/.*$/gmu, '');
     expect(code).not.toContain('import.meta');
   });
+});
+
+/**
+ * Живой журнал владельца 27.09.2026: первая прямая команда после запуска
+ * выполнялась 2052 мс, следующие — 511 и 671. Разница — запуск PowerShell и
+ * сборка C# в драйвере: 817 мс холодным против 10–14 тёплым (замер здесь же).
+ * Настоящий драйвер, только чтение списка окон — фокус не трогается.
+ */
+describe('прогрев драйвера', () => {
+  it.skipIf(process.platform !== 'win32')('после warm() первая команда не платит за запуск', async () => {
+    const драйвер = new DesktopDriver();
+    try {
+      await драйвер.warm();
+      const начало = performance.now();
+      await драйвер.windows();
+      // Порог с запасом на медленную машину, но ниже любого холодного запуска.
+      expect(performance.now() - начало).toBeLessThan(300);
+    } finally {
+      драйвер.dispose();
+    }
+  }, 60_000);
 });

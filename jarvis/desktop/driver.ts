@@ -65,6 +65,8 @@ export interface DesktopControl {
   key(keys: string): Promise<void>;
   elements(): Promise<{ title: string; elements: UiElement[] }>;
   focus(title: string): Promise<{ title: string }>;
+  /** Поднять драйвер заранее, чтобы первая команда не платила за его запуск. */
+  warm(): Promise<void>;
   dispose(): void;
 }
 
@@ -295,6 +297,18 @@ export class DesktopDriver {
 
   focus(title: string): Promise<{ title: string }> {
     return this.send({ cmd: 'focus', title });
+  }
+
+  /**
+   * Запустить PowerShell и собрать C#, не дожидаясь первой команды.
+   *
+   * Живой журнал владельца 27.09.2026: «переключись на blender» — первая
+   * команда после запуска — выполнялась 2052 мс, следующие «переключись на
+   * edge» — 511 и 671. Разница — запуск драйвера: на этой машине 817 мс
+   * холодным против 10 мс тёплым.
+   */
+  warm(): Promise<void> {
+    return this.start();
   }
 
   dispose(): void {

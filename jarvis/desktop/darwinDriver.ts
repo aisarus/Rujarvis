@@ -1236,6 +1236,9 @@ export class DarwinDriver {
     return { title: front.title || front.app || what };
   }
 
+  /** Демона нет — греть нечего: каждый вызов — свой osascript. */
+  async warm(): Promise<void> {}
+
   /** Демона нет — гасить нечего. Метод есть, чтобы драйверы были взаимозаменяемы. */
   dispose(): void {}
 }
