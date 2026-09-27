@@ -44,12 +44,21 @@ const ФОРМА = [
 
 const свои: number[] = [];
 
+const начало = Date.now();
+
 function открыть(заголовок: string, развернуть: boolean): void {
   const child = spawn('powershell', ['-NoProfile', '-NonInteractive', '-Command', ФОРМА], {
     env: { ...process.env, PROBE_TITLE: заголовок, PROBE_MAX: развернуть ? '1' : '0' },
-    stdio: 'ignore',
+    stdio: ['ignore', 'ignore', 'pipe'],
   });
   if (child.pid) свои.push(child.pid);
+  // Окно пробы, пропавшее посреди проверки, — это улика, а не шум: пишем,
+  // когда и с чем вышел его процесс.
+  child.stderr?.setEncoding('utf8');
+  child.stderr?.on('data', (текст: string) => console.log(`  [${заголовок}] stderr: ${текст.trim().slice(0, 300)}`));
+  child.on('exit', (код, сигнал) =>
+    console.log(`  [${заголовок}] процесс вышел через ${Date.now() - начало} мс: код ${код}, сигнал ${сигнал}`),
+  );
 }
 
 function найти(окна: DesktopWindow[], заголовок: string): DesktopWindow | undefined {
@@ -67,6 +76,7 @@ async function main(): Promise<void> {
   const драйвер = new DesktopDriver();
   const итоги: Array<{ имя: string; итог: Итог }> = [];
   const шаг = async (имя: string, делать: () => Promise<Итог>): Promise<void> => {
+    console.log(`  шаг «${имя}» — с ${Date.now() - начало} мс`);
     try {
       итоги.push({ имя, итог: await делать() });
     } catch (беда) {
