@@ -21,6 +21,10 @@
 
 set -euo pipefail
 
+# PATH, с которым человек нас запустил: по нему в конце видно, найдёт ли его
+# Терминал node и npm, которые мы поставили.
+START_PATH="$PATH"
+
 REPO_URL="https://github.com/aisarus/Rujarvis.git"
 INSTALL_ROOT="$HOME/Library/Application Support/Rujarvis"
 SOURCE_DIR="$INSTALL_ROOT/src"
@@ -497,6 +501,27 @@ printf '\n'
 note 'Микрофон macOS спросит один раз — разрешение будет записано на Electron:'
 note 'приложение запускается его двоичным файлом, своей подписи у сборки пока нет.'
 printf '\n'
+
+# Node мог встать туда, чего Терминал человека не видит.
+#
+# Живой мак тестера 27.09.2026: чистый Apple Silicon, Homebrew поставили мы —
+# и «npm install -g @openai/codex» после установки ответил «command not
+# found». brew shellenv действует только внутри установщика, а в ~/.zprofile
+# мы не пишем: всё на диске — в своей папке. Самому Rujarvis это не мешает —
+# ярлык дописывает PATH сам, — а человеку в Терминале нужна одна строка.
+case ":$START_PATH:" in
+  *":$NODE_DIR:"*) ;;
+  *)
+    note "Node и npm стоят в $NODE_DIR — этот Терминал их пока не видит."
+    if [ -x "$NODE_DIR/brew" ]; then
+      note "Чтобы увидел (в каждом новом окне), выполните: eval \"\$($NODE_DIR/brew shellenv)\""
+    else
+      note "Чтобы увидел (в каждом новом окне), выполните: export PATH=\"$NODE_DIR:\$PATH\""
+    fi
+    note 'Потом Codex, если его нет: npm install -g @openai/codex, затем codex login.'
+    printf '\n'
+    ;;
+esac
 
 # Ярлык на Рабочий стол.
 #
