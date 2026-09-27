@@ -25,10 +25,12 @@ import path from 'node:path';
 import { app, BrowserWindow, screen } from 'electron';
 
 import {
+  findNamedElement,
   привязатьНастройкиДляПриёмки,
   runDirectCommand,
   type ГоворящаяСессия,
 } from '../../app/voiceBridge';
+import { createDesktopDriver } from '../../jarvis/desktop/platform';
 import { parseDirectCommand } from '../../jarvis/control/commands';
 import { cannotMeasure, failed, passed, type Gate } from '../../jarvis/measure/gate';
 import { командаПоказа, openPath, tidyRoot } from '../../jarvis/desktop/files';
@@ -168,6 +170,43 @@ const окна: Случай[] = [
           return failed(`команда отказала: ${исход.why}`);
         }
         return окно.isMinimized() ? failed('окно осталось свёрнутым') : passed('свёрнутое окно поднялось');
+      } finally {
+        if (!окно.isDestroyed()) окно.destroy();
+      }
+    },
+  },
+  {
+    // «Кликни по кнопке …» до 27.09.2026 не мерила приёмка ни одной системы.
+    // Окно — Chromium, как у браузера и у половины программ человека: у него
+    // дерево доступности строится лениво, и на маке голосовой путь его не
+    // просил (опись 27.09.2026). Поиск — тот же, что у голоса.
+    имя: 'клик по названию: «кликни по кнопке сохранить» нажимает кнопку в окне Chromium',
+    async проверка(): Promise<Gate> {
+      if (!ЕСТЬ_ДРАЙВЕР_ОКОН) return cannotMeasure(`драйвера окон для ${process.platform} нет`);
+      if (process.env.JARVIS_QA_NO_FOCUS === '1') {
+        return cannotMeasure('пропущено: просили не отнимать передний план');
+      }
+      const страница =
+        '<!doctype html><html><head><meta charset="utf-8"><title>Проба клика Rujarvis</title></head>' +
+        '<body style="font:20px sans-serif;padding:40px"><button id="b" style="font-size:24px;padding:12px 24px">Сохранить</button>' +
+        '<script>document.getElementById("b").onclick=function(){window.__нажато=true;document.title="нажато";};</script></body></html>';
+      const окно = new BrowserWindow({ title: 'Проба клика Rujarvis', width: 480, height: 260, show: false });
+      try {
+        await окно.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(страница)}`);
+        окно.show();
+        окно.focus();
+        await ждать(1_000);
+
+        const команда = parseDirectCommand('кликни по кнопке сохранить');
+        if (команда?.kind !== 'clickNamed') return failed(`фраза разобралась как ${JSON.stringify(команда)}`);
+        const найдено = await findNamedElement(команда.query);
+        if (!найдено) return failed(`«${команда.query}» не найдено среди элементов переднего окна`);
+        await createDesktopDriver().click({ x: найдено.x, y: найдено.y });
+        await ждать(700);
+        const нажато = (await окно.webContents.executeJavaScript('window.__нажато === true')) as boolean;
+        return нажато
+          ? passed(`нажата «${найдено.name || найдено.id}»`)
+          : failed(`нашёл «${найдено.name || найдено.id}» в (${найдено.x}, ${найдено.y}), но кнопка не нажалась`);
       } finally {
         if (!окно.isDestroyed()) окно.destroy();
       }

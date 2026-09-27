@@ -630,8 +630,13 @@ async function применитьНастройку(
   await session.speak(tr(`Громкость ${процент} процентов.`, `Volume ${процент} percent.`));
 }
 
-/** Ищет названный элемент в активном окне. */
-async function findNamedElement(query: string) {
+/**
+ * Ищет названный элемент в активном окне.
+ *
+ * Экспортирован для приёмки: «кликни по кнопке …» проверяется тем же
+ * поиском, что у голоса, на обеих системах.
+ */
+export async function findNamedElement(query: string) {
   const window = await desktop.elements();
   const found = chooseElement(query, window.elements);
   console.log(
