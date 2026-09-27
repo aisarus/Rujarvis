@@ -3,7 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { KEY_COMBOS } from '../control/commands';
-import { keyScript, mediaKeyScript } from './darwinDriver';
+import { keyScript, mediaKeyArgs } from './darwinDriver';
 
 /**
  * Каждая клавиша из таблицы команд есть в словаре обоих драйверов.
@@ -44,7 +44,7 @@ describe('словари клавиш драйверов', () => {
 
   it('драйвер мака знает каждую клавишу таблицы команд', () => {
     const неизвестные = KEY_COMBOS.filter((сочетание) => {
-      if (mediaKeyScript(сочетание)) return false;
+      if (mediaKeyArgs(сочетание)) return false;
       try {
         keyScript(сочетание);
         return false;
@@ -55,10 +55,14 @@ describe('словари клавиш драйверов', () => {
     expect(неизвестные).toEqual([]);
   });
 
-  it('медиа на маке — системное событие с кодом NX_KEYTYPE, а не код клавиши', () => {
-    expect(mediaKeyScript('volumeup')).toContain('(0 << 16)');
-    expect(mediaKeyScript('playpause')).toContain('(16 << 16)');
-    expect(mediaKeyScript('nexttrack')).toContain('CGEventPost');
-    expect(mediaKeyScript('ctrl+c')).toBeNull();
+  it('громкость на маке — set volume, плеер — системное событие NX_KEYTYPE', () => {
+    // Медиа-событие громкость на маке CI не сдвинуло (100 → 100 → 100);
+    // set volume читается обратно и проверяется.
+    expect((mediaKeyArgs('volumeup') ?? []).join(' ')).toContain('set volume output volume');
+    expect((mediaKeyArgs('volumemute') ?? []).join(' ')).toContain('output muted');
+    const плеер = (mediaKeyArgs('playpause') ?? []).join(' ');
+    expect(плеер).toContain('JavaScript');
+    expect(плеер).toContain('(16 << 16)');
+    expect(mediaKeyArgs('ctrl+c')).toBeNull();
   });
 });

@@ -641,33 +641,52 @@ export function macCombo(keys: string): string {
 }
 
 /**
- * Звук и медиа — не клавиши System Events.
- *
- * У «громче», «пауза музыки», «следующий трек» на маке нет кода клавиши:
- * клавиатура шлёт их системным событием NX_KEYTYPE. Так их и шлём —
- * NSEvent подтипа 8 через CoreGraphics, как клавиши на клавиатуре мака: с
- * экранной плашкой громкости и для любого плеера, а не только для Music.
- * Коды — из IOKit hidsystem/ev_keymap.h.
- *
- * Не замерено на настоящем маке: у раннера CI звука нет, а плеер не играет.
+ * Звук и медиа — не клавиши System Events: у них на маке нет кода клавиши.
  * До 27.09.2026 этих имён не было вовсе, и фраза кончалась «Неизвестная
  * клавиша».
+ *
+ * Громкость — штатным `set volume`: шаг 6 из 100, как у клавиши на
+ * клавиатуре мака (16 делений). Первая попытка шла медиа-событием, как
+ * плей/пауза ниже, и на маке CI громкость не сдвинулась ни на деление —
+ * `set volume` же читается обратно и проверяется.
+ */
+const VOLUME_SCRIPTS: Record<string, string> = {
+  volumeup: [
+    'set v to (output volume of (get volume settings)) + 6',
+    'if v > 100 then set v to 100',
+    'set volume output volume v',
+    'set volume output muted false',
+  ].join('\n'),
+  volumedown: [
+    'set v to (output volume of (get volume settings)) - 6',
+    'if v < 0 then set v to 0',
+    'set volume output volume v',
+  ].join('\n'),
+  volumemute: 'set volume output muted (not (output muted of (get volume settings)))',
+};
+
+/**
+ * Плей/пауза и треки — системным событием NX_KEYTYPE (NSEvent подтипа 8
+ * через CoreGraphics), как медиа-клавиши клавиатуры: их слушает любой плеер,
+ * а не только Music. Коды — из IOKit hidsystem/ev_keymap.h.
+ *
+ * Не замерено: на маке CI плеер не играет, мерить нечем.
  */
 const MEDIA_KEYS: Record<string, number> = {
-  volumeup: 0,
-  volumedown: 1,
-  volumemute: 7,
   playpause: 16,
   nexttrack: 17,
   prevtrack: 18,
 };
 
-/** Скрипт JXA для медиа-клавиши, или `null`, если это обычная клавиша. */
-export function mediaKeyScript(keys: string): string | null {
-  const code = MEDIA_KEYS[keys.trim().toLowerCase()];
+/** Аргументы osascript для звука и медиа, или `null`, если это обычная клавиша. */
+export function mediaKeyArgs(keys: string): string[] | null {
+  const имя = keys.trim().toLowerCase();
+  const громкость = VOLUME_SCRIPTS[имя];
+  if (громкость) return громкость.split('\n').flatMap((строка) => ['-e', строка]);
+  const code = MEDIA_KEYS[имя];
   if (code === undefined) return null;
   // Нажатие и отпускание: состояние 0xA и 0xB во флагах и в data1.
-  return `
+  return jxaArgs(`
   ObjC.import('Cocoa');
   ObjC.import('CoreGraphics');
   for (const state of [0xa, 0xb]) {
@@ -676,7 +695,7 @@ export function mediaKeyScript(keys: string): string | null {
     $.CGEventPost($.kCGHIDEventTap, event.CGEvent);
   }
   'ok';
-`;
+`);
 }
 
 export function keyScript(keys: string): string {
@@ -1018,8 +1037,7 @@ export class DarwinDriver {
 
   async key(keys: string): Promise<void> {
     await this.access();
-    const медиа = mediaKeyScript(keys);
-    await this.osascript(медиа ? jxaArgs(медиа) : appleScriptArgs(keyScript(keys)));
+    await this.osascript(mediaKeyArgs(keys) ?? appleScriptArgs(keyScript(keys)));
   }
 
   /**
