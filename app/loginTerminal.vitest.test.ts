@@ -126,3 +126,42 @@ describe('терминалДляВхода на остальном', () => {
     expect(запуск).toEqual({ file: 'x-terminal-emulator', args: ['-e', '/usr/bin/claude', 'auth', 'login'] });
   });
 });
+
+/**
+ * Со слов владельца после живого теста на маке 27.09.2026: обе кнопки
+ * «Войти» увели во вход Claude Code, «в странное место». Окно теперь
+ * называет своего агента — и человеку, и тому, кто разбирает жалобу.
+ */
+describe('окно входа называет агента', () => {
+  it('мак: заголовок окна и строка перед командой — свой агент у каждой кнопки', () => {
+    const codex = скриптТерминала('/opt/homebrew/bin/codex', ['login'], 'Codex');
+    const claude = скриптТерминала('/Users/t/.local/bin/claude', ['auth', 'login'], 'Claude Code');
+    expect(codex).toContain('set custom title of t to "Вход в Codex"');
+    expect(codex).toContain("'/opt/homebrew/bin/codex' 'login'");
+    expect(codex).not.toContain('claude');
+    expect(claude).toContain('set custom title of t to "Вход в Claude Code"');
+    expect(claude).toContain("'/Users/t/.local/bin/claude' 'auth' 'login'");
+  });
+
+  it('мак: вне кавычек — только латиница, иначе AppleScript не соберётся', () => {
+    const скрипт = скриптТерминала('/opt/homebrew/bin/codex', ['login'], 'Codex');
+    // Строки AppleScript вырезаются вместе с экранированными кавычками внутри.
+    const внеКавычек = скрипт.replace(/"(?:[^"\\]|\\.)*"/gu, '');
+    expect(внеКавычек).not.toMatch(/[А-Яа-яЁё]/u);
+  });
+
+  it('Windows: заголовок и строка — латиницей, команда прежняя', () => {
+    const путь = ['C:', 'Users', 't', 'AppData', 'Roaming', 'npm', 'codex.cmd'].join(String.fromCharCode(92));
+    const текст = сценарийВхода(путь, ['login'], 'Codex');
+    expect(текст).toContain('title Rujarvis - Codex');
+    expect(текст).toContain(`"${путь}" "login"`);
+    const подписи = текст.split(String.fromCharCode(13) + String.fromCharCode(10)).filter((с) => /^(title|echo ===)/u.test(с));
+    expect(подписи).toHaveLength(2);
+    for (const с of подписи) expect(с).toMatch(/^[\x20-\x7e]+$/u);
+  });
+
+  it('без имени агента — как прежде, без подписи', () => {
+    expect(скриптТерминала('/bin/x', ['login'])).not.toContain('custom title');
+    expect(сценарийВхода('C:/x.cmd', ['login'])).not.toContain('title');
+  });
+});

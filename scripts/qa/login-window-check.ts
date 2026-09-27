@@ -104,7 +104,7 @@ async function проверки(): Promise<Array<{ имя: string; итог: И�
     });
   } else {
     const { заглушка, метка, папка } = стенд();
-    const запуск = терминалДляВхода(заглушка, ['auth', 'login'], папка);
+    const запуск = терминалДляВхода(заглушка, ['auth', 'login'], папка, process.platform, 'Claude Code');
     let беда: string | null = null;
     try {
       if (запуск.сценарий) writeFileSync(запуск.сценарий.файл, запуск.сценарий.текст, 'utf8');
@@ -182,7 +182,7 @@ async function проверки(): Promise<Array<{ имя: string; итог: И�
       encoding: 'utf8',
       mode: 0o755,
     });
-    const запуск = терминалДляВхода(заглушка, ['auth', 'login'], папка);
+    const запуск = терминалДляВхода(заглушка, ['auth', 'login'], папка, process.platform, 'Claude Code');
     const скрипт = запуск.args[1] ?? '';
 
     // 5. Сборка без запуска: osacompile не посылает событий и разрешений не просит.

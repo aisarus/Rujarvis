@@ -295,17 +295,21 @@ function registerHandlers(): void {
 
   ipcMain.handle(`${SETTINGS_CHANNEL}:signIn`, async (_event, cli: 'claude' | 'codex') => {
     const status = await cliStatus(cli);
-    if (!status.path) return false;
+    // В журнал — какая кнопка, какой CLI и какой командой. Со слов владельца
+    // после живого теста на маке 27.09.2026 обе кнопки увели во вход Claude
+    // Code; по журналу понять, что открылось на самом деле, было нельзя.
+    if (!status.path) {
+      console.log(`[jarvis] вход: ${cli} — CLI не найден, окно не открываю`);
+      return false;
+    }
     const { paths } = current as SettingsWindowOptions;
     // Подкоманды сверены с самими CLI 26.09.2026: `claude auth login` и
     // `codex login` — обе существуют.
+    const args = cli === 'claude' ? ['auth', 'login'] : ['login'];
+    console.log(`[jarvis] вход: ${cli} — ${status.path} ${args.join(' ')}`);
     // Сценарий входа лежит в папке Джарвиса: всё на диске живёт под одной
     // крышей, и мусор в чужих местах не остаётся.
-    return openTerminal(
-      status.path,
-      cli === 'claude' ? ['auth', 'login'] : ['login'],
-      path.join(paths.home, 'data'),
-    );
+    return openTerminal(status.path, args, path.join(paths.home, 'data'), cli === 'claude' ? 'Claude Code' : 'Codex');
   });
 
   ipcMain.handle(`${SETTINGS_CHANNEL}:openUrl`, (_event, url: string) => {
@@ -326,8 +330,8 @@ function registerHandlers(): void {
  * молча: окно не открывалось, ошибка уходила в никуда, а человек оставался на
  * шаге, который обойти нельзя.
  */
-function openTerminal(command: string, args: string[], папка: string): boolean {
-  const запуск = терминалДляВхода(command, args, папка);
+function openTerminal(command: string, args: string[], папка: string, агент: string): boolean {
+  const запуск = терминалДляВхода(command, args, папка, process.platform, агент);
   try {
     if (запуск.сценарий) {
       mkdirSync(path.dirname(запуск.сценарий.файл), { recursive: true });
