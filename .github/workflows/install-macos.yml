@@ -292,6 +292,24 @@ jobs:
           }
           test "$br_code" -eq 0 || { echo "Вкладки не работают (код $br_code)"; exit 1; }
 
+      - name: 'Браузер быстрыми командами, когда впереди не браузер'
+        # То же, что на Windows, с TextEdit вместо блокнота: «открой третью
+        # ссылку», «первую», «последнюю», «закрой вкладку» — мимо переднего
+        # окна в браузер. До 27.09.2026 на маке не шло вовсе. «Новая вкладка»
+        # на маке — «нечем мерить», это код 2, а не провал.
+        shell: bash
+        run: |
+          set -o pipefail
+          cd "$HOME/Library/Application Support/Rujarvis/src"
+          set +e
+          pnpm jarvis:browser-keys-check 2>&1 | tee /tmp/browser-keys.log | tail -20
+          code=$?
+          set -e
+          grep -a 'Всего' /tmp/browser-keys.log || { echo 'Замер не дошёл до итога: судить не по чему.'; exit 1; }
+          if grep -a 'НЕ ПРОШЛО' /tmp/browser-keys.log; then echo 'Браузерные команды на маке не работают'; exit 1; fi
+          if [ "$code" -eq 2 ]; then echo 'Браузерные команды: часть нечем мерить.'; exit 0; fi
+          test "$code" -eq 0 || { echo "Браузерные команды не работают (код $code)"; exit 1; }
+
       - name: 'Окно входа: единственный шаг, который нельзя обойти'
         # Живой прогон 26.09.2026 у владельца: вкладка «войти» открывала окно с
         # «"\\"C:\Users\ariel\.local\bin\claude.exe\\"" не является внутренней или

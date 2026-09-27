@@ -6,7 +6,9 @@
  * впереди, а впереди был Claude — вкладка в Edge осталась открытой. Поэтому
  * здесь впереди нарочно НЕ браузер: свой блокнот. Если команда уйдёт в
  * переднее окно, это сразу видно: Ctrl+W в блокноте Windows 11 закрывает его
- * вкладку, а с ней и само окно.
+ * вкладку, а с ней и само окно. На маке «блокнот» — TextEdit со своим
+ * файлом, и Cmd+W, ушедший не туда, закрыл бы его окно. «Новую вкладку» на
+ * маке мерить нечем: число вкладок там не пишется в заголовок окна.
  *
  * Путь тот же, что у голоса: фраза → `parseDirectCommand` → `нажать` /
  * `открытьСсылку` → настоящий драйвер рабочего стола. Мост зовёт ровно эти
@@ -18,6 +20,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { нажать, окноБраузера, открытьСсылку, этоОкноБраузера } from '../../jarvis/control/browserCommands';
 import { parseDirectCommand } from '../../jarvis/control/commands';
@@ -150,6 +153,8 @@ function страница(): string {
     ].join(NL),
     'utf8',
   );
+  // На маке путь начинается с «/», и склейка дала бы «file:////var/…».
+  if (process.platform === 'darwin') return pathToFileURL(файл).href;
   return `file:///${файл.replace(/\\/gu, '/')}`;
 }
 
@@ -247,14 +252,19 @@ async function main(): Promise<void> {
       : { вид: 'не прошло', почему: `мимо: ${мимо.map(([ф]) => `«${ф}» → ${JSON.stringify(parseDirectCommand(ф))}`).join('; ')}` },
   );
 
-  if (process.platform !== 'win32') {
+  if (process.platform !== 'win32' && process.platform !== 'darwin') {
     запиши('живые команды в браузере', {
       вид: 'нечем мерить',
-      почему: `живой прогон собран под Windows, здесь ${process.platform}`,
+      почему: `живой прогон собран под Windows и мак, здесь ${process.platform}`,
     });
     печатать(итоги);
     return;
   }
+  // На маке «блокнот» — TextEdit со своим файлом: Cmd+W, ушедший не туда,
+  // закрыл бы его окно, и это так же видно. До 27.09.2026 проверка на маке
+  // не шла вовсе, и ссылки голосом там не мерил никто.
+  const МАК = process.platform === 'darwin';
+  const БЛОКНОТ = МАК ? /textedit/iu : /notepad/iu;
 
   const s = new Сервер();
   const desktop = createDesktopDriver();
@@ -301,7 +311,7 @@ async function main(): Promise<void> {
     // мерить», а не повод его закрыть.
     const былиPid = new Set(
       окнаИз(await s.инструмент('window_list', {}))
-        .filter((о) => /notepad/iu.test(о.app))
+        .filter((о) => БЛОКНОТ.test(о.app))
         .map((о) => о.pid),
     );
     if (былиPid.size > 0) {
@@ -311,14 +321,21 @@ async function main(): Promise<void> {
       });
       return;
     }
-    spawn('notepad.exe', [], {
-      detached: true,
-      stdio: 'ignore',
-    }).unref();
+    if (МАК) {
+      // С файлом: TextEdit без файла открывает окно выбора, а не документ.
+      const файл = path.join(mkdtempSync(path.join(os.tmpdir(), 'jarvis-keys-')), 'jarvis-keys-probe.txt');
+      writeFileSync(файл, 'Проба: сюда нажатия приходить не должны.', 'utf8');
+      spawn('open', ['-a', 'TextEdit', файл], { detached: true, stdio: 'ignore' }).unref();
+    } else {
+      spawn('notepad.exe', [], {
+        detached: true,
+        stdio: 'ignore',
+      }).unref();
+    }
     let блокнот: Окно | undefined;
     await ждать(async () => {
       блокнот = окнаИз(await s.инструмент('window_list', {})).find(
-        (о) => /notepad/iu.test(о.app) && !былиPid.has(о.pid),
+        (о) => БЛОКНОТ.test(о.app) && !былиPid.has(о.pid),
       );
       return Boolean(блокнот);
     }, 20_000);
@@ -425,7 +442,15 @@ async function main(): Promise<void> {
     }
 
     // 4. «Новая вкладка» при блокноте впереди.
-    if (!(await блокнотВперёд(desktop, блокнот.title))) {
+    if (МАК) {
+      // Счёт вкладок здесь берётся из заголовка окна Edge («… и ещё N
+      // страниц»), а Chrome на маке его не пишет; список Playwright вкладку,
+      // открытую с клавиатуры, не видит (замер 26.09.2026).
+      запиши('«новая вкладка» открывается в браузере, а не в блокноте', {
+        вид: 'нечем мерить',
+        почему: 'на маке заголовок окна не называет число вкладок, а Playwright новую вкладку не видит',
+      });
+    } else if (!(await блокнотВперёд(desktop, блокнот.title))) {
       запиши('«новая вкладка» открывается в браузере, а не в блокноте', { вид: 'нечем мерить', почему: 'фокус не отдали' });
     } else {
       const нельзя = await выбраноНаше(desktop, нашPid);
@@ -461,12 +486,23 @@ async function main(): Promise<void> {
         запиши('«закрой вкладку» закрывает вкладку браузера, а блокнот не трогает', { вид: 'нечем мерить', почему: нельзя });
         return;
       }
-      const было = await вкладокВОкне(desktop, нашPid);
+      // На маке — по списку Playwright: закрытие своей страницы он видит, а
+      // заголовок окна числа вкладок не пишет. Закрылась последняя вкладка —
+      // с ней и окно, и список отвечает ошибкой: это ноль.
+      const счёт = async (): Promise<number | null> => {
+        if (!МАК) return вкладокВОкне(desktop, нашPid);
+        try {
+          return вкладки(await s.инструмент('browser_tabs', { action: 'list' })).length;
+        } catch {
+          return 0;
+        }
+      };
+      const было = await счёт();
       const до = await впереди(desktop);
       const к = parseDirectCommand('закрой вкладку');
       if (к?.kind === 'key') await нажать(desktop, к.keys);
-      const закрылась = было !== null && (await ждать(async () => (await вкладокВОкне(desktop, нашPid)) === было - 1, 6_000));
-      console.log(`    закрой вкладку: впереди до «${до}», после «${await впереди(desktop)}», вкладок ${String(было)} → ${String(await вкладокВОкне(desktop, нашPid))}`);
+      const закрылась = было !== null && (await ждать(async () => (await счёт()) === было - 1, 6_000));
+      console.log(`    закрой вкладку: впереди до «${до}», после «${await впереди(desktop)}», вкладок ${String(было)} → ${String(await счёт())}`);
       const блокнотЖив = окнаИз(await s.инструмент('window_list', {})).some((о) => о.pid === блокнотPid);
       запиши(
         '«закрой вкладку» закрывает вкладку браузера, а блокнот не трогает',
