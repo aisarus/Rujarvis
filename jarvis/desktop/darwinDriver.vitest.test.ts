@@ -473,6 +473,14 @@ describe('manualAccessibilityScript', () => {
     expect(manualAccessibilityScript(4242)).toContain('unix id is 4242');
   });
 
+  it('говорит, приняла ли программа просьбу: ждать дерево стоит только у Chromium', () => {
+    // Голосовой клик по названию ждёт роста дерева лишь после «ok» — иначе
+    // TextEdit и все прочие платили бы секундами за каждую первую фразу.
+    const скрипт = manualAccessibilityScript(4242);
+    expect(скрипт).toContain('return "ok"');
+    expect(скрипт).toContain('return "нет"');
+  });
+
   it('не роняет разбор, если атрибут не принят', () => {
     // Программа может не быть Chromium — тогда атрибута нет вовсе.
     expect(manualAccessibilityScript(1)).toContain('try');

@@ -755,15 +755,22 @@ export function keyScript(keys: string): string {
  * error: Expected expression but found unknown token».
  */
 export function manualAccessibilityScript(pid: number): string {
+  // «ok» — атрибут принят (Chromium, Electron): дерево будет строиться, и его
+  // стоит подождать. «нет» — у программы такого атрибута нет, ждать нечего.
   return `
 tell application "System Events"
   set target to first process whose unix id is ${pid}
   try
     set value of attribute "AXManualAccessibility" of target to true
+    return "ok"
   end try
 end tell
+return "нет"
 `;
 }
+
+/** Номер процесса переднего окна. */
+export const FRONT_PID_SCRIPT = 'tell application "System Events" to get unix id of first process whose frontmost is true';
 
 export const ELEMENTS_SCRIPT = `
 set fieldSep to character id 31
@@ -1048,17 +1055,67 @@ export class DarwinDriver {
    * Программа может не быть Chromium — тогда атрибута нет и просьба ничего не
    * значит. Ронять из-за этого разбор окна нельзя.
    */
-  async askForAccessibility(pid: number): Promise<void> {
+  async askForAccessibility(pid: number): Promise<boolean> {
+    this.попрошено.add(pid);
     try {
-      await запустить('osascript', appleScriptArgs(manualAccessibilityScript(pid)));
+      const { stdout } = await запустить('osascript', appleScriptArgs(manualAccessibilityScript(pid)));
+      return stdout.trim() === 'ok';
     } catch {
       // Не Chromium или атрибут не принят — дерево спросим как есть.
+      return false;
     }
   }
 
+  /** У каких программ дерево уже просили: атрибут держится, пока программа жива. */
+  private readonly попрошено = new Set<number>();
+
   async elements(): Promise<{ title: string; elements: UiElement[] }> {
     await this.access();
+    await this.деревоПереднего();
+    return this.прочитатьЭлементы();
+  }
+
+  private async прочитатьЭлементы(): Promise<{ title: string; elements: UiElement[] }> {
     return parseElements(await this.osascript(appleScriptArgs(ELEMENTS_SCRIPT), ELEMENTS_TIMEOUT_MS));
+  }
+
+  /**
+   * Попросить переднюю программу построить дерево — и дождаться его.
+   *
+   * Голосовой «кликни по кнопке …» читал дерево без просьбы, а у Chromium оно
+   * строится лениво: замер на маке CI 27.09.2026 — в окне с кнопкой
+   * «Сохранить» одиннадцать элементов, одна рама окна, кнопки нет. Инструменты
+   * агента просили (`darwinWindows.ts`), голос — нет.
+   *
+   * Один раз на программу. Ждём, только если просьбу приняли (Chromium): у
+   * TextEdit атрибута нет, и платить ему ожиданием незачем. Ждём признак, а
+   * не время: читаем, пока дерево растёт, но не дольше нескольких секунд.
+   */
+  private async деревоПереднего(): Promise<void> {
+    let pid = Number.NaN;
+    try {
+      pid = Number.parseInt((await this.osascript(appleScriptArgs(FRONT_PID_SCRIPT))).trim(), 10);
+    } catch {
+      return;
+    }
+    if (!Number.isFinite(pid) || this.попрошено.has(pid)) return;
+    if (!(await this.askForAccessibility(pid))) return;
+
+    const конец = Date.now() + 5_000;
+    let прежде = -1;
+    let росло = false;
+    while (Date.now() < конец) {
+      await new Promise((готово) => setTimeout(готово, 300));
+      let сейчас = 0;
+      try {
+        сейчас = (await this.прочитатьЭлементы()).elements.length;
+      } catch {
+        return;
+      }
+      if (сейчас > прежде && прежде >= 0) росло = true;
+      if (росло && сейчас === прежде) return;
+      прежде = сейчас;
+    }
   }
 
   /**
