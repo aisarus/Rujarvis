@@ -99,9 +99,18 @@ public class Desk {
         uint mine = GetCurrentThreadId();
         uint target = GetWindowThreadProcessId(h, out dummy);
 
+        /*
+            SW_RESTORE (9) - tolko svyornutomu.
+
+            Dlya RAZVYORNUTOGO okna SW_RESTORE vozvrashchaet ego k obychnomu
+            razmeru, i "pereklyuchis na edzh" umenshalo by razvyornutyy Edge.
+            SW_SHOW (5) pokazyvaet okno v tom razmere, v kakom ono est.
+        */
+        bool svyornuto = IsIconic(h);
+
         AttachThreadInput(mine, front, true);
         AttachThreadInput(mine, target, true);
-        ShowWindow(h, 9);
+        ShowWindow(h, svyornuto ? 9 : 5);
         BringWindowToTop(h);
         SetForegroundWindow(h);
         AttachThreadInput(mine, target, false);
@@ -121,7 +130,22 @@ public class Desk {
         Marshal.FreeHGlobal(was);
         SystemParametersInfo(SET_LOCK, 0, new IntPtr((int)bylo), SEND_CHANGE);
 
-        System.Threading.Thread.Sleep(250);
+        /*
+            Zhdyom, poka okno vyydet vperyod, - do 250 ms, a ne vsegda 250.
+
+            Ranshe son v 250 ms stoyal bezuslovno: v zhivom zhurnale 27.09.2026
+            "pereklyuchis na edzh" - 511 i 671 ms, i chetvert iz nih - etot son.
+            Svyornutomu ostavlyaem polnye 250: okno eshchyo razvorachivaetsya, i
+            snimok srazu posle podyoma poymal by ego na polputi. Proverka
+            chestnaya po-prezhnemu: vozvrashchaem to, chto vperedi.
+        */
+        if (svyornuto) {
+            System.Threading.Thread.Sleep(250);
+        } else {
+            for (int zhdali = 0; zhdali < 250 && GetForegroundWindow() != h; zhdali += 10) {
+                System.Threading.Thread.Sleep(10);
+            }
+        }
         StringBuilder sb = new StringBuilder(512);
         GetWindowTextW(GetForegroundWindow(), sb, 512);
         return sb.ToString();
