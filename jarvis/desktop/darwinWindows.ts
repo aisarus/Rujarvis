@@ -138,7 +138,7 @@ export class DarwinWindowTools {
    * Возвращает рамку уже ПОСЛЕ подъёма: свёрнутое окно разворачивается, и до
    * подъёма его положение и размер — нули.
    */
-  private async поднять(pid: number, windowId: number): Promise<ScreenBounds & { title: string }> {
+  private async поднять(pid: number, windowId: number): Promise<ScreenBounds & { title: string; app: string }> {
     const заголовок = this.заголовки.get(this.ключ(pid, windowId));
     const было = await this.driver.windows();
     const свои = было.filter((окно) => окно.pid === pid);
@@ -161,7 +161,7 @@ export class DarwinWindowTools {
       (окно) => окно.pid === pid && окно.title === цель.title,
     );
     const рамка = стало ?? цель;
-    return { x: рамка.x, y: рамка.y, width: рамка.width, height: рамка.height, title: рамка.title };
+    return { x: рамка.x, y: рамка.y, width: рамка.width, height: рамка.height, title: рамка.title, app: цель.app };
   }
 
   /**
@@ -231,7 +231,7 @@ export class DarwinWindowTools {
   }
 
   private async дерево(pid: number, windowId: number): Promise<UiElement[]> {
-    await this.поднять(pid, windowId);
+    const { app } = await this.поднять(pid, windowId);
 
     // Просим ДО первого чтения, а не когда дерево покажется пустым.
     //
@@ -251,7 +251,9 @@ export class DarwinWindowTools {
     // вызов osascript на каждый разбор окна стоит сотен миллисекунд.
     if (!this.попрошено.has(pid)) {
       this.попрошено.add(pid);
-      await this.driver.askForAccessibility(pid);
+      // С именем программы: браузерам на Chromium драйвер ставит ещё
+      // AXEnhancedUserInterface — без него у Edge страница пуста (27.09.2026).
+      await this.driver.askForAccessibility(pid, app);
       await this.дождатьсяДерева();
     }
 

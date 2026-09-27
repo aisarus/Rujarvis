@@ -768,23 +768,48 @@ export function keyScript(keys: string): string {
  * Имена переменных латиницей: в AppleScript кириллица в именах даёт «syntax
  * error: Expected expression but found unknown token».
  */
-export function manualAccessibilityScript(pid: number): string {
+export function manualAccessibilityScript(pid: number, браузер = false): string {
   // «ok» — атрибут принят (Chromium, Electron): дерево будет строиться, и его
   // стоит подождать. «нет» — у программы такого атрибута нет, ждать нечего.
+  //
+  // Браузерам на Chromium — ещё AXEnhancedUserInterface. AXManualAccessibility
+  // придуман Electron: замер на маке CI 27.09.2026 — у Edge после него
+  // область страницы оставалась пустыми группами (59 элементов, ни одной
+  // ссылки), после AXEnhancedUserInterface — 85, область страницы и все пять
+  // ссылок. Остальным программам его не ставим: у некоторых он двигает окна.
+  const усиленный = браузер
+    ? `
+  try
+    set value of attribute "AXEnhancedUserInterface" of target to true
+    set accepted to true
+  end try`
+    : '';
   return `
+set accepted to false
 tell application "System Events"
   set target to first process whose unix id is ${pid}
   try
     set value of attribute "AXManualAccessibility" of target to true
-    return "ok"
-  end try
+    set accepted to true
+  end try${усиленный}
 end tell
+if accepted then return "ok"
 return "нет"
 `;
 }
 
-/** Номер процесса переднего окна. */
-export const FRONT_PID_SCRIPT = 'tell application "System Events" to get unix id of first process whose frontmost is true';
+/** Браузеры на Chromium: дерево страницы они строят по AXEnhancedUserInterface. */
+export function chromiumBrowser(app: string): boolean {
+  return /^(google chrome|microsoft edge|chromium|brave browser|arc|opera|vivaldi|yandex)/iu.test(app.trim());
+}
+
+/** Номер и имя программы переднего окна, через разделитель 31. */
+export const FRONT_APP_SCRIPT = [
+  'tell application "System Events"',
+  '  set p to first process whose frontmost is true',
+  '  return ((unix id of p) as text) & (character id 31) & (name of p)',
+  'end tell',
+].join('\n');
 
 /**
  * Элементы переднего окна.
@@ -1087,10 +1112,10 @@ export class DarwinDriver {
    * Программа может не быть Chromium — тогда атрибута нет и просьба ничего не
    * значит. Ронять из-за этого разбор окна нельзя.
    */
-  async askForAccessibility(pid: number): Promise<boolean> {
+  async askForAccessibility(pid: number, app = ''): Promise<boolean> {
     this.попрошено.add(pid);
     try {
-      const { stdout } = await запустить('osascript', appleScriptArgs(manualAccessibilityScript(pid)));
+      const { stdout } = await запустить('osascript', appleScriptArgs(manualAccessibilityScript(pid, chromiumBrowser(app))));
       return stdout.trim() === 'ok';
     } catch {
       // Не Chromium или атрибут не принят — дерево спросим как есть.
@@ -1125,13 +1150,16 @@ export class DarwinDriver {
    */
   private async деревоПереднего(): Promise<void> {
     let pid = Number.NaN;
+    let app = '';
     try {
-      pid = Number.parseInt((await this.osascript(appleScriptArgs(FRONT_PID_SCRIPT))).trim(), 10);
+      const [номер, имя] = (await this.osascript(appleScriptArgs(FRONT_APP_SCRIPT))).trim().split(FIELD);
+      pid = Number.parseInt(номер ?? '', 10);
+      app = имя ?? '';
     } catch {
       return;
     }
     if (!Number.isFinite(pid) || this.попрошено.has(pid)) return;
-    if (!(await this.askForAccessibility(pid))) return;
+    if (!(await this.askForAccessibility(pid, app))) return;
 
     const конец = Date.now() + 5_000;
     let прежде = -1;

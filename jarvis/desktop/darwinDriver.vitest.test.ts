@@ -28,6 +28,8 @@ import {
   typeScript,
   type DarwinWindow,
   manualAccessibilityScript,
+  chromiumBrowser,
+  FRONT_APP_SCRIPT,
 } from './darwinDriver';
 import { createDesktopDriver, desktopStamp } from './platform';
 import { DesktopDriver } from './driver';
@@ -493,6 +495,26 @@ describe('manualAccessibilityScript', () => {
     // Всплывающее «Translate page from Russian?» у Chrome — окно 1, и ссылки
     // страницы искались в нём (мак CI, 27.09.2026).
     expect(ELEMENTS_SCRIPT).toContain('AXMain');
+  });
+
+  it('браузерам на Chromium — ещё AXEnhancedUserInterface, прочим — нет', () => {
+    // Замер на маке CI 27.09.2026: у Edge после одного AXManualAccessibility
+    // страница — пустые группы, после AXEnhancedUserInterface — все ссылки.
+    expect(manualAccessibilityScript(4242, true)).toContain('AXEnhancedUserInterface');
+    expect(manualAccessibilityScript(4242, false)).not.toContain('AXEnhancedUserInterface');
+    expect(chromiumBrowser('Microsoft Edge')).toBe(true);
+    expect(chromiumBrowser('Google Chrome')).toBe(true);
+    expect(chromiumBrowser('Safari')).toBe(false);
+    expect(chromiumBrowser('TextEdit')).toBe(false);
+  });
+
+  it('в скриптах просьбы и переднего окна вне кавычек — только латиница', () => {
+    // Кириллица вне кавычек ломает AppleScript: «Expected expression but found
+    // unknown token». 27.09.2026 так едва не уехала переменная «принят».
+    for (const скрипт of [manualAccessibilityScript(1, true), FRONT_APP_SCRIPT]) {
+      const внеКавычек = скрипт.replace(/"[^"]*"/gu, '');
+      expect(внеКавычек).not.toMatch(/[А-Яа-яЁё]/u);
+    }
   });
 
   it('говорит, приняла ли программа просьбу: ждать дерево стоит только у Chromium', () => {
