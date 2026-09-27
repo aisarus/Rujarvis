@@ -99,9 +99,10 @@ not download models.
 
 Direct commands — scroll, keys, tabs, windows, clicking a button by its name, a
 numbered grid over the screen, dictation, opening and closing apps — are
-answered instantly, without a model. Anything else goes to a live Claude Code
-session that remembers the conversation and can start, correct, pause or stop
-the running work.
+answered instantly, without a model. Anything else goes to the conversation, which
+remembers the thread and can start, correct, pause or stop the running work. A
+live Claude Code session runs it, or Codex when Claude Code is not there (a
+slower turn: one process per reply).
 
 The stop and silence words, and yes/no answers, work in both languages
 whichever language is selected.

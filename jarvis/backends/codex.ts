@@ -208,7 +208,7 @@ export function codexOwnerChoices(config: string | null): CodexOwnerChoices {
 }
 
 /** Настройки Codex человека: `$CODEX_HOME/config.toml`, нет файла — null. */
-function readCodexUserConfig(): string | null {
+export function readCodexUserConfig(): string | null {
   const дом = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
   try {
     return readFileSync(path.join(дом, 'config.toml'), 'utf8');
@@ -223,12 +223,14 @@ function tomlСтрока(значение: string): string {
 }
 
 export function buildCodexArgs(
-  request: BackendRequest,
+  request: Pick<BackendRequest, 'sessionId' | 'cwd'>,
   options: {
     model?: string;
     sandbox: CodexSandbox;
     mcpOverrides?: readonly string[];
     ownerChoices?: CodexOwnerChoices;
+    /** Возможности Codex, выключенные на этот запуск (`features.<имя>=false`). */
+    disabledFeatures?: readonly string[];
   },
 ): string[] {
   const args = ['exec'];
@@ -260,6 +262,11 @@ export function buildCodexArgs(
   // Рабочий стол Кодексу — на один запуск, без следов в его настройках.
   for (const перекрытие of options.mcpOverrides ?? []) {
     args.push('-c', перекрытие);
+  }
+  // Настройкой, а не `--disable`: так одинаково у запуска и у продолжения.
+  // Незнакомое имя Codex 0.153.4 пропускает молча — проверено.
+  for (const возможность of options.disabledFeatures ?? []) {
+    args.push('-c', `features.${возможность}=false`);
   }
   // `-` makes Codex read the prompt from stdin, which keeps long Russian
   // prompts off the Windows command line and its length limit.

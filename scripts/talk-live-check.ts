@@ -7,10 +7,11 @@
  * по-настоящему — как человек проверял бы руками, только быстрее.
  *
  *     npx tsx scripts/talk-live-check.ts
+ *     pnpm jarvis:talk-check -- --codex     # разговор через Codex
  *
  * Стоит одной сессии CLI и нескольких ходов по подписке. Работу ничего не
  * трогает: мост подставной, задачу он никуда не заводит, а только записывает,
- * что его попросили.
+ * что его попросили. Окон не открывает — можно гонять и при человеке.
  */
 
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -19,7 +20,11 @@ import path from 'node:path';
 
 import { TalkBridge, type TalkRequest } from '../jarvis/dialogue/talkBridge';
 import { TalkSession } from '../jarvis/dialogue/talkSession';
-import { createClaudeProbe } from '../jarvis/backends/cliProbes';
+import { createClaudeProbe, createCodexProbe } from '../jarvis/backends/cliProbes';
+
+/** Чей разговор меряем: Codex — для тех, у кого нет Claude Code. */
+const АГЕНТ = process.argv.includes('--codex') ? 'codex' : 'claude-code';
+const ИМЯ = АГЕНТ === 'codex' ? 'Codex' : 'Claude Code';
 import { makePlan, renderPlan, type Plan } from '../jarvis/agent/plan';
 import { resolveDesktopMcpLaunch } from '../jarvis/desktop/launch';
 
@@ -102,16 +107,17 @@ async function main(): Promise<void> {
     console.log('НЕЧЕМ МЕРИТЬ: сервера разговора нет — сначала pnpm run build');
     process.exit(2);
   }
-  const статусCLI = await createClaudeProbe().status();
-  console.log(`CLI: ${статусCLI.path ?? 'не найден'} (установлен: ${статусCLI.installed})`);
-  if (!статусCLI.path) {
-    console.log('НЕЧЕМ МЕРИТЬ: Claude Code не найден — разговору не на чем работать');
+  const статусCLI = await (АГЕНТ === 'codex' ? createCodexProbe() : createClaudeProbe()).status();
+  console.log(`CLI ${ИМЯ}: ${статусCLI.path ?? 'не найден'} (установлен: ${статусCLI.installed})`);
+  const путьCLI = статусCLI.path;
+  if (!путьCLI) {
+    console.log(`НЕЧЕМ МЕРИТЬ: ${ИМЯ} не найден — разговору не на чем работать`);
     process.exit(2);
   }
 
   const сказанное: string[] = [];
   const разговор = new TalkSession({
-    cliPath: async () => статусCLI.path ?? null,
+    agent: async () => ({ id: АГЕНТ, path: путьCLI }),
     cwd: ДОМ,
     mcpConfig: сервер,
     delta: { journalFile: ЖУРНАЛ, planFile: ПЛАН },
@@ -137,7 +143,10 @@ async function main(): Promise<void> {
   // Свои фразы через командную строку, разделённые вертикальной чертой: когда
   // проверяешь одно место, гонять все восемь ходов незачем.
   //   npx tsx scripts/talk-live-check.ts "займись вот чем: ..."
-  const свои = process.argv[2]?.trim();
+  const свои = process.argv
+    .slice(2)
+    .find((а) => !а.startsWith('--'))
+    ?.trim();
   const ходы = свои
     ? свои.split('|').map((ф) => ф.trim()).filter(Boolean)
     : [

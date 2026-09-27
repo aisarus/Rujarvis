@@ -94,7 +94,7 @@ import { createHelpOverlay, type HelpOverlay } from './helpOverlay';
 import { createLogWindow, type LogWindow } from './logWindow';
 import { obviousAside } from '../jarvis/dialogue/aside';
 import { TalkBridge } from '../jarvis/dialogue/talkBridge';
-import { TalkSession } from '../jarvis/dialogue/talkSession';
+import { pickTalkAgent, TalkSession } from '../jarvis/dialogue/talkSession';
 import { ЭХО_РАЗГОВОРА } from '../jarvis/dialogue/workDelta';
 import { RunLogStore } from '../jarvis/observe/runLogStore';
 import { Storyline } from '../jarvis/observe/storyline';
@@ -1142,11 +1142,9 @@ async function поднятьМост(options: {
    */
   const talkBridgeDir = path.join(path.dirname(journalFile()), 'talk-bridge');
   const talk = new TalkSession({
-    cliPath: async () => {
-      const все = await jarvis.backends.availability();
-      const клод = все.find((b) => b.id === 'claude-code');
-      return клод?.ready && клод.path ? клод.path : null;
-    },
+    // Claude Code первым: у него живая сессия и прогрев. Codex — когда
+    // Claude Code нет, иначе у человека с одним Codex разговора нет вовсе.
+    agent: async () => pickTalkAgent(await jarvis.backends.availability()),
     // Дом Джарвиса, а не рабочая папка: разговору нечего делать в коде.
     cwd: jarvisHome(),
     mcpConfig: writeTalkMcpConfig(talkBridgeDir),

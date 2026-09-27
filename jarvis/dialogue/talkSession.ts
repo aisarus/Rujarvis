@@ -34,34 +34,36 @@ import { createStreamState } from '../backends/cliRunner';
 import { consumeClaudeStreamLine } from '../backends/claudeCode';
 import { LiveSession, type SessionKey } from '../backends/liveSession';
 import { agentEnv } from '../backends/subscriptionEnv';
-import type { BackendResult } from '../backends/types';
+import type { BackendAvailability, BackendResult } from '../backends/types';
 import { stripUnspeakable, toSpokenResponse } from '../voice/spokenResponse';
+import { tr } from '../locale/language';
+import { CodexTalkLive } from './codexTalk';
 import { buildTalkOpening, buildTalkTurn } from './talkPrompt';
+import { talkToolNames } from './talkTools';
 import { WorkDelta, type WorkDeltaOptions } from './workDelta';
 
-/** Имя сервера разговора в конфиге MCP. */
-export const TALK_SERVER = 'jarvis-talk';
+export { TALK_SERVER, TALK_TOOLS, talkToolNames } from './talkTools';
 
 /**
- * Глаголы разговора.
+ * На ком идёт разговор.
  *
- * Латиницей — и это не вкусовщина: имена инструментов MCP обязаны попадать в
- * `^[a-zA-Z0-9_.-]{1,64}$`, кириллические отклоняются целиком. Русский живёт в
- * описаниях, которые читает модель.
+ * Claude Code — первым: живая сессия помнит нить в одном процессе и
+ * прогревается заранее. Codex — когда Claude Code нет: у тестера на маке
+ * может быть только он, и без этого разговора у него не было бы вовсе.
  */
-export const TALK_TOOLS = [
-  'start_work',
-  'add_note',
-  'stop_work',
-  'pause_work',
-  'resume_work',
-  'add_step',
-  'work_now',
-] as const;
+export interface TalkAgent {
+  id: 'claude-code' | 'codex';
+  path: string;
+}
 
-/** Как эти же глаголы называются в `--allowedTools`. */
-export const talkToolNames = (): string[] =>
-  TALK_TOOLS.map((name) => `mcp__${TALK_SERVER}__${name}`);
+/** Кому вести разговор: первый готовый — Claude Code, потом Codex. */
+export function pickTalkAgent(все: readonly BackendAvailability[]): TalkAgent | null {
+  for (const id of ['claude-code', 'codex'] as const) {
+    const агент = все.find((b) => b.id === id);
+    if (агент?.ready && агент.path) return { id, path: агент.path };
+  }
+  return null;
+}
 
 /** Столько молчания хватает, чтобы признать ход зависшим. */
 const SILENCE_MS = 90_000;
@@ -86,12 +88,13 @@ export interface TalkState {
 }
 
 export interface TalkSessionOptions {
-  /** Где лежит CLI. `null` — разговора не будет, и об этом надо сказать. */
-  cliPath: () => Promise<string | null>;
+  /** Кто ведёт разговор. `null` — разговора не будет, и об этом надо сказать. */
+  agent: () => Promise<TalkAgent | null>;
   /** Папка разговора. Дом Джарвиса, а не проект человека. */
   cwd: string;
   /** Конфиг MCP с ролью разговора. Без него рычагов нет. */
   mcpConfig?: string;
+  /** Модель Claude Code. Codex берёт модель, выбранную человеком в его настройках. */
   model?: string;
   env?: NodeJS.ProcessEnv;
   /** Где журнал и план: по ним считается «что случилось с прошлого раза». */
@@ -100,7 +103,7 @@ export interface TalkSessionOptions {
   speak: (text: string) => Promise<void> | void;
   log?: (line: string) => void;
   /** Подмена живой сессии в тестах. */
-  createSession?: (key: SessionKey, command: string) => TalkLive;
+  createSession?: (key: SessionKey, command: string, agent: TalkAgent['id']) => TalkLive;
 }
 
 export class TalkSession {
@@ -274,16 +277,19 @@ export class TalkSession {
     }
 
     const моё = this.поколение;
-    const command = await this.options.cliPath();
+    const agent = await this.options.agent();
     if (this.поколение !== моё) return null;
-    if (!command) {
+    if (!agent) {
       if (!this.complained) {
         this.complained = true;
-        await this.say('Разговор недоступен: не нашёл Claude Code.');
+        await this.say(
+          tr('Разговор недоступен: не нашёл ни Claude Code, ни Codex.', 'Conversation is unavailable: found neither Claude Code nor Codex.'),
+        );
       }
       return null;
     }
     this.complained = false;
+    const command = agent.path;
 
     const key: SessionKey = {
       cwd: this.options.cwd,
@@ -297,8 +303,10 @@ export class TalkSession {
     };
 
     const live = this.options.createSession
-      ? this.options.createSession(key, command)
-      : new LiveSession({
+      ? this.options.createSession(key, command, agent.id)
+      : agent.id === 'codex'
+        ? new CodexTalkLive({ command, cwd: this.options.cwd, mcpConfig: this.options.mcpConfig, silenceMs: SILENCE_MS })
+        : new LiveSession({
           key,
           command,
           consumeLine: (raw, emit) => consumeClaudeStreamLine(raw, createStreamState(), emit),
@@ -316,7 +324,7 @@ export class TalkSession {
     }
 
     this.live = live;
-    this.log('поднял сессию разговора');
+    this.log(`поднял сессию разговора: ${agent.id === 'codex' ? 'Codex' : 'Claude Code'}`);
 
     if (this.lostThread) {
       this.lostThread = false;

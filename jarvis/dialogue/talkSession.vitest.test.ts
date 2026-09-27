@@ -3,8 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { TALK_TOOLS, TalkSession, talkToolNames, type TalkLive } from './talkSession';
-import type { BackendResult } from '../backends/types';
+import { pickTalkAgent, TALK_TOOLS, TalkSession, talkToolNames, type TalkAgent, type TalkLive } from './talkSession';
+import type { BackendAvailability, BackendResult } from '../backends/types';
 import type { SessionKey } from '../backends/liveSession';
 
 function ok(text: string): BackendResult {
@@ -72,12 +72,13 @@ beforeEach(() => {
 
 function завести(
   сессии: Поддельная[],
-  cliPath: () => Promise<string | null> = () => Promise.resolve('claude'),
+  agent: () => Promise<TalkAgent | null> = () => Promise.resolve({ id: 'claude-code', path: 'claude' }),
+  агенты: Array<TalkAgent['id']> = [],
 ): { разговор: TalkSession; ключи: SessionKey[] } {
   const ключи: SessionKey[] = [];
   let next = 0;
   const разговор = new TalkSession({
-    cliPath,
+    agent,
     cwd: dir,
     mcpConfig: path.join(dir, 'talk.json'),
     delta: { journalFile: path.join(dir, 'journal.json'), planFile: path.join(dir, 'plan.json') },
@@ -88,8 +89,9 @@ function завести(
     log: (line) => {
       записи.push(line);
     },
-    createSession: (key) => {
+    createSession: (key, _command, агент) => {
       ключи.push(key);
+      агенты.push(агент);
       const сессия = сессии[next];
       next += 1;
       if (!сессия) throw new Error('лишняя сессия');
@@ -175,7 +177,36 @@ describe('TalkSession', () => {
     await разговор.hear('привет');
     await разговор.hear('ну привет же');
 
-    expect(сказанное).toEqual(['Разговор недоступен: не нашёл Claude Code.']);
+    expect(сказанное).toEqual(['Разговор недоступен: не нашёл ни Claude Code, ни Codex.']);
+  });
+
+  it('кому вести разговор: Claude Code первым, без него — Codex, без обоих — никому', () => {
+    const готов = (id: 'claude-code' | 'codex', ready = true): BackendAvailability => ({
+      id,
+      installed: true,
+      authenticated: ready,
+      ready,
+      path: `/bin/${id}`,
+      checkedAt: 0,
+    });
+    expect(pickTalkAgent([готов('codex'), готов('claude-code')])?.id).toBe('claude-code');
+    expect(pickTalkAgent([готов('claude-code', false), готов('codex')])).toEqual({ id: 'codex', path: '/bin/codex' });
+    expect(pickTalkAgent([готов('claude-code', false), готов('codex', false)])).toBeNull();
+    expect(pickTalkAgent([])).toBeNull();
+  });
+
+  it('с одним Codex разговор есть — поднимается на Codex', async () => {
+    // Тестер на маке может прийти с одним Codex. До 27.09.2026 разговор
+    // искал только Claude Code и отвечал «недоступен».
+    const агенты: Array<TalkAgent['id']> = [];
+    const сессия = new Поддельная([ok('Слушаю.')]);
+    const { разговор } = завести([сессия], () => Promise.resolve({ id: 'codex', path: 'codex' }), агенты);
+
+    await разговор.hear('привет');
+
+    expect(агенты).toEqual(['codex']);
+    expect(сказанное).toEqual(['Слушаю.']);
+    expect(записи.some((line) => line.includes('Codex'))).toBe(true);
   });
 
   it('за отменённый ход не извиняется', async () => {
