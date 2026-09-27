@@ -333,6 +333,38 @@ jobs:
         # Кодекс до 26.09.2026 не проверялся живьём ни разу.
         run: npm install -g @anthropic-ai/claude-code @openai/codex
 
+      - name: 'Запуск из Finder: ярлык находит node, Codex и Claude Code'
+        # У приложения из Finder и автозапуска PATH — /usr/bin:/bin:/usr/sbin:/sbin.
+        # Раннер это не воспроизводит: его launchd отдаёт `open` полный PATH
+        # (замер 27.09.2026, ветка mac/path-probe). Поэтому PATH Finder задаётся
+        # здесь явно, через env -i.
+        #
+        # Сначала — сама поломка: без ярлыка Codex из npm падает на
+        # «#!/usr/bin/env node». Потом — ярлык, как он есть на диске, без
+        # последней строки (exec Electron): node, Codex и Claude Code отвечают.
+        shell: bash
+        run: |
+          launcher="$HOME/Applications/Rujarvis.app/Contents/MacOS/Rujarvis"
+          finder='/usr/bin:/bin:/usr/sbin:/sbin'
+          codex_bin="$(command -v codex)"
+          echo "codex: $codex_bin"
+          if env -i HOME="$HOME" PATH="$finder" "$codex_bin" --version >/tmp/finder-codex.log 2>&1; then
+            echo 'С PATH Finder Codex и без ярлыка запускается — поломки нет, мерить нечего.'
+            cat /tmp/finder-codex.log
+          else
+            echo "Без ярлыка, как из Finder: $(head -1 /tmp/finder-codex.log)"
+          fi
+          # Claude Code из npm здесь без postinstall (npm его не пускает), поэтому
+          # его ответ только показывается; обязательны node и Codex.
+          env -i HOME="$HOME" PATH="$finder" /bin/bash -c "
+            set -e
+            source <(grep -v '^exec ' '$launcher')
+            echo \"PATH ярлыка: \$PATH\"
+            node --version
+            codex --version
+            claude --version || echo 'claude не ответил (без postinstall это ожидаемо)'
+          " || { echo 'Ярлык не дал приложению node или Codex'; exit 1; }
+
       - name: 'Claude Code и Codex: путь до подписки'
         shell: bash
         run: |

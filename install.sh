@@ -426,9 +426,23 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
+# PATH у приложения из Finder и из автозапуска — /usr/bin:/bin:/usr/sbin:/sbin,
+# без Homebrew и npm. Тогда нет node — а на нём хук красных линий, — и не
+# запускаются Codex и Claude Code, поставленные через npm: это скрипты
+# «#!/usr/bin/env node», и они падают с «env: node: No such file». Ярлык
+# дописывает папки сам: ту, где node нашёл установщик, и обычные места
+# менеджеров. Только существующие и только те, которых в PATH ещё нет.
+NODE_DIR="$(dirname "$(command -v node)")"
+
 cat > "$APP_DIR/Contents/MacOS/Rujarvis" <<LAUNCHER
 #!/bin/bash
 # Ярлык Rujarvis. Путь к pnpm сюда не нужен: приложение уже собрано.
+# Последняя папка списка оказывается первой в PATH.
+for d in "\$HOME/.bun/bin" "\$HOME/.volta/bin" "\$HOME/.npm-global/bin" "\$HOME/.local/bin" \\
+         /usr/local/bin /opt/homebrew/sbin /opt/homebrew/bin "$INSTALL_ROOT/node/bin" "$NODE_DIR"; do
+  case ":\$PATH:" in *":\$d:"*) ;; *) if [ -d "\$d" ]; then PATH="\$d:\$PATH"; fi ;; esac
+done
+export PATH
 exec "$ELECTRON_BIN" "$ENTRY" "\$@"
 LAUNCHER
 chmod +x "$APP_DIR/Contents/MacOS/Rujarvis"
