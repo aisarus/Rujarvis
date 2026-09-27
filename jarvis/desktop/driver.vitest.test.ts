@@ -41,15 +41,21 @@ describe('драйвер рабочего стола', () => {
  */
 describe('прогрев драйвера', () => {
   it.skipIf(process.platform !== 'win32')('после warm() первая команда не платит за запуск', async () => {
-    const драйвер = new DesktopDriver();
-    try {
-      await драйвер.warm();
-      const начало = performance.now();
-      await драйвер.windows();
-      // Порог с запасом на медленную машину, но ниже любого холодного запуска.
-      expect(performance.now() - начало).toBeLessThan(300);
-    } finally {
-      драйвер.dispose();
-    }
+    const первая = async (греть: boolean): Promise<number> => {
+      const драйвер = new DesktopDriver();
+      try {
+        if (греть) await драйвер.warm();
+        const начало = performance.now();
+        await драйвер.windows();
+        return performance.now() - начало;
+      } finally {
+        драйвер.dispose();
+      }
+    };
+    // Сравнение, а не порог в миллисекундах: под нагрузкой всего набора
+    // тёплый вызов доходил до 314 мс, а холодный растёт вместе с ним.
+    const холодная = await первая(false);
+    const тёплая = await первая(true);
+    expect(тёплая, `тёплая ${Math.round(тёплая)} мс, холодная ${Math.round(холодная)} мс`).toBeLessThan(холодная / 2);
   }, 60_000);
 });
