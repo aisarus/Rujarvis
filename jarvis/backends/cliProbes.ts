@@ -18,6 +18,7 @@ import { promisify } from 'node:util';
 import { hasClaudeEnvironmentAuth, hasCodexEnvironmentAuth, resolveAuthState, type AuthState } from './authHints';
 import type { ClaudeCliProbe } from './claudeCode';
 import type { CodexCliProbe } from './codex';
+import { cliLaunch } from './spawnCli';
 import { localModel } from './localModel';
 import { agentEnv } from './subscriptionEnv';
 
@@ -92,7 +93,6 @@ export function resolveCli(
 }
 
 async function version(file: string): Promise<string | null> {
-  const черезОболочку = /\.(cmd|bat)$/iu.test(file);
   try {
     // `.cmd` на Windows запускается только через оболочку — И ТОЛЬКО В
     // КАВЫЧКАХ.
@@ -102,11 +102,17 @@ async function version(file: string): Promise<string | null> {
     // cmd.exe как команда `C:\Users\Иван`. Версия не читалась, и человек
     // получал «не установлен» на установленном CLI. Пути с пробелами здесь
     // обычное дело.
-    const { stdout } = await run(черезОболочку ? `"${file}"` : file, ['--version'], {
+    //
+    // Строку собирает cliLaunch — тот же, что у запуска задач: с отдельным
+    // массивом аргументов при `shell: true` Node 24 пишет DEP0190 («будет
+    // убрано») — в живом логе владельца пять раз за шесть запусков. Когда
+    // уберут, «Codex не установлен» стало бы ответом на установленный codex.cmd.
+    const запуск = cliLaunch(file, ['--version']);
+    const { stdout } = await run(запуск.command, запуск.args, {
       timeout: 10_000,
       encoding: 'utf8',
       windowsHide: true,
-      shell: черезОболочку,
+      shell: запуск.shell,
     });
     return stdout.trim();
   } catch {
@@ -142,14 +148,14 @@ export function loginFromCli(cli: Cli, output: string): boolean | null {
 
 /** Спросить CLI о входе в том окружении, какое он получит в работе. */
 async function askLogin(cli: Cli, file: string, env: NodeJS.ProcessEnv): Promise<boolean | null> {
-  const черезОболочку = /\.(cmd|bat)$/iu.test(file);
   const args = cli === 'claude' ? ['auth', 'status', '--json'] : ['login', 'status'];
+  const запуск = cliLaunch(file, args);
   try {
-    const { stdout, stderr } = await run(черезОболочку ? `"${file}"` : file, args, {
+    const { stdout, stderr } = await run(запуск.command, запуск.args, {
       timeout: 10_000,
       encoding: 'utf8',
       windowsHide: true,
-      shell: черезОболочку,
+      shell: запуск.shell,
       env,
     });
     return loginFromCli(cli, `${stdout}\n${stderr}`);
