@@ -617,6 +617,12 @@ const MAC_COMBOS: Record<string, string> = {
   'win+d': 'f11',
   f5: 'cmd+r',
   f11: 'ctrl+cmd+f',
+  // Правка диктовки. Общее правило дало бы Cmd+Backspace — на маке это «стереть
+  // до начала строки», а просили слово; End на маке листает, а не ведёт
+  // курсор к концу строки, и «удали строку» стирала один знак.
+  'ctrl+backspace': 'option+backspace',
+  'shift+end': 'cmd+shift+right',
+  'shift+home': 'cmd+shift+left',
 };
 
 export function macCombo(keys: string): string {

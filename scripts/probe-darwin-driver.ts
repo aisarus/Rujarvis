@@ -29,6 +29,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import { parseDictationEdit } from '../jarvis/control/dictationEdits';
 import { DarwinDriver, type DarwinWindow } from '../jarvis/desktop/darwinDriver';
 import { createWindowTools } from '../jarvis/desktop/windowTools';
 
@@ -308,6 +309,29 @@ await подождать(1_000);
 const послеЗамены = await шаг('прочитать текст окна', () => текстОкна());
 if (послеЗамены !== null) console.log(`         в окне: «${послеЗамены}»`);
 сравнить(послеЗамены, (текст) => текст === 'Замена', 'ctrl+a на маке выделил всё — текст заменён целиком');
+
+// Правка диктовки теми же клавишами, что у голоса. До 27.09.2026 «удали
+// слово» (ctrl+backspace) на маке превращалось в Cmd+Backspace и стирало
+// строку до начала, а «удали строку» стирала один знак: End на маке листает.
+const удалиСлово = parseDictationEdit('удали слово', 'ru');
+const удалиСтроку = parseDictationEdit('удали строку', 'ru');
+await шаг('допечатать два слова', () => driver.type(' два три'));
+await шаг('«удали слово»', async () => {
+  if (удалиСлово?.kind !== 'key') throw new Error(`«удали слово» разобралось как ${JSON.stringify(удалиСлово)}`);
+  await driver.key(удалиСлово.keys);
+});
+await подождать(700);
+const послеСлова = await шаг('прочитать текст окна', () => текстОкна());
+if (послеСлова !== null) console.log(`         в окне: «${послеСлова}»`);
+сравнить(послеСлова, (текст) => текст.trimEnd() === 'Замена два', '«удали слово» стёрло одно слово');
+await шаг('«удали строку»', async () => {
+  if (удалиСтроку?.kind !== 'keys') throw new Error(`«удали строку» разобралось как ${JSON.stringify(удалиСтроку)}`);
+  for (const клавиши of удалиСтроку.keys) await driver.key(клавиши);
+});
+await подождать(700);
+const послеСтроки = await шаг('прочитать текст окна', () => текстОкна());
+if (послеСтроки !== null) console.log(`         в окне: «${послеСтроки}»`);
+сравнить(послеСтроки, (текст) => текст.trim() === '', '«удали строку» стёрло строку целиком');
 
 console.log('\n=== 6. Элементы окна');
 const элементы = await шаг('дерево доступности активного окна', () => driver.elements(), false);

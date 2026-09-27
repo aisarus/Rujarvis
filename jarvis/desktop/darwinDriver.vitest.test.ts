@@ -313,6 +313,10 @@ describe('сочетания клавиш', () => {
     ['win+down', 'cmd+m'],
     ['f5', 'cmd+r'],
     ['enter', 'enter'],
+    // Правка диктовки: слово — Option+Backspace, конец строки — Cmd+→.
+    ['ctrl+backspace', 'option+backspace'],
+    ['shift+end', 'cmd+shift+right'],
+    ['shift+home', 'cmd+shift+left'],
   ])('%s → %s', (было, стало) => {
     expect(macCombo(было)).toBe(стало);
   });
