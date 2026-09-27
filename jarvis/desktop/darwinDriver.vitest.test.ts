@@ -101,7 +101,23 @@ describe('свод двух списков окон', () => {
       { app: 'Electron', pid: 900, title: 'Проба приёмки', x: 10, y: 20, width: 300, height: 160 },
     ]);
     expect(сведено).toHaveLength(3);
-    expect(сведено[2]).toMatchObject({ app: 'Electron', pid: 900, title: 'Проба приёмки', index: 0 });
+    // Где оно в списке — решает глубина экрана (тест ниже), поэтому ищем по номеру программы.
+    expect(сведено.find((о) => о.pid === 900)).toMatchObject({ app: 'Electron', pid: 900, title: 'Проба приёмки', index: 0 });
+  });
+
+  it('список — по глубине экрана, а не по программам: верхний браузер — тот, что сверху', () => {
+    // System Events перечислил Safari раньше Chrome, а на экране выше Chrome.
+    // На маке CI 27.09.2026 так ссылки искались в Safari.
+    const два = parseWindows(
+      окно(['Safari', 100, 1, 'Start Page', 0, 0, 800, 600, 'false', 'false']) +
+        окно(['Google Chrome', 200, 1, 'Проба ссылок', 0, 0, 800, 600, 'false', 'false']) +
+        окно(['Google Chrome', 200, 2, 'Свёрнутое Chrome', 0, 0, 0, 0, 'true', 'false']),
+    );
+    const сведено = mergeWindows(два, [
+      { app: 'Google Chrome', pid: 200, title: 'Проба ссылок', x: 0, y: 0, width: 800, height: 600 },
+      { app: 'Safari', pid: 100, title: 'Start Page', x: 0, y: 0, width: 800, height: 600 },
+    ]);
+    expect(сведено.map((о) => о.title)).toEqual(['Проба ссылок', 'Start Page', 'Свёрнутое Chrome']);
   });
 
   it('не двоит окно, которое видно обоим', () => {

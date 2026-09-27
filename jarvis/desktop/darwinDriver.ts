@@ -282,7 +282,21 @@ export function mergeWindows(fromEvents: readonly DarwinWindow[], fromServer: re
     });
   }
 
-  return [...fromEvents, ...добор];
+  // По глубине экрана, спереди назад. System Events перечисляет окна по
+  // программам, а оконный сервер — как они лежат на экране. Команды вкладок
+  // и ссылок идут в ВЕРХНЕЕ окно браузера, и на маке CI 27.09.2026 «верхним»
+  // оказался открытый раньше Safari, хотя выше лежало наше окно Chrome: у
+  // человека с двумя браузерами «закрой вкладку» ушла бы не туда. Место
+  // программы — место её первого окна у сервера; внутри программы порядок
+  // System Events (он и так спереди назад). Свёрнутые и невидимые серверу —
+  // в конце. Сортировка устойчивая.
+  const глубина = new Map<number, number>();
+  fromServer.forEach((окно, место) => {
+    if (окно.pid && !глубина.has(окно.pid)) глубина.set(окно.pid, место);
+  });
+  const ранг = (окно: DarwinWindow): number =>
+    окно.minimized ? Number.MAX_SAFE_INTEGER : (глубина.get(окно.pid) ?? Number.MAX_SAFE_INTEGER - 1);
+  return [...fromEvents, ...добор].sort((а, б) => ранг(а) - ранг(б));
 }
 
 /** Разбор ответа `WINDOW_LIST_SCRIPT`. */
