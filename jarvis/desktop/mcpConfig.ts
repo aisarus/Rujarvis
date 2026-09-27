@@ -22,6 +22,12 @@ export interface DesktopMcpConfigOptions {
   /** Куда агент складывает результаты. */
   outputDir?: string;
   language: Language;
+  /**
+   * Добавка к окружению сервера — для живых проверок: например, свой
+   * JARVIS_HOME, чтобы браузер агента жил во временном профиле, а не в
+   * профиле человека, который может быть занят его работающим Джарвисом.
+   */
+  extraEnv?: Record<string, string>;
 }
 
 export type DesktopMcpConfig =
@@ -76,6 +82,7 @@ export function writeDesktopMcpConfig(options: DesktopMcpConfigOptions): Desktop
               JARVIS_PLAN: path.join(options.dataDir, 'plan.json'),
               // Заметки агента между запусками — там же, где всё остальное.
               JARVIS_AGENT_NOTES: path.join(options.dataDir, 'agent-notes.json'),
+              ...options.extraEnv,
             },
           },
         },

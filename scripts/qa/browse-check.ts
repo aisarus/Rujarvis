@@ -17,37 +17,11 @@
  * Три ответа: прошло, не прошло, нечем мерить (нет браузера или сборки).
  */
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
 import { Сервер } from './mcpClient';
-
-const СТРАНИЦА = [
-  '<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Проба поиска Джарвиса</title></head><body>',
-  '<main>',
-  '<h1>Магазин пробы</h1>',
-  '<form id="f"><label for="q">Поиск товаров</label>',
-  '<input id="q" name="q" placeholder="Поиск товаров"><button type="submit">Найти</button></form>',
-  '<p id="itog"></p>',
-  '<table id="t"></table>',
-  '</main>',
-  '<script>',
-  'var goods = [["Ноутбук Лёгкий", 54990], ["Ноутбук Мощный", 129990], ["Ноутбук Школьный", 32990],',
-  '  ["Мышь беспроводная", 1490], ["Клавиатура тихая", 2990]];',
-  'document.getElementById("f").addEventListener("submit", function (e) {',
-  '  e.preventDefault();',
-  '  var q = document.getElementById("q").value.trim().toLowerCase();',
-  '  setTimeout(function () {',
-  '    var found = goods.filter(function (g) { return g[0].toLowerCase().indexOf(q) >= 0; });',
-  '    document.getElementById("t").innerHTML = found.map(function (g) {',
-  '      return "<tr><td>" + g[0] + "</td><td>" + g[1] + " руб.</td></tr>"; }).join("");',
-  '    document.getElementById("itog").textContent = "Найдено: " + found.length;',
-  '  }, 1500);',
-  '});',
-  '</script></body></html>',
-].join('');
+import { ЛИШНЕЕ, НОУТБУКИ, поднятьМагазин } from './shopPage';
 
 type Итог = { вид: 'прошло' | 'не прошло' | 'нечем мерить'; что: string };
 
@@ -59,12 +33,8 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const http = createServer((_req, res) => {
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    res.end(СТРАНИЦА);
-  });
-  await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve));
-  const адрес = `http://127.0.0.1:${(http.address() as AddressInfo).port}/`;
+  const магазин = await поднятьМагазин();
+  const адрес = магазин.адрес;
 
   const дом = mkdtempSync(path.join(os.tmpdir(), 'jarvis-browse-'));
   const s = new Сервер({ JARVIS_HOME: дом });
@@ -105,16 +75,16 @@ async function main(): Promise<void> {
     });
     await шаг('прочитать ровно найденное', async () => {
       const текст = await s.инструмент('browser_read', {});
-      const нужные = ['Ноутбук Лёгкий', 'Ноутбук Мощный', 'Ноутбук Школьный', 'Найдено: 3'];
+      const нужные = [...НОУТБУКИ.map(([имя]) => имя), `Найдено: ${НОУТБУКИ.length}`];
       const нет = нужные.filter((н) => !текст.includes(н));
-      const лишнее = ['Мышь беспроводная', 'Клавиатура тихая'].filter((л) => текст.includes(л));
+      const лишнее = ЛИШНЕЕ.map(([имя]) => имя).filter((л) => текст.includes(л));
       return нет.length === 0 && лишнее.length === 0
         ? { вид: 'прошло', что: 'три ноутбука, ничего лишнего' }
         : { вид: 'не прошло', что: `нет: ${нет.join(', ') || '—'}; лишнее: ${лишнее.join(', ') || '—'}` };
     });
   } finally {
     s.закрыть();
-    http.close();
+    магазин.закрыть();
     rmSync(дом, { recursive: true, force: true, maxRetries: 3 });
   }
 

@@ -41,6 +41,7 @@
     "jarvis:cli-check": "tsx scripts/qa/cli-check.ts",
     "jarvis:download-check": "tsx scripts/qa/download-check.ts",
     "jarvis:browse-check": "node build.mjs && tsx scripts/qa/browse-check.ts",
+    "jarvis:browse-agent-check": "node build.mjs && tsx scripts/qa/browse-agent-check.ts",
     "jarvis:browser-check": "tsx scripts/qa/browser-check.ts",
     "jarvis:qa": "node build.mjs && electron dist/qa/acceptance.cjs",
     "jarvis:hands-check": "node build.mjs && tsx scripts/qa/hands-check.ts",
