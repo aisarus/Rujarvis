@@ -77,7 +77,7 @@ import {
   matchVoiceControl,
   type ControlOutcome,
 } from './voice/interrupts';
-import { spokenFailure, toSpokenResponse } from './voice/spokenResponse';
+import { spokenFailure, spokenTaskReport, toSpokenResponse } from './voice/spokenResponse';
 
 export interface JarvisSettings {
   /** The "Coding" selector. */
@@ -829,9 +829,7 @@ export class JarvisCore {
 
     if (task.state === 'cancelled') return;
 
-    const spoken = result.ok
-      ? toSpokenResponse(result.text).spoken
-      : spokenFailure(result.error);
+    const spoken = result.ok ? spokenTaskReport(result.text) : spokenFailure(result.error);
     this.say(spoken, settings);
   }
 }

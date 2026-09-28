@@ -160,6 +160,23 @@ export function toSpokenResponse(
 }
 
 /**
+ * Итог сделанной работы вслух — одно предложение.
+ *
+ * Отчёт агента устроен так: первым предложением итог («Готово — громкость
+ * 70%»), дальше — как сделано. Раньше вслух шло до восьми предложений, как у
+ * ответа на вопрос, и это около минуты речи: «IAudioEndpointVolume»,
+ * «ShowWindow(hwnd, SW_MINIMIZE)», «handle 266276». Живой журнал 28.09.2026:
+ * из восьми отчётов владелец перебил шесть. Как сделано — на экране, в окне
+ * «что делаю»; вслух — что получилось.
+ */
+const TASK_REPORT_MAX_CHARS = 180;
+
+export function spokenTaskReport(text: string): string {
+  const first = splitSentences(stripUnspeakable(text)).find(isSpeakable);
+  return first ? shorten(first, TASK_REPORT_MAX_CHARS) : tr('Готово.', 'Done.');
+}
+
+/**
  * Что сказать, когда задача кончилась.
  *
  * Остановленную человеком — ничего: на «стоп» уже прозвучало «Остановил.».
@@ -173,7 +190,7 @@ export function spokenTaskEnd(
 ): string {
   if (state === 'cancelled') return '';
   return result?.ok
-    ? toSpokenResponse(result.text ?? '', { fallback: tr('Готово.', 'Done.') }).spoken
+    ? spokenTaskReport(result.text ?? '')
     : spokenFailure(result?.error ?? tr('Не получилось.', 'That did not work.'));
 }
 
