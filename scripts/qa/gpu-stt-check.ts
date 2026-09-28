@@ -122,7 +122,7 @@ async function main(): Promise<void> {
 
   // Строки об отказе («no GPU found», «failed to initialize Metal») — не
   // признак видеокарты: одинаково строго для CUDA и Metal.
-  const признаки = устройство.filter((с) => !/no|failed|not found|error/iu.test(с));
+  const признаки = устройство.filter((с) => !/\bno\b|failed|not found|error/iu.test(с));
   const считал = признаки.some((с) => /metal/iu.test(с))
     ? 'Metal'
     : признаки.some((с) => /cuda/iu.test(с))
