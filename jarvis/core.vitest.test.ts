@@ -260,16 +260,14 @@ describe('Test E — «В проекте Aegis ... почини через Claud
     expect(h.recorded[0]?.request.cwd).toBe('D:\\Projects\\aegis');
     expect(h.recorded[0]?.request.project).toBe('aegis');
 
-    // Голос читает ответ, а не его первые три фразы.
+    // После работы вслух — итог одним предложением, как сделано — на экране.
     //
-    // Предел был три предложения, и на вопросах это резало по живому: человек
-    // слышал первый пункт списка, оборванный посреди фразы, и решал, что его
-    // не поняли. Теперь читается целиком, пока укладывается в минуту речи, а
-    // перебить можно, просто заговорив.
+    // Раньше здесь ждали весь отчёт, до минуты речи: правило ответа на вопрос
+    // применялось и к отчёту о работе. Живой журнал 28.09.2026: владелец
+    // перебил шесть отчётов из восьми («IAudioEndpointVolume», «handle
+    // 266276»). Агенту и так велено начинать с итога одной фразой.
     const lastSpoken = h.spoken.at(-1) ?? '';
-    expect(lastSpoken).toContain('Нашёл проблему.');
-    expect(lastSpoken).toContain('устаревшую зависимость');
-    expect(lastSpoken.length).toBeLessThan(1_100);
+    expect(lastSpoken).toBe('Нашёл проблему.');
     // …while the full text is what the task result carries for the UI.
     if (turn.kind === 'task') {
       expect(turn.task.result?.text).toContain('устаревшую зависимость');
