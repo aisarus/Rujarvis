@@ -67,8 +67,7 @@ describe('classifyToolUse', () => {
     expect(level('mcp__jarvis-desktop__browser_click', { text: 'Переводчик' })).toBe('safe');
   });
 
-  it('asks before a skill lands in every Claude Code session and before running a program', () => {
-    expect(level('mcp__jarvis-desktop__write_skill', { name: 'x' })).toBe('sensitive');
+  it('asks before running a program', () => {
     expect(level('mcp__jarvis-desktop__show_file', { file: 'C:/Downloads/setup.exe', open: true })).toBe('sensitive');
     expect(level('mcp__jarvis-desktop__show_file', { file: 'C:/Downloads/photo.png', open: true })).toBe('safe');
   });
@@ -180,5 +179,28 @@ describe('язык вопросов хука', () => {
     expect(ru.summary).toContain('Агент хочет выполнить команду');
     expect(en.summary).toBe('The agent wants to run: git push origin main.');
     expect(en.level).toBe(ru.level);
+  });
+});
+
+/**
+ * Навыки — без вопроса (решение владельца 28.09.2026), остальное в настройках
+ * агента — по-прежнему с вопросом. Раньше write_skill и правка навыка
+ * спрашивали: этот тест заменил ожидание 'sensitive' для write_skill.
+ */
+describe('навыки агента', () => {
+  const skill = 'C:/Users/user/.claude/skills/blender-3d/SKILL.md';
+
+  it('правка и запись навыка — без вопроса', () => {
+    expect(level('mcp__jarvis-desktop__write_skill', { name: 'blender-live-session' })).toBe('normal');
+    expect(level('Edit', { file_path: skill })).toBe('normal');
+    expect(level('Write', { file_path: String.raw`C:\Users\user\.codex\skills\x\SKILL.md` })).toBe('normal');
+    expect(level('PowerShell', { command: String.raw`$p = 'C:\Users\user\.claude\skills\blender-3d\SKILL.md'; Set-Content $p 'x'` })).toBe('normal');
+  });
+
+  it('рядом с навыками — по-прежнему с вопросом', () => {
+    expect(level('Edit', { file_path: 'C:/Users/user/.claude/settings.json' })).toBe('sensitive');
+    expect(level('Write', { file_path: 'C:/Users/user/.claude/skills/../settings.json' })).toBe('sensitive');
+    expect(level('PowerShell', { command: `Set-Content C:/Users/user/.claude/skills/x/SKILL.md 1; Set-Content C:/Users/user/.claude/settings.json 2` })).not.toBe('normal');
+    expect(level('PowerShell', { command: `Set-Content C:/Users/user/.claude/skills/../settings.json 2` })).not.toBe('normal');
   });
 });

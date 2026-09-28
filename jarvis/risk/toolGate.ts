@@ -97,7 +97,14 @@ export function classifyToolUse(tool: string, input: Input, context: GateContext
     // Этого хватало, чтобы подложить `ok-<id>.json` с `{"allow": true}` —
     // мост принял бы это за разрешение, данное голосом. Красная линия,
     // которую можно обойти изнутри, — не линия.
-    const метитВЗащищённое = protectedRoots(context).some((root) => mentions(command, root));
+    // Папки навыков из защищённого вырезаны (решение владельца, см.
+    // skillRoots): упоминание навыка не делает команду чужой. Но выход из них
+    // через «..» — это уже не навык, а то, что лежит рядом, например
+    // settings.json с хуком красных линий.
+    const безНавыков = skillRoots(context).reduce((rest, root) => withoutMentions(rest, root), command);
+    const метитВЗащищённое =
+      skillRoots(context).some((root) => mentions(command, `${root}/..`)) ||
+      protectedRoots(context).some((root) => mentions(безНавыков, root));
     return {
       level: classifyAction({ kind: 'shell', command, insideProject: !метитВЗащищённое }),
       summary: tr(`Агент хочет выполнить команду: ${clip(command)}.`, `The agent wants to run: ${clip(command)}.`),
@@ -125,9 +132,10 @@ export function classifyToolUse(tool: string, input: Input, context: GateContext
     }
     case 'write_skill':
       // Навык ложится в общие навыки Claude Code и действует во всех его
-      // сессиях человека, не только в работе Джарвиса.
+      // сессиях человека, не только в работе Джарвиса. Спрашивали раньше; по
+      // решению владельца — нет (см. skillRoots).
       return {
-        level: 'sensitive',
+        level: 'normal',
         summary: tr(
           `Агент хочет записать навык «${clip(text('name'))}» в общие навыки Claude Code.`,
           `The agent wants to save the skill "${clip(text('name'))}" to your Claude Code skills.`,
@@ -167,8 +175,24 @@ function writeAction(raw: string, context: GateContext): JarvisAction {
     // Настройки самого агента и Джарвиса — не «внутри проекта», даже если
     // проект лежит рядом: правка там переживает задачу и меняет поведение
     // всех следующих.
-    insideProject: within(file, workRoots(context)) && !within(file, protectedRoots(context)),
+    insideProject:
+      within(file, skillRoots(context)) || (within(file, workRoots(context)) && !within(file, protectedRoots(context))),
   };
+}
+
+/**
+ * Папки навыков агентов — их агент правит без вопроса.
+ *
+ * Решение владельца 28.09.2026: «скилы просто разрешить». Живой журнал того
+ * же дня: за две с половиной минуты работы над фурой в Blender агент четыре
+ * раза спросил разрешения поправить навык blender-3d, и одно разрешение
+ * истекло, пока микрофон был выключен. Правка навыка — не одна из четырёх
+ * красных линий владельца. Остальное в ~/.claude и ~/.codex (settings.json с
+ * хуком красных линий, память, учётные данные) по-прежнему защищено.
+ */
+function skillRoots(context: GateContext): string[] {
+  if (!context.userHome) return [];
+  return [path.join(context.userHome, '.claude', 'skills'), path.join(context.userHome, '.codex', 'skills')];
 }
 
 function workRoots(context: GateContext): string[] {
@@ -209,11 +233,19 @@ export function isSystemPath(file: string): boolean {
  */
 function mentions(command: string, root: string): boolean {
   if (!command || !root) return false;
+  return видПути(command).includes(видПути(root));
+}
+
+/** Команда без упоминаний папки — в том же написании, в каком их ищет `mentions`. */
+function withoutMentions(command: string, root: string): string {
+  return видПути(command).split(видПути(root)).join(' ');
+}
+
+function видПути(текст: string): string {
   // Обратный слеш через код символа: в шаблонных строках и заменах он
   // схлопывается вдвое незаметно, и правка ломает разбор пути молча.
   const ОБРАТНЫЙ = String.fromCharCode(92);
-  const вид = (текст: string): string => текст.toLowerCase().split(ОБРАТНЫЙ).join('/');
-  return вид(command).includes(вид(root));
+  return текст.toLowerCase().split(ОБРАТНЫЙ).join('/');
 }
 
 /** Лежит ли файл внутри одной из папок. Регистр и вид косой черты не важны. */
