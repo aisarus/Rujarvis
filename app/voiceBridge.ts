@@ -13,7 +13,7 @@
  *   - put a global hotkey in front of the whole thing
  */
 
-import { app, BrowserWindow, globalShortcut, ipcMain } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, shell } from 'electron';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -101,7 +101,7 @@ import { RunLogStore } from '../jarvis/observe/runLogStore';
 import { Storyline } from '../jarvis/observe/storyline';
 import { StartupTiming } from '../jarvis/observe/timing';
 import { parseLiveEdit, нечегоПравить } from '../jarvis/live/edits';
-import { нажать, открытьСсылку, перейтиНаВкладку } from '../jarvis/control/browserCommands';
+import { адресСайта, нажать, открытьСсылку, перейтиНаВкладку } from '../jarvis/control/browserCommands';
 import { isLive, sendLive } from '../jarvis/desktop/blenderLive';
 import { NoteStore } from '../jarvis/dialogue/noteStore';
 import { describeLessons, lessonsFrom } from '../jarvis/memory/lessons';
@@ -436,6 +436,37 @@ export async function runDirectCommand(
         await применитьНастройку(command.what, command.direction, session);
         break;
       }
+      case 'minimize': {
+        // Тем же поиском, что «переключись на»: «эдж» — это Microsoft Edge.
+        let свёрнуто: { title: string } | null = null;
+        let почему = '';
+        for (const candidate of windowCandidates(command.title)) {
+          try {
+            свёрнуто = await desktop.minimize(candidate);
+            break;
+          } catch (error) {
+            почему = error instanceof Error ? error.message : String(error);
+          }
+        }
+        if (!свёрнуто) throw new Error(`не свернул «${command.title}»${почему ? `: ${почему}` : ''}`);
+        console.log(`[jarvis] свернул «${свёрнуто.title}»`);
+        break;
+      }
+      case 'volume': {
+        const { level } = await desktop.setVolume(command.level);
+        console.log(`[jarvis] громкость системы: ${level}%`);
+        await session.speak(tr(`Громкость ${level}.`, `Volume ${level}.`));
+        break;
+      }
+      case 'openSite': {
+        // В браузере по умолчанию — там, где у человека вход и закладки.
+        const адрес = адресСайта(command.name);
+        await shell.openExternal(адрес);
+        // Имя сайта — сказанное человеком, и в адресе поиска оно тоже есть:
+        // в журнал — только через logged, по его настройке.
+        console.log(`[jarvis] открыл сайт «${logged(command.name)}»`);
+        break;
+      }
       case 'clickNamed': {
         // Не нашли — не кликаем. Промах мимо названной кнопки хуже отказа:
         // он срабатывает, человек его не ждал, и заметит не сразу.
@@ -750,6 +781,12 @@ function describeDirect(command: DirectCommand): string {
       return 'слушаю длинно';
     case 'repeat':
       return `${describeDirect(command.command)} ${command.times} раз`;
+    case 'minimize':
+      return `свернул ${command.title}`;
+    case 'volume':
+      return `громкость ${command.level}%`;
+    case 'openSite':
+      return `открыл сайт ${command.name}`;
   }
 }
 

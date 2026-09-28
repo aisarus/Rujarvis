@@ -65,6 +65,12 @@ export interface DesktopControl {
   key(keys: string): Promise<void>;
   elements(): Promise<{ title: string; elements: UiElement[] }>;
   focus(title: string): Promise<{ title: string }>;
+  /** Свернуть окно по названию — тем же поиском, что у `focus`. */
+  minimize(title: string): Promise<{ title: string }>;
+  /** Громкость системы, 0–100. Возвращает ту, что система показывает после записи. */
+  setVolume(level: number): Promise<{ level: number }>;
+  /** Громкость системы сейчас, ничего не меняя. */
+  volume(): Promise<{ level: number }>;
   /** Поднять драйвер заранее, чтобы первая команда не платила за его запуск. */
   warm(): Promise<void>;
   dispose(): void;
@@ -297,6 +303,18 @@ export class DesktopDriver {
 
   focus(title: string): Promise<{ title: string }> {
     return this.send({ cmd: 'focus', title });
+  }
+
+  minimize(title: string): Promise<{ title: string }> {
+    return this.send({ cmd: 'minimize', title });
+  }
+
+  setVolume(level: number): Promise<{ level: number }> {
+    return this.send({ cmd: 'volume', level: Math.round(level) });
+  }
+
+  volume(): Promise<{ level: number }> {
+    return this.send({ cmd: 'volume' });
   }
 
   /**

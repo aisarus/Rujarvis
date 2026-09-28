@@ -170,6 +170,59 @@ public class Desk {
     public const uint KEYEVENTF_KEYUP = 0x0002;
     public const uint KEYEVENTF_UNICODE = 0x0004;
 }
+
+/*
+    Gromkost sistemy - cherez Core Audio (IAudioEndpointVolume), a ne klavishami.
+
+    Klavisha gromkosti menyaet na 2% i pokazyvaet vsplyvashku; chtoby postavit
+    "70", nado nazhat ee desyatki raz. Zhivoy zhurnal 28.09.2026: agent sdelal
+    imenno eto cherez IAudioEndpointVolume za 48 sekund. Zdes - odin vyzov.
+    Poryadok metodov interfeysa vazhen: eto tablitsa COM, a ne imena.
+*/
+[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IZvukTochka {
+    int _0(); int _1(); int _2(); int _3();
+    int SetMasterVolumeLevelScalar(float level, Guid context);
+    int _5();
+    int GetMasterVolumeLevelScalar(out float level);
+    int _7(); int _8(); int _9(); int _10();
+    int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, Guid context);
+    int GetMute(out bool mute);
+}
+[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IZvukUstroystvo { int Activate(ref Guid id, int clsCtx, IntPtr activationParams, out IZvukTochka tochka); }
+[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IZvukPerechen { int _0(); int GetDefaultAudioEndpoint(int dataFlow, int role, out IZvukUstroystvo ustroystvo); }
+[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class ZvukPerechenObject { }
+
+public class Zvuk {
+    static IZvukTochka Tochka() {
+        IZvukPerechen perechen = (IZvukPerechen) new ZvukPerechenObject();
+        IZvukUstroystvo ustroystvo;
+        // eRender = 0, eMultimedia = 1: to, chto igraet muzyka i video.
+        Marshal.ThrowExceptionForHR(perechen.GetDefaultAudioEndpoint(0, 1, out ustroystvo));
+        IZvukTochka tochka;
+        Guid id = typeof(IZvukTochka).GUID;
+        Marshal.ThrowExceptionForHR(ustroystvo.Activate(ref id, 23, IntPtr.Zero, out tochka));
+        return tochka;
+    }
+    public static float Get() {
+        float level;
+        Marshal.ThrowExceptionForHR(Tochka().GetMasterVolumeLevelScalar(out level));
+        return level;
+    }
+    public static bool Muted() {
+        bool mute;
+        Marshal.ThrowExceptionForHR(Tochka().GetMute(out mute));
+        return mute;
+    }
+    public static void Set(float level) {
+        IZvukTochka tochka = Tochka();
+        Marshal.ThrowExceptionForHR(tochka.SetMasterVolumeLevelScalar(level, Guid.Empty));
+        // "Postav 70" pri vyklyuchennom zvuke - eto prosba slyshat, a ne tolko chislo.
+        if (level > 0) Marshal.ThrowExceptionForHR(tochka.SetMute(false, Guid.Empty));
+    }
+}
 "@
 
 [void][Desk]::SetProcessDPIAware()
@@ -383,6 +436,45 @@ function Get-Elements {
     return $items
 }
 
+# Окно по названию: сначала заголовок, потом имя процесса. Общее у «перейти»
+# и «свернуть»: одно и то же «эдж» обязано находить одно и то же окно.
+function Find-Window([string] $needle) {
+    $simple = Simplify-Text $needle
+    $windows = Get-Windows
+    $target = $windows | Where-Object { (Simplify-Text $_.title).Contains($simple) } | Select-Object -First 1
+    if (-not $target) {
+        # "Program Manager" - eto rabochiy stol, a ne okno Provodnika.
+        # On vo ves ekran, poetomu sortirovka po ploshchadi stavila ego
+        # pervym: «pereklyuchis na provodnik» pokazyvalo pustoy stol.
+        $target = $windows | Where-Object {
+            $_.title -ne 'Program Manager' -and
+            ($proc = Get-Process -Id $_.pid -ErrorAction SilentlyContinue) -and
+            (Simplify-Text $proc.ProcessName).Contains($simple)
+        } | Sort-Object { $_.width * $_.height } -Descending | Select-Object -First 1
+    }
+    if (-not $target) {
+        # Говорим, что есть, а не просто «нет».
+        #
+        # «Не получилось» не говорит человеку ничего: ни что искали, ни
+        # что рядом. Список того, что на экране, делает следующую
+        # попытку осмысленной.
+        #
+        # Показываем ЗАГОЛОВКИ, а не имена процессов. Живой прогон
+        # 26.09.2026 выдал «Na ekrane: electron, blender, claude,
+        # msedge» — по такому списку человек не назовёт окно заново,
+        # потому что вслух он говорит «блендер» или «Личный — Edge», а
+        # не «msedge». Имя процесса остаётся запасным, когда заголовка
+        # нет вовсе.
+        $nearby = ($windows | Where-Object { $_.title -ne 'Program Manager' } |
+            ForEach-Object {
+                if ($_.title) { $_.title }
+                else { (Get-Process -Id $_.pid -ErrorAction SilentlyContinue).ProcessName }
+            } | Where-Object { $_ } | Select-Object -Unique -First 8) -join ', '
+        throw "Не нашёл окно «$needle». На экране: $nearby"
+    }
+    return $target
+}
+
 function Invoke-Command2($message) {
     switch ($message.cmd) {
         'elements' {
@@ -441,39 +533,7 @@ function Invoke-Command2($message) {
             # U Chrome sovpadalo sluchayno, u Edge net, i chelovek slyshal
             # «ne poluchilos» na komandu, kotoraya obyazana rabotat vsegda.
             $needle = $message.title
-            $simple = Simplify-Text $needle
-            $windows = Get-Windows
-            $target = $windows | Where-Object { (Simplify-Text $_.title).Contains($simple) } | Select-Object -First 1
-            if (-not $target) {
-                # "Program Manager" - eto rabochiy stol, a ne okno Provodnika.
-                # On vo ves ekran, poetomu sortirovka po ploshchadi stavila ego
-                # pervym: «pereklyuchis na provodnik» pokazyvalo pustoy stol.
-                $target = $windows | Where-Object {
-                    $_.title -ne 'Program Manager' -and
-                    ($proc = Get-Process -Id $_.pid -ErrorAction SilentlyContinue) -and
-                    (Simplify-Text $proc.ProcessName).Contains($simple)
-                } | Sort-Object { $_.width * $_.height } -Descending | Select-Object -First 1
-            }
-            if (-not $target) {
-                # Говорим, что есть, а не просто «нет».
-                #
-                # «Не получилось» не говорит человеку ничего: ни что искали, ни
-                # что рядом. Список того, что на экране, делает следующую
-                # попытку осмысленной.
-                #
-                # Показываем ЗАГОЛОВКИ, а не имена процессов. Живой прогон
-                # 26.09.2026 выдал «Na ekrane: electron, blender, claude,
-                # msedge» — по такому списку человек не назовёт окно заново,
-                # потому что вслух он говорит «блендер» или «Личный — Edge», а
-                # не «msedge». Имя процесса остаётся запасным, когда заголовка
-                # нет вовсе.
-                $nearby = ($windows | Where-Object { $_.title -ne 'Program Manager' } |
-                    ForEach-Object {
-                        if ($_.title) { $_.title }
-                        else { (Get-Process -Id $_.pid -ErrorAction SilentlyContinue).ProcessName }
-                    } | Where-Object { $_ } | Select-Object -Unique -First 8) -join ', '
-                throw "Не нашёл окно «$needle». На экране: $nearby"
-            }
+            $target = Find-Window $needle
             $handle = [IntPtr][int64]$target.handle
             if ($handle -eq [IntPtr]::Zero) { throw "У окна «$($target.title)» нет дескриптора" }
 
@@ -491,6 +551,26 @@ function Invoke-Command2($message) {
                 throw "Не вышло поднять окно. Просили «$($target.title)», впереди «$nowFront»"
             }
             return @{ ok = $true; title = $nowFront }
+        }
+        'minimize' {
+            $target = Find-Window $message.title
+            $handle = [IntPtr][int64]$target.handle
+            if ($handle -eq [IntPtr]::Zero) { throw "У окна «$($target.title)» нет дескриптора" }
+            # SW_MINIMIZE = 6: окно уходит в панель задач, не закрывается.
+            [void][Desk]::ShowWindow($handle, 6)
+            Start-Sleep -Milliseconds 150
+            if (-not [Desk]::IsIconic($handle)) { throw "Окно «$($target.title)» не свернулось" }
+            return @{ ok = $true; title = $target.title }
+        }
+        'volume' {
+            # Без числа — только прочитать: [int]$null это 0, и «узнать громкость»
+            # иначе выключило бы звук.
+            if ($null -ne $message.level) {
+                $level = [Math]::Max(0, [Math]::Min(100, [int]$message.level))
+                [Zvuk]::Set([float]($level / 100.0))
+            }
+            # Отчитываемся тем, что система показывает после записи, а не тем, что просили.
+            return @{ ok = $true; level = [int][Math]::Round([Zvuk]::Get() * 100); muted = [Zvuk]::Muted() }
         }
         default { throw "Неизвестная команда: $($message.cmd)" }
     }

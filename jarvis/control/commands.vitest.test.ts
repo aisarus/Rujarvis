@@ -783,3 +783,36 @@ describe('вкладки из живого журнала 28.09.2026', () => {
     expect(parseDirectCommand('найди предыдущую вкладку с отчётом и сравни')).toBeNull();
   });
 });
+
+describe('мгновенное вместо агента (живой журнал 28.09.2026)', () => {
+  it('громкость числом — на обоих языках, только число после «на/до»', () => {
+    expect(parseDirectCommand('поставь громкость на 70')).toEqual({ kind: 'volume', level: 70 });
+    expect(parseDirectCommand('Опусти звук до 30%')).toEqual({ kind: 'volume', level: 30 });
+    expect(parseDirectCommand('громкость пятьдесят')).toEqual({ kind: 'volume', level: 50 });
+    expect(parseDirectCommand('set volume to 40')).toEqual({ kind: 'volume', level: 40 });
+    expect(parseDirectCommand('поставь громкость на 170')).toBeNull();
+    expect(parseDirectCommand('звук на компьютере')).toBeNull();
+  });
+
+  it('«сделай звук потише» — клавиша громкости, а не разговор', () => {
+    expect(act('сделай звук потише')).toBe('key:volumedown');
+    expect(act('сделай погромче')).toBe('key:volumeup');
+    expect(act('turn the volume down')).toBe('key:volumedown');
+  });
+
+  it('«сверни Edge» — свернуть названное; «сверни все окна» — рабочий стол', () => {
+    expect(parseDirectCommand('сверни Edge')).toEqual({ kind: 'minimize', title: 'edge' });
+    expect(parseDirectCommand('minimize Blender')).toEqual({ kind: 'minimize', title: 'blender' });
+    expect(act('Сверни все окна.')).toBe('key:win+d');
+    expect(act('minimize all windows')).toBe('key:win+d');
+    expect(act('сверни окно')).toBe('key:win+down');
+    expect(act('сверни')).toBe('key:win+down');
+  });
+
+  it('«открой сайт Netflix» — сайт, а не агент и не программа', () => {
+    expect(parseDirectCommand('открой сайт Netflix')).toEqual({ kind: 'openSite', name: 'netflix' });
+    expect(parseDirectCommand('открой мне сайт нетфликс')).toEqual({ kind: 'openSite', name: 'нетфликс' });
+    expect(parseDirectCommand('перейди на сайт гитхаб')).toEqual({ kind: 'openSite', name: 'гитхаб' });
+    expect(parseDirectCommand('open the website github')).toEqual({ kind: 'openSite', name: 'github' });
+  });
+});

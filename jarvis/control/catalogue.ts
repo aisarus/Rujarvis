@@ -52,6 +52,7 @@ function russianCatalogue(): CatalogueGroup[] {
         { say: 'переключись на блендер', does: 'показать уже открытое окно', layer: 'direct' },
         { say: 'разверни', does: 'развернуть окно', layer: 'direct' },
         { say: 'сверни', does: 'свернуть окно', layer: 'direct' },
+        { say: 'сверни эдж', does: 'свернуть названное окно', layer: 'direct' },
         { say: 'закрой окно', does: 'закрыть текущее окно', layer: 'direct' },
         { say: 'покажи рабочий стол', does: 'свернуть всё', layer: 'direct' },
       ],
@@ -122,6 +123,9 @@ function russianCatalogue(): CatalogueGroup[] {
         { say: 'закрой вкладку', does: 'закрыть вкладку', layer: 'direct' },
         { say: 'верни вкладку', does: 'вернуть закрытую', layer: 'direct' },
         { say: 'следующая вкладка', does: 'перейти к следующей', layer: 'direct' },
+        { say: 'вернись на предыдущую вкладку', does: 'перейти к предыдущей', layer: 'direct' },
+        { say: 'переключись на вкладку с ютубом', does: 'перейти на вкладку по названию', layer: 'direct' },
+        { say: 'открой сайт нетфликс', does: 'открыть сайт по имени в браузере', layer: 'direct' },
         // Вкладки и ссылки идут в браузер, даже когда впереди другое окно.
         { say: 'открой третью ссылку', does: 'открыть ссылку страницы по номеру', layer: 'direct' },
         { say: 'открой последнюю ссылку', does: 'открыть последнюю ссылку страницы', layer: 'direct' },
@@ -132,6 +136,7 @@ function russianCatalogue(): CatalogueGroup[] {
       items: [
         { say: 'громче', does: 'прибавить звук', layer: 'direct' },
         { say: 'тише звук', does: 'убавить звук', layer: 'direct' },
+        { say: 'поставь громкость на 50', does: 'громкость системы числом', layer: 'direct' },
         { say: 'выключи звук', does: 'приглушить', layer: 'direct' },
         // Здесь стояла «пауза». Она разбирается раньше — как пауза работы, и
         // это красная линия, трогать её нельзя. Музыку останавливает «играй».
@@ -188,6 +193,7 @@ function englishCatalogue(): CatalogueGroup[] {
         { say: 'switch to blender', does: 'bring an open window forward', layer: 'direct' },
         { say: 'maximize', does: 'maximize the window', layer: 'direct' },
         { say: 'minimize', does: 'minimize the window', layer: 'direct' },
+        { say: 'minimize edge', does: 'minimize the named window', layer: 'direct' },
         { say: 'close the window', does: 'close the current window', layer: 'direct' },
         { say: 'show desktop', does: 'minimize everything', layer: 'direct' },
       ],
@@ -252,6 +258,9 @@ function englishCatalogue(): CatalogueGroup[] {
         { say: 'close tab', does: 'close the tab', layer: 'direct' },
         { say: 'reopen tab', does: 'bring back a closed tab', layer: 'direct' },
         { say: 'next tab', does: 'go to the next tab', layer: 'direct' },
+        { say: 'go to the previous tab', does: 'go to the previous tab', layer: 'direct' },
+        { say: 'switch to tab youtube', does: 'go to a tab by its name', layer: 'direct' },
+        { say: 'open the website netflix', does: 'open a site by name in the browser', layer: 'direct' },
         { say: 'open the third link', does: 'open a page link by its number', layer: 'direct' },
         { say: 'open the last link', does: 'open the last link on the page', layer: 'direct' },
       ],
@@ -261,6 +270,7 @@ function englishCatalogue(): CatalogueGroup[] {
       items: [
         { say: 'volume up', does: 'louder', layer: 'direct' },
         { say: 'volume down', does: 'quieter', layer: 'direct' },
+        { say: 'set volume to 50', does: 'system volume by number', layer: 'direct' },
         { say: 'mute sound', does: 'mute the system sound', layer: 'direct' },
         { say: 'play music', does: 'play and pause', layer: 'direct' },
         { say: 'next track', does: 'next song', layer: 'direct' },

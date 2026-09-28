@@ -31,6 +31,12 @@ export type DirectCommand =
   | { kind: 'click'; button: 'left' | 'right' | 'middle'; double?: boolean }
   | { kind: 'type'; text: string }
   | { kind: 'focus'; title: string }
+  /** Свернуть названное окно — не переднее, а то, что назвали. */
+  | { kind: 'minimize'; title: string }
+  /** Громкость системы числом, 0–100. */
+  | { kind: 'volume'; level: number }
+  /** Открыть сайт в браузере по умолчанию: по имени, не по адресу. */
+  | { kind: 'openSite'; name: string }
   | { kind: 'dictation'; on: boolean }
   | { kind: 'clickNamed'; query: string }
   /** N-я ссылка страницы в браузере; -1 — последняя. */
@@ -513,11 +519,19 @@ const KEYS: Record<string, string> = {
   'сверни': 'win+down', 'свернуть': 'win+down',
   'сверни окно': 'win+down', 'сверни это окно': 'win+down',
   'сверни все': 'win+d', 'покажи рабочий стол': 'win+d',
+  // Живая запись владельца 28.09.2026: «Сверни все окна» не узнавалось.
+  'сверни все окна': 'win+d',
 
   // Звук и медиа.
   'громче': 'volumeup', 'сделай громче': 'volumeup',
   'тише звук': 'volumedown', 'сделай тише': 'volumedown',
   'выключи звук': 'volumemute', 'без звука': 'volumemute',
+  // Живые запись и журнал 28.09.2026: «сделай потише», «сделай звук потише»,
+  // «сделаем музыку погромче» не узнавались и уходили агенту на 48 с.
+  'сделай потише': 'volumedown', 'сделай погромче': 'volumeup',
+  'сделай звук потише': 'volumedown', 'сделай звук погромче': 'volumeup',
+  'сделай звук тише': 'volumedown', 'сделай звук громче': 'volumeup',
+  'сделай музыку потише': 'volumedown', 'сделай музыку погромче': 'volumeup',
   // «Поставь на паузу» сюда намеренно не добавлено. Слова остановки
   // разбираются раньше таблицы, и «пауза», «на паузу» там уже есть: это
   // просьба отложить РАБОТУ, а не нажать клавишу плеера. Забрать её сюда
@@ -545,6 +559,10 @@ const KEYS: Record<string, string> = {
   'full screen': 'f11', 'fullscreen': 'f11', 'show desktop': 'win+d', 'minimize all': 'win+d',
   'louder': 'volumeup', 'volume up': 'volumeup', 'turn it up': 'volumeup',
   'volume down': 'volumedown', 'turn it down': 'volumedown', 'mute sound': 'volumemute',
+  'turn the volume down': 'volumedown', 'turn the volume up': 'volumeup',
+  'make it quieter': 'volumedown', 'make it louder': 'volumeup',
+  'turn the music down': 'volumedown', 'turn the music up': 'volumeup',
+  'minimize all windows': 'win+d',
   'play music': 'playpause', 'resume music': 'playpause', 'next track': 'nexttrack',
   'previous track': 'prevtrack', 'next song': 'nexttrack', 'previous song': 'prevtrack',
 };
@@ -671,6 +689,12 @@ export const БРАУЗЕРЫ_ПО_СЛОВАМ: Readonly<Record<string, readonl
  * попасть в переход к программе, а не в Ctrl+Tab.
  */
 const ПРАВИЛА: Array<Rule<DirectCommand>> = [
+  // САЙТ ПО ИМЕНИ — раньше перехода к программе: «перейди на сайт гитхаб» не
+  // окно. Живой журнал 28.09.2026: «открой сайт Netflix» ушло агенту на две
+  // минуты. Адрес решает мост (openSite).
+  { pattern: '(открой|зайди|перейди) [мне] [на] сайт {куда}', make: (s) => ({ kind: 'openSite', name: s.куда as string }) },
+  { pattern: '(open|go) [to] [the] (site|website) {where}', make: (s) => ({ kind: 'openSite', name: s.where as string }) },
+
   // ВКЛАДКИ БЕЗ НАЗВАНИЯ — раньше всего про переключение, иначе общее правило
   // перехода к программе съедает «переключись на следующую вкладку».
   {
@@ -737,6 +761,11 @@ const ПРАВИЛА: Array<Rule<DirectCommand>> = [
     make: () => ({ kind: 'key', keys: 'win+up' }),
   },
   { pattern: 'закрой [это] окно', make: () => ({ kind: 'key', keys: 'alt+f4' }) },
+  // «Сверни Edge» — свернуть названное окно, а не переднее. Живой журнал
+  // 28.09.2026: ушло агенту на 44 с. «Сверни все окна» — рабочий стол, и это
+  // правило стоит раньше: иначе «все окна» стало бы названием окна.
+  { pattern: 'сверни (все|всё) [окна]', make: () => ({ kind: 'key', keys: 'win+d' }) },
+  { pattern: 'сверни [окно] {куда}', make: (s) => ({ kind: 'minimize', title: s.куда as string }) },
 
   // ПРОКРУТКА: направление словом, а не таблицей форм.
   {
@@ -761,6 +790,8 @@ const ПРАВИЛА: Array<Rule<DirectCommand>> = [
   // «hide it» это команда Блендера, и одинокое «hide» от распознавателя
   // сворачивало окно.
   { pattern: 'minimize [this|the] [window]', make: () => ({ kind: 'key', keys: 'win+down' }) },
+  { pattern: 'minimize (all|every) [windows]', make: () => ({ kind: 'key', keys: 'win+d' }) },
+  { pattern: 'minimize [the] {where}', make: (s) => ({ kind: 'minimize', title: s.where as string }) },
   { pattern: 'hide [this|the] window', make: () => ({ kind: 'key', keys: 'win+down' }) },
   { pattern: '(maximize|expand) [this|the] [window]', make: () => ({ kind: 'key', keys: 'win+up' }) },
   { pattern: 'close [this|the] window', make: () => ({ kind: 'key', keys: 'alt+f4' }) },
@@ -792,6 +823,9 @@ function readDirect(phrase: string): DirectCommand | null {
   // Вкладка по направлению — даже с искажённым словом, раньше грамматики.
   const поНаправлению = вкладкаПоНаправлению(phrase);
   if (поНаправлению) return поНаправлению;
+
+  const громкость = громкостьЧислом(phrase);
+  if (громкость) return громкость;
 
   // Грамматика раньше таблиц: она покрывает формы, которых в таблице нет.
   const поГрамматике = firstMatch(ПРАВИЛА, phrase);
@@ -979,6 +1013,27 @@ function вкладкаПоНаправлению(phrase: string): DirectCommand
   const found = ВКЛАДКА_ПО_НАПРАВЛЕНИЮ.exec(phrase);
   if (!found) return null;
   return { kind: 'key', keys: found[1] === 'след' ? 'ctrl+tab' : 'ctrl+shift+tab' };
+}
+
+/**
+ * Громкость системы числом: «поставь громкость на 70», «звук до 30 процентов».
+ *
+ * Живой журнал 28.09.2026: «сделай звук потише, опусти на 70» ушло агенту —
+ * 48 секунд на то, что система делает мгновенно. После «на/до» — только
+ * число: «звук на компьютере» числом не станет.
+ */
+const ГРОМКОСТЬ_RU =
+  /^(?:(?:сделай|поставь|установи|выстави|выставь|убавь|прибавь|опусти|подними|измени|верни)\s+)?(?:звук|громкость)\s+(?:(?:на|до)\s+)?(.+?)(?:\s+процент\S*)?$/u;
+const ГРОМКОСТЬ_EN = /^(?:(?:set|turn|put|change)\s+)?(?:the\s+)?volume\s+(?:(?:to|at)\s+)?(.+?)(?:\s+percent)?$/u;
+
+function громкостьЧислом(phrase: string): DirectCommand | null {
+  const found = ГРОМКОСТЬ_RU.exec(phrase) ?? ГРОМКОСТЬ_EN.exec(phrase);
+  const число = found?.[1];
+  if (!число) return null;
+  const толькоЧисло = число.split(' ').every((слово) => /^\d+$/u.test(слово) || parseSpokenNumber(слово) !== null);
+  if (!толькоЧисло) return null;
+  const level = parseSpokenNumber(число);
+  return level !== null && level >= 0 && level <= 100 ? { kind: 'volume', level } : null;
 }
 
 function readFocus(phrase: string): DirectCommand | null {

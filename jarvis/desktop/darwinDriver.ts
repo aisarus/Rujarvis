@@ -407,6 +407,23 @@ export function explainMiss(needle: string, windows: readonly DarwinWindow[]): s
  * Отчитываемся тем, что впереди после попытки, а не тем, что просили: драйвер,
  * который говорит «переключился» не глядя, стоит человеку минуты выяснений.
  */
+export function minimizeScript(pid: number, index: number): string {
+  return `
+tell application "System Events"
+  set p to first process whose unix id is ${Math.trunc(pid)}
+  set value of attribute "AXMinimized" of window ${Math.trunc(index)} of p to true
+end tell`;
+}
+
+export function volumeScript(level: number): string {
+  const уровень = Math.max(0, Math.min(100, Math.round(level)));
+  // «Поставь 70» при выключенном звуке — просьба слышать, а не только число.
+  return `
+set volume output volume ${уровень}
+${уровень > 0 ? 'set volume without output muted' : ''}
+return output volume of (get volume settings)`;
+}
+
 export function raiseScript(pid: number, index: number): string {
   return `
 set fieldSep to character id 31
@@ -1234,6 +1251,30 @@ export class DarwinDriver {
       }
     }
     return { title: front.title || front.app || what };
+  }
+
+  /** Свернуть окно по названию: атрибут AXMinimized — то же, что жёлтая кнопка. */
+  async minimize(title: string): Promise<{ title: string }> {
+    await this.access();
+    const windows = await this.windows();
+    const target = chooseWindow(title, windows);
+    if (!target) throw new Error(explainMiss(title, windows));
+    await this.osascript(appleScriptArgs(minimizeScript(target.pid, target.index)));
+    return { title: target.title || target.app };
+  }
+
+  /** Громкость системы: `set volume output volume`, и отчёт — прочитанным после записи. */
+  async setVolume(level: number): Promise<{ level: number }> {
+    const out = await this.osascript(appleScriptArgs(volumeScript(level)));
+    const прочитано = Number.parseInt(out.trim(), 10);
+    return { level: Number.isFinite(прочитано) ? прочитано : Math.round(level) };
+  }
+
+  async volume(): Promise<{ level: number }> {
+    const out = await this.osascript(appleScriptArgs('return output volume of (get volume settings)'));
+    const прочитано = Number.parseInt(out.trim(), 10);
+    if (!Number.isFinite(прочитано)) throw new Error('громкость не читается: у системы нет устройства вывода');
+    return { level: прочитано };
   }
 
   /** Демона нет — греть нечего: каждый вызов — свой osascript. */

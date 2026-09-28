@@ -15,7 +15,7 @@
  * Windows (UIA через PowerShell) и на маке (AX через osascript), а проверяется
  * настоящим драйвером без Электрона.
  */
-import { transliterate } from '../apps/startMenu';
+import { stem, transliterate } from '../apps/startMenu';
 import type { DesktopControl, DesktopWindow } from '../desktop/driver';
 import { editDistance } from '../voice/wakeWord';
 import type { UiElement } from './elements';
@@ -342,9 +342,13 @@ export function выбратьВкладку(название: string, элем�
     const слова = словаНазвания(вкладка.name);
     let счёт = 0;
     for (const слово of сказано) {
-      const латиницей = transliterate(слово);
+      // «С ютубом»: падеж срезается, а известное имя сайта даёт написание
+      // латиницей — «ютуб» буквами это "yutub", а вкладка называется YouTube.
+      const основа = stem(слово);
+      const латиницей = transliterate(основа);
+      const известное = САЙТЫ.find(([имена]) => имена.includes(слово) || имена.includes(основа))?.[0] ?? [];
       // «Нетфликс» латиницей — "netfliks", а пишется "netflix".
-      const варианты = [слово, латиницей, латиницей.replace(/ks/gu, 'x')];
+      const варианты = [слово, основа, латиницей, латиницей.replace(/ks/gu, 'x'), ...известное];
       let лучшееСлово = 0;
       for (const вариант of варианты) {
         if (слова.includes(вариант)) лучшееСлово = Math.max(лучшееСлово, 3);
@@ -389,4 +393,49 @@ export async function перейтиНаВкладку(desktop: DesktopControl, 
     }
   }
   return null;
+}
+
+/* ------------------------------------------------------ сайт по имени --- */
+
+/**
+ * Сайты, которые называют по имени. Ключ — как говорят, на обоих языках.
+ *
+ * Живой журнал 28.09.2026: «открой сайт Netflix» ушло агенту на две минуты —
+ * он выяснял браузер по умолчанию и поднимал окно через WinAPI.
+ */
+const САЙТЫ: ReadonlyArray<readonly [readonly string[], string]> = [
+  [['ютуб', 'ютюб', 'youtube'], 'https://www.youtube.com'],
+  [['нетфликс', 'netflix'], 'https://www.netflix.com'],
+  [['гугл', 'google'], 'https://www.google.com'],
+  [['яндекс', 'yandex'], 'https://ya.ru'],
+  [['гитхаб', 'github'], 'https://github.com'],
+  [['джимейл', 'гмейл', 'gmail', 'почта гугл'], 'https://mail.google.com'],
+  [['вк', 'вконтакте', 'vk'], 'https://vk.com'],
+  [['чат гпт', 'чатгпт', 'chatgpt', 'chat gpt'], 'https://chatgpt.com'],
+  [['клод', 'claude'], 'https://claude.ai'],
+  [['твич', 'twitch'], 'https://www.twitch.tv'],
+  [['википедия', 'википедию', 'wikipedia'], 'https://ru.wikipedia.org'],
+  [['кинопоиск', 'kinopoisk'], 'https://www.kinopoisk.ru'],
+  [['озон', 'ozon'], 'https://www.ozon.ru'],
+  [['авито', 'avito'], 'https://www.avito.ru'],
+  [['спотифай', 'spotify'], 'https://open.spotify.com'],
+  [['реддит', 'reddit'], 'https://www.reddit.com'],
+];
+
+/**
+ * Адрес сайта по сказанному имени.
+ *
+ * Известное — по таблице. Сказанное с доменом («ютуб точка ком», «site.ru»
+ * после очистки — «site ru») — как адрес. Остальное — первый результат
+ * поиска: DuckDuckGo по «!ducky» сразу переходит на него. Ничего не
+ * открывается наугад по угаданному домену.
+ */
+export function адресСайта(имя: string): string {
+  const сказано = словаНазвания(имя).filter((слово) => слово !== 'точка' && слово !== 'dot').join(' ');
+  for (const [имена, адрес] of САЙТЫ) {
+    if (имена.includes(сказано)) return адрес;
+  }
+  const домен = /^([a-z0-9-]+) (com|ru|org|net|io|ai|dev|il|me|tv)$/u.exec(сказано);
+  if (домен) return `https://${домен[1]}.${домен[2]}`;
+  return `https://duckduckgo.com/?q=${encodeURIComponent(`!ducky ${сказано}`)}`;
 }
