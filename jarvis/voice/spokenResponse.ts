@@ -46,6 +46,12 @@ const DEFAULT_MAX_CHARS = 900;
 /** Чем сказать, что сказано не всё. Молчаливый обрыв читается как поломка. */
 const thereIsMore = (): string => tr('Дальше — на экране.', 'The rest is on screen.');
 
+/** Последняя часть пути — имя файла или папки; точка в конце предложения остаётся за ним. */
+function последнееИмя(путь: string): string {
+  const части = путь.split(/[\\/]+/u).filter(Boolean);
+  return части[части.length - 1] ?? путь;
+}
+
 /** Removes anything that is noise when read aloud. */
 export function stripUnspeakable(text: string): string {
   return text
@@ -62,6 +68,14 @@ export function stripUnspeakable(text: string): string {
     // Links: keep the label, drop the target.
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/https?:\/\/\S+/g, '')
+    // Путь посреди фразы — только его имя.
+    //
+    // Владелец 28.09.2026: «перечитывает имена папок дословно вместо того,
+    // чтобы передать смысл». «Сохранил в C:\Users\ariel\Desktop\Джарвис\
+    // Images\кот.png» — это полминуты букв; смысл в «кот.png». Путь целиком —
+    // на экране.
+    .replace(/[A-Za-z]:[\\/][^\s,;«»"')]+/gu, последнееИмя)
+    .replace(/(?:~|\/(?:Users|home|Library|Applications|opt|tmp|var|usr))\/[^\s,;«»"')]+/gu, последнееИмя)
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{2,}/g, '\n')
     .trim();

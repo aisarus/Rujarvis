@@ -216,6 +216,14 @@ describe('spoken response', () => {
     expect(stripped).toContain('Смотри конфиг');
   });
 
+  it('путь посреди фразы читает только именем (владелец, 28.09.2026)', () => {
+    expect(stripUnspeakable(String.raw`Готово — сохранил в C:\Users\ariel\Desktop\Джарвис\Images\кот.png, открыл.`)).toBe(
+      'Готово — сохранил в кот.png, открыл.',
+    );
+    expect(stripUnspeakable('Рендер лежит в /Users/ariel/Desktop/Джарвис/фура.png.')).toBe('Рендер лежит в фура.png.');
+    expect(stripUnspeakable('Папка ~/Library/Application')).toBe('Папка Application');
+  });
+
   it('обычный ответ читает целиком, а не первые три фразы', () => {
     // Предел был три предложения, и это резало ответы на вопросы. Замер из
     // журнала: на «какие три вопроса в конце брейншторма» человек услышал
