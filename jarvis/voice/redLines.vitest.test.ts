@@ -102,6 +102,15 @@ const RED_LINES: RedLine[] = [
   { said: 'замолкни', control: 'mute', must: ['stopSpeaking'] },
   { said: 'пауза', control: 'pause', must: ['stopSpeaking', 'pauseForeground'] },
   { said: 'продолжай', control: 'resume', must: ['resumeLast'] },
+  // Слова управления подряд. Живая запись 28.09.2026: «тишина стоп» не
+  // сработало вовсе — целиком фразы нет в списке, а по словам не сверялось.
+  // Исполняется самое сильное: «стоп» глушит речь и сам.
+  { said: 'тишина, стоп', control: 'stop', must: ['stopSpeaking', 'cancelForeground'] },
+  { said: 'стоп, тишина', control: 'stop', must: ['stopSpeaking', 'cancelForeground'] },
+  { said: 'хватит, замолкни', control: 'stop', must: ['stopSpeaking', 'cancelForeground'] },
+  { said: 'silence, stop', control: 'stop', must: ['stopSpeaking', 'cancelForeground'] },
+  { said: 'тише, пауза', control: 'pause', must: ['stopSpeaking', 'pauseForeground'] },
+  { said: 'пауза пауза', control: 'pause', must: ['stopSpeaking', 'pauseForeground'] },
 ];
 
 describe('красные линии: разбор', () => {
@@ -131,6 +140,14 @@ describe('красные линии: разбор', () => {
     for (const said of работа) {
       expect(matchVoiceControl(said), `«${said}» перехвачено как остановка`).toBeNull();
     }
+  });
+
+  it('противоречивую смесь не угадывает', () => {
+    // «Стоп, продолжай» просит двух противоположных вещей сразу. Выбрать одну
+    // наугад — значит либо погасить работу, которую просили продолжить, либо
+    // продолжить ту, которую просили остановить.
+    expect(matchVoiceControl('стоп, продолжай')).toBeNull();
+    expect(matchVoiceControl('stop, continue')).toBeNull();
   });
 });
 

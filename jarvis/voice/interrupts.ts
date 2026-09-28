@@ -195,6 +195,50 @@ export function главноеСловоПоЗвучанию(слово: string)
 }
 
 /**
+ * Что сильнее, когда слова управления сказаны подряд.
+ *
+ * Остановка глушит речь и гасит работу, пауза глушит речь и держит работу,
+ * заглушение только глушит речь. Из «тишина, стоп» исполняется «стоп»: он
+ * делает и то, о чём просит «тишина». «Продолжай» в такой смеси не участвует:
+ * «стоп, продолжай» противоречит само себе, и угадывать здесь нельзя.
+ */
+const СИЛА: readonly VoiceControl[] = ['stop', 'cancel', 'pause', 'mute'];
+
+/** Фраза списка → чем она управляет; порядок списков тот же, что у точной сверки. */
+function управлениеФразы(фраза: string): VoiceControl | null {
+  for (const { control, phrases } of CONTROL_PHRASES) if (phrases.includes(фраза)) return control;
+  return null;
+}
+
+/**
+ * Фраза, целиком составленная из слов управления: «тишина стоп», «стоп,
+ * хватит говорить», «silence, stop».
+ *
+ * Живая запись 28.09.2026: человек сказал «тишина стоп» — и не сработало
+ * ничего. Каждое слово по отдельности — красная линия, а вместе они не
+ * совпадали ни с одной фразой списка и уходили дальше, к разбору команд.
+ * Каждый кусок здесь — фраза списка или одно слово, узнанное по звучанию, как
+ * и в одиночку; из найденного исполняется самое сильное.
+ */
+function управлениеПодряд(слова: readonly string[]): VoiceControl | null {
+  if (слова.length < 2) return null;
+  const разбор = (от: number): VoiceControl[] | null => {
+    if (от === слова.length) return [];
+    for (let до = слова.length; до > от; до -= 1) {
+      const кусок = слова.slice(от, до);
+      const control =
+        управлениеФразы(кусок.join(' ')) ?? (кусок.length === 1 ? главноеСловоПоЗвучанию(кусок[0] as string) : null);
+      if (!control || control === 'resume') continue;
+      const дальше = разбор(до);
+      if (дальше) return [control, ...дальше];
+    }
+    return null;
+  };
+  const найдено = разбор(0);
+  return найдено ? (СИЛА.find((c) => найдено.includes(c)) ?? null) : null;
+}
+
+/**
  * Recognises a control utterance.
  *
  * Returns null for anything that is not clearly one of them, including a
@@ -225,6 +269,13 @@ export function matchVoiceControl(transcript: string): ControlMatch | null {
         return остановка && проВсё(tokens) ? { control, phrase, всё: true } : { control, phrase };
       }
     }
+  }
+
+  const подряд = управлениеПодряд(meaningful);
+  if (подряд) {
+    const остановка = подряд === 'stop' || подряд === 'cancel';
+    const phrase = meaningful.join(' ');
+    return остановка && проВсё(tokens) ? { control: подряд, phrase, всё: true } : { control: подряд, phrase };
   }
 
   // Точного совпадения нет — одно слово, близкое по звучанию к главному.
