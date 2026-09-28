@@ -87,7 +87,14 @@ import {
 import { installVoice, isVoiceInstalled, Speaker } from '../jarvis/voice/tts';
 import { AUDIO_BRIDGE_CHANNELS, buildAudioBridgeHtml } from './audioBridgePage';
 import { cloudSpeechKey, createElevenLabsTranscriber } from './cloudTranscriber';
-import { createGpuTranscriber, waitForWhisperServer } from './gpuTranscriber';
+import {
+  createGpuTranscriber,
+  isWhisperServerReady,
+  waitForWhisperServer,
+  WHISPER_SERVER_PORT,
+  WHISPER_SERVER_URL,
+} from './gpuTranscriber';
+import { findGpuWhisper, GPU_WHISPER_MODEL, gpuWhisperDir, startGpuWhisper, type GpuWhisperServer } from '../jarvis/voice/gpuWhisper';
 import { createSttProcess } from './sttProcess';
 import { startLogFile } from './logFile';
 import { createGridOverlay, type GridOverlay } from './gridOverlay';
@@ -258,6 +265,14 @@ let showWork = true;
  * тишины.
  */
 let muted = false;
+/** Свой сервер распознавания на видеокарте: pid записан при запуске, гасится ровно он. */
+let серверРаспознавания: GpuWhisperServer | null = null;
+/**
+ * Растёт на каждый запуск и остановку моста. Сервер поднимается в фоне, и
+ * мост могут закрыть раньше, чем тот ответит: тогда поднявшийся сервер ничей,
+ * и его надо погасить сразу, а не подключать к мёртвому мосту.
+ */
+let поколениеМоста = 0;
 /**
  * Вопрос о разрешении, который ждёт ответа. Включая микрофон, Джарвис
  * повторяет его: человек мог выключить слух посреди вопроса и забыть, о чём
@@ -339,6 +354,51 @@ let stopGateBridge: (() => void) | null = null;
  * «напечатай джарвис молодец» — в «молодец». Оба потому, что имя вырезалось
  * откуда угодно и бралось то, что после него.
  */
+/**
+ * Поднять свой сервер распознавания на видеокарте, если он поставлен.
+ *
+ * Живой журнал 28.09.2026: base на процессоре — 1,7–3,9 с на фразу и каша
+ * вместо команд. Не поставлено, не поднялся (нет CUDA, занят порт) — null, и
+ * мост слушает процессором, как раньше: Джарвис не бывает глухим.
+ */
+async function поднятьРаспознаваниеНаВидеокарте(): Promise<string | null> {
+  if (process.platform !== 'win32' && process.platform !== 'darwin') return null;
+  if (серверРаспознавания) return серверРаспознавания.endpoint;
+  const files = await findGpuWhisper(gpuWhisperDir(PATHS.home)).catch(() => null);
+  if (!files) return null;
+  // Упавший прошлый запуск мог оставить свой сервер живым: процессы Windows не
+  // уходят вместе с родителем. Порт тогда занят, и новый сервер не поднялся
+  // бы — Джарвис молча ушёл бы на процессор. Отвечающий — берём.
+  if (await isWhisperServerReady(WHISPER_SERVER_URL)) {
+    console.log(`[jarvis:stt] на порту ${WHISPER_SERVER_PORT} уже отвечает сервер распознавания — пользуюсь им`);
+    return WHISPER_SERVER_URL;
+  }
+  const начало = Date.now();
+  const поколение = поколениеМоста;
+  try {
+    const сервер = await startGpuWhisper(files, {
+      port: WHISPER_SERVER_PORT,
+      isReady: isWhisperServerReady,
+      // Первый запуск на машине владельца — 55 с под нагрузкой: CUDA собирает
+      // ядра под видеокарту. Минуты не хватило бы впритык.
+      readyMs: 180_000,
+      log: (строка) => console.log(`[jarvis:stt] сервер: ${строка.slice(0, 200)}`),
+    });
+    // Мост закрыли, пока сервер поднимался: он ничей — гасим свой pid сразу.
+    if (поколение !== поколениеМоста) {
+      сервер.stop();
+      return null;
+    }
+    серверРаспознавания = сервер;
+    console.log(`[jarvis:stt] сервер распознавания поднят за ${Date.now() - начало} мс (pid ${сервер.pid})`);
+    return сервер.endpoint;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[jarvis:stt] видеокарта: ${message} — распознаю на процессоре`);
+    return null;
+  }
+}
+
 function withoutLeadingName(text: string): string {
   const found = findWakeWord(text);
   if (!found || found.index !== 0) return text;
@@ -898,21 +958,45 @@ async function поднятьМост(options: {
     ? createElevenLabsTranscriber({ apiKey: cloudKey, language: settings().language, fallback: recogniser })
     : null;
 
-  const gpuEndpoint = await waitForWhisperServer();
-  const gpuReady = gpuEndpoint !== null;
-  const engine: Transcriber = gpuEndpoint
-    ? createGpuTranscriber({ endpoint: gpuEndpoint, language: settings().language, fallback: cloud ?? recogniser })
-    : cloud ?? recogniser;
-
+  const сразу: Transcriber = cloud ?? recogniser;
   console.log(
     `[jarvis:stt] распознавание: ${
-      gpuReady
-        ? 'видеокарта (large-v3-turbo)'
-        : cloud
-          ? 'облако ElevenLabs Scribe (включено в настройках; звук уходит в интернет)'
-          : `Whisper ${settings().whisperModel} на этом компьютере`
+      cloud
+        ? 'облако ElevenLabs Scribe (включено в настройках; звук уходит в интернет)'
+        : `Whisper ${settings().whisperModel} на этом компьютере`
     }`,
   );
+
+  // Видеокарта — в фоне, а слух — сразу.
+  //
+  // Замер на машине владельца 28.09.2026: свой сервер поднимается 18–55 с
+  // (библиотека CUDA на полгигабайта и сборка ядер под видеокарту), а первая
+  // фраза после — ещё 2–5 с. Ждать этого до начала слушания значило бы
+  // минуту глухого Джарвиса после каждого запуска. Поэтому до готовности
+  // слушает процессор, а готовый и прогретый сервер подменяет его на ходу.
+  // Адрес чужого сервера в JARVIS_GPU_STT главнее своего.
+  let наВидеокарте: Transcriber | null = null;
+  const поколение = ++поколениеМоста;
+  void (async () => {
+    const начало = Date.now();
+    const endpoint = process.env.JARVIS_GPU_STT?.trim()
+      ? await waitForWhisperServer()
+      : await поднятьРаспознаваниеНаВидеокарте();
+    if (!endpoint || поколение !== поколениеМоста) return;
+    const gpu = createGpuTranscriber({ endpoint, language: settings().language, fallback: сразу });
+    // Прогрев секундой тишины: первая фраза иначе платит 2–5 с за разгон.
+    await gpu.transcribe(new Float32Array(16_000), 16_000).catch(() => undefined);
+    if (поколение !== поколениеМоста) return;
+    наВидеокарте = gpu;
+    console.log(
+      `[jarvis:stt] распознавание: видеокарта (${
+        серверРаспознавания ? `whisper.cpp ${GPU_WHISPER_MODEL.name}` : 'сервер whisper.cpp из JARVIS_GPU_STT'
+      }) — готова за ${Math.round((Date.now() - начало) / 1000)} с`,
+    );
+  })();
+  const engine: Transcriber = {
+    transcribe: (samples, sampleRate) => (наВидеокарте ?? сразу).transcribe(samples, sampleRate),
+  };
 
   // Every path into the session goes through here, so the room's noises are
   // filtered once rather than at each caller.
@@ -2037,6 +2121,12 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
       notes = null;
       plans = null;
       story = null;
+      // Сервер распознавания — свой процесс: не погасить его значит держать
+      // видеопамять и порт до перезагрузки, а следующий запуск моста не смог
+      // бы поднять свой.
+      поколениеМоста += 1;
+      серверРаспознавания?.stop();
+      серверРаспознавания = null;
       // Сессия разговора — это процесс CLI со своим MCP-сервером. Не закрыть
       // его значит оставить его жить до перезагрузки.
       talkRef?.dispose();

@@ -34,6 +34,8 @@
     "jarvis:talk-check": "tsx scripts/talk-live-check.ts",
     "jarvis:mac-apps-check": "tsx scripts/qa/mac-apps-check.ts",
     "jarvis:focus-check": "tsx scripts/qa/focus-check.ts",
+    "jarvis:gpu-stt": "tsx scripts/jarvis-gpu-stt.ts",
+    "jarvis:gpu-stt-check": "tsx scripts/qa/gpu-stt-check.ts",
     "jarvis:roundtrip": "tsx scripts/voice-roundtrip.ts",
     "jarvis:mac-check": "tsx scripts/probe-darwin-driver.ts",
     "jarvis:health": "node scripts/health.mjs",

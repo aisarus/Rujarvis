@@ -168,7 +168,7 @@ export async function extractTarBz2(archivePath: string, destinationDir: string)
  * Бросает, если связь оборвалась, замерла или сервер ответил отказом.
  */
 async function попытка(
-  options: ArchiveInstall,
+  options: DownloadOptions,
   target: string,
   уже: number,
   прогресс: (получено: number, всего: number) => void,
@@ -270,7 +270,23 @@ async function попытка(
  * оборвавшаяся на 180-м, качалась заново руками, а замершая стояла с
  * неподвижной полоской без конца.
  */
-async function download(options: ArchiveInstall, target: string): Promise<void> {
+/** Что нужно загрузке одного файла — без распаковки. */
+export type DownloadOptions = Pick<
+  ArchiveInstall,
+  'url' | 'expectedBytes' | 'onProgress' | 'signal' | 'fetchImpl' | 'stallMs' | 'retryDelayMs'
+>;
+
+/**
+ * Скачать один файл с докачкой, повтором и сроком на зависание.
+ *
+ * Тот же путь, что у архива модели: распознавание на видеокарте ставит zip и
+ * файл модели, и учить обрыв связи второй раз незачем.
+ */
+export async function downloadFile(options: DownloadOptions, target: string): Promise<void> {
+  await download(options, target);
+}
+
+async function download(options: DownloadOptions, target: string): Promise<void> {
   const задержка = options.retryDelayMs ?? паузаПередПовтором;
   let провалов = 0;
   let всего = options.expectedBytes;

@@ -191,8 +191,12 @@ pointing somewhere other than `localhost`). There is no telemetry.
   [cua-driver](https://github.com/trycua/cua) (MIT). The installer downloads a
   pinned release and checks its SHA-256; if that fails, screen, mouse, keyboard
   and browser still work without it.
-- GPU recognition is optional: run a whisper.cpp server and set
-  `JARVIS_GPU_STT`; otherwise recognition runs on the CPU.
+- GPU recognition is optional: `pnpm jarvis:gpu-stt` installs whisper.cpp and
+  the small model (Windows — the CUDA build for NVIDIA cards, about 900 MB;
+  Mac — `brew install whisper-cpp`, Metal) into the Jarvis folder, and Jarvis
+  starts its own server on this machine. Check it with
+  `pnpm jarvis:gpu-stt-check`. Without it, recognition runs on the CPU. Your
+  own server over the network — `JARVIS_GPU_STT`.
 
 ## Development
 
