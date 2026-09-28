@@ -11,6 +11,8 @@ import {
   ссылкиСтраницы,
   этоКлавишаВкладки,
   этоОкноБраузера,
+  выбратьВкладку,
+  перейтиНаВкладку,
 } from './browserCommands';
 import { parseDirectCommand } from './commands';
 
@@ -255,5 +257,73 @@ describe('открытьСсылку на медленной машине', () =
 
     expect(беда).toBeInstanceOf(Error);
     expect((беда as Error).message).toMatch(/не вижу ни одной ссылки \(ждал \d+ с\)/u);
+  });
+});
+
+describe('вкладка по названию (живой журнал 28.09.2026)', () => {
+  const вкладка = (name: string, x: number): UiElement => ({
+    name, id: '', type: 'TabItem', enabled: true, x, y: 20, width: 200, height: 30,
+  });
+  const ПОЛОСА = [
+    вкладка('Новая вкладка', 100),
+    вкладка('Netflix Israel - Watch TV Shows Online', 300),
+    вкладка('inbar - Поиск', 500),
+    { name: 'inbar - Поиск', id: '', type: 'Document', enabled: true, x: 600, y: 500, width: 1200, height: 800 },
+  ];
+
+  it('сказанное кириллицей и с ошибкой находит вкладку латиницей', () => {
+    expect(выбратьВкладку('инбар', ПОЛОСА)?.x).toBe(500);
+    expect(выбратьВкладку('имбар', ПОЛОСА)?.x).toBe(500);
+    expect(выбратьВкладку('нетфликс', ПОЛОСА)?.x).toBe(300);
+  });
+
+  it('не вкладку и непохожее — не выбирает', () => {
+    expect(выбратьВкладку('ютуб', ПОЛОСА)).toBeNull();
+    expect(выбратьВкладку('по', ПОЛОСА)).toBeNull();
+  });
+
+  it('ищет во втором окне браузера и щёлкает по вкладке там', async () => {
+    const поднято: string[] = [];
+    const нажато: Array<{ x?: number; y?: number }> = [];
+    let впереди = 'Claude';
+    const окна = [
+      { title: 'Claude', focused: true, minimized: false, x: 0, y: 0, width: 800, height: 600, pid: 1 },
+      { title: 'Новая вкладка — Личный: Microsoft Edge', focused: false, minimized: false, x: 0, y: 0, width: 800, height: 600, pid: 2 },
+      { title: 'aisarus/distrib и еще 2 страницы — Личный: Microsoft Edge', focused: false, minimized: true, x: 0, y: 0, width: 800, height: 600, pid: 3 },
+    ];
+    const desktop = {
+      windows: async () => окна,
+      focus: async (title: string) => {
+        поднято.push(title);
+        впереди = title;
+        return { title };
+      },
+      elements: async () => ({
+        title: впереди,
+        elements: впереди.startsWith('aisarus') ? ПОЛОСА : [вкладка('Новая вкладка', 100)],
+      }),
+      click: async (где: { x?: number; y?: number }) => {
+        нажато.push(где);
+      },
+    } as unknown as DesktopControl;
+
+    const найдено = await перейтиНаВкладку(desktop, 'инбар');
+    expect(найдено?.name).toBe('inbar - Поиск');
+    expect(поднято).toEqual([окна[1]?.title, окна[2]?.title]);
+    expect(нажато).toEqual([{ x: 500, y: 20 }]);
+  });
+
+  it('нет такой вкладки — null и ни одного щелчка', async () => {
+    const нажато: unknown[] = [];
+    const desktop = {
+      windows: async () => [{ title: 'Проба — Microsoft Edge', focused: true, minimized: false, x: 0, y: 0, width: 800, height: 600, pid: 1 }],
+      focus: async (title: string) => ({ title }),
+      elements: async () => ({ title: 'Проба — Microsoft Edge', elements: ПОЛОСА }),
+      click: async (где: unknown) => {
+        нажато.push(где);
+      },
+    } as unknown as DesktopControl;
+    expect(await перейтиНаВкладку(desktop, 'телеграм')).toBeNull();
+    expect(нажато).toEqual([]);
   });
 });

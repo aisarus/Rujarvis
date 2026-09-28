@@ -101,7 +101,7 @@ import { RunLogStore } from '../jarvis/observe/runLogStore';
 import { Storyline } from '../jarvis/observe/storyline';
 import { StartupTiming } from '../jarvis/observe/timing';
 import { parseLiveEdit, нечегоПравить } from '../jarvis/live/edits';
-import { нажать, открытьСсылку } from '../jarvis/control/browserCommands';
+import { нажать, открытьСсылку, перейтиНаВкладку } from '../jarvis/control/browserCommands';
 import { isLive, sendLive } from '../jarvis/desktop/blenderLive';
 import { NoteStore } from '../jarvis/dialogue/noteStore';
 import { describeLessons, lessonsFrom } from '../jarvis/memory/lessons';
@@ -419,7 +419,15 @@ export async function runDirectCommand(
           }
         }
         if (!found) {
-          throw new Error(`не нашёл окно «${command.title}»${почему ? `: ${почему}` : ''}`);
+          // Окна нет — может быть, это вкладка браузера позади: у окна в
+          // заголовке только активная вкладка. Живой журнал 28.09.2026:
+          // «вернись на вкладку с Инбар» — «не нашёл окно», хотя вкладка была.
+          const вкладка = await перейтиНаВкладку(desktop, command.title).catch(() => null);
+          if (вкладка) {
+            console.log(`[jarvis] переключился на вкладку «${вкладка.name}»`);
+            break;
+          }
+          throw new Error(`не нашёл ни окна, ни вкладки «${command.title}»${почему ? `: ${почему}` : ''}`);
         }
         console.log(`[jarvis] переключился на «${found.title}»`);
         break;

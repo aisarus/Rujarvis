@@ -15,7 +15,9 @@
  * Windows (UIA через PowerShell) и на маке (AX через osascript), а проверяется
  * настоящим драйвером без Электрона.
  */
+import { transliterate } from '../apps/startMenu';
 import type { DesktopControl, DesktopWindow } from '../desktop/driver';
+import { editDistance } from '../voice/wakeWord';
 import type { UiElement } from './elements';
 import { parseSpokenNumber } from './grid';
 
@@ -298,4 +300,93 @@ export async function открытьСсылку(
   }
   await desktop.click({ x: ссылка.x, y: ссылка.y });
   return ссылка;
+}
+
+/* ------------------------------------------------ вкладка по названию --- */
+
+/**
+ * Вкладки в дереве доступности: TabItem на Windows.
+ *
+ * Маковский драйвер отдаёт роли AX, и вкладок Safari среди них мы не мерили —
+ * там поиск честно не находит ничего, и фраза идёт дальше, как раньше.
+ */
+function этоВкладка(элемент: UiElement): boolean {
+  return элемент.type === 'TabItem' && элемент.enabled !== false;
+}
+
+function словаНазвания(текст: string): string[] {
+  return текст
+    .toLowerCase()
+    .replace(/ё/gu, 'е')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/u)
+    .filter(Boolean);
+}
+
+/**
+ * Какая вкладка названа: по словам названия, на обоих алфавитах.
+ *
+ * Живой журнал 28.09.2026: владелец сказал «вернись на вкладку с Инбар», а
+ * вкладка называлась «inbar - Поиск»; распознаватель к тому же записал
+ * «имбар». Каждое сказанное слово (от трёх букв) сверяется и как есть, и
+ * латиницей: целиком, по началу или с одной ошибкой. Побеждает вкладка, у
+ * которой совпало больше.
+ */
+export function выбратьВкладку(название: string, элементы: readonly UiElement[]): UiElement | null {
+  const сказано = словаНазвания(название).filter((слово) => слово.length >= 3);
+  if (сказано.length === 0) return null;
+
+  let лучшая: UiElement | null = null;
+  let лучшийСчёт = 0;
+  for (const вкладка of элементы.filter(этоВкладка)) {
+    const слова = словаНазвания(вкладка.name);
+    let счёт = 0;
+    for (const слово of сказано) {
+      const латиницей = transliterate(слово);
+      // «Нетфликс» латиницей — "netfliks", а пишется "netflix".
+      const варианты = [слово, латиницей, латиницей.replace(/ks/gu, 'x')];
+      let лучшееСлово = 0;
+      for (const вариант of варианты) {
+        if (слова.includes(вариант)) лучшееСлово = Math.max(лучшееСлово, 3);
+        else if (слова.some((ч) => ч.startsWith(вариант))) лучшееСлово = Math.max(лучшееСлово, 2);
+        else if (вариант.length >= 4 && слова.some((ч) => editDistance(ч, вариант, 1) <= 1)) {
+          лучшееСлово = Math.max(лучшееСлово, 1);
+        }
+      }
+      счёт += лучшееСлово;
+    }
+    if (счёт > лучшийСчёт) {
+      лучшая = вкладка;
+      лучшийСчёт = счёт;
+    }
+  }
+  return лучшая;
+}
+
+/**
+ * Перейти на вкладку браузера по её названию.
+ *
+ * У окна браузера в заголовке только активная вкладка, поэтому «переключись
+ * на Инбар» по окнам не находилось, когда Инбар — вкладка позади. Здесь окна
+ * браузера перебираются по очереди (переднее первым: у владельца бывает два
+ * окна Edge), в каждом — полоса вкладок из дерева доступности. Нашлась —
+ * щелчок по ней; нет — null, и решает тот, кто спрашивал.
+ */
+export async function перейтиНаВкладку(desktop: DesktopControl, название: string): Promise<UiElement | null> {
+  const окна = ((await desktop.windows()) as Array<DesktopWindow & { app?: string }>).filter(этоОкноБраузера);
+  const порядок = [
+    ...окна.filter((о) => о.focused),
+    ...окна.filter((о) => !о.focused && !о.minimized),
+    ...окна.filter((о) => !о.focused && о.minimized),
+  ].slice(0, 3);
+  for (const окно of порядок) {
+    if (!окно.focused) await desktop.focus(окно.title);
+    const { elements } = await desktop.elements();
+    const вкладка = выбратьВкладку(название, elements);
+    if (вкладка) {
+      await desktop.click({ x: вкладка.x, y: вкладка.y });
+      return вкладка;
+    }
+  }
+  return null;
 }

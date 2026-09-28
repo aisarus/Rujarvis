@@ -763,3 +763,23 @@ describe('команда после вступления и вкладка на�
     expect(parseDirectCommandInPhrase('Что там? Копируй')).toBeNull();
   });
 });
+
+describe('вкладки из живого журнала 28.09.2026', () => {
+  it('направление узнаётся и в искажённом слове — клавиша вкладок, а не поиск окна', () => {
+    expect(parseDirectCommand('вернись на предбывающую вкладку')).toEqual({ kind: 'key', keys: 'ctrl+shift+tab' });
+    expect(parseDirectCommand('переключительно предыдущую вкладку в браузере')).toEqual({ kind: 'key', keys: 'ctrl+shift+tab' });
+    expect(parseDirectCommand('вернись на прошлую вкладку')).toEqual({ kind: 'key', keys: 'ctrl+shift+tab' });
+    expect(parseDirectCommand('перейди на следущую вкладку')).toEqual({ kind: 'key', keys: 'ctrl+tab' });
+  });
+
+  it('«вернись на вкладку с X» — переход к X, без предлога', () => {
+    expect(parseDirectCommand('Вернись на вкладку с имбар')).toEqual({ kind: 'focus', title: 'имбар' });
+    expect(parseDirectCommand('переключись на вкладку со спотифай')).toEqual({ kind: 'focus', title: 'спотифай' });
+    // Начало имени на «с» предлогом не считается.
+    expect(parseDirectCommand('переключись на вкладку спотифай')).toEqual({ kind: 'focus', title: 'спотифай' });
+  });
+
+  it('просьба про вкладку внутри работы — не команда', () => {
+    expect(parseDirectCommand('найди предыдущую вкладку с отчётом и сравни')).toBeNull();
+  });
+});
