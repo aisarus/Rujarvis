@@ -13,6 +13,8 @@
  * означают «не делай», а не «делай».
  */
 
+import { editDistance } from './wakeWord';
+
 export type Confirmation = 'yes' | 'no' | 'unclear';
 
 // Оба языка сразу: ответ на вопрос о красной линии не должен зависеть от
@@ -85,6 +87,13 @@ export function readConfirmation(transcript: string): Confirmation {
 
   if (YES.some((фраза) => содержит(text, words, фраза))) return 'yes';
 
+  // «Разрешаю», искажённое распознаванием. Живой журнал 28.09.2026: Whisper
+  // base выдал «Разрешла», и вопрос повторялся, пока не истёк. Только длинное
+  // слово и не больше двух букв разницы: короткое «да» по звучанию («ба»)
+  // сюда не входит — ошибка в сторону «да» на вопросе о красной линии
+  // дороже переспроса. Отказ проверен выше и всё равно побеждает.
+  if (words.some((слово) => слово.length >= 6 && editDistance(слово, 'разрешаю', 2) <= 2)) return 'yes';
+
   // Слова, которые согласие только сами по себе.
   if (words.length <= КОРОТКИЙ_ОТВЕТ && YES_ОТДЕЛЬНО.some((слово) => words.includes(слово))) {
     return 'yes';
@@ -97,4 +106,32 @@ export function readConfirmation(transcript: string): Confirmation {
 function содержит(text: string, words: readonly string[], фраза: string): boolean {
   if (!фраза.includes(' ')) return words.includes(фраза);
   return text === фраза || ` ${text} `.includes(` ${фраза} `);
+}
+
+/**
+ * Сколько ждать ответа — считая только время, когда Джарвис слышит.
+ *
+ * Живой журнал 28.09.2026: пока висел вопрос о разрешении, владелец выключил
+ * микрофон; через 45 секунд Джарвис «не дождался ответа» и засчитал отказ —
+ * работа, на которую человек согласился бы, отменилась, пока он просто не
+ * мог ответить. Время с выключенным микрофоном не считается.
+ */
+export function ждатьОтвета(options: {
+  ждатьМс: number;
+  слышу: () => boolean;
+  истекло: () => void;
+  шагМс?: number;
+}): () => void {
+  const шаг = options.шагМс ?? 1_000;
+  let прошло = 0;
+  const timer = setInterval(() => {
+    if (!options.слышу()) return;
+    прошло += шаг;
+    if (прошло >= options.ждатьМс) {
+      clearInterval(timer);
+      options.истекло();
+    }
+  }, шаг);
+  timer.unref?.();
+  return () => clearInterval(timer);
 }

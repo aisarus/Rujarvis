@@ -41,7 +41,7 @@ import {
   windowAlias,
   windowCandidates,
 } from '../jarvis/apps/launch';
-import { readConfirmation } from '../jarvis/voice/confirm';
+import { readConfirmation, ждатьОтвета } from '../jarvis/voice/confirm';
 import { chooseShortcut } from '../jarvis/apps/startMenu';
 import { OUTPUT_SECTIONS, revealPath, sectionDir, tidyOutput } from '../jarvis/desktop/files';
 import { describeArtifacts } from '../jarvis/files/artifacts';
@@ -258,6 +258,12 @@ let showWork = true;
  * тишины.
  */
 let muted = false;
+/**
+ * Вопрос о разрешении, который ждёт ответа. Включая микрофон, Джарвис
+ * повторяет его: человек мог выключить слух посреди вопроса и забыть, о чём
+ * тот был.
+ */
+let открытыйВопрос: string | null = null;
 let story: Storyline | null = null;
 /** Джарвис целиком — чтобы закрыть его живые процессы при выходе. */
 let jarvisRef: Jarvis | null = null;
@@ -2793,7 +2799,9 @@ function registerSelfMute(
     слушать();
     console.log(`[jarvis] немой режим выключен${сам ? ' (по времени)' : ''}`);
     overlay.note(session.status, tr('Слушаю снова', 'Listening again'));
-    void session.speak(tr('Слушаю.', 'Listening.'));
+    void session.speak(
+      открытыйВопрос ? `${tr('Слушаю.', 'Listening.')} ${открытыйВопрос}` : tr('Слушаю.', 'Listening.'),
+    );
   };
 
   const выключить = (): void => {
@@ -2902,25 +2910,33 @@ async function askForApproval(
 
   return new Promise<boolean>((resolve) => {
     let settled = false;
+    const закрыть = (): void => {
+      settled = true;
+      перестатьЖдать();
+      hold(null);
+      if (открытыйВопрос === question) открытыйВопрос = null;
+    };
     const finish = (answer: 'yes' | 'no') => {
       if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      hold(null);
+      закрыть();
       session.keepAwake();
       resolve(answer === 'yes');
     };
 
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      hold(null);
-      console.log('[jarvis] ответа не дождался — считаю отказом');
-      void session.speak(tr('Не дождался ответа, отменяю.', 'No answer, cancelling.'));
-      resolve(false);
-    }, 45_000);
-    timer.unref?.();
+    // 45 секунд, в которые Джарвис слышит: выключенный микрофон — не молчание.
+    const перестатьЖдать = ждатьОтвета({
+      ждатьМс: 45_000,
+      слышу: () => !muted,
+      истекло: () => {
+        if (settled) return;
+        закрыть();
+        console.log('[jarvis] ответа не дождался — считаю отказом');
+        void session.speak(tr('Не дождался ответа, отменяю.', 'No answer, cancelling.'));
+        resolve(false);
+      },
+    });
 
+    открытыйВопрос = question;
     hold(finish);
     session.keepAwake();
     void session.speak(question);

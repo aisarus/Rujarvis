@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { readConfirmation } from './confirm';
+import { readConfirmation, ждатьОтвета } from './confirm';
 
 describe('ответ на вопрос «да или нет»', () => {
   it('слышит согласие', () => {
@@ -49,5 +49,52 @@ describe('согласие не выдумывается из неясного �
   it('но короткий ответ этими же словами — согласие', () => {
     expect(readConfirmation('можно')).toBe('yes');
     expect(readConfirmation('ну давай')).toBe('yes');
+  });
+});
+
+describe('искажённое «разрешаю» (живой журнал 28.09.2026)', () => {
+  it('длинное слово с искажением — согласие', () => {
+    for (const answer of ['Разрешла', 'разришаю', 'Это разрешаю']) {
+      expect(readConfirmation(answer), answer).toBe('yes');
+    }
+  });
+
+  it('короткое созвучие и отказ согласием не становятся', () => {
+    expect(readConfirmation('Ба')).toBe('unclear');
+    expect(readConfirmation('не разрешла')).toBe('no');
+    expect(readConfirmation('решаю')).toBe('unclear');
+  });
+});
+
+describe('ожидание ответа', () => {
+  it('время с выключенным микрофоном не считается', () => {
+    vi.useFakeTimers();
+    try {
+      let слышу = true;
+      const истекло = vi.fn();
+      ждатьОтвета({ ждатьМс: 45_000, слышу: () => слышу, истекло });
+      vi.advanceTimersByTime(30_000);
+      слышу = false;
+      vi.advanceTimersByTime(120_000);
+      expect(истекло).not.toHaveBeenCalled();
+      слышу = true;
+      vi.advanceTimersByTime(15_000);
+      expect(истекло).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('отменённое ожидание не истекает', () => {
+    vi.useFakeTimers();
+    try {
+      const истекло = vi.fn();
+      const отменить = ждатьОтвета({ ждатьМс: 5_000, слышу: () => true, истекло });
+      отменить();
+      vi.advanceTimersByTime(60_000);
+      expect(истекло).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
