@@ -60,6 +60,16 @@ const SPEECH_RMS = 0.022;
 // but not all of it, and an assistant that interrupts itself is worse than one
 // that cannot be interrupted.
 const BARGE_IN_FACTOR = 2.5;
+// Перебивание — это речь, а не любой громкий звук.
+//
+// Кусок звука здесь 256 мс, и раньше хватало одного громкого куска. Щелчок
+// клавиши у микрофона ноутбука такой кусок перекрывает: Ctrl+M и Ctrl+Space
+// обрывали Джарвиса на полуслове, и выключение микрофона съедало даже
+// собственное «Микрофон выключен» (живой журнал 28.09.2026). Щелчок длится
+// десятки миллисекунд, слог — сотню и больше: считаем, сколько кадров по 16 мс
+// подряд было громче порога перебивания.
+const BARGE_IN_MIN_MS = 120;
+const BARGE_IN_FRAME_MS = 16;
 const SILENCE_MS_TO_CLOSE = 700;
 const MIN_SPEECH_MS = 400;
 // Потолок длины записи.
@@ -90,6 +100,9 @@ let bufferedSamples = 0;
 let speechSamples = 0;
 let silenceSamples = 0;
 let sawSpeech = false;
+/** Сколько громких миллисекунд набралось подряд, пока перебивания не было. */
+let bargeLoudMs = 0;
+let bargeSent = false;
 
 let player = null;
 /** Метка фразы, которая звучит сейчас: по ней главный процесс узнаёт свою. */
@@ -124,6 +137,21 @@ function resetBuffer() {
   speechSamples = 0;
   silenceSamples = 0;
   sawSpeech = false;
+  bargeLoudMs = 0;
+  bargeSent = false;
+}
+
+/** Сколько миллисекунд куска были громче порога — по кадрам BARGE_IN_FRAME_MS. */
+function loudMs(input, threshold, sampleRate) {
+  const frame = Math.max(1, Math.round((sampleRate * BARGE_IN_FRAME_MS) / 1000));
+  let loudFrames = 0;
+  for (let start = 0; start < input.length; start += frame) {
+    const end = Math.min(input.length, start + frame);
+    let sum = 0;
+    for (let i = start; i < end; i += 1) sum += input[i] * input[i];
+    if (Math.sqrt(sum / (end - start)) > threshold) loudFrames += 1;
+  }
+  return (loudFrames * frame * 1000) / sampleRate;
 }
 
 // closedBy говорит, почему запись закончилась: 'silence' — человек замолчал,
@@ -180,13 +208,22 @@ function onAudio(event) {
     return;
   }
 
-  if (loud) {
-    // Interrupting is voice activity, not a word: waiting for "стоп" to be
-    // recognised means waiting seconds, by which time the person has already
-    // talked over the assistant. Speaking at all is the signal.
-    if (!sawSpeech && rms > SPEECH_RMS * BARGE_IN_FACTOR) {
+  // Interrupting is voice activity, not a word: waiting for "стоп" to be
+  // recognised means waiting seconds, by which time the person has already
+  // talked over the assistant. Speaking at all is the signal — но речь, а не
+  // щелчок (см. BARGE_IN_MIN_MS). Громкий в целом кусок нужен, как и раньше:
+  // так собственный голос из колонок не перебивает сам себя.
+  if (!bargeSent) {
+    const bargeThreshold = SPEECH_RMS * BARGE_IN_FACTOR;
+    const loudHere = loudMs(input, bargeThreshold, audioContext.sampleRate);
+    bargeLoudMs = loudHere > 0 ? bargeLoudMs + loudHere : 0;
+    if (rms > bargeThreshold && bargeLoudMs >= BARGE_IN_MIN_MS) {
       ipcRenderer.send(CH.speechStarted);
+      bargeSent = true;
     }
+  }
+
+  if (loud) {
     sawSpeech = true;
     speechSamples += copy.length;
     silenceSamples = 0;

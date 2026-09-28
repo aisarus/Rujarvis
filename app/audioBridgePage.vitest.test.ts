@@ -1,4 +1,4 @@
-import { Script } from 'node:vm';
+import { createContext, Script } from 'node:vm';
 
 import { describe, expect, it } from 'vitest';
 
@@ -67,5 +67,71 @@ describe('buildAudioBridgeHtml', () => {
     // Без этого оборванная на полуслове мысль снова уйдёт задачей.
     expect(html).toContain('closedBy');
     expect(html).toContain("'length'");
+  });
+});
+
+/**
+ * Перебивание — речью, а не щелчком.
+ *
+ * Живой журнал 28.09.2026: Ctrl+M и Ctrl+Space обрывали Джарвиса на полуслове.
+ * Щелчок клавиши у микрофона ноутбука перекрывал 256-мс кусок звука, и этого
+ * хватало, чтобы «перебили — замолкаю». Здесь страница выполняется целиком, с
+ * заглушками вместо Electron, и в её обработчик звука подаются настоящие
+ * куски: щелчок и слог.
+ */
+describe('перебивание', () => {
+  const html = buildAudioBridgeHtml();
+  const открывающий = html.indexOf('<script>') + '<script>'.length;
+  const тело = html.slice(открывающий, html.indexOf('</script>', открывающий));
+
+  function страница(): { отправлено: string[]; звук: (samples: Float32Array) => void } {
+    const отправлено: string[] = [];
+    const ipcRenderer = { on: () => undefined, send: (channel: string) => { отправлено.push(channel); } };
+    const контекст = createContext({
+      require: () => ({ ipcRenderer }),
+      setInterval: () => 0,
+      setTimeout: () => 0,
+      clearTimeout: () => undefined,
+      console,
+      navigator: { mediaDevices: {} },
+    });
+    new Script(тело).runInContext(контекст);
+    // Верхнеуровневые let страницы живут в общем лексическом окружении
+    // контекста: следующий скрипт их видит и может включить прослушивание.
+    new Script('ambient = true; audioContext = { sampleRate: 16000 };').runInContext(контекст);
+    const onAudio = new Script('onAudio').runInContext(контекст) as (event: unknown) => void;
+    return {
+      отправлено,
+      звук: (samples) => onAudio({ inputBuffer: { getChannelData: () => samples } }),
+    };
+  }
+
+  const КУСОК = 4096;
+  const тишина = (): Float32Array => new Float32Array(КУСОК);
+  /** Щелчок клавиши: 16 мс на пределе громкости посреди тишины. */
+  const щелчок = (): Float32Array => {
+    const out = new Float32Array(КУСОК);
+    for (let i = 1000; i < 1256; i += 1) out[i] = i % 2 === 0 ? 0.9 : -0.9;
+    return out;
+  };
+  /** Слог: 200 мс голоса громкостью обычной речи у микрофона. */
+  const слог = (): Float32Array => {
+    const out = new Float32Array(КУСОК);
+    for (let i = 0; i < 3200; i += 1) out[i] = 0.2 * Math.sin((2 * Math.PI * 180 * i) / 16000);
+    return out;
+  };
+
+  it('щелчок клавиши Джарвиса не перебивает', () => {
+    const { отправлено, звук } = страница();
+    звук(щелчок());
+    звук(тишина());
+    expect(отправлено).not.toContain('jarvis-audio:speech-started');
+  });
+
+  it('заговорил поверх — перебил, и один раз на реплику', () => {
+    const { отправлено, звук } = страница();
+    звук(слог());
+    звук(слог());
+    expect(отправлено.filter((c) => c === 'jarvis-audio:speech-started')).toHaveLength(1);
   });
 });
