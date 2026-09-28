@@ -84,6 +84,16 @@ const MIN_SCORE = 40;
 /** Одна буква совпадает с чем угодно; запрос короче этого не рассматриваем. */
 const MIN_QUERY_LENGTH = 2;
 
+/**
+ * Отдельное слово фразы — не короче трёх букв и только с начала слова.
+ *
+ * Живой журнал 28.09.2026: распознаватель выдал кашу «нажми на селку им бар
+ * билл», и слово «им» нашлось внутри «Имеет доступ к этому сайту» — Джарвис
+ * кликнул по случайной надписи. Двухбуквенные слова фразы — почти всегда
+ * предлоги и обрывки, а кусок внутри чужого слова — не название.
+ */
+const MIN_WORD_LENGTH = 3;
+
 export function chooseElement(query: string, elements: readonly UiElement[]): UiElement | null {
   const wanted = normalise(query);
   if (wanted.length < MIN_QUERY_LENGTH) return null;
@@ -114,10 +124,9 @@ function scoreElement(element: UiElement, variants: readonly Variant[]): number 
 
   let best = 0;
   for (const variant of variants) {
-    const score = Math.max(
-      matchScore(name, variant.text, 100),
-      matchScore(id, variant.text, 88),
-    );
+    const score = variant.word
+      ? matchWordScore(name, variant.text, 100)
+      : Math.max(matchScore(name, variant.text, 100), matchScore(id, variant.text, 88));
     if (score > 0) best = Math.max(best, score - variant.penalty);
   }
   if (best === 0) return 0;
@@ -144,6 +153,17 @@ interface Variant {
   text: string;
   /** Насколько это совпадение слабее точного: по части фразы — слабее. */
   penalty: number;
+  /** Слово из фразы как сказано: совпадает только с началом слова в названии (см. MIN_WORD_LENGTH). */
+  word?: boolean;
+}
+
+/** Слово фразы против названия: целое слово или его начало, а не кусок внутри. */
+function matchWordScore(candidate: string, word: string, top: number): number {
+  if (!candidate || !word) return 0;
+  const words = candidate.split(' ');
+  if (words.includes(word)) return top - 40;
+  if (words.some((part) => part.startsWith(word))) return top - 45;
+  return 0;
 }
 
 /**
@@ -155,10 +175,10 @@ interface Variant {
  * длинная фраза цеплялась бы за первое попавшееся слово.
  */
 function expand(wanted: string): Variant[] {
-  const variants = new Map<string, number>();
-  const add = (text: string, penalty: number): void => {
+  const variants = new Map<string, Variant>();
+  const add = (text: string, penalty: number, word = false): void => {
     const existing = variants.get(text);
-    if (existing === undefined || penalty < existing) variants.set(text, penalty);
+    if (existing === undefined || penalty < existing.penalty) variants.set(text, { text, penalty, word });
   };
 
   add(wanted, 0);
@@ -167,13 +187,15 @@ function expand(wanted: string): Variant[] {
   const words = wanted.split(' ');
   if (words.length > 1) {
     for (const word of words) {
-      if (word.length < MIN_QUERY_LENGTH) continue;
-      add(word, 10);
+      // Синонимы проверены заранее и ищутся как раньше («закрыть» → close в
+      // CloseButton); слово как сказано — только целиком или с начала слова.
       for (const item of synonymsOf(word)) add(item, 10);
+      if (word.length < MIN_WORD_LENGTH) continue;
+      add(word, 10, true);
     }
   }
 
-  return [...variants].map(([text, penalty]) => ({ text, penalty }));
+  return [...variants.values()];
 }
 
 function synonymsOf(wanted: string): string[] {
