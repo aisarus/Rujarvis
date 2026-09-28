@@ -120,9 +120,12 @@ async function main(): Promise<void> {
     сервер.stop();
   }
 
-  const считал = устройство.some((с) => /metal/iu.test(с))
+  // Строки об отказе («no GPU found», «failed to initialize Metal») — не
+  // признак видеокарты: одинаково строго для CUDA и Metal.
+  const признаки = устройство.filter((с) => !/no|failed|not found|error/iu.test(с));
+  const считал = признаки.some((с) => /metal/iu.test(с))
     ? 'Metal'
-    : устройство.some((с) => /cuda/iu.test(с) && !/no cuda|failed|not found|error/iu.test(с))
+    : признаки.some((с) => /cuda/iu.test(с))
       ? 'CUDA'
       : 'процессор или не видно из вывода сервера';
   const медиана = [...времена].sort((a, b) => a - b)[Math.floor(времена.length / 2)] ?? 0;
