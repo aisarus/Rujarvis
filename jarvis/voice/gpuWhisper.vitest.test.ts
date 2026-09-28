@@ -38,18 +38,20 @@ const отвечает = async (endpoint: string): Promise<boolean> => {
 };
 
 describe('установленное распознавание на видеокарте', () => {
+  // Раскладка Windows: на маке сервер ставит Homebrew, и папка runtime не смотрится
+  // вовсе. Платформа — явно, иначе на маке CI тест искал бы Homebrew.
   it('находит сервер во вложенной папке архива и модель нужного размера', async () => {
     const dir = await временная();
     await mkdir(path.join(dir, 'runtime', 'Release'), { recursive: true });
     await writeFile(path.join(dir, 'runtime', 'Release', 'whisper-server.exe'), '');
     const модель = { file: 'ggml-small-q8_0.bin', bytes: 5 };
-    expect(await findGpuWhisper(dir, модель)).toBeNull();
+    expect(await findGpuWhisper(dir, модель, 'win32')).toBeNull();
 
     await writeFile(path.join(dir, модель.file), '1234');
-    expect(await findGpuWhisper(dir, модель)).toBeNull();
+    expect(await findGpuWhisper(dir, модель, 'win32')).toBeNull();
 
     await writeFile(path.join(dir, модель.file), '12345');
-    expect(await findGpuWhisper(dir, модель)).toEqual({
+    expect(await findGpuWhisper(dir, модель, 'win32')).toEqual({
       server: path.join(dir, 'runtime', 'Release', 'whisper-server.exe'),
       model: path.join(dir, модель.file),
     });
