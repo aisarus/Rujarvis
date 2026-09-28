@@ -101,6 +101,16 @@ describe('звук и медиа', () => {
   ])('«%s» → %s', (phrase, expected) => {
     expect(act(phrase)).toBe(expected);
   });
+
+  it('«…на компьютере» в конце не мешает команде', () => {
+    // Живая запись 28.09.2026: без этого фраза доходила до закрытия программ,
+    // и по слову «компьютере» находился запущенный codex-computer-use-swift.
+    expect(act('Выключи звук на компьютере.')).toBe('key:volumemute');
+    expect(act('сделай громче на ноутбуке')).toBe('key:volumeup');
+    expect(act('mute sound on my computer')).toBe('key:volumemute');
+    // Только с конца: в середине «на компьютере» — уже содержание.
+    expect(parseDirectCommand('на компьютере выключи звук')).toBeNull();
+  });
 });
 
 describe('диктовка', () => {

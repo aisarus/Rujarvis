@@ -18,7 +18,7 @@
  * секунды ожидания; в обратную — нажатого невпопад Ctrl+F посреди работы.
  */
 
-import { stripFiller } from '../voice/filler';
+import { stripFiller, withoutPlace } from '../voice/filler';
 import { WAKE_WORD_VARIANTS } from '../voice/wakeWord';
 import { разобратьСсылку } from './browserCommands';
 import { firstMatch, type Rule } from './grammar';
@@ -598,7 +598,12 @@ export function parseDirectCommand(utterance: string): DirectCommand | null {
   // Сперва как сказано, потом без слов-вставок. Порядок важен: «стоп» и «назад»
   // должны находиться сразу, а очистка нужна только тем фразам, которые её
   // переживают без потери смысла.
-  return readDirect(exact) ?? readDirect(dropFiller(exact));
+  const безВставок = dropFiller(exact);
+  const direct = readDirect(exact) ?? readDirect(безВставок);
+  if (direct) return direct;
+  // «Выключи звук на компьютере» — это «выключи звук»; см. `withoutPlace`.
+  const безМеста = withoutPlace(безВставок.split(' ')).join(' ');
+  return безМеста === безВставок ? null : readDirect(безМеста);
 }
 
 /**

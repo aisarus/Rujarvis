@@ -116,3 +116,27 @@ export function stripFiller(words: readonly string[], extra: readonly string[] =
   // что человек сказал, и решать её судьбу не здесь.
   return kept.length > 0 ? kept : result;
 }
+
+/**
+ * «…на компьютере» в конце команды — где, а не что.
+ *
+ * Звук, окно и программа и так на этом компьютере: хвост ничего не уточняет,
+ * но ломает сверку. Живая запись 28.09.2026: «Выключи звук на компьютере» не
+ * совпало с «выключи звук» и дошло до закрытия программ, а там по слову
+ * «компьютере» нашёлся запущенный codex-computer-use-swift. Просили выключить
+ * звук — закрыли бы Кодексу управление компьютером.
+ *
+ * Снимается только с конца: в середине фразы это уже содержание.
+ */
+const МЕСТО: ReadonlyArray<readonly string[]> = [
+  ['на', 'компьютере'], ['на', 'этом', 'компьютере'], ['на', 'компе'], ['на', 'ноутбуке'], ['на', 'ноуте'],
+  ['on', 'the', 'computer'], ['on', 'my', 'computer'], ['on', 'this', 'computer'], ['on', 'the', 'pc'], ['on', 'my', 'pc'],
+];
+
+export function withoutPlace(words: readonly string[]): string[] {
+  for (const хвост of МЕСТО) {
+    const от = words.length - хвост.length;
+    if (от > 0 && хвост.every((слово, i) => words[от + i] === слово)) return words.slice(0, от);
+  }
+  return [...words];
+}

@@ -85,6 +85,14 @@ describe('spokenCloseTarget', () => {
     expect(spokenCloseTarget('открой хром')).toBeNull();
   });
 
+  it('drops «на компьютере» from the end of the name', () => {
+    // «Звук на компьютере» нечётко совпадало с запущенным
+    // codex-computer-use-swift — по слову «компьютере».
+    expect(spokenCloseTarget('закрой телеграм на компьютере')).toBe('телеграм');
+    expect(spokenCloseTarget('close telegram on my computer')).toBe('telegram');
+    expect(spokenTarget('открой блокнот на этом компьютере')).toBe('блокнот');
+  });
+
   it('leaves descriptions of work alone', () => {
     expect(spokenCloseTarget('закрой все вкладки и выключи компьютер')).toBeNull();
   });

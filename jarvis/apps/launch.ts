@@ -12,6 +12,7 @@
  * the process. No model, no shell, no chance of a confident lie.
  */
 
+import { withoutPlace } from '../voice/filler';
 import { macAppName } from './macApps';
 
 /** Verbs that mean "stop this program". */
@@ -192,9 +193,9 @@ function targetAfterVerb(utterance: string, verbs: readonly string[]): string | 
   // открывай» — то же самое, что «не открывай».
   if (words.slice(0, verbIndex).some((word) => NEGATIONS.includes(word))) return null;
 
-  const rest = words
-    .slice(verbIndex + 1)
-    .filter((word) => !FILLER.includes(word));
+  // Хвост «на компьютере» — не часть имени: по слову «компьютере» нечёткий
+  // поиск находил codex-computer-use-swift (см. `withoutPlace`).
+  const rest = withoutPlace(words.slice(verbIndex + 1)).filter((word) => !FILLER.includes(word));
 
   // Больше трёх слов — это уже описание работы, а не название программы.
   // «Открой файл отчёт и посчитай сумму» нечётко сопоставится с чем-нибудь
