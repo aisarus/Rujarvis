@@ -108,7 +108,7 @@ import { RunLogStore } from '../jarvis/observe/runLogStore';
 import { Storyline } from '../jarvis/observe/storyline';
 import { StartupTiming } from '../jarvis/observe/timing';
 import { parseLiveEdit, нечегоПравить } from '../jarvis/live/edits';
-import { адресСайта, нажать, открытьСсылку, перейтиНаВкладку } from '../jarvis/control/browserCommands';
+import { адресСайта, известныйСайт, нажать, открытьСсылку, перейтиНаВкладку } from '../jarvis/control/browserCommands';
 import { isLive, sendLive } from '../jarvis/desktop/blenderLive';
 import { NoteStore } from '../jarvis/dialogue/noteStore';
 import { describeLessons, lessonsFrom } from '../jarvis/memory/lessons';
@@ -1713,6 +1713,16 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
           // to whichever came first in the list.
           const searchable = [aliasTarget(wanted), wanted].filter(Boolean).join(' ');
           const found = chooseShortcut(searchable, await listStartMenuShortcuts(), (s) => s.name);
+          // Такой программы нет, а сайт с таким именем есть: «открой гитхаб».
+          // Живой журнал 29.09.2026: «Открой гидхаб» — «не нашёл среди
+          // установленных». Программа важнее сайта, поэтому только когда её нет.
+          const сайт = found ? null : известныйСайт(wanted);
+          if (сайт) {
+            await shell.openExternal(сайт);
+            console.log(`[jarvis] программы «${logged(wanted)}» нет — открыл сайт ${new URL(сайт).hostname}`);
+            session.keepAwake();
+            return;
+          }
           if (!found) {
             // Saying so beats sending a two-word request to the agent, which
             // costs minutes and, on this runtime, tends to report success for
