@@ -11,7 +11,7 @@
  * Джарвиса: конспект не пропадает оттого, что нет приложения.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -22,15 +22,24 @@ export function obsidianConfigPath(env: NodeJS.ProcessEnv = process.env, platfor
   return path.join(env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'), 'obsidian', 'obsidian.json');
 }
 
-/** Открытое хранилище Obsidian, если оно одно такое; иначе — последнее открывавшееся. */
-export function openObsidianVault(configText: string): string | null {
+/**
+ * Открытое хранилище Obsidian; иначе — последнее открывавшееся.
+ *
+ * Только те, что есть на диске. Obsidian помнит и удалённые хранилища — у
+ * владельца «открытым» числилось хранилище из распакованного в «Загрузки»
+ * архива, которого уже не было (29.09.2026). Взять такое — значит создать
+ * папку-призрак, которую никто не откроет, и конспект в ней потерять.
+ */
+export function openObsidianVault(configText: string, exists: (dir: string) => boolean = existsSync): string | null {
   let config: { vaults?: Record<string, { path?: string; open?: boolean; ts?: number }> };
   try {
     config = JSON.parse(configText) as typeof config;
   } catch {
     return null;
   }
-  const хранилища = Object.values(config.vaults ?? {}).filter((х): х is { path: string; open?: boolean; ts?: number } => typeof х.path === 'string');
+  const хранилища = Object.values(config.vaults ?? {}).filter(
+    (х): х is { path: string; open?: boolean; ts?: number } => typeof х.path === 'string' && exists(х.path),
+  );
   const открытое = хранилища.find((х) => х.open);
   if (открытое) return открытое.path;
   const последнее = [...хранилища].sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0))[0];
@@ -53,9 +62,10 @@ export function lectureFolder(
       return null;
     }
   },
+  exists: (dir: string) => boolean = existsSync,
 ): LectureFolder {
   const текст = readConfig();
-  const vault = текст ? openObsidianVault(текст) : null;
+  const vault = текст ? openObsidianVault(текст, exists) : null;
   return { folder: path.join(vault ?? outputDir, 'Лекции'), vault };
 }
 

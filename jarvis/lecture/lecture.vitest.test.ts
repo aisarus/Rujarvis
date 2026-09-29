@@ -27,14 +27,27 @@ describe('куда класть конспекты', () => {
         b: { path: 'C:/Users/x/Brain', ts: 2, open: true },
       },
     });
-    expect(openObsidianVault(config)).toBe('C:/Users/x/Brain');
-    expect(lectureFolder('C:/out', () => config)).toEqual({ folder: path.join('C:/Users/x/Brain', 'Лекции'), vault: 'C:/Users/x/Brain' });
+    const есть = (): boolean => true;
+    expect(openObsidianVault(config, есть)).toBe('C:/Users/x/Brain');
+    expect(lectureFolder('C:/out', () => config, есть)).toEqual({ folder: path.join('C:/Users/x/Brain', 'Лекции'), vault: 'C:/Users/x/Brain' });
   });
 
   it('без Obsidian — в папку результатов Джарвиса; открытого нет — последнее', () => {
     expect(lectureFolder('C:/out', () => null)).toEqual({ folder: path.join('C:/out', 'Лекции'), vault: null });
-    expect(openObsidianVault(JSON.stringify({ vaults: { a: { path: 'A', ts: 1 }, b: { path: 'B', ts: 5 } } }))).toBe('B');
+    expect(openObsidianVault(JSON.stringify({ vaults: { a: { path: 'A', ts: 1 }, b: { path: 'B', ts: 5 } } }), () => true)).toBe('B');
     expect(openObsidianVault('не json')).toBeNull();
+  });
+
+  it('хранилище, которого нет на диске, не берёт — даже «открытое» (журнал 29.09.2026)', () => {
+    const config = JSON.stringify({
+      vaults: {
+        a: { path: 'C:/Users/x/Documents/Obsidian Vault', ts: 1 },
+        b: { path: 'C:/Users/x/Downloads/архив/мозг', ts: 2, open: true },
+      },
+    });
+    const есть = (dir: string): boolean => dir.includes('Documents');
+    expect(openObsidianVault(config, есть)).toBe('C:/Users/x/Documents/Obsidian Vault');
+    expect(lectureFolder('C:/out', () => config, () => false)).toEqual({ folder: path.join('C:/out', 'Лекции'), vault: null });
   });
 
   it('имя файла — дата и предмет без запрещённых знаков; ссылка открывает заметку', () => {
