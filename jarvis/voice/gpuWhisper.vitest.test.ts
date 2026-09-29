@@ -94,6 +94,28 @@ describe('запуск своего сервера', () => {
     expect(ещёЖив).toBe(false);
   });
 
+  it('что с видеокартой — в журнал при запуске, а не на каждый запрос (журнал 29.09.2026)', async () => {
+    const port = await свободныйПорт();
+    const код = [
+      "console.error('ggml_cuda_init: found 1 CUDA devices');",
+      `require('http').createServer((q, r) => { console.error('system_info: CUDA : ARCHS = 860'); r.end('ok'); }).listen(${port}, '127.0.0.1');`,
+    ].join(' ');
+    const журнал: string[] = [];
+    const сервер = await startGpuWhisper(
+      { server: process.execPath, model: 'не нужна' },
+      { port, isReady: отвечает, readyMs: 15_000, log: (строка) => журнал.push(строка), command: { file: process.execPath, args: ['-e', код] } },
+    );
+    try {
+      const при_запуске = журнал.length;
+      expect(журнал.some((с) => с.includes('found 1 CUDA devices'))).toBe(true);
+      for (let i = 0; i < 3; i += 1) await fetch(`${сервер.endpoint}/`);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(журнал.length).toBe(при_запуске);
+    } finally {
+      сервер.stop();
+    }
+  });
+
   it('упавший до готовности сервер — ошибка с кодом выхода, а не вечное ожидание', async () => {
     const port = await свободныйПорт();
     await expect(

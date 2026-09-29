@@ -274,6 +274,10 @@ export async function startGpuWhisper(files: GpuWhisperFiles, options: StartGpuW
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const хвост: string[] = [];
+  // Сервер печатает system_info на каждый запрос, и в нём есть «CUDA»: живой
+  // журнал 29.09.2026 — строка на каждую фразу. Что с видеокартой, важно при
+  // запуске; дальше — только хвост на случай падения.
+  let готов = false;
   const читать = (кусок: Buffer): void => {
     for (const строка of кусок.toString('utf8').split(/\r?\n/u)) {
       const чистая = строка.trim();
@@ -281,7 +285,7 @@ export async function startGpuWhisper(files: GpuWhisperFiles, options: StartGpuW
       хвост.push(чистая);
       if (хвост.length > 8) хвост.shift();
       // Видеокарта найдена или нет — первое, что нужно знать о таком сервере.
-      if (/cuda|gpu|metal/iu.test(чистая)) options.log?.(чистая);
+      if (!готов && /cuda|gpu|metal/iu.test(чистая)) options.log?.(чистая);
     }
   };
   child.stdout?.on('data', читать);
@@ -306,6 +310,7 @@ export async function startGpuWhisper(files: GpuWhisperFiles, options: StartGpuW
     if (вышел !== null) throw new Error(`сервер распознавания вышел с кодом ${вышел}: ${хвост.join(' | ')}`);
     if (await options.isReady(endpoint)) {
       if (child.pid === undefined) throw new Error('сервер распознавания запущен без pid');
+      готов = true;
       return { endpoint, pid: child.pid, stop };
     }
     await new Promise((resolve) => setTimeout(resolve, 300));
