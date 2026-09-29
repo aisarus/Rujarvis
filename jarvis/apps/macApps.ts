@@ -46,6 +46,10 @@ const MAC_APPS: Readonly<Record<string, string>> = {
   systemsettings: 'System Settings',
   obs64: 'OBS',
   dota2: 'Dota 2',
+  // Диктофон: на Windows — «Запись голоса» из магазина, на маке — «Диктофон»
+  // (Voice Memos). Ключ — пусковое имя Windows в нижнем регистре, окно — VoiceRecorder.
+  [String.raw`shell:appsfolder\microsoft.windowssoundrecorder_8wekyb3d8bbwe!app`]: 'Voice Memos',
+  voicerecorder: 'Voice Memos',
 };
 
 /** Имя программы мака для цели из таблицы запуска, или `null`. */

@@ -70,9 +70,28 @@ const SYNONYMS: Record<string, string[]> = {
   'печать': ['print', 'печать'],
   'копировать': ['copy', 'копировать'],
   'вставить': ['paste', 'вставить'],
+  // Живой журнал 29.09.2026: «Нажми запись», «нажми на красную кнопку
+  // рекорд» — в диктофоне на иврите кнопки не нашлось ни разу, и запись
+  // включал агент четыре минуты.
+  'запись': ['record', 'recording', 'запись', 'записать', 'рекорд', 'הקלטה', 'הקלט'],
+  'остановить': ['stop', 'остановить', 'стоп', 'עצור', 'הפסק'],
+  'пауза': ['pause', 'пауза', 'השהה'],
 };
 
 /** Типы, по которым вообще имеет смысл кликать. */
+/**
+ * Противоположные кнопки: просили одно — кнопка с другим не годится.
+ *
+ * «הקלטה» (запись) есть и в «התחל הקלטה» (начать запись), и в «עצור הקלטה»
+ * (остановить запись): пока идёт запись, «начни запись» нажало бы «стоп».
+ *
+ * В одну сторону: кнопка остановки законно называется «остановить запись», и
+ * исключать её по слову «запись» из просьбы «остановить» нельзя.
+ */
+const ПРОТИВОПОЛОЖНОЕ: Record<string, string> = {
+  'запись': 'остановить',
+};
+
 const INTERACTIVE = new Set([
   'Button', 'MenuItem', 'TabItem', 'CheckBox', 'RadioButton', 'Hyperlink',
   'ListItem', 'ComboBox', 'Edit', 'SplitButton', 'TreeItem', 'Custom',
@@ -99,6 +118,13 @@ export function chooseElement(query: string, elements: readonly UiElement[]): Ui
   if (wanted.length < MIN_QUERY_LENGTH) return null;
 
   const variants = expand(wanted);
+  // Слова противоположной кнопки — только те, которых в самой просьбе нет:
+  // «остановить запись» просит остановку, хотя в ней есть и «запись».
+  const просимое = new Set(variants.map((v) => v.text));
+  const чужие = Object.entries(ПРОТИВОПОЛОЖНОЕ)
+    .filter(([слово]) => просимое.has(слово))
+    .flatMap(([, противоположное]) => SYNONYMS[противоположное] ?? [])
+    .filter((слово) => !просимое.has(слово) && !wanted.split(' ').includes(слово));
 
   let best: UiElement | null = null;
   let bestScore = 0;
@@ -107,6 +133,8 @@ export function chooseElement(query: string, elements: readonly UiElement[]): Ui
     // По выключенной кнопке кликать нечего, и выбрать её вместо живой — хуже,
     // чем не найти ничего.
     if (!element.enabled) continue;
+    const имя = normalise(element.name);
+    if (чужие.some((слово) => имя.split(' ').includes(слово))) continue;
 
     const score = scoreElement(element, variants);
     if (score > bestScore) {

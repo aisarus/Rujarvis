@@ -112,6 +112,11 @@ const APP_ALIASES: ReadonlyArray<readonly [readonly string[], string]> = [
   [['эксель', 'ексель', 'excel'], 'excel'],
   [['ворд пад', 'вордпад', 'wordpad'], 'wordpad'],
   [['настройки', 'параметры', 'settings'], 'ms-settings:'],
+  // Живой журнал 29.09.2026: «Открой диктофон» — «не нашёл среди
+  // установленных». Интерфейс Windows у владельца на иврите, и в меню «Пуск»
+  // диктофон зовётся «רשמקול»: по-русски его не найти никаким поиском. Это
+  // программа из магазина — запускается по идентификатору через shell:AppsFolder.
+  [['диктофон', 'диктофона', 'запись голоса', 'sound recorder', 'voice recorder'], String.raw`shell:AppsFolder\Microsoft.WindowsSoundRecorder_8wekyb3d8bbwe!App`],
 ];
 
 export interface AppLaunch {
@@ -252,7 +257,20 @@ const WINDOW_ALIASES: ReadonlyArray<readonly [readonly string[], string]> = [
   // процесса, и закрытие искало программу с таким именем. Окно «Параметров»
   // принадлежит SystemSettings.
   [['настройки', 'параметры', 'settings'], 'SystemSettings'],
+  [['диктофон', 'диктофона', 'запись голоса', 'sound recorder', 'voice recorder'], 'VoiceRecorder'],
 ];
+
+/**
+ * Заголовки окон программ из магазина — на языках интерфейса Windows.
+ *
+ * Окно такой программы принадлежит ApplicationFrameHost, а не её процессу, и по
+ * имени процесса его не найти; а заголовок переведён. Живой журнал
+ * 29.09.2026: у владельца Windows на иврите, и окно диктофона — «רשמקול».
+ * Процесс (для «закрой») — по-прежнему из таблицы выше.
+ */
+const ЗАГОЛОВКИ_ОКОН: Readonly<Record<string, readonly string[]>> = {
+  VoiceRecorder: ['Sound Recorder', 'Запись голоса', 'Звукозапись', 'רשמקול'],
+};
 
 /** Как окно называется на самом деле. Для переключения и закрытия. */
 export function windowAlias(phrase: string): string | null {
@@ -281,7 +299,8 @@ export function windowCandidates(title: string, platform: NodeJS.Platform = proc
   // Microsoft Edge, а не msedge; «терминал» — Terminal, а не WindowsTerminal.
   // До 27.09.2026 эти имена на маке не находились никогда.
   const первый = platform === 'darwin' && таблица ? (macAppName(таблица) ?? таблица) : таблица;
-  return [первый, title].filter((имя): имя is string => Boolean(имя));
+  const заголовки = platform === 'win32' && таблица ? (ЗАГОЛОВКИ_ОКОН[таблица] ?? []) : [];
+  return [первый, ...заголовки, title].filter((имя): имя is string => Boolean(имя));
 }
 
 export function aliasTarget(phrase: string): string | null {

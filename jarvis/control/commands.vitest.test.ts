@@ -826,3 +826,12 @@ describe('меню «Пуск» и поиск Windows (живой журнал 2
     expect(parseDirectCommand('сверни блендер')).toEqual({ kind: 'minimize', title: 'блендер' });
   });
 });
+
+describe('запись кнопкой окна (живой журнал 29.09.2026)', () => {
+  it('«начни/останови запись» — кнопка активного окна, а не закрытие программы «запись»', () => {
+    expect(parseDirectCommand('начни записывать')).toEqual({ kind: 'clickNamed', query: 'запись' });
+    expect(parseDirectCommand('Останови запись')).toEqual({ kind: 'clickNamed', query: 'остановить' });
+    expect(parseDirectCommand('start recording')).toEqual({ kind: 'clickNamed', query: 'record' });
+    expect(parseDirectCommand('stop recording')).toEqual({ kind: 'clickNamed', query: 'stop' });
+  });
+});

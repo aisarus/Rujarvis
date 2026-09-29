@@ -361,6 +361,8 @@ async function cleanEnv(): Promise<NodeJS.ProcessEnv | null> {
  */
 export async function startSource(target: string): Promise<StartSource> {
   if (target.includes('://') || /^[a-z][a-z0-9+.-]*:$/iu.test(target)) return 'протокол';
+  // Программа из магазина по идентификатору: её запускает сам проводник.
+  if (/^shell:appsfolder\\/iu.test(target)) return 'протокол';
 
   const env = await cleanEnv();
   // PATH машины получить не вышло: спросить не у чего, и врать нечем.
