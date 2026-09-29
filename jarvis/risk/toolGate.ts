@@ -16,7 +16,9 @@
  *
  * Клик по координатам и нажатие элемента окна по номеру (`click`,
  * `window_press`) не говорят, что именно нажимается, — оценить их нечем.
- * Кнопки веб-страниц (`browser_click`) называются текстом и проверяются.
+ * Кнопки веб-страниц (`browser_click`) и кнопки чужих окон по надписи
+ * (`window_click`) называются текстом и проверяются; у `window_click`
+ * сервер ещё раз сверяет надпись найденной кнопки.
  */
 
 import path from 'node:path';
@@ -124,6 +126,17 @@ export function classifyToolUse(tool: string, input: Input, context: GateContext
       const label = text('text');
       return labelRisk(label, tr(`Агент хочет нажать «${clip(label)}» в браузере.`, `The agent wants to press "${clip(label)}" in the browser.`));
     }
+    case 'window_click': {
+      // Надпись названа словами — значит оценить её можно, как у кнопки
+      // браузера. Ревью 29.09.2026: без этой ветки «Отправить» и «Оплатить»
+      // в чужой программе нажимались без вопроса.
+      const label = text('name');
+      const окно = text('window');
+      return labelRisk(
+        label,
+        tr(`Агент хочет нажать «${clip(label)}» в окне «${clip(окно)}».`, `The agent wants to press "${clip(label)}" in "${clip(окно)}".`),
+      );
+    }
     case 'browser_fill': {
       const label = text('label');
       const summary = tr(`Агент хочет ввести данные в поле «${clip(label)}».`, `The agent wants to fill in "${clip(label)}".`);
@@ -160,7 +173,8 @@ export function classifyToolUse(tool: string, input: Input, context: GateContext
   }
 }
 
-function labelRisk(label: string, summary: string): ToolRisk {
+/** Надпись кнопки: оплата и отправка — красные линии, остальное — нет. */
+export function labelRisk(label: string, summary: string): ToolRisk {
   if (PAYMENT_LABEL.test(label)) return { level: classifyAction({ kind: 'payment', detail: label }), summary };
   if (SEND_LABEL.test(label)) return { level: classifyAction({ kind: 'send-message', channel: label }), summary };
   return { level: 'safe', summary };

@@ -310,9 +310,15 @@ export class BackendManager {
         // целиком, у пользователя Claude — только Claude, и исчерпанный лимит
         // не повод жечь чужой. Названный голосом или в настройках — работает
         // как раньше: он во главе очереди, а не подмена.
-        if (id === 'codex' && номер > 0 && failures.length > 0 && (await this.claudeГотов())) {
-          failures.push('Codex не подменяет Claude Code, когда тот есть');
-          continue;
+        if (id === 'codex' && номер > 0 && failures.length > 0) {
+          const есть = await this.claudeГотов();
+          // Проба доступности — до десяти секунд, и «стоп» за это время не
+          // должен пропустить запуск следующего (ревью 29.09.2026).
+          if (cancelled) break;
+          if (есть) {
+            failures.push('Codex не подменяет Claude Code, когда тот есть');
+            continue;
+          }
         }
 
         if (failures.length > 0) {

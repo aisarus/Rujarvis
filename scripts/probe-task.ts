@@ -4,12 +4,32 @@
  * Отвечает на вопрос, на который лог не отвечает: что происходит после
  * «Работаю». Печатает каждое событие задачи с отметкой времени, включая выбор
  * backend и причину отказа.
+ *
+ * `--fast` — как короткое дело от разговора (быстрая полоса): работа без
+ * переспроса, Sonnet, сжатая инструкция. Сервер рабочего стола — из
+ * JARVIS_MCP_CONFIG, а без неё собирается сам из этой сборки.
  */
 
 import { createJarvis } from '../jarvis/createJarvis';
-import { jarvisOutputDir } from '../jarvis/setup/paths';
+import { writeDesktopMcpConfig } from '../jarvis/desktop/mcpConfig';
+import { currentLanguage } from '../jarvis/locale/language';
+import { jarvisOutputDir, jarvisPaths } from '../jarvis/setup/paths';
 
-const utterance = process.argv.slice(2).join(' ') || 'Создай в блендере красную сферу';
+const быстро = process.argv.includes('--fast');
+const utterance = process.argv.slice(2).filter((a) => a !== '--fast').join(' ') || 'Создай в блендере красную сферу';
+
+function конфигРабочегоСтола(): string | undefined {
+  if (process.env.JARVIS_MCP_CONFIG) return process.env.JARVIS_MCP_CONFIG;
+  const итог = writeDesktopMcpConfig({
+    appRoot: process.cwd(),
+    dataDir: jarvisPaths().data,
+    outputDir: jarvisOutputDir(),
+    language: currentLanguage(),
+  });
+  if (итог.ok) return итог.file;
+  console.log(`сервер рабочего стола не собран: ${'missing' in итог ? итог.missing : String(итог.error)} (pnpm build)`);
+  return undefined;
+}
 const started = Date.now();
 const at = (): string => `${((Date.now() - started) / 1000).toFixed(1)}с`;
 
@@ -17,7 +37,7 @@ async function main(): Promise<void> {
   const jarvis = createJarvis({
     workspace: process.cwd(),
     outputDir: jarvisOutputDir(),
-    desktopMcpConfig: process.env.JARVIS_MCP_CONFIG,
+    desktopMcpConfig: конфигРабочегоСтола(),
     speak: (text) => console.log(`[${at()}] говорит: ${text}`),
   });
 
@@ -55,8 +75,8 @@ async function main(): Promise<void> {
     process.exit(result?.ok === true ? 0 : 1);
   });
 
-  console.log(`[${at()}] отправляю: «${utterance}»`);
-  const turn = await jarvis.core.handleUtterance(utterance);
+  console.log(`[${at()}] отправляю${быстро ? ' коротким делом' : ''}: «${utterance}»`);
+  const turn = await jarvis.core.handleUtterance(utterance, быстро ? { asWork: true, fast: true } : {});
   console.log(`[${at()}] ход: ${turn.kind}`);
   if (turn.kind === 'task') {
     моя = turn.task.id;

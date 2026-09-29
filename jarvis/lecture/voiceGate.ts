@@ -18,6 +18,7 @@
  */
 
 import { parseDirectCommandInPhrase } from '../control/commands';
+import { readConfirmation } from '../voice/confirm';
 import { matchVoiceControl } from '../voice/interrupts';
 import { isSilenceRequest } from '../voice/noise';
 import { findWakeWord } from '../voice/wakeWord';
@@ -25,7 +26,12 @@ import { findWakeWord } from '../voice/wakeWord';
 /** Сколько слов может быть во фразе «разбудить», вместе с именем. */
 const КОРОТКАЯ_ФРАЗА = 3;
 
-export function lectureHeardForJarvis(text: string, awake: boolean): boolean {
+/**
+ * @param ждётОтвета Джарвис задал вопрос «да или нет». Тогда короткий ответ
+ *   проходит: иначе вопрос агента посреди лекции нельзя было ни разрешить, ни
+ *   запретить, и он истекал отказом (ревью 29.09.2026).
+ */
+export function lectureHeardForJarvis(text: string, awake: boolean, ждётОтвета = false): boolean {
   const фраза = text.trim();
   if (!фраза) return false;
   if (isSilenceRequest(фраза)) return true;
@@ -33,6 +39,13 @@ export function lectureHeardForJarvis(text: string, awake: boolean): boolean {
   const имя = findWakeWord(фраза);
   const безИмени = имя && имя.index === 0 ? имя.command.trim() : фраза;
   if (matchVoiceControl(безИмени) ?? matchVoiceControl(фраза)) return true;
+  if (
+    ждётОтвета &&
+    безИмени.split(/\s+/u).filter(Boolean).length <= КОРОТКАЯ_ФРАЗА &&
+    readConfirmation(безИмени) !== 'unclear'
+  ) {
+    return true;
+  }
 
   // Одно имя — разбудить, чтобы следующая фраза прошла без него. Только в
   // начале короткой фразы: в середине каши «похожее на имя» находится.

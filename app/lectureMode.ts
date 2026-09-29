@@ -35,16 +35,22 @@ interface Лекция {
 let идёт: Лекция | null = null;
 /** Итог прошлой лекции ещё пишется: её сервер занимает тот же порт. */
 let дописывается: Promise<string> | null = null;
+/**
+ * Лекция поднимается: до `идёт` — несколько ожиданий. Двойное нажатие кнопки
+ * или кнопка вместе с голосом заводили две сессии и два сервера на одном
+ * порту (ревью 29.09.2026).
+ */
+let запускается = false;
 
 export function lectureActive(): boolean {
   return идёт !== null;
 }
 
 /** Что с конспектом сейчас — для кнопки на плашке. */
-export type LectureState = 'off' | 'on' | 'finishing';
+export type LectureState = 'off' | 'starting' | 'on' | 'finishing';
 
 export function lectureState(): LectureState {
-  return идёт ? 'on' : дописывается ? 'finishing' : 'off';
+  return идёт ? 'on' : запускается ? 'starting' : дописывается ? 'finishing' : 'off';
 }
 
 const слушатели = new Set<(state: LectureState) => void>();
@@ -77,8 +83,19 @@ export interface LectureStartOptions {
 }
 
 export async function startLecture(subject: string | undefined, options: LectureStartOptions): Promise<string> {
-  if (идёт) return tr('Конспект уже пишется.', 'Already taking notes.');
+  if (идёт || запускается) return tr('Конспект уже пишется.', 'Already taking notes.');
   if (дописывается) return tr('Ещё дописываю прошлый конспект — через минуту.', 'Still finishing the previous notes. Give me a minute.');
+  запускается = true;
+  оповестить();
+  try {
+    return await начатьЛекцию(subject, options);
+  } finally {
+    запускается = false;
+    оповестить();
+  }
+}
+
+async function начатьЛекцию(subject: string | undefined, options: LectureStartOptions): Promise<string> {
 
   const dir = gpuWhisperDir(options.home);
   const files = await findGpuWhisper(dir).catch(() => null);

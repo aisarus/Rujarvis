@@ -53,7 +53,12 @@ async function main(): Promise<void> {
 
   let заметка = process.argv.slice(2).find((a) => !a.startsWith('-'));
   if (!заметка) {
-    const { folder } = lectureFolder(settings.outputDir || jarvisOutputDir(), notes);
+    // Папка результатов — как у приложения: «Jarvis» у английского интерфейса.
+    // Рабочий стол, перенесённый в OneDrive, скрипт без Electron не знает —
+    // тогда путь к заметке передаётся аргументом.
+    const результаты =
+      settings.outputDir || jarvisOutputDir(process.env, undefined, notes === 'en' ? 'Jarvis' : 'Джарвис');
+    const { folder } = lectureFolder(результаты, notes);
     const кандидаты = readdirSync(folder)
       .filter((f) => f.endsWith('.md') && !/ — (расшифровка|transcript)\.md$/u.test(f))
       .map((f) => path.join(folder, f))

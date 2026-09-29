@@ -102,6 +102,31 @@ export function killProcessTree(pid: number): Promise<boolean> {
 }
 
 /**
+ * Погасить дочерний процесс: на Windows — деревом по его pid, `kill()` —
+ * только если дерево не далось. Сразу звать `kill()` нельзя: убитый родитель
+ * уносит связь с детьми, и taskkill /T их уже не находит.
+ */
+export function stopChildTree(child: {
+  pid?: number;
+  killed: boolean;
+  exitCode: number | null;
+  signalCode?: NodeJS.Signals | null;
+  kill(): boolean;
+}): void {
+  // Уже вышел — не трогать. Номер вышедшего процесса Windows отдаёт другим, и
+  // taskkill /T по нему погасил бы чужое дерево: гасить можно только свой pid,
+  // пока он свой.
+  if (child.killed || child.exitCode !== null || (child.signalCode ?? null) !== null) return;
+  if (process.platform === 'win32' && typeof child.pid === 'number') {
+    void killProcessTree(child.pid).then((убит) => {
+      if (!убит && !child.killed && child.exitCode === null) child.kill();
+    });
+    return;
+  }
+  child.kill();
+}
+
+/**
  * Убить всех своих.
  *
  * Из реестра выбывают только подтверждённо убитые. Раньше список чистился

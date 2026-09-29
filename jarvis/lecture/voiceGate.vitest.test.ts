@@ -28,6 +28,14 @@ describe('голос во время лекции', () => {
     expect(lectureHeardForJarvis('расскажи анекдот', true)).toBe(false);
   });
 
+  it('на заданный вопрос короткое «да» и «нет» проходят; без вопроса — нет (ревью 29.09.2026)', () => {
+    expect(lectureHeardForJarvis('Джарвис, да', false, true)).toBe(true);
+    expect(lectureHeardForJarvis('нет', false, true)).toBe(true);
+    expect(lectureHeardForJarvis('Джарвис, да', false, false)).toBe(false);
+    // Длинная фраза из аудитории с «да» внутри — не ответ.
+    expect(lectureHeardForJarvis('да это было в восемнадцатом веке во Франции', false, true)).toBe(false);
+  });
+
   it('пустое — не к нему', () => {
     expect(lectureHeardForJarvis('', true)).toBe(false);
     expect(lectureHeardForJarvis('   ', false)).toBe(false);

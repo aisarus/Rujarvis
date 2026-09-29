@@ -19,6 +19,7 @@ import {
   isVendorInternalPath,
   shellByNameArgs,
   selectPermissionMode,
+  allowedToolsFor,
 } from './claudeCode';
 import {
   CodexBackend,
@@ -307,6 +308,19 @@ describe('Claude Code adapter', () => {
 
   it('без подтверждения опасное так и остаётся спрашивающим', () => {
     expect(selectPermissionMode(request({ risk: 'dangerous' }), false)).toBe('default');
+  });
+
+  it('экран без права менять: смотреть можно, писать нельзя (замер 29.09.2026)', () => {
+    // «Перечисли открытые окна» шло в режиме плана, и список окон был заблокирован.
+    const смотреть = request({ capabilities: ['computer', 'reasoning'], permissions: READ_ONLY_PERMISSIONS });
+    expect(selectPermissionMode(смотреть, false)).toBe('default');
+    const инструменты = allowedToolsFor(смотреть, true, 'win32');
+    expect(инструменты).toContain('mcp__jarvis-desktop__window_list');
+    for (const пишущий of ['Write', 'Edit', 'PowerShell', 'mcp__jarvis-desktop__write_skill']) {
+      expect(инструменты, пишущий).not.toContain(пишущий);
+    }
+    // Без экрана «только посмотреть» — по-прежнему режим плана.
+    expect(selectPermissionMode(request({ capabilities: ['coding'], permissions: READ_ONLY_PERMISSIONS }), false)).toBe('plan');
   });
 
   it('подтверждение не открывает то, что человек закрыл', () => {

@@ -23,12 +23,13 @@ import { currentLanguage, tr } from '../jarvis/locale/language';
 export const STATUS_OVERLAY_CHANNEL = 'jarvis-overlay:status';
 
 /** Состояние конспекта, как его показывает кнопка. */
-export type LectureButtonState = 'off' | 'on' | 'finishing';
+export type LectureButtonState = 'off' | 'starting' | 'on' | 'finishing';
 
 /** Подписи — при сборке страницы: язык читается из настроек позже загрузки модуля. */
 function lectureButtonLabels(): Record<LectureButtonState, string> {
   return {
     off: tr('● Конспект', '● Lecture notes'),
+    starting: tr('Начинаю…', 'Starting…'),
     on: tr('■ Закончить конспект', '■ Stop lecture notes'),
     finishing: tr('Дописываю итог…', 'Writing the summary…'),
   };
@@ -56,9 +57,9 @@ const BIG_HEIGHT = 120;
  * Полный текст — это то, о чём просил человек, но плашка плавает поверх всего,
  * и фраза на пол-экрана закрыла бы саму работу. Двести восемьдесят точек — это
  * примерно восемь строк: длинная просьба помещается целиком, а экран остаётся
- * экраном.
+ * экраном. Плюс ряд кнопок под плашкой: его потолок не должен срезать.
  */
-const MAX_HEIGHT = 280;
+const MAX_HEIGHT = 340;
 
 interface Размер {
   width: number;
@@ -167,10 +168,10 @@ lectureButton.addEventListener('click', () => {
   ipcRenderer.send(${JSON.stringify(STATUS_OVERLAY_CHANNEL + ':lecture')});
 });
 function showLecture(state) {
-  const now = state === 'on' || state === 'finishing' ? state : 'off';
+  const now = state === 'on' || state === 'finishing' || state === 'starting' ? state : 'off';
   lectureButton.textContent = lectureLabels[now];
   lectureButton.classList.toggle('on', now === 'on');
-  lectureButton.disabled = now === 'finishing';
+  lectureButton.disabled = now === 'finishing' || now === 'starting';
 }
 const dot = document.getElementById('dot');
 const label = document.getElementById('label');
@@ -507,7 +508,11 @@ function openWindow(pagePath: string, размерРежима: () => Разме
     //
     // Растём вниз от той же верхней кромки: плашка стоит внизу экрана, и рост
     // вверх выталкивал бы её за край.
-    window.setBounds({ x: было.x, y: было.y, width: режим.width, height: нужно });
+    // Нижний край — на экране: плашка стоит внизу, и выросшее окно уводило
+    // кнопки под край экрана (ревью 29.09.2026). Не помещается — поднимаем.
+    const экран = screen.getDisplayMatching(было).workArea;
+    const y = Math.max(экран.y, Math.min(было.y, экран.y + экран.height - нужно));
+    window.setBounds({ x: было.x, y, width: режим.width, height: нужно });
   };
   ipcMain.on(`${STATUS_OVERLAY_CHANNEL}:height`, onHeight);
   window.once('closed', () => {

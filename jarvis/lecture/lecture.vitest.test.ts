@@ -276,6 +276,30 @@ describe('Джарвиса закрыли посреди лекции', () => {
     expect(await finishFromTranscript({ notesFile: заметка, summarize: async () => 'x', lectureLanguage: 'he', notesLanguage: 'ru' })).toMatchObject({ skipped: 'конспект уже дописан' });
   });
 
+  it('разделы, написанные вживую, не повторяются (ревью 29.09.2026)', async () => {
+    const папка = await временная();
+    const заметка = path.join(папка, '2026-09-29 истории.md');
+    await writeFile(заметка, '# истории\n\n## Конспект\n\n### Живой раздел\n- был\n\n', 'utf8');
+    const строки = Array.from({ length: 14 }, (_, i) => `**[${String(Math.floor((i * 40) / 60)).padStart(2, '0')}:${String((i * 40) % 60).padStart(2, '0')}]** ${'מילה '.repeat(20).trim()}`);
+    await writeFile(path.join(папка, '2026-09-29 истории — расшифровка.md'), строки.join('\n\n'), 'utf8');
+
+    const просьбы: string[] = [];
+    const итог = await finishFromTranscript({
+      notesFile: заметка,
+      summarize: async (prompt) => {
+        просьбы.push(prompt);
+        return prompt.includes('## Кратко') ? '## Кратко\nО лекции.' : '### Остаток\n- пункт';
+      },
+      lectureLanguage: 'he',
+      notesLanguage: 'ru',
+    });
+    // Из двух разделов первый уже был — дописан только остаток.
+    expect(итог.sections).toBe(1);
+    const текст = await readFile(заметка, 'utf8');
+    expect(текст.match(/### /gu)).toHaveLength(2);
+    expect(просьбы[0]).toMatch(/Уже написанные разделы: Живой раздел/u);
+  });
+
   it('метки расшифровки читаются и с часами', () => {
     expect(parseTranscript('**[00:10]** a\n\nмусор\n**[1:02:03]** b')).toEqual([
       { at: 10, text: 'a' },

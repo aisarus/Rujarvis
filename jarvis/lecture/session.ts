@@ -342,6 +342,13 @@ export class LectureSession {
    */
   abandon(): void {
     this.закончена = true;
+    this.заголовокПоРазмеру();
+    // И ещё раз, когда очередь допишет уже принятые куски: иначе их звук
+    // оказался бы за объявленным размером и не проигрывался бы.
+    void this.расшифровка.finally(() => this.заголовокПоРазмеру());
+  }
+
+  private заголовокПоРазмеру(): void {
     try {
       const данные = Math.max(0, statSync(this.audioFile).size - 44);
       const файл = openSync(this.audioFile, 'r+');

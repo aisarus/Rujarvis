@@ -34,7 +34,7 @@ import { cliLaunch } from './spawnCli';
 import { randomUUID } from 'node:crypto';
 
 import { EventChannel, looksUsageLimited } from './process';
-import { forgetChild, trackChild } from '../tasks/reaper';
+import { forgetChild, stopChildTree, trackChild } from '../tasks/reaper';
 import type { BackendEvent, BackendFileChange, BackendResult, BackendRun } from './types';
 
 const BACKEND_ID = 'claude-code' as const;
@@ -268,7 +268,14 @@ export class LiveSession {
     const ушедший = this.child;
     this.child = null;
     try {
-      ушедший?.kill();
+      // Деревом, а не одним процессом: CLI через оболочку (claude.cmd) —
+      // внук, и «стоп» оставлял его работать (ревью 29.09.2026). Подставленный
+      // снаружи процесс (проверки) — своим `kill()`: taskkill по его
+      // выдуманному номеру бил бы по настоящим процессам машины.
+      if (ушедший) {
+        if (this.options.spawnProcess) ушедший.kill();
+        else stopChildTree(ушедший);
+      }
     } catch {
       // Уже мёртв — и хорошо.
     }
@@ -455,8 +462,8 @@ export class LiveSession {
     // Закрытие сессии — всегда отмена для идущего хода: человек сказал
     // «забудь», «стоп» или закрыл Джарвиса. Это исполненная просьба, а не
     // неудача, и извиняться за неё не за что.
-    const child = this.child;
+    // `die` гасит процесс деревом и сам; второй `kill()` здесь убил бы
+    // родителя раньше, чем taskkill /T найдёт его детей.
     this.die(why, отменён);
-    child?.kill();
   }
 }

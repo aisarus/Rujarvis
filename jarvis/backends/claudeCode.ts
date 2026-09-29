@@ -141,6 +141,12 @@ export function selectPermissionMode(
   allowBypass: boolean,
 ): ClaudePermissionMode {
   if (!request.permissions.edit) {
+    // Экран без права менять: смотреть можно, писать — нет. Режим плана
+    // запрещал сам взгляд: замер 29.09.2026, «перечисли открытые окна» —
+    // список окон заблокирован, и агент ответил «не могу». Правку файлов и
+    // оболочку у такой задачи отнимает список инструментов
+    // (`allowedToolsFor`), а не режим.
+    if (смотритНаЭкран(request.capabilities)) return 'default';
     // Plan mode investigates and reports without modifying anything.
     return 'plan';
   }
@@ -226,7 +232,7 @@ export function buildClaudeArgs(
     // Headless Claude Code withholds the web tools and anything that runs
     // commands unless they are named. Naming them is the difference between an
     // agent that can look something up mid-task and one that can only guess.
-    args.push('--allowedTools', toolsFor(request.capabilities, Boolean(options.gateSettings), options.platform).join(','));
+    args.push('--allowedTools', allowedToolsFor(request, Boolean(options.gateSettings), options.platform).join(','));
   } else {
     args.push(...shellByNameArgs(options.gateSettings, false, options.platform));
   }
@@ -402,6 +408,39 @@ export function shellByNameArgs(
 }
 
 /** Что агенту дать под эту задачу. */
+/** Задаче нужен экран: глаза — снимок, список окон, страница. */
+function смотритНаЭкран(capabilities: readonly JarvisCapability[]): boolean {
+  return capabilities.includes('computer') || capabilities.includes('vision') || capabilities.includes('browser');
+}
+
+/** Что пишет на диск или исполняет команды — у задачи «только посмотреть» этого нет. */
+const ПИШУЩИЕ = new Set([
+  'Edit',
+  'Write',
+  'NotebookEdit',
+  'MultiEdit',
+  'Bash',
+  'PowerShell',
+  'mcp__jarvis-desktop__write_skill',
+  'mcp__jarvis-desktop__move_to_output',
+  'mcp__jarvis-desktop__tidy_folder',
+]);
+
+/**
+ * Разрешённые инструменты запроса. Экран без права менять — без правки
+ * файлов и оболочки: режим у такой задачи `default`, и что в списке, то и
+ * можно.
+ */
+export function allowedToolsFor(
+  request: Pick<BackendRequest, 'capabilities' | 'permissions'>,
+  gated = true,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  const tools = toolsFor(request.capabilities, gated, platform);
+  if (request.permissions.edit || !смотритНаЭкран(request.capabilities)) return tools;
+  return tools.filter((tool) => !ПИШУЩИЕ.has(tool));
+}
+
 export function toolsFor(
   capabilities: readonly JarvisCapability[],
   gated = true,
@@ -684,7 +723,7 @@ export class ClaudeCodeBackend implements AgentBackend {
 
     const key: SessionKey = {
       cwd: request.cwd,
-      tools: toolsFor(request.capabilities, Boolean(this.options.gateSettings)).join(','),
+      tools: allowedToolsFor(request, Boolean(this.options.gateSettings)).join(','),
       permissionMode,
       mcpConfig: needsDesktopTools(request.capabilities) ? this.options.desktopMcpConfig : undefined,
       model,

@@ -38,6 +38,7 @@ import { buildSkillFile, isSelfAuthored, skillPath } from '../skills/author';
 import { createDesktopDriver } from './platform';
 import { createWindowTools } from './windowTools';
 import { guardEveryTool, serverGateFromEnv } from '../risk/serverGate';
+import { labelRisk } from '../risk/toolGate';
 import { windowListLines } from './cuaProtocol';
 import { pickElement, pickWindow } from './windowClick';
 import { jarvisDataRoot } from '../setup/paths';
@@ -1585,8 +1586,19 @@ function registerWindowTools(server: McpServer): void {
               элемент.выбрать.map((e) => `[${e.index}] ${e.role} «${e.name}»`).join('\n'),
           );
         }
+        // Красная линия проверялась по тому, что просили, а нажимается то,
+        // что нашлось: «сообщение» находит «Отправить сообщение». Нашлась
+        // кнопка оплаты или отправки под другой надписью — не нажимать, а
+        // попросить точное название: тогда проверка спросит человека.
+        const найдено = элемент.нажать.name;
+        if (найдено.trim().toLowerCase() !== name.trim().toLowerCase() && labelRisk(найдено, '').level !== 'safe') {
+          return say(
+            `Нашлась «${найдено}» — это оплата или отправка. Нажму только по точному названию: ` +
+              `повтори window_click с name «${найдено}».`,
+          );
+        }
         await cua.press(окно.pid, окно.windowId, элемент.нажать.index);
-        return say(`Нажал ${элемент.нажать.role} «${элемент.нажать.name}» в окне «${окно.title}».`);
+        return say(`Нажал ${элемент.нажать.role} «${найдено}» в окне «${окно.title}».`);
       } catch (error) {
         return failed(error);
       }

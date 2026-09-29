@@ -1310,7 +1310,9 @@ async function поднятьМост(options: {
   // Кнопка конспекта на плашке: в аудитории вслух не покомандуешь.
   const overlay = createStatusOverlay({
     onLectureButton: () => {
-      if (lectureState() === 'finishing') return;
+      // Пока поднимается или дописывается — нажатие ничего не делает: иначе
+      // двойной щелчок заводил вторую лекцию.
+      if (lectureState() === 'finishing' || lectureState() === 'starting') return;
       console.log(`[jarvis:lecture] кнопка на плашке: ${lectureActive() ? 'закончить' : 'начать'}`);
       void переключитьЛекцию(!lectureActive(), undefined, (текст) => overlay.note(session.status, текст)).catch(
         (error: unknown) => {
@@ -1524,7 +1526,7 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
         const started = Date.now();
         const { text } = await transcriber.transcribe(samples, payload.sampleRate);
         const распознано = Date.now();
-        if (лекция && !lectureHeardForJarvis(text, session.status.awake)) return;
+        if (лекция && !lectureHeardForJarvis(text, session.status.awake, awaitingAnswer !== null)) return;
         const seconds = (samples.length / payload.sampleRate).toFixed(1);
 
         if (!text) return;
@@ -1566,11 +1568,14 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
         // Диктовка перехватывает раньше любых разборов: в режиме записи текста
         // нет команд, есть только слова человека.
         // Ответ на заданный вопрос — раньше диктовки: «да» и «нет» разбираются
-        // прежде всего остального и не печатаются в текст. Неясное во время
-        // диктовки — это продиктованный текст, а вопрос ждёт дальше.
+        // прежде всего остального и не печатаются в текст. Но в диктовке —
+        // только короткий ответ: «да» и «не» ищутся по всей фразе, и
+        // продиктованное «Да, конечно, пришлю завтра» разрешало агенту
+        // отправку (ревью 29.09.2026). Длинное — это текст, а вопрос ждёт.
         if (awaitingAnswer) {
           const answer = readConfirmation(text);
-          if (answer !== 'unclear') {
+          const короткий = text.split(/\s+/u).filter(Boolean).length <= 3;
+          if (answer !== 'unclear' && (!dictating || короткий)) {
             console.log(`[jarvis] ответ: ${answer === 'yes' ? 'да' : 'нет'}`);
             const waiter = awaitingAnswer;
             awaitingAnswer = null;

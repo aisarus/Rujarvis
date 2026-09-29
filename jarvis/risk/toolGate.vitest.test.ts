@@ -54,6 +54,14 @@ describe('classifyToolUse', () => {
     expect(level('mcp__jarvis-desktop__browser_fill', { label: 'Поиск', value: 'погода' })).toBe('safe');
   });
 
+  it('кнопка в чужой программе по надписи проверяется так же (ревью 29.09.2026)', () => {
+    // Без своей ветки window_click проходил как безопасный, и «Отправить» в
+    // мессенджере нажималось без вопроса.
+    expect(level('mcp__jarvis-desktop__window_click', { window: 'Telegram', name: 'Отправить' })).toBe('sensitive');
+    expect(level('mcp__jarvis-desktop__window_click', { window: 'Магазин', name: 'Оплатить' })).toBe('dangerous');
+    expect(level('mcp__jarvis-desktop__window_click', { window: 'Диктофон', name: 'Начать запись' })).toBe('safe');
+  });
+
   it('кириллица в конце надписи не делает кнопку безопасной', () => {
     // Граница слова в JS считает словом только латиницу, поэтому «Перевод»,
     // «Написать» и «ПИН-код» проходили мимо всех трёх шаблонов и получали

@@ -89,9 +89,17 @@ export async function finishFromTranscript(options: FinishFromTranscriptOptions)
   const subject = предмет === с.lecture ? '' : предмет;
   const языки = { lecture: options.lectureLanguage, notes: options.notesLanguage };
 
-  const заголовки: string[] = [];
+  // Разделы, написанные вживую, не повторяются: живая сессия режет по тому
+  // же правилу, так что первые из них уже в заметке (ревью 29.09.2026 —
+  // лекция, закрытая на тридцатой минуте, получала шесть разделов дважды).
+  const место0 = заметка.indexOf(с.notes);
+  const живые = место0 >= 0
+    ? [...заметка.slice(место0).matchAll(/^###\s+(.+)$/gmu)].map((m) => (m[1] ?? '').trim())
+    : [];
+  const заголовки: string[] = [...живые];
   const разделы: string[] = [];
   for (const [номер, текст] of groupSections(куски).entries()) {
+    if (номер < живые.length) continue;
     let раздел: string | null;
     try {
       раздел = sectionFromReply(await options.summarize(sectionPrompt(текст, subject, заголовки, языки)), номер + 1, options.notesLanguage);
