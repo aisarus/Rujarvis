@@ -53,6 +53,12 @@ export interface SessionKey {
   permissionMode: string;
   mcpConfig?: string;
   model?: string;
+  /**
+   * Сессия коротких дел. Её первый ход — сжатая инструкция «одно действие,
+   * одна проверка», и долгая работа в ней делалась бы по этим правилам. Та же
+   * модель у обеих — не повод их смешивать.
+   */
+  fast?: boolean;
 }
 
 export function sameSession(a: SessionKey, b: SessionKey): boolean {
@@ -61,7 +67,8 @@ export function sameSession(a: SessionKey, b: SessionKey): boolean {
     a.tools === b.tools &&
     a.permissionMode === b.permissionMode &&
     (a.mcpConfig ?? '') === (b.mcpConfig ?? '') &&
-    (a.model ?? '') === (b.model ?? '')
+    (a.model ?? '') === (b.model ?? '') &&
+    (a.fast === true) === (b.fast === true)
   );
 }
 

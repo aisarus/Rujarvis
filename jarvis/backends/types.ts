@@ -129,6 +129,12 @@ export interface BackendRequest {
   timeoutMs?: number;
   /** Language the answer should be written in. Jarvis defaults to Russian. */
   language?: string;
+  /**
+   * Короткое дело: одно-два действия на экране — «нажми запись», «закрой
+   * диктофон». Быстрая модель и сжатая инструкция: человек ждёт секунды, а
+   * замер 29.09.2026 дал 40–250 секунд на такие дела. Решает разговор.
+   */
+  fast?: boolean;
 }
 
 export interface BackendFileChange {

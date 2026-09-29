@@ -48,6 +48,8 @@ export interface TalkRequest {
   kind: TalkCommandKind;
   /** Задача для `start`. У остальных пусто. */
   text?: string;
+  /** Короткое дело для `start` — быстрая полоса. */
+  quick?: boolean;
   at: number;
 }
 
@@ -97,9 +99,9 @@ export class TalkBridge {
    * Отказ — такой же ответ, как согласие. Молчание в инструменте читается
    * моделью как успех, и разговор скажет человеку «запустил» про незапущенное.
    */
-  async ask(kind: TalkCommandKind, text?: string): Promise<TalkAnswer> {
+  async ask(kind: TalkCommandKind, text?: string, { quick }: { quick?: boolean } = {}): Promise<TalkAnswer> {
     const id = randomUUID();
-    const request: TalkRequest = { id, kind, text, at: this.now() };
+    const request: TalkRequest = { id, kind, text, ...(quick ? { quick: true } : {}), at: this.now() };
 
     try {
       mkdirSync(this.dir, { recursive: true });
@@ -259,6 +261,7 @@ function readRequest(file: string): TalkRequest | null {
       id: request.id,
       kind: request.kind as TalkCommandKind,
       text: typeof request.text === 'string' ? request.text : undefined,
+      ...(request.quick === true ? { quick: true } : {}),
       at: typeof request.at === 'number' ? request.at : 0,
     };
   } catch {

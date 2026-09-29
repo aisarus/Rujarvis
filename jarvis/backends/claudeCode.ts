@@ -41,6 +41,26 @@ const AUTH_UNKNOWN_REASON =
   // нему, а к тому, кто ставил, — и названа простыми словами.
   'Похоже, я не могу связаться с тем, кто выполняет работу. Попросите того, кто меня ставил, открыть программу Claude и войти.';
 
+/**
+ * Короткое дело — на Sonnet (решение владельца 29.09.2026): шаг на экране у
+ * него заметно быстрее, а лимиты подписки он бережёт.
+ */
+export const FAST_MODEL = 'sonnet';
+
+/**
+ * Набор возможностей короткого дела — один на все.
+ *
+ * Тёплая сессия ищется по набору инструментов, а разбор фразы давал каждому
+ * делу свой: «нажми запись» — экран, «открой репозиторий» — экран, браузер и
+ * код. Разные наборы — разные сессии, и каждое дело стартовало холодным.
+ */
+export const FAST_CAPABILITIES: readonly JarvisCapability[] = ['computer', 'browser', 'reasoning'];
+
+/** Короткое дело — с общим набором возможностей; остальное — как есть. */
+export function asFastRequest(request: BackendRequest): BackendRequest {
+  return request.fast ? { ...request, capabilities: [...FAST_CAPABILITIES] } : request;
+}
+
 const CAPABILITIES: ReadonlySet<JarvisCapability> = new Set<JarvisCapability>([
   'reasoning',
   'coding',
@@ -74,6 +94,8 @@ export interface ClaudeCodeBackendOptions {
   probe: ClaudeCliProbe;
   /** Model override, e.g. "opus". Omitted means the CLI's own default. */
   model?: string;
+  /** Модель коротких дел (`request.fast`). По умолчанию — Sonnet. */
+  fastModel?: string;
   /**
    * Permits `--permission-mode bypassPermissions`. Off by default and never
    * derived from model output: only an explicit user setting turns it on.
@@ -311,6 +333,7 @@ const ALWAYS = [
 /** Чужое окно: смотреть, искать по имени, нажимать по номеру. */
 const WINDOW_TOOLS = [
   'mcp__jarvis-desktop__window_list',
+  'mcp__jarvis-desktop__window_click',
   'mcp__jarvis-desktop__window_look',
   'mcp__jarvis-desktop__window_find',
   'mcp__jarvis-desktop__window_press',
@@ -589,13 +612,15 @@ export class ClaudeCodeBackend implements AgentBackend {
     this.cached = null;
   }
 
-  run(request: BackendRequest): BackendRun {
+  run(исходный: BackendRequest): BackendRun {
+    const request = asFastRequest(исходный);
+    const model = request.fast ? (this.options.fastModel ?? FAST_MODEL) : this.options.model;
     const permissionMode = selectPermissionMode(
       request,
       this.options.allowBypassPermissions === true,
     );
 
-    const живая = this.liveRun(request, permissionMode);
+    const живая = this.liveRun(request, permissionMode, model);
     if (живая) return живая;
 
     return createCliRun({
@@ -603,7 +628,7 @@ export class ClaudeCodeBackend implements AgentBackend {
       availability: () => this.checkAvailability(),
       buildArgs: () =>
         buildClaudeArgs(request, {
-          model: this.options.model,
+          model,
           permissionMode,
           desktopMcpConfig: this.options.desktopMcpConfig,
           homeDir: this.options.homeDir,
@@ -637,7 +662,7 @@ export class ClaudeCodeBackend implements AgentBackend {
    * `null` значит «этой задаче живая сессия не подходит» — тогда работает
    * обычный разовый прогон, как раньше.
    */
-  private liveRun(request: BackendRequest, permissionMode: ClaudePermissionMode): BackendRun | null {
+  private liveRun(request: BackendRequest, permissionMode: ClaudePermissionMode, model: string | undefined): BackendRun | null {
     const pool = this.options.sessions;
     if (!pool || this.options.spawnCli) return null;
 
@@ -662,7 +687,8 @@ export class ClaudeCodeBackend implements AgentBackend {
       tools: toolsFor(request.capabilities, Boolean(this.options.gateSettings)).join(','),
       permissionMode,
       mcpConfig: needsDesktopTools(request.capabilities) ? this.options.desktopMcpConfig : undefined,
-      model: this.options.model,
+      model,
+      ...(request.fast ? { fast: true } : {}),
     };
 
     const готовая = pool.find(key);

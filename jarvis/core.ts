@@ -325,7 +325,7 @@ export class JarvisCore {
    */
   async handleUtterance(
     utterance: string,
-    { asWork = false }: { asWork?: boolean } = {},
+    { asWork = false, fast = false }: { asWork?: boolean; fast?: boolean } = {},
   ): Promise<JarvisTurn> {
     const settings = this.options.settings();
 
@@ -562,6 +562,7 @@ export class JarvisCore {
       // Согласие человека едет с задачей: иначе бэкенд запустится в режиме, где
       // каждая запись отклоняется, и согласие не купит ничего.
       approved: approvedByHuman,
+      ...(fast ? { fast: true } : {}),
     };
 
     const preference: BackendPreference = toBackendPreference(decision, {

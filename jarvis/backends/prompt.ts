@@ -111,6 +111,7 @@ const TOOL_NAMES = [
   '- Сайт: page_ride (снять целиком), page_depth (есть ли что делать),',
   '  browser_open, browser_read, browser_click, browser_fill, browser_key,',
   '  browser_wait_for, browser_download.',
+  '- Кнопка в чужой программе по надписи — window_click(окно, надпись): один вызов.',
   '- Чужая программа: window_list → window_look (снимок окна ОДИН раз) →',
   '  window_find по надписи → window_press по номеру. Имя бери со снимка.',
   '  window_find стоит 300 токенов и 90 мс, снимок экрана — 2 700 и секунды.',
@@ -228,7 +229,50 @@ const POWERSHELL_CYRILLIC = [
   '- При записи всегда -Encoding utf8: по умолчанию пишется кодовая страница.',
 ].join('\n');
 
+/**
+ * Короткое дело: одно-два действия на экране.
+ *
+ * Журнал 29.09.2026: «нажми запись в диктофоне» — 254 секунды, «закрой
+ * диктофон» — 145, «открой репозиторий» — 40. Время ушло не на нажатие, а
+ * на всё вокруг: пять вызовов на одну кнопку, поиск записей по всему диску,
+ * которого не просили, запоминание, правка навыка, починка чужих настроек.
+ * Человек в это время ждал.
+ */
+export const FAST_GUIDANCE = [
+  'КОРОТКОЕ ДЕЛО — ДЕЛАЙ БЫСТРО:',
+  '- Это одно-два действия на экране. Человек ждёт секунды, а не минуты.',
+  '- Кнопку в программе нажимай window_click: окно по названию, кнопка по надписи — один вызов.',
+  '  Не знаешь надписи — один window_look, потом window_click. Снимок всего экрана — последнее средство.',
+  '- После действия проверь один раз и заканчивай. Подтвердилось — не перепроверяй.',
+  '- Делай только то, что просили: не ищи файлы по диску, не запоминай, не пиши навыки,',
+  '  не закрывай и не перезапускай программы, если об этом не просили.',
+  '- Мешает то, что за одно-два действия не решить (нет доступа, нужна настройка, программа',
+  '  не отвечает), — не чини. Остановись и скажи одной фразой, что мешает и что можно сделать.',
+  '- Ответ — одна короткая фраза о результате.',
+].join('\n');
+
+function buildFastPrompt(request: BackendRequest, platform: NodeJS.Platform): string {
+  const parts: string[] = [];
+  const standing = request.instructions?.trim();
+  if (standing) parts.push(`ПОСТОЯННЫЕ УКАЗАНИЯ ЧЕЛОВЕКА (действуют всегда):\n${standing}`);
+  parts.push(`USER REQUEST (verbatim, this is the source of truth):\n"""\n${request.utterance.trim()}\n"""`);
+  const context = section('CONTEXT', request.context ?? []);
+  if (context) parts.push(context);
+  const permissions = section('PERMISSIONS', permissionLines(request));
+  if (permissions) parts.push(permissions);
+  parts.push(FAST_GUIDANCE);
+  if (platform === 'win32') parts.push(POWERSHELL_CYRILLIC);
+  if (request.showWork === false) parts.push(QUIET_MODE);
+  parts.push(
+    (request.language ?? 'ru') === 'ru'
+      ? 'ANSWER FORMAT\n- Write the final answer in Russian: one short sentence with the outcome.'
+      : 'ANSWER FORMAT\n- One short sentence with the outcome.',
+  );
+  return parts.join('\n\n');
+}
+
 export function buildBackendPrompt(request: BackendRequest, platform: NodeJS.Platform = process.platform): string {
+  if (request.fast) return buildFastPrompt(request, platform);
   const language = request.language ?? 'ru';
   const parts: string[] = [];
 

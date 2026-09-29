@@ -344,13 +344,13 @@ export class VoiceSession {
    * Мимо пробуждения и слов остановки нарочно: разговор уже выслушал человека
    * и уже решил. Второй раз спрашивать «а обращались ли ко мне» не у кого.
    */
-  async work(utterance: string): Promise<JarvisTurn | null> {
-    return this.dispatch(utterance, { asWork: true });
+  async work(utterance: string, { fast = false }: { fast?: boolean } = {}): Promise<JarvisTurn | null> {
+    return this.dispatch(utterance, { asWork: true, fast });
   }
 
   private async dispatch(
     utterance: string,
-    options: { asWork?: boolean } = {},
+    options: { asWork?: boolean; fast?: boolean } = {},
   ): Promise<JarvisTurn | null> {
     this.setIndicator('thinking');
     let turn: JarvisTurn;

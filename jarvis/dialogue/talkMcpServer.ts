@@ -81,10 +81,18 @@ export function createTalkMcpServer(bridge = new TalkBridge(bridgeDir())): McpSe
         'то, что уже делается.',
       inputSchema: {
         task: z.string().describe('Что сделать, словами человека.'),
+        quick: z
+          .boolean()
+          .optional()
+          .describe(
+            'true — короткое дело: одно-два действия на экране или в программе («нажми запись», ' +
+              '«закрой диктофон», «открой вторую вкладку»). Делается быстрой моделью за секунды. ' +
+              'Код, модели, документы, поиск и всё, что требует размышлений, — не короткое.',
+          ),
       },
     },
-    async ({ task }) => {
-      const answer = await bridge.ask('start', task);
+    async ({ task, quick }) => {
+      const answer = await bridge.ask('start', task, { quick });
       return answer.ok ? say(answer.text) : refused(answer.text);
     },
   );

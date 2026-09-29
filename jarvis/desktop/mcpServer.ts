@@ -39,6 +39,7 @@ import { createDesktopDriver } from './platform';
 import { createWindowTools } from './windowTools';
 import { guardEveryTool, serverGateFromEnv } from '../risk/serverGate';
 import { windowListLines } from './cuaProtocol';
+import { pickElement, pickWindow } from './windowClick';
 import { jarvisDataRoot } from '../setup/paths';
 
 const driver = createDesktopDriver();
@@ -1542,6 +1543,50 @@ function registerWindowTools(server: McpServer): void {
           );
         }
         return say(found.map((e) => `[${e.index}] ${e.role} «${e.name}»`).join('\n'));
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'window_click',
+    {
+      title: 'Нажать в окне по надписи',
+      description:
+        'Одним вызовом: окно по части заголовка или имени программы, в нём элемент по ' +
+        'надписи — и нажимает. Вместо window_list → window_find → window_press. Подходят ' +
+        'несколько, а точной надписи нет — ничего не нажимает и возвращает список с номерами ' +
+        'для window_press.',
+      inputSchema: {
+        window: z.string().describe('Часть заголовка окна или имя программы, например «Диктофон» или «msedge»'),
+        name: z.string().describe('Надпись на кнопке или элементе, например «Сохранить»'),
+      },
+    },
+    async ({ window, name }) => {
+      try {
+        const окна = await cua.windows();
+        const выбор = pickWindow(окна, window);
+        if ('нет' in выбор) {
+          const открыты = окна.map((w) => `«${w.title || w.app}»`).slice(0, 12).join(', ');
+          return say(`Окна «${window}» нет. Открыты: ${открыты || 'ничего'}.`);
+        }
+        const { окно } = выбор;
+        const элемент = pickElement(await cua.find(окно.pid, окно.windowId, name), name);
+        if ('нет' in элемент) {
+          return say(
+            `В окне «${окно.title}» нет «${name}». Сделай window_look (pid ${окно.pid}, окно ${окно.windowId}) ` +
+              'и возьми надпись со снимка.',
+          );
+        }
+        if ('выбрать' in элемент) {
+          return say(
+            `Подходит несколько (pid ${окно.pid}, окно ${окно.windowId}) — нажми нужный window_press:\n` +
+              элемент.выбрать.map((e) => `[${e.index}] ${e.role} «${e.name}»`).join('\n'),
+          );
+        }
+        await cua.press(окно.pid, окно.windowId, элемент.нажать.index);
+        return say(`Нажал ${элемент.нажать.role} «${элемент.нажать.name}» в окне «${окно.title}».`);
       } catch (error) {
         return failed(error);
       }

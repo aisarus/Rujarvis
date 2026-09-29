@@ -73,6 +73,7 @@ import { findWakeWord } from '../jarvis/voice/wakeWord';
 import { spokenTaskEnd } from '../jarvis/voice/spokenResponse';
 import { createJarvis, type Jarvis } from '../jarvis/createJarvis';
 import { setLocalModel } from '../jarvis/backends/localModel';
+import { FAST_MODEL } from '../jarvis/backends/claudeCode';
 import { setLanguage, tr } from '../jarvis/locale/language';
 import type { BackendFileChange } from '../jarvis/backends/types';
 import { jarvisOutputDir, jarvisPaths } from '../jarvis/setup/paths';
@@ -1362,6 +1363,10 @@ async function поднятьМост(options: {
     unavailable: async () => talkUnavailableReason(await jarvis.backends.availability()),
     // Дом Джарвиса, а не рабочая папка: разговору нечего делать в коде.
     cwd: jarvisHome(),
+    // Разговор — на Sonnet (решение владельца 29.09.2026): ход на модели по
+    // умолчанию шёл 5–10 секунд, а разговор решает, что делать, а не делает.
+    // Своя модель на домашнем сервере имени «sonnet» не знает — там её имя.
+    model: settings().localModelUrl ? undefined : FAST_MODEL,
     mcpConfig: writeTalkMcpConfig(talkBridgeDir),
     delta: { journalFile: journalFile(), planFile: planFile() },
     state: () => {
@@ -1412,9 +1417,10 @@ async function поднятьМост(options: {
     // Но не через `acceptAmbientTranscript`: там фраза снова проходит проверку
     // «а работа ли это», и низкая уверенность разбора вернула бы «Не понял,
     // что именно сделать» на то, о чём разговор с человеком уже договорился.
-    note('command', `разговор поручил: ${задача}`);
-    console.log(`[jarvis] разговор поручил: ${задача}`);
-    void session.work(задача).catch((error: unknown) => {
+    const быстро = request.quick === true;
+    note('command', `разговор поручил${быстро ? ' (коротко)' : ''}: ${задача}`);
+    console.log(`[jarvis] разговор поручил${быстро ? ' (коротко)' : ''}: ${задача}`);
+    void session.work(задача, { fast: быстро }).catch((error: unknown) => {
       console.error('[jarvis] не удалось завести работу по просьбе разговора:', error);
     });
     return { ok: true, text: `Запускаю: ${short(задача)}` };
