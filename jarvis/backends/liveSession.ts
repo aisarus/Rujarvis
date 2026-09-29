@@ -162,6 +162,8 @@ export class LiveSession {
   private readonly queue: Array<() => void> = [];
   private dead = false;
   private spoken = false;
+  /** Id сессии Claude Code, как только он прозвучал в потоке. */
+  private сессия: string | undefined;
 
   constructor(private readonly options: LiveSessionOptions) {}
 
@@ -325,6 +327,13 @@ export class LiveSession {
   private consume(raw: Record<string, unknown>): void {
     const turn = this.turn;
     if (!turn) return;
+    // Id сессии — в каждой строке потока. Разбор строки его не запоминает
+    // (состояние у него на строку), и живая задача не знала своей сессии:
+    // ни паузы, ни продолжения после неё.
+    if (typeof raw.session_id === 'string' && raw.session_id) {
+      this.сессия = raw.session_id;
+      turn.sessionId = raw.session_id;
+    }
 
     this.options.consumeLine(raw, (event) => {
       if (event.type === 'started' && event.sessionId) turn.sessionId = event.sessionId;
@@ -430,6 +439,7 @@ export class LiveSession {
       // потом дешевле невыполненной команды остановки.
       cancel: () => this.dispose('Отменено', true),
       result: () => done,
+      sessionId: () => this.сессия,
     };
   }
 

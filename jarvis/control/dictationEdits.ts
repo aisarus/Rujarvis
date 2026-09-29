@@ -17,6 +17,10 @@
  */
 
 import { currentLanguage, type Language } from '../locale/language';
+import { matchVoiceControl } from '../voice/interrupts';
+import { isSilenceRequest } from '../voice/noise';
+import { findWakeWord } from '../voice/wakeWord';
+import { endsDictation } from './commands';
 
 export type DictationEdit =
   | { kind: 'key'; keys: string }
@@ -102,6 +106,30 @@ export function parseDictationEdit(
   }
 
   return null;
+}
+
+/** Что сделать с фразой, пока идёт диктовка. */
+export type DictationStep =
+  | { kind: 'control' }
+  | { kind: 'end' }
+  | { kind: 'edit'; edit: DictationEdit }
+  | { kind: 'text' };
+
+/**
+ * Фраза во время диктовки: остановка, конец, правка — или текст.
+ *
+ * «Стоп», «пауза», «отмена», «продолжай» — первыми и на обоих языках, как и
+ * везде: слова остановки обязаны работать всегда. До 29.09.2026 в диктовке
+ * они печатались в текст, а работа агента шла дальше. Узнаётся только фраза
+ * целиком, с именем или без: «стоп, я передумал» — продиктованный текст.
+ */
+export function dictationStep(utterance: string, language: Language = currentLanguage()): DictationStep {
+  const найдено = findWakeWord(utterance);
+  const безИмени = найдено && найдено.index === 0 && найдено.command ? найдено.command : utterance;
+  if (matchVoiceControl(безИмени) ?? matchVoiceControl(utterance)) return { kind: 'control' };
+  if (endsDictation(безИмени) || isSilenceRequest(utterance)) return { kind: 'end' };
+  const edit = parseDictationEdit(безИмени, language);
+  return edit ? { kind: 'edit', edit } : { kind: 'text' };
 }
 
 function normalise(utterance: string): string {

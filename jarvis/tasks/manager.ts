@@ -179,9 +179,9 @@ export class TaskManager {
         if (event.type === 'completed') break;
         // Id сессии приходит в событии начала — без него «продолжай» начнёт
         // работу с нуля, а обещание паузы было другим.
-        if (event.type === 'started' && event.sessionId) {
-          task.sessionId = event.sessionId;
+        if (event.type === 'started') {
           task.sessionBackend = event.backend;
+          if (event.sessionId) task.sessionId = event.sessionId;
         }
         task.events.push(event);
         if (task.events.length > limit) task.events.splice(0, task.events.length - limit);
@@ -313,7 +313,10 @@ export class TaskManager {
     if (!task || task.state !== 'running') return false;
     // Без id сессии продолжить нельзя — только начать заново. Обещать паузу в
     // этом случае значит потерять работу молча, о чём сказано прямо выше.
-    if (!task.sessionId && !task.request.sessionId) return false;
+    // Id спрашивается у самого запуска: в событии начала его ещё нет.
+    const сессия = task.sessionId ?? task.request.sessionId ?? this.runs.get(id)?.sessionId?.();
+    if (!сессия) return false;
+    task.sessionId = сессия;
     task.state = 'paused';
     this.runs.get(id)?.cancel('pause');
     this.emit({ type: 'task-state', task });

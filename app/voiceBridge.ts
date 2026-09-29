@@ -51,13 +51,12 @@ import { matchVoiceControl } from '../jarvis/voice/interrupts';
 import { fixMishearings } from '../jarvis/voice/mishearing';
 import { isSilenceRequest, looksLikeChatter, meaningfulSpeech } from '../jarvis/voice/noise';
 import {
-  endsDictation,
   parseDirectCommandInPhrase,
   type DirectCommand,
   type НастройкаГолосом,
 } from '../jarvis/control/commands';
 import { reapAll } from '../jarvis/tasks/reaper';
-import { parseDictationEdit, type DictationEdit } from '../jarvis/control/dictationEdits';
+import { dictationStep, type DictationEdit } from '../jarvis/control/dictationEdits';
 import { chooseElement } from '../jarvis/control/elements';
 import { cellCenter, subCellCenter } from '../jarvis/control/grid';
 import { createDesktopDriver, desktopStamp } from '../jarvis/desktop/platform';
@@ -229,6 +228,15 @@ const desktop = createDesktopDriver();
  * команды, а читает обработчик речи.
  */
 let dictating = false;
+/**
+ * Нужен ли пробел перед следующей фразой диктовки.
+ *
+ * Фраза печатается как распознана, без пробелов по краям, и две подряд
+ * слипались: «как дела?Я дома». После правки («новая строка», «удали
+ * слово», «исправь на») пробел уже не нужен: курсор стоит в начале строки
+ * или после пробела.
+ */
+let пробелПередФразой = false;
 
 /**
  * Сетка с номерами и последняя названная клетка.
@@ -410,6 +418,7 @@ function withoutLeadingName(text: string): string {
 
 function setDictation(on: boolean): void {
   dictating = on;
+  пробелПередФразой = false;
   console.log(on ? '[jarvis] диктовка началась' : '[jarvis] диктовка окончена');
 }
 
@@ -1525,18 +1534,46 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
         // instead of minutes, and it either happens or says why.
         // Диктовка перехватывает раньше любых разборов: в режиме записи текста
         // нет команд, есть только слова человека.
+        // Ответ на заданный вопрос — раньше диктовки: «да» и «нет» разбираются
+        // прежде всего остального и не печатаются в текст. Неясное во время
+        // диктовки — это продиктованный текст, а вопрос ждёт дальше.
+        if (awaitingAnswer) {
+          const answer = readConfirmation(text);
+          if (answer !== 'unclear') {
+            console.log(`[jarvis] ответ: ${answer === 'yes' ? 'да' : 'нет'}`);
+            const waiter = awaitingAnswer;
+            awaitingAnswer = null;
+            waiter(answer);
+            return;
+          }
+          if (!dictating) {
+            console.log(`[jarvis] ответ не понят: ${logged(text)}`);
+            await session.speak(tr('Не понял. Скажите «да» или «нет».', 'Sorry? Say yes or no.'));
+            return;
+          }
+        }
+
         if (dictating) {
-          if (endsDictation(text) || isSilenceRequest(text)) {
-            dictating = false;
-            console.log('[jarvis] диктовка окончена');
+          // Остановка, конец, правка или текст — `dictationStep`, под тестом
+          // красных линий: «стоп» в диктовке останавливает, а не печатается.
+          const шаг = dictationStep(text);
+          if (шаг.kind === 'control') {
+            setDictation(false);
+            note('command', 'закончил диктовку');
+            console.log(`[jarvis] слово остановки в диктовке: ${logged(text)}`);
+            await session.acceptAmbientTranscript(text);
+            return;
+          }
+          if (шаг.kind === 'end') {
+            setDictation(false);
             note('command', 'закончил диктовку');
             await session.speak(tr('Записал.', 'Done.'));
             return;
           }
           // Правка на ходу: диктовка без неё нерабочая. Список точных фраз
           // крошечный нарочно — всё остальное печатается буквами.
-          const edit = parseDictationEdit(text);
-          if (edit) {
+          if (шаг.kind === 'edit') {
+            const edit = шаг.edit;
             console.log(`[jarvis] правка диктовки: ${unlogged(text)}`);
             try {
               await applyDictationEdit(edit);
@@ -1544,33 +1581,20 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
               console.error('[jarvis] правка не прошла:', error);
               await session.speak(tr('Не получилось.', 'That did not work.'));
             }
+            пробелПередФразой = false;
             session.keepAwake();
             return;
           }
 
           console.log(`[jarvis] диктую: ${unlogged(text)}`);
           try {
-            await desktop.type(text);
+            await desktop.type(пробелПередФразой ? ` ${text}` : text);
+            пробелПередФразой = true;
           } catch (error) {
             console.error('[jarvis] не удалось напечатать:', error);
             await session.speak(tr('Не получилось напечатать.', 'Could not type that.'));
           }
           session.keepAwake();
-          return;
-        }
-
-        // Если задан вопрос — это ответ на него, а не новая команда.
-        if (awaitingAnswer) {
-          const answer = readConfirmation(text);
-          if (answer === 'unclear') {
-            console.log(`[jarvis] ответ не понят: ${logged(text)}`);
-            await session.speak(tr('Не понял. Скажите «да» или «нет».', 'Sorry? Say yes or no.'));
-            return;
-          }
-          console.log(`[jarvis] ответ: ${answer === 'yes' ? 'да' : 'нет'}`);
-          const waiter = awaitingAnswer;
-          awaitingAnswer = null;
-          waiter(answer);
           return;
         }
 

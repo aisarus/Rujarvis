@@ -30,7 +30,7 @@ import { describe, expect, it } from 'vitest';
 import { spokenCloseTarget, spokenTarget } from '../apps/launch';
 import { commandCatalogue } from '../control/catalogue';
 import { DOTA_OVERLAY_PHRASES, KILL_PHRASES, parseDirectCommand } from '../control/commands';
-import { parseDictationEdit } from '../control/dictationEdits';
+import { dictationStep, parseDictationEdit } from '../control/dictationEdits';
 import { parseLiveEdit } from '../live/edits';
 import { EchoGuard } from './echo';
 import { LAUNCH_NAMES } from '../apps/launch';
@@ -248,6 +248,28 @@ function handledByLayer(say: string, layer: string): boolean {
       return false;
   }
 }
+
+describe('красные линии в диктовке', () => {
+  // До 29.09.2026 в режиме диктовки «стоп» печатался в текст, а работа агента
+  // шла дальше: диктовка перехватывала фразу раньше слов остановки.
+  it('слова остановки останавливают, а не печатаются — с именем и без, на обоих языках', () => {
+    for (const line of RED_LINES) {
+      for (const said of [line.said, `Джарвис, ${line.said}`]) {
+        for (const language of ['ru', 'en'] as const) {
+          expect(dictationStep(said, language).kind, `«${said}» в диктовке (${language})`).toBe('control');
+        }
+      }
+    }
+  });
+
+  it('конец диктовки, правка и обычный текст остаются собой', () => {
+    expect(dictationStep('конец диктовки', 'ru').kind).toBe('end');
+    expect(dictationStep('новая строка', 'ru').kind).toBe('edit');
+    // Слово остановки внутри продиктованной мысли — текст, а не команда.
+    expect(dictationStep('стоп, я передумал и пошёл домой пешком', 'ru').kind).toBe('text');
+    expect(dictationStep('давай встретимся завтра у метро', 'ru').kind).toBe('text');
+  });
+});
 
 describe('сторож согласованности справочника', () => {
   it('каждая обещанная фраза разбирается своим слоем', () => {

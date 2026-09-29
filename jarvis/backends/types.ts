@@ -201,6 +201,12 @@ export interface BackendRun {
   cancel(reason?: string): void;
   /** Resolves with the same result carried by the terminal event. */
   result(): Promise<BackendResult>;
+  /**
+   * Id сессии бэкенда — как только он его назвал. Событие `started` уходит
+   * раньше, чем CLI его сообщает, и пауза без этого отвечала «нечего
+   * ставить на паузу» на любой идущей задаче.
+   */
+  sessionId?(): string | undefined;
 }
 
 export interface AgentBackend {

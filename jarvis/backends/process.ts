@@ -10,7 +10,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 
 import { cliLaunch } from './spawnCli';
 
-import { forgetChild, trackChild } from '../tasks/reaper';
+import { forgetChild, killProcessTree, trackChild } from '../tasks/reaper';
 
 /**
  * An async queue that turns callback-style progress into an `AsyncIterable`.
@@ -295,7 +295,17 @@ export class CliProcess implements CliHandle {
     if (!child || child.killed || child.exitCode !== null) return;
     try {
       if (process.platform === 'win32') {
-        child.kill();
+        // Дерево, а не один процесс: через оболочку агент — внук, и одного
+        // `kill()` он не замечает. Pid — свой, записанный при запуске.
+        // `kill()` — только если дерево не далось: убитый заранее родитель
+        // уносит с собой связь с детьми, и taskkill /T их уже не находит.
+        if (typeof child.pid === 'number') {
+          void killProcessTree(child.pid).then((убит) => {
+            if (!убит && !child.killed && child.exitCode === null) child.kill();
+          });
+        } else {
+          child.kill();
+        }
       } else if (typeof child.pid === 'number') {
         // Negative pid targets the detached group created above.
         process.kill(-child.pid, 'SIGTERM');

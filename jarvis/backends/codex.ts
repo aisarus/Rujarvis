@@ -222,6 +222,24 @@ function tomlСтрока(значение: string): string {
   return `"${значение.split(БС).join(БС + БС).split('"').join(БС + '"')}"`;
 }
 
+/**
+ * Собственные руки Codex, выключенные и в работе, не только в разговоре.
+ *
+ * Экран и браузер Codex получает только через сервер Джарвиса — с проверкой
+ * красных линий и без лишнего расхода лимитов. Свои `computer_use` и
+ * `browser_use` оставались включены в рабочих запусках: мимо проверки и за
+ * счёт подписки (решение владельца: Codex не управляет компьютером напрямую).
+ * Оболочка остаётся — без неё нет работы с кодом.
+ */
+export const WORK_DISABLED_FEATURES = [
+  'computer_use',
+  'browser_use',
+  'browser_use_external',
+  'in_app_browser',
+  'apps',
+  'plugins',
+] as const;
+
 export function buildCodexArgs(
   request: Pick<BackendRequest, 'sessionId' | 'cwd'>,
   options: {
@@ -696,6 +714,7 @@ export class CodexBackend implements AgentBackend {
           sandbox,
           mcpOverrides: this.перекрытияРабочегоСтола(request.capabilities),
           ownerChoices: codexOwnerChoices((this.options.userConfig ?? readCodexUserConfig)()),
+          disabledFeatures: WORK_DISABLED_FEATURES,
         }),
       cwd: request.cwd,
       timeoutMs: request.timeoutMs ?? this.options.defaultTimeoutMs ?? WORK_CEILING_MS,

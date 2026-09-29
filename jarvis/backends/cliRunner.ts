@@ -266,6 +266,7 @@ export function createCliRun(spec: CliRunSpec): BackendRun {
       child?.cancel();
     },
     result: () => resultPromise,
+    sessionId: () => state.sessionId,
   };
 }
 

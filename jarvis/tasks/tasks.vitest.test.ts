@@ -36,6 +36,8 @@ function controllableBackend(id: BackendId = 'claude-code') {
   const channel = new EventChannel<BackendEvent>();
   let settle: (result: BackendResult) => void = () => {};
   let cancelled = false;
+  /** Id сессии, который знает сам запуск, — как у CLI после первой строки потока. */
+  let сессияЗапуска: string | undefined;
   const finished = new Promise<BackendResult>((resolve) => {
     settle = resolve;
   });
@@ -62,6 +64,9 @@ function controllableBackend(id: BackendId = 'claude-code') {
     get cancelled() {
       return cancelled;
     },
+    знаетСессию(id: string) {
+      сессияЗапуска = id;
+    },
   };
 
   const backend = {
@@ -84,6 +89,7 @@ function controllableBackend(id: BackendId = 'claude-code') {
         controls.finish({ ok: false, cancelled: true, text: '', error: 'Отменено' });
       },
       result: () => finished,
+      sessionId: () => сессияЗапуска,
     }),
   } as unknown as AgentBackend;
 
@@ -196,6 +202,26 @@ describe('TaskManager', () => {
     // Пауза без id сессии — обещание, которого не сдержать: продолжить будет
     // нечем, только начать заново.
     expect(task.sessionId).toBe('sess-42');
+  });
+
+  it('пауза берёт id сессии у запуска: событие начала уходит раньше, чем CLI его назовёт', async () => {
+    // Живой порядок: `started` без id, потом CLI сообщает сессию в потоке.
+    // Раньше пауза смотрела только на событие и отвечала «нечего ставить на
+    // паузу» на любой идущей задаче.
+    const { backend, controls } = controllableBackend();
+    const tasks = managerWith(backend);
+
+    const task = tasks.start({ title: 'Долгая задача', request: request() });
+    await tick();
+    controls.emit({ type: 'started', backend: 'claude-code' });
+    await tick();
+    controls.знаетСессию('sess-live');
+
+    expect(tasks.pause(task.id)).toBe(true);
+    await tick();
+    expect(task.state).toBe('paused');
+    expect(task.sessionId).toBe('sess-live');
+    expect(task.sessionBackend).toBe('claude-code');
   });
 
   it('пауза без сессии не обещает продолжения', async () => {

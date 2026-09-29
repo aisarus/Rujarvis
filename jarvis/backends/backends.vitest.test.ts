@@ -693,6 +693,37 @@ describe('Claude Code adapter', () => {
     expect(state.errorMessage).toContain('usage limit');
   });
 
+  it('называет сессию, пока работа ещё идёт: без этого пауза не срабатывала', async () => {
+    let дописать: () => void = () => {};
+    const пишет = new Promise<void>((resolve) => {
+      дописать = resolve;
+    });
+    let первая: () => void = () => {};
+    const перваяСтрока = new Promise<void>((resolve) => {
+      первая = resolve;
+    });
+    const spawn = (options: CliProcessOptions): CliHandle => ({
+      cancel: () => {},
+      wait: async () => {
+        options.onStdoutLine('{"type":"system","subtype":"init","session_id":"s-live"}');
+        первая();
+        await пишет;
+        options.onStdoutLine('{"type":"result","subtype":"success","result":"Готово.","session_id":"s-live"}');
+        return { exitCode: 0, signal: null, stderr: '', cancelled: false, timedOut: false };
+      },
+    });
+    const backend = new ClaudeCodeBackend({ probe: readyProbe, spawnCli: spawn });
+
+    const run = backend.run(request());
+    const события = drain(run);
+    await перваяСтрока;
+    // Работа не кончилась, а сессия уже известна.
+    expect(run.sessionId?.()).toBe('s-live');
+    дописать();
+    await события;
+    expect((await run.result()).sessionId).toBe('s-live');
+  });
+
   it('runs end to end against a fake CLI', async () => {
     const { spawn, calls } = fakeSpawn([
       '{"type":"system","subtype":"init","session_id":"s1"}',
@@ -985,6 +1016,12 @@ describe('Codex adapter', () => {
     expect(args).toEqual(expect.arrayContaining(['-c', 'windows.sandbox="elevated"']));
     expect(args.some((арг) => арг.startsWith('approval_policy'))).toBe(false);
     expect(result.inputTokens).toBe(14277);
+    // Свои руки Codex выключены и в работе: экран — только через Джарвиса.
+    for (const возможность of ['computer_use', 'browser_use', 'plugins']) {
+      expect(args).toEqual(expect.arrayContaining(['-c', `features.${возможность}=false`]));
+    }
+    // Оболочка остаётся: без неё нет работы с кодом.
+    expect(args).not.toContain('features.shell_tool=false');
   });
 
   it('tells a retry notice apart from a real failure', () => {
@@ -1256,8 +1293,8 @@ describe('BackendManager', () => {
   });
 
   it('запасному бэкенду не отдаёт чужую сессию', async () => {
-    // Claude Code исчерпал лимит, работа ушла Codex — а поток-то у Claude
-    // Code. Codex отвечал бы «no rollout found» и падал следом.
+    // Claude Code недоступен (вход не выполнен), работа ушла Codex — а поток-то
+    // у Claude Code. Codex отвечал бы «no rollout found» и падал следом.
     const запросы: Array<{ backend: string; sessionId?: string }> = [];
     const записывать = (backend: AgentBackend): AgentBackend => ({
       ...backend,
@@ -1266,7 +1303,7 @@ describe('BackendManager', () => {
         return backend.run(req);
       },
     });
-    const claude = stubBackend('claude-code', result({ usageLimited: true, error: 'limit' }));
+    const claude = stubBackend('claude-code', result({ error: 'вход не выполнен' }), false);
     const codex = stubBackend('codex', result({ ok: true, backend: 'codex', text: 'Готово.' }));
     const manager = managerWith(
       записывать(claude),
@@ -1295,20 +1332,46 @@ describe('BackendManager', () => {
     expect(plan.order).not.toContain('claude-code');
   });
 
-  it('falls back to the next backend when a quota is exhausted', async () => {
+  it('исчерпанный лимит Claude Code не отдаёт работу Codex, когда Claude есть', async () => {
+    // Решение владельца 29.09.2026: у пользователя Claude — только Claude.
+    // Исчерпанный лимит не повод жечь подписку Codex на ту же работу.
     const claude = stubBackend('claude-code', result({ usageLimited: true, error: 'limit' }));
     const codex = stubBackend('codex', result({ ok: true, backend: 'codex', text: 'Готово.' }));
-    const manager = managerWith(claude, codex, stubBackend('openai-compatible', result({ ok: true })));
+    const manager = managerWith(claude, codex);
+
+    const final = await manager.run(request(), { codingPreference: 'claude-code' }).result();
+
+    expect(claude.runs).toBe(1);
+    expect(codex.runs).toBe(0);
+    expect(final.ok).toBe(false);
+    expect(final.error).toContain('исчерпан лимит');
+  });
+
+  it('нет Claude Code — Codex заменяет его целиком', async () => {
+    // Пользователь Codex: Claude Code не установлен или вход не выполнен.
+    const claude = stubBackend('claude-code', result({ error: 'Claude Code недоступен' }), false);
+    const codex = stubBackend('codex', result({ ok: true, backend: 'codex', text: 'Готово.' }));
+    const manager = managerWith(claude, codex);
 
     const run = manager.run(request(), { codingPreference: 'claude-code' });
     const events = await drain(run);
     const final = await run.result();
 
-    expect(claude.runs).toBe(1);
     expect(codex.runs).toBe(1);
     expect(final.ok).toBe(true);
     expect(final.backend).toBe('codex');
     expect(events.some((event) => event.type === 'status' && event.text.includes('codex'))).toBe(true);
+  });
+
+  it('названный голосом Codex работает и у пользователя Claude', async () => {
+    const claude = stubBackend('claude-code', result({ ok: true, text: 'Готово.' }));
+    const codex = stubBackend('codex', result({ ok: true, backend: 'codex', text: 'Готово.' }));
+    const manager = managerWith(claude, codex);
+
+    const final = await manager.run(request(), { requested: 'codex' }).result();
+    expect(codex.runs).toBe(1);
+    expect(claude.runs).toBe(0);
+    expect(final.backend).toBe('codex');
   });
 
   it('does not second-guess an honest failure from a backend that ran', async () => {
@@ -1326,7 +1389,7 @@ describe('BackendManager', () => {
 
   it('reports every failure when nothing works, without throwing', async () => {
     const manager = managerWith(
-      stubBackend('claude-code', result({ error: 'нет CLI' })),
+      stubBackend('claude-code', result({ error: 'нет CLI' }), false),
       stubBackend('codex', result({ backend: 'codex', error: 'нет входа' })),
     );
     const final = await manager.run(request()).result();
@@ -1354,8 +1417,10 @@ describe('BackendManager', () => {
 
     const manager = managerWith(exploding, stubBackend('codex', result({ ok: true, backend: 'codex', text: 'ок' })));
     const final = await manager.run(request(), { codingPreference: 'claude-code' }).result();
-    expect(final.ok).toBe(true);
-    expect(final.backend).toBe('codex');
+    // Итог с причиной, а не исключение. Codex не подменяет Claude Code,
+    // который установлен и в который выполнен вход.
+    expect(final.ok).toBe(false);
+    expect(final.error).toContain('adapter exploded');
   });
 
   it('reports no backends at all as a result, not an exception', async () => {

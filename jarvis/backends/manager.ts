@@ -154,6 +154,17 @@ export class BackendManager {
     return this.backends.get(id)?.capabilities.has('computer') === true;
   }
 
+  /** Установлен ли Claude Code и выполнен ли вход — то есть пользователь ли это Claude. */
+  private async claudeГотов(): Promise<boolean> {
+    const claude = this.backends.get('claude-code');
+    if (!claude) return false;
+    try {
+      return (await claude.checkAvailability()).ready;
+    } catch {
+      return false;
+    }
+  }
+
   private почемуНекому(request: BackendRequest): string {
     const экран = needsScreen(request.capabilities) || needsCommunication(request.capabilities);
     if (экран && !this.backends.has('claude-code')) {
@@ -289,10 +300,20 @@ export class BackendManager {
 
       const failures: string[] = [];
 
-      for (const id of plan.order) {
+      for (const [номер, id] of plan.order.entries()) {
         if (cancelled) break;
         const backend = this.backends.get(id);
         if (!backend) continue;
+
+        // Codex — не запасной для того, у кого есть Claude Code (решение
+        // владельца 29.09.2026): у пользователя Codex он заменяет Claude Code
+        // целиком, у пользователя Claude — только Claude, и исчерпанный лимит
+        // не повод жечь чужой. Названный голосом или в настройках — работает
+        // как раньше: он во главе очереди, а не подмена.
+        if (id === 'codex' && номер > 0 && failures.length > 0 && (await this.claudeГотов())) {
+          failures.push('Codex не подменяет Claude Code, когда тот есть');
+          continue;
+        }
 
         if (failures.length > 0) {
           channel.push({
@@ -374,6 +395,9 @@ export class BackendManager {
         active?.cancel(reason);
       },
       result: () => resultPromise,
+      // Сессию знает тот запуск, что идёт сейчас: после перехода на другой
+      // бэкенд — его, а не первого.
+      sessionId: () => active?.sessionId?.(),
     };
   }
 }
