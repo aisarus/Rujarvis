@@ -87,7 +87,8 @@ import {
 import { installVoice, isVoiceInstalled, Speaker } from '../jarvis/voice/tts';
 import { AUDIO_BRIDGE_CHANNELS, buildAudioBridgeHtml } from './audioBridgePage';
 import { cloudSpeechKey, createElevenLabsTranscriber } from './cloudTranscriber';
-import { abandonLecture, feedLecture, finishLecture, lectureActive, startLecture } from './lectureMode';
+import { abandonLecture, feedLecture, finishLecture, lectureActive, lectureState, onLectureState, startLecture } from './lectureMode';
+import { lectureHeardForJarvis } from '../jarvis/lecture/voiceGate';
 import {
   createGpuTranscriber,
   isWhisperServerReady,
@@ -423,6 +424,58 @@ function setDictation(on: boolean): void {
   console.log(on ? '[jarvis] диктовка началась' : '[jarvis] диктовка окончена');
 }
 
+/** Окно микрофона в режиме лекции слышит тише и пишет длиннее. */
+function звукЛекции(on: boolean): void {
+  try {
+    if (окноЗвука && !окноЗвука.isDestroyed()) окноЗвука.webContents.send(AUDIO_BRIDGE_CHANNELS.lecture, on);
+  } catch {
+    // Окно микрофона могло упасть — конспект всё равно пишется.
+  }
+}
+
+/**
+ * Начать или закончить конспект — голосом или кнопкой на плашке.
+ *
+ * Голос отвечает голосом, кнопка — строкой на плашке: в аудитории Джарвис
+ * не должен заговорить. Итог — минута-другая модели, и ждать его здесь
+ * нельзя: реплики разбираются по одной, и «стоп» простоял бы за ним.
+ */
+async function переключитьЛекцию(
+  on: boolean,
+  subject: string | undefined,
+  сообщить: (текст: string) => Promise<void> | void,
+): Promise<void> {
+  if (on) {
+    const ответ = await startLecture(subject, {
+      home: PATHS.home,
+      // Пусто в настройках — лекция на языке интерфейса.
+      lectureLanguage: settings().lectureLanguage || settings().language,
+      notesLanguage: settings().language,
+      outputDir:
+        settings().outputDir ||
+        jarvisOutputDir(process.env, app.getPath('desktop'), settings().language === 'en' ? 'Jarvis' : 'Джарвис'),
+      mainEndpoint: () => серверРаспознавания?.endpoint ?? (process.env.JARVIS_GPU_STT?.trim() || null),
+    });
+    if (lectureActive()) звукЛекции(true);
+    await сообщить(ответ);
+    return;
+  }
+  const итог = finishLecture();
+  if (!итог) {
+    await сообщить(tr('Конспект сейчас не пишется.', 'No lecture notes are being taken.'));
+    return;
+  }
+  звукЛекции(false);
+  void итог
+    .then((ответ) => сообщить(ответ))
+    .catch((error: unknown) => {
+      console.error(`[jarvis:lecture] итог не дописан: ${error instanceof Error ? error.message : String(error)}`);
+      return сообщить(tr('Итог не собрался. Записанное — на диске.', 'The summary failed. What was recorded is on disk.'));
+    })
+    .catch(() => undefined);
+  await сообщить(tr('Дописываю итог. Когда будет готов — сообщу.', 'Writing the summary. I will let you know when it is ready.'));
+}
+
 /** Выполняет прямую команду. Молча: речь после каждого нажатия невыносима. */
 /**
  * Что исполнителю прямых команд нужно от сессии на самом деле.
@@ -526,44 +579,7 @@ export async function runDirectCommand(
         break;
       }
       case 'lecture': {
-        const звук = (on: boolean): void => {
-          try {
-            if (окноЗвука && !окноЗвука.isDestroyed()) окноЗвука.webContents.send(AUDIO_BRIDGE_CHANNELS.lecture, on);
-          } catch {
-            // Окно микрофона могло упасть — конспект всё равно пишется.
-          }
-        };
-        if (command.on) {
-          const ответ = await startLecture(command.subject, {
-            home: PATHS.home,
-            // Пусто в настройках — лекция на языке интерфейса.
-            lectureLanguage: settings().lectureLanguage || settings().language,
-            notesLanguage: settings().language,
-            outputDir:
-              settings().outputDir ||
-              jarvisOutputDir(process.env, app.getPath('desktop'), settings().language === 'en' ? 'Jarvis' : 'Джарвис'),
-            mainEndpoint: () => серверРаспознавания?.endpoint ?? (process.env.JARVIS_GPU_STT?.trim() || null),
-          });
-          звук(true);
-          await session.speak(ответ);
-        } else {
-          const итог = finishLecture();
-          if (!итог) {
-            await session.speak(tr('Конспект сейчас не пишется.', 'No lecture notes are being taken.'));
-            break;
-          }
-          звук(false);
-          // Итог — минута-другая модели. Ждать его здесь нельзя: реплики
-          // разбираются по одной, и «стоп» простоял бы за ним. Готово — скажет.
-          void итог
-            .then((ответ) => session.speak(ответ))
-            .catch((error: unknown) => {
-              console.error(`[jarvis:lecture] итог не дописан: ${error instanceof Error ? error.message : String(error)}`);
-              return session.speak(tr('Итог не собрался. Записанное — на диске.', 'The summary failed. What was recorded is on disk.'));
-            })
-            .catch(() => undefined);
-          await session.speak(tr('Дописываю итог — скажу, когда будет готов.', 'Writing the summary. I will tell you when it is ready.'));
-        }
+        await переключитьЛекцию(command.on, command.subject, (текст) => session.speak(текст));
         break;
       }
       case 'volume': {
@@ -1291,7 +1307,20 @@ async function поднятьМост(options: {
       .catch((error: unknown) => console.error(`[jarvis] голос ${voiceId} не скачался:`, error));
   }
 
-  const overlay = createStatusOverlay();
+  // Кнопка конспекта на плашке: в аудитории вслух не покомандуешь.
+  const overlay = createStatusOverlay({
+    onLectureButton: () => {
+      if (lectureState() === 'finishing') return;
+      console.log(`[jarvis:lecture] кнопка на плашке: ${lectureActive() ? 'закончить' : 'начать'}`);
+      void переключитьЛекцию(!lectureActive(), undefined, (текст) => overlay.note(session.status, текст)).catch(
+        (error: unknown) => {
+          console.error(`[jarvis:lecture] кнопка не сработала: ${error instanceof Error ? error.message : String(error)}`);
+          overlay.note(session.status, tr('Конспект не запустился — причина в журнале.', 'Lecture notes did not start — see the log.'));
+        },
+      );
+    },
+  });
+  const отписатьЛекцию = onLectureState((state) => overlay.setLecture(state));
   // Крупный режим — из настроек, и сразу: его могли включить голосом в прошлый
   // раз, и при запуске плашка обязана быть такой, какой её оставили.
   overlay.setBig(settings().bigMode);
@@ -1488,18 +1517,14 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
         const samples = toFloat32(payload.samples);
         // Лекция: звук аудитории — в конспект, а не в разговор. В конспект —
         // раньше русского слуха: упади общий сервер, лекция всё равно
-        // пишется. Русский слух проверяет только, не к Джарвису ли это
-        // («Джарвис, закончи конспект») и не «стоп»/«тишина» ли: остальное из
-        // аудитории — не команды.
+        // пишется. Дальше проходит только управление, имя и прямые команды
+        // (`lectureHeardForJarvis`): каша из аудитории — не разговор.
         const лекция = lectureActive();
         if (лекция) feedLecture(samples, payload.sampleRate);
         const started = Date.now();
         const { text } = await transcriber.transcribe(samples, payload.sampleRate);
         const распознано = Date.now();
-        if (лекция) {
-          const кДжарвису = Boolean(text) && (matchVoiceControl(text) !== null || isSilenceRequest(text) || findWakeWord(text) !== null);
-          if (!кДжарвису) return;
-        }
+        if (лекция && !lectureHeardForJarvis(text, session.status.awake)) return;
         const seconds = (samples.length / payload.sampleRate).toFixed(1);
 
         if (!text) return;
@@ -2223,6 +2248,7 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
       // видеопамять и порт до перезагрузки, а следующий запуск моста не смог
       // бы поднять свой.
       поколениеМоста += 1;
+      отписатьЛекцию();
       abandonLecture();
       окноЗвука = null;
       серверРаспознавания?.stop();

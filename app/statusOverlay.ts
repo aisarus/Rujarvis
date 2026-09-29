@@ -22,6 +22,18 @@ import { currentLanguage, tr } from '../jarvis/locale/language';
 
 export const STATUS_OVERLAY_CHANNEL = 'jarvis-overlay:status';
 
+/** Состояние конспекта, как его показывает кнопка. */
+export type LectureButtonState = 'off' | 'on' | 'finishing';
+
+/** Подписи — при сборке страницы: язык читается из настроек позже загрузки модуля. */
+function lectureButtonLabels(): Record<LectureButtonState, string> {
+  return {
+    off: tr('● Конспект', '● Lecture notes'),
+    on: tr('■ Закончить конспект', '■ Stop lecture notes'),
+    finishing: tr('Дописываю итог…', 'Writing the summary…'),
+  };
+}
+
 const WIDTH = 320;
 const HEIGHT = 84;
 
@@ -57,7 +69,7 @@ const размер = (крупно: boolean): Размер =>
   крупно ? { width: BIG_WIDTH, height: BIG_HEIGHT } : { width: WIDTH, height: HEIGHT };
 const MARGIN = 24;
 
-function buildOverlayHtml(): string {
+export function buildOverlayHtml(): string {
   return `<!doctype html>
 <html lang="${currentLanguage()}">
 <head><meta charset="utf-8"><title>Jarvis</title>
@@ -114,6 +126,25 @@ function buildOverlayHtml(): string {
   body.big #label { font-size: 26px; line-height: 1.3; }
   body.big #hint { font-size: 18px; color: #e4e4e7; margin-top: 6px; }
   body.big #dot { width: 18px; height: 18px; }
+  /* Кнопки под плашкой. В аудитории вслух не покомандуешь — живой прогон
+     29.09.2026: «нужны физические кнопки под плашкой». Окно по-прежнему не
+     берёт фокус, так что нажатие не сбивает то, что человек печатает;
+     кнопки вынуты из области перетаскивания, иначе нажатие тащило бы окно. */
+  #bar {
+    display: flex; gap: 8px; padding: 0 12px 10px;
+    -webkit-app-region: drag;
+  }
+  #bar button {
+    -webkit-app-region: no-drag; cursor: pointer;
+    font: 600 13px "Segoe UI", system-ui, sans-serif;
+    color: #f4f4f5; background: #27272a;
+    border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 8px;
+    padding: 6px 12px;
+  }
+  #bar button:hover { background: #3f3f46; }
+  #bar button.on { background: #7f1d1d; border-color: #ef4444; }
+  #bar button:disabled { opacity: 0.55; cursor: default; }
+  body.big #bar button { font-size: 20px; padding: 10px 18px; }
 </style>
 </head>
 <body>
@@ -124,9 +155,23 @@ function buildOverlayHtml(): string {
     <div id="hint">${tr('Скажите «Джарвис»', 'Say "Jarvis"')}</div>
   </div>
 </div>
+<div id="bar">
+  <button id="lecture" type="button">${lectureButtonLabels().off}</button>
+</div>
 <script>
 const { ipcRenderer } = require('electron');
 const pill = document.getElementById('pill');
+const lectureButton = document.getElementById('lecture');
+const lectureLabels = ${JSON.stringify(lectureButtonLabels())};
+lectureButton.addEventListener('click', () => {
+  ipcRenderer.send(${JSON.stringify(STATUS_OVERLAY_CHANNEL + ':lecture')});
+});
+function showLecture(state) {
+  const now = state === 'on' || state === 'finishing' ? state : 'off';
+  lectureButton.textContent = lectureLabels[now];
+  lectureButton.classList.toggle('on', now === 'on');
+  lectureButton.disabled = now === 'finishing';
+}
 const dot = document.getElementById('dot');
 const label = document.getElementById('label');
 const hint = document.getElementById('hint');
@@ -151,16 +196,20 @@ let noteUntil = 0;
 let последняяВысота = 0;
 function подогнатьВысоту() {
   requestAnimationFrame(() => {
-    const нужно = Math.ceil(document.getElementById('pill').getBoundingClientRect().height) + 2;
+    const нужно = Math.ceil(pill.getBoundingClientRect().height + document.getElementById('bar').getBoundingClientRect().height) + 2;
     if (нужно === последняяВысота) return;
     последняяВысота = нужно;
     ipcRenderer.send(${JSON.stringify(STATUS_OVERLAY_CHANNEL + ':height')}, нужно);
   });
 }
 
+// Кнопки под плашкой видны сразу, а не с первой услышанной фразы.
+подогнатьВысоту();
+
 ipcRenderer.on(${JSON.stringify(STATUS_OVERLAY_CHANNEL)}, (_event, status) => {
   // Крупный режим переключается на ходу: его меняют голосом.
   document.body.classList.toggle('big', Boolean(status.big));
+  showLecture(status.lecture);
   dot.className = status.indicator;
   label.textContent = status.label;
   pill.classList.toggle('asleep', !status.awake && status.indicator === 'idle');
@@ -198,7 +247,14 @@ export interface StatusOverlay {
    * ходу, и плашка должна перестроиться сразу, не дожидаясь перезапуска.
    */
   setBig(big: boolean): void;
+  /** Что показывать на кнопке конспекта. */
+  setLecture(state: LectureButtonState): void;
   dispose(): void;
+}
+
+export interface StatusOverlayOptions {
+  /** Нажата кнопка конспекта: начать или закончить. */
+  onLectureButton?: () => void;
 }
 
 interface SavedPosition {
@@ -243,8 +299,11 @@ function savePosition(position: SavedPosition): void {
   }
 }
 
-export function createStatusOverlay(): StatusOverlay {
+export function createStatusOverlay(options: StatusOverlayOptions = {}): StatusOverlay {
   let крупно = false;
+  let лекция: LectureButtonState = 'off';
+  // Последнее состояние, чтобы перерисовать кнопку, не дожидаясь новой фразы.
+  let последнее: Record<string, unknown> | null = null;
   const dir = mkdtempSync(path.join(os.tmpdir(), 'jarvis-overlay-'));
   const pagePath = path.join(dir, 'overlay.html');
   writeFileSync(pagePath, buildOverlayHtml(), 'utf8');
@@ -309,14 +368,22 @@ export function createStatusOverlay(): StatusOverlay {
    * `send` бросает «Render frame was disposed». Раз в секунду, бесконечно —
    * ровно это и залило лог ошибками.
    */
-  const send = (payload: unknown): void => {
+  const send = (payload: Record<string, unknown>): void => {
+    последнее = payload;
     try {
       if (window.isDestroyed() || window.webContents.isDestroyed()) return;
-      window.webContents.send(STATUS_OVERLAY_CHANNEL, payload);
+      window.webContents.send(STATUS_OVERLAY_CHANNEL, { ...payload, lecture: лекция });
     } catch {
       // Кадр исчез между проверкой и отправкой. Индикатор поднимется сам.
     }
   };
+
+  // Кнопка — только из своего окна: чужая страница не может начать запись.
+  const onLecture = (event: Electron.IpcMainEvent): void => {
+    if (window.isDestroyed() || event.sender !== window.webContents) return;
+    options.onLectureButton?.();
+  };
+  ipcMain.on(`${STATUS_OVERLAY_CHANNEL}:lecture`, onLecture);
 
   return {
     note(status, text) {
@@ -324,6 +391,12 @@ export function createStatusOverlay(): StatusOverlay {
     },
     update(status) {
       send({ ...status, big: крупно });
+    },
+    setLecture(state) {
+      if (лекция === state) return;
+      лекция = state;
+      // Без заметки: иначе прошлая строка «услышал…» всплыла бы заново.
+      if (последнее) send({ ...последнее, note: undefined });
     },
     setBig(big) {
       if (крупно === big) return;
@@ -347,6 +420,7 @@ export function createStatusOverlay(): StatusOverlay {
       // Отложенный подъём тоже надо отменить: иначе окно всплывёт уже после
       // того, как его закрыли, и переживёт выключение самого Джарвиса.
       похоронено = true;
+      ipcMain.removeListener(`${STATUS_OVERLAY_CHANNEL}:lecture`, onLecture);
       if (ожидание) {
         clearTimeout(ожидание);
         ожидание = null;

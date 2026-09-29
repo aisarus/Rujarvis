@@ -21,6 +21,7 @@
  * Code по подписке, проверки — подделки.
  */
 
+import { closeSync, openSync, statSync, writeSync } from 'node:fs';
 import { appendFile, mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -137,7 +138,8 @@ export function sectionPrompt(
         : "- terms as the lecturer said them;",
       '- no introductions, no retelling of earlier sections, nothing made up;',
       '- the chunk is cut by time and may start and end mid-sentence: leave out what is cut off at the edges, do not mark it.',
-      `If the chunk has no lecture content (organisational talk, noise, chatter), reply with one word: ${NOTES_WORDS.en.skip}`,
+      '- course logistics that matter to the student (exam format, deadlines, required reading, office hours) go into a short section "### Course logistics";',
+      `If the chunk has neither lecture content nor such logistics (noise, chatter, sound checks), reply with one word: ${NOTES_WORDS.en.skip}`,
       '',
       `Sections already written: ${заголовки.length > 0 ? заголовки.join('; ') : 'none yet'}.`,
       '',
@@ -156,7 +158,8 @@ export function sectionPrompt(
     чужой ? `- термины — по-русски и в скобках на ${язык}, как их сказал лектор;` : '- термины — как их сказал лектор;',
     '- без вступлений, без пересказа прошлых разделов, без выдуманного;',
     '- кусок режется по времени и может начинаться и кончаться на полуслове: оборванное по краям просто опусти, не помечай.',
-    `Если в куске нет содержания лекции (организационное, шум, разговоры) — ответь одним словом: ${NOTES_WORDS.ru.skip}`,
+    '- организационное, важное студенту (формат экзамена, сроки, обязательная литература, часы приёма), — коротким разделом «### Организационное»;',
+    `Если в куске нет ни содержания лекции, ни такого организационного (шум, болтовня, проверка звука) — ответь одним словом: ${NOTES_WORDS.ru.skip}`,
     '',
     `Уже написанные разделы: ${заголовки.length > 0 ? заголовки.join('; ') : 'ещё нет'}.`,
     '',
@@ -326,6 +329,30 @@ export class LectureSession {
       this.заголовки.push(раздел.split('\n')[0]?.replace(/^###\s*/u, '') ?? `${this.слова.section} ${номер}`);
       await appendFile(this.notesFile, `${раздел}\n\n`, 'utf8');
     });
+  }
+
+  /**
+   * Джарвис закрывается посреди лекции: итога не будет, а звук должен
+   * остаться целым.
+   *
+   * Размер в заголовке WAV дописывался только в `finish`, и после выхода
+   * посреди лекции (живой прогон 29.09.2026) файл на 11 МБ плеер показывал
+   * пустым. Здесь — синхронно и по настоящему размеру файла: ждать очередь
+   * закрытие не может.
+   */
+  abandon(): void {
+    this.закончена = true;
+    try {
+      const данные = Math.max(0, statSync(this.audioFile).size - 44);
+      const файл = openSync(this.audioFile, 'r+');
+      try {
+        writeSync(файл, wavHeader(данные, this.частотаЗвука), 0, 44, 0);
+      } finally {
+        closeSync(файл);
+      }
+    } catch {
+      // Файла нет — беречь нечего.
+    }
   }
 
   /** Дописать последний раздел, итог — над разделами, и закрыть запись звука. */

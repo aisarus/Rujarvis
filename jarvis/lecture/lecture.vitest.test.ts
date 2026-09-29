@@ -1,10 +1,11 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { normaliseSettings } from '../setup/settings';
+import { finishFromTranscript, parseTranscript } from './finishFromTranscript';
 import { finalPrompt, LectureSession, sectionFromReply, sectionPrompt } from './session';
 import { claudeSummaryArgs, createClaudeSummarizer } from './summarize';
 import { lectureFileBase, lectureFolder, obsidianOpenUrl, openObsidianVault } from './vault';
@@ -229,5 +230,56 @@ describe('языки лекции и конспекта', () => {
     for (const плохой of ['иврит', 'he; rm -rf', 'hebrew', 7]) {
       expect(normaliseSettings({ lectureLanguage: плохой }).lectureLanguage, String(плохой)).toBe('');
     }
+  });
+});
+
+describe('Джарвиса закрыли посреди лекции', () => {
+  it('звук остаётся целым: размер в заголовке WAV дописан', async () => {
+    const папка = await временная();
+    const сессия = new LectureSession(папка, 'Физика', { transcribe: async () => '', summarize: async () => '' });
+    await сессия.start();
+    сессия.addAudio(new Float32Array(1600), 16_000);
+    // Дать очереди дописать звук.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    сессия.abandon();
+    const wav = await readFile(сессия.audioFile);
+    expect(wav.readUInt32LE(40)).toBe(wav.length - 44);
+    expect(wav.readUInt32LE(4)).toBe(wav.length - 8);
+  });
+
+  it('конспект дописывается по сохранённой расшифровке: разделы по пять минут, итог сверху', async () => {
+    const папка = await временная();
+    const заметка = path.join(папка, '2026-09-29 истории.md');
+    await writeFile(заметка, '# истории\n\nРасшифровка: [[2026-09-29 истории — расшифровка]]\n\n## Конспект\n\n', 'utf8');
+    const строки = Array.from({ length: 14 }, (_, i) => `**[${String(Math.floor((i * 40) / 60)).padStart(2, '0')}:${String((i * 40) % 60).padStart(2, '0')}]** ${'מילה '.repeat(20).trim()}`);
+    await writeFile(path.join(папка, '2026-09-29 истории — расшифровка.md'), `# Расшифровка — истории\n\n${строки.join('\n\n')}\n`, 'utf8');
+
+    const просьбы: string[] = [];
+    const итог = await finishFromTranscript({
+      notesFile: заметка,
+      summarize: async (prompt) => {
+        просьбы.push(prompt);
+        return prompt.includes('## Кратко') ? '## Кратко\nО лекции.' : `### Тема ${просьбы.length}\n- пункт`;
+      },
+      lectureLanguage: 'he',
+      notesLanguage: 'ru',
+    });
+
+    // 14 кусков по 40 с = 8:40: раздел на пятой минуте и остаток.
+    expect(итог).toEqual({ sections: 2, summary: true });
+    const текст = await readFile(заметка, 'utf8');
+    expect(текст.indexOf('## Кратко')).toBeLessThan(текст.indexOf('## Конспект'));
+    expect(текст.indexOf('## Конспект')).toBeLessThan(текст.indexOf('### Тема 1'));
+    expect(просьбы[0]).toMatch(/Предмет: истории/u);
+    expect(просьбы[0]).toMatch(/в скобках на иврите/u);
+    // Второй раз — не дописывает поверх.
+    expect(await finishFromTranscript({ notesFile: заметка, summarize: async () => 'x', lectureLanguage: 'he', notesLanguage: 'ru' })).toMatchObject({ skipped: 'конспект уже дописан' });
+  });
+
+  it('метки расшифровки читаются и с часами', () => {
+    expect(parseTranscript('**[00:10]** a\n\nмусор\n**[1:02:03]** b')).toEqual([
+      { at: 10, text: 'a' },
+      { at: 3723, text: 'b' },
+    ]);
   });
 });

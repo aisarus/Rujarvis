@@ -40,6 +40,32 @@ export function lectureActive(): boolean {
   return идёт !== null;
 }
 
+/** Что с конспектом сейчас — для кнопки на плашке. */
+export type LectureState = 'off' | 'on' | 'finishing';
+
+export function lectureState(): LectureState {
+  return идёт ? 'on' : дописывается ? 'finishing' : 'off';
+}
+
+const слушатели = new Set<(state: LectureState) => void>();
+
+/** Подписка на смену состояния. Возвращает отписку. */
+export function onLectureState(listener: (state: LectureState) => void): () => void {
+  слушатели.add(listener);
+  return () => слушатели.delete(listener);
+}
+
+function оповестить(): void {
+  const state = lectureState();
+  for (const слушатель of слушатели) {
+    try {
+      слушатель(state);
+    } catch {
+      // Упавший слушатель — не повод ронять конспект.
+    }
+  }
+}
+
 export interface LectureStartOptions {
   home: string;
   outputDir: string;
@@ -91,6 +117,7 @@ export async function startLecture(subject: string | undefined, options: Lecture
   });
   await session.start();
   идёт = { session, сервер };
+  оповестить();
   console.log(
     `[jarvis:lecture] конспект начат${vault ? ' в хранилище Obsidian' : ' в папке результатов (Obsidian не найден)'}; ` +
       `язык лекции: ${options.lectureLanguage}, конспекта: ${options.notesLanguage}; ` +
@@ -130,9 +157,11 @@ export function finishLecture(): Promise<string> | null {
     } finally {
       (await была.сервер)?.stop();
       дописывается = null;
+      оповестить();
     }
   })();
   дописывается = работа;
+  оповестить();
   return работа;
 }
 
@@ -144,5 +173,7 @@ export function finishLecture(): Promise<string> | null {
 export function abandonLecture(): void {
   const была = идёт;
   идёт = null;
+  была?.session.abandon();
   void была?.сервер.then((сервер) => сервер?.stop());
+  if (была) оповестить();
 }
