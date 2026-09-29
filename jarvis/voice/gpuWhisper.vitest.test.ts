@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { findGpuWhisper, serverArgs, sha256, startGpuWhisper } from './gpuWhisper';
+import { findGpuWhisper, findHebrewWhisper, HEBREW_WHISPER_FILES, installHebrewWhisper, serverArgs, sha256, startGpuWhisper } from './gpuWhisper';
 
 const папки: string[] = [];
 afterEach(async () => {
@@ -129,5 +129,28 @@ describe('запуск своего сервера', () => {
         },
       ),
     ).rejects.toThrow(/вышел с кодом 3.*no CUDA devices/u);
+  });
+});
+
+describe('модель иврита для лекций', () => {
+  it('сжатая — первой, несжатая — если сжать было нечем; недокачанная — не модель', async () => {
+    const dir = await временная();
+    expect(await findHebrewWhisper(dir)).toBeNull();
+    await writeFile(path.join(dir, `${HEBREW_WHISPER_FILES.q5}.partial`), 'x');
+    expect(await findHebrewWhisper(dir)).toBeNull();
+    await writeFile(path.join(dir, HEBREW_WHISPER_FILES.f16), 'x');
+    expect(await findHebrewWhisper(dir)).toBe(path.join(dir, HEBREW_WHISPER_FILES.f16));
+    await writeFile(path.join(dir, HEBREW_WHISPER_FILES.q5), 'x');
+    expect(await findHebrewWhisper(dir)).toBe(path.join(dir, HEBREW_WHISPER_FILES.q5));
+  });
+
+  it('поставленную не качает заново; без распознавания на видеокарте — говорит, что поставить', async () => {
+    const dir = await временная();
+    const ничего = (): never => {
+      throw new Error('качать не должен');
+    };
+    await expect(installHebrewWhisper({ dir, fetchImpl: ничего as never })).rejects.toThrow(/pnpm jarvis:gpu-stt/u);
+    await writeFile(path.join(dir, HEBREW_WHISPER_FILES.q5), 'x');
+    expect(await installHebrewWhisper({ dir, fetchImpl: ничего as never })).toBe(path.join(dir, HEBREW_WHISPER_FILES.q5));
   });
 });

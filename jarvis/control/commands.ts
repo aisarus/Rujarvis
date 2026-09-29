@@ -37,6 +37,8 @@ export type DirectCommand =
   | { kind: 'volume'; level: number }
   /** Открыть сайт в браузере по умолчанию: по имени, не по адресу. */
   | { kind: 'openSite'; name: string }
+  /** Конспект лекции: начать (с предметом, если назван) или закончить. */
+  | { kind: 'lecture'; on: boolean; subject?: string }
   | { kind: 'dictation'; on: boolean }
   | { kind: 'clickNamed'; query: string }
   /** N-я ссылка страницы в браузере; -1 — последняя. */
@@ -689,6 +691,22 @@ export const БРАУЗЕРЫ_ПО_СЛОВАМ: Readonly<Record<string, readonl
  * попасть в переход к программе, а не в Ctrl+Tab.
  */
 const ПРАВИЛА: Array<Rule<DirectCommand>> = [
+  // КОНСПЕКТ ЛЕКЦИИ (решение владельца 29.09.2026) — раньше «запись» и «сайт».
+  // Необязательные слова грамматика сначала пропускает, и «лекцию по» ушло бы
+  // в название предмета: полные формы стоят раньше коротких.
+  { pattern: '(конспектируй|законспектируй) (лекцию|лекции) по {предмет}', make: (s) => ({ kind: 'lecture', on: true, subject: s.предмет as string }) },
+  { pattern: '(конспектируй|законспектируй) по {предмет}', make: (s) => ({ kind: 'lecture', on: true, subject: s.предмет as string }) },
+  { pattern: '(конспектируй|законспектируй) [лекцию]', make: () => ({ kind: 'lecture', on: true }) },
+  { pattern: '(начни|включи) (конспект|конспектировать) (лекцию|лекции) по {предмет}', make: (s) => ({ kind: 'lecture', on: true, subject: s.предмет as string }) },
+  { pattern: '(начни|включи) (конспект|конспектировать) по {предмет}', make: (s) => ({ kind: 'lecture', on: true, subject: s.предмет as string }) },
+  { pattern: '(начни|включи) (конспект|конспектировать) [лекцию] [лекции]', make: () => ({ kind: 'lecture', on: true }) },
+  { pattern: '(закончи|останови|заверши|выключи|прекрати) (конспект|конспектировать) [лекции]', make: () => ({ kind: 'lecture', on: false }) },
+  { pattern: '(конец|окончание) лекции', make: () => ({ kind: 'lecture', on: false }) },
+  { pattern: '(take|start) [the] lecture notes (on|for|in) {where}', make: (s) => ({ kind: 'lecture', on: true, subject: s.where as string }) },
+  { pattern: '(take|start) [the] lecture notes', make: () => ({ kind: 'lecture', on: true }) },
+  { pattern: '(stop|end|finish) [the] lecture notes', make: () => ({ kind: 'lecture', on: false }) },
+  { pattern: '(end|finish) [the] lecture', make: () => ({ kind: 'lecture', on: false }) },
+
   // ЗАПИСЬ — кнопкой активного окна (диктофон, OBS), а не агентом: живой
   // журнал 29.09.2026 — «начни записывать» четыре минуты, «останови запись»
   // уходило в закрытие программы «запись». Кнопка ищется по синонимам на

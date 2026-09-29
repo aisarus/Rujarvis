@@ -87,6 +87,7 @@ import {
 import { installVoice, isVoiceInstalled, Speaker } from '../jarvis/voice/tts';
 import { AUDIO_BRIDGE_CHANNELS, buildAudioBridgeHtml } from './audioBridgePage';
 import { cloudSpeechKey, createElevenLabsTranscriber } from './cloudTranscriber';
+import { abandonLecture, feedLecture, finishLecture, lectureActive, startLecture } from './lectureMode';
 import {
   createGpuTranscriber,
   isWhisperServerReady,
@@ -265,6 +266,8 @@ let showWork = true;
  * тишины.
  */
 let muted = false;
+/** Окно микрофона: режим лекции переключает в нём порог речи. */
+let окноЗвука: BrowserWindow | null = null;
 /** Свой сервер распознавания на видеокарте: pid записан при запуске, гасится ровно он. */
 let серверРаспознавания: GpuWhisperServer | null = null;
 /**
@@ -510,6 +513,32 @@ export async function runDirectCommand(
         }
         if (!свёрнуто) throw new Error(`не свернул «${command.title}»${почему ? `: ${почему}` : ''}`);
         console.log(`[jarvis] свернул «${свёрнуто.title}»`);
+        break;
+      }
+      case 'lecture': {
+        const звук = (on: boolean): void => {
+          try {
+            if (окноЗвука && !окноЗвука.isDestroyed()) окноЗвука.webContents.send(AUDIO_BRIDGE_CHANNELS.lecture, on);
+          } catch {
+            // Окно микрофона могло упасть — конспект всё равно пишется.
+          }
+        };
+        if (command.on) {
+          const ответ = await startLecture(command.subject, {
+            home: PATHS.home,
+            outputDir:
+              settings().outputDir ||
+              jarvisOutputDir(process.env, app.getPath('desktop'), settings().language === 'en' ? 'Jarvis' : 'Джарвис'),
+            mainEndpoint: () => серверРаспознавания?.endpoint ?? (process.env.JARVIS_GPU_STT?.trim() || null),
+          });
+          звук(true);
+          await session.speak(ответ);
+        } else {
+          звук(false);
+          // Итог — минута работы модели: сказать сразу, что происходит.
+          await session.speak(tr('Дописываю итог.', 'Writing the summary.'));
+          await session.speak(await finishLecture());
+        }
         break;
       }
       case 'volume': {
@@ -843,6 +872,8 @@ function describeDirect(command: DirectCommand): string {
       return `${describeDirect(command.command)} ${command.times} раз`;
     case 'minimize':
       return `свернул ${command.title}`;
+    case 'lecture':
+      return command.on ? 'начал конспект лекции' : 'закончил конспект лекции';
     case 'volume':
       return `громкость ${command.level}%`;
     case 'openSite':
@@ -932,6 +963,7 @@ async function поднятьМост(options: {
   );
 
   const audioWindow = await createAudioWindow();
+  окноЗвука = audioWindow;
   незавершённое.push(() => {
     if (!audioWindow.isDestroyed()) audioWindow.destroy();
   });
@@ -1424,9 +1456,20 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
     {
       try {
         const samples = toFloat32(payload.samples);
+        // Лекция: звук аудитории — в конспект, а не в разговор. В конспект —
+        // раньше русского слуха: упади общий сервер, лекция всё равно
+        // пишется. Русский слух проверяет только, не к Джарвису ли это
+        // («Джарвис, закончи конспект») и не «стоп»/«тишина» ли: остальное из
+        // аудитории — не команды.
+        const лекция = lectureActive();
+        if (лекция) feedLecture(samples, payload.sampleRate);
         const started = Date.now();
         const { text } = await transcriber.transcribe(samples, payload.sampleRate);
         const распознано = Date.now();
+        if (лекция) {
+          const кДжарвису = Boolean(text) && (matchVoiceControl(text) !== null || isSilenceRequest(text) || findWakeWord(text) !== null);
+          if (!кДжарвису) return;
+        }
         const seconds = (samples.length / payload.sampleRate).toFixed(1);
 
         if (!text) return;
@@ -2135,6 +2178,8 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
       // видеопамять и порт до перезагрузки, а следующий запуск моста не смог
       // бы поднять свой.
       поколениеМоста += 1;
+      abandonLecture();
+      окноЗвука = null;
       серверРаспознавания?.stop();
       серверРаспознавания = null;
       // Сессия разговора — это процесс CLI со своим MCP-сервером. Не закрыть

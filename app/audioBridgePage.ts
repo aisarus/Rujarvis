@@ -19,6 +19,8 @@ export const AUDIO_BRIDGE_CHANNELS = {
   speechStarted: 'jarvis-audio:speech-started',
   pushResult: 'jarvis-audio:push-result',
   startAmbient: 'jarvis-audio:start-ambient',
+  /** Режим лекции: порог речи мягче, куски длиннее. */
+  lecture: 'jarvis-audio:lecture',
   stopAmbient: 'jarvis-audio:stop-ambient',
   startPush: 'jarvis-audio:start-push',
   stopPush: 'jarvis-audio:stop-push',
@@ -86,6 +88,18 @@ const MIN_SPEECH_MS = 400;
 // тогда, когда в комнате шум или музыка и тишины не наступает вовсе, и любая
 // команда в этот момент ждала бы вдвое дольше.
 const MAX_UTTERANCE_MS = 15000;
+// Режим лекции (решение владельца 29.09.2026): лектор в аудитории дальше и
+// тише человека у ноутбука, и порог, подобранный под голос рядом, не услышал
+// бы его вовсе. Порог речи мягче, а кусок длиннее — до окна Whisper в 30 с:
+// лекция — это не команды, и ждать ответа тут некому. Порог перебивания не
+// трогается: собственный голос Джарвиса не должен перебивать сам себя.
+const LECTURE_RMS_FACTOR = 0.4;
+const LECTURE_MAX_UTTERANCE_MS = 28000;
+let lecture = false;
+
+function speechThreshold() {
+  return lecture ? SPEECH_RMS * LECTURE_RMS_FACTOR : SPEECH_RMS;
+}
 
 let audioContext = null;
 let source = null;
@@ -197,7 +211,7 @@ function onAudio(event) {
   let sum = 0;
   for (let i = 0; i < input.length; i += 1) sum += input[i] * input[i];
   const rms = Math.sqrt(sum / input.length);
-  const loud = rms > SPEECH_RMS;
+  const loud = rms > speechThreshold();
 
   // Push-to-talk keeps everything between key down and key up: the user said
   // when to listen, so second-guessing them with a loudness gate only loses
@@ -266,7 +280,7 @@ function onAudio(event) {
     return;
   }
 
-  const closedByLength = samplesToMs(bufferedSamples) >= MAX_UTTERANCE_MS;
+  const closedByLength = samplesToMs(bufferedSamples) >= (lecture ? LECTURE_MAX_UTTERANCE_MS : MAX_UTTERANCE_MS);
 
   if (closedBySilence || closedByLength) {
     emit(CH.utterance, closedBySilence ? 'silence' : 'length');
@@ -384,6 +398,10 @@ async function raiseCapture() {
   mute.connect(audioContext.destination);
   lastAudioAt = Date.now();
 }
+
+ipcRenderer.on(CH.lecture, (_event, on) => {
+  lecture = Boolean(on);
+});
 
 ipcRenderer.on(CH.startAmbient, async () => {
   try {

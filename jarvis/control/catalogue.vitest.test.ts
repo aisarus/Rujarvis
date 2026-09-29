@@ -61,7 +61,7 @@ const everyPhrase = catalogue.flatMap((group) => group.items.map((item) => item.
     const kinds = new Set(
       everyPhrase.map((phrase) => parseDirectCommand(phrase)?.kind).filter(Boolean),
     );
-    for (const kind of ['key', 'scroll', 'click', 'focus', 'dictation', 'grid', 'clickNamed']) {
+    for (const kind of ['key', 'scroll', 'click', 'focus', 'dictation', 'grid', 'clickNamed', 'lecture']) {
       expect(kinds.has(kind as never), `нет примера для «${kind}»`).toBe(true);
     }
   });

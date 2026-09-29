@@ -835,3 +835,19 @@ describe('запись кнопкой окна (живой журнал 29.09.20
     expect(parseDirectCommand('stop recording')).toEqual({ kind: 'clickNamed', query: 'stop' });
   });
 });
+describe('конспект лекции голосом', () => {
+  it('начать — с предметом и без, на обоих языках', () => {
+    expect(parseDirectCommand('Джарвис, конспектируй лекцию по матанализу')).toEqual({ kind: 'lecture', on: true, subject: 'матанализу' });
+    expect(parseDirectCommand('конспектируй лекцию')).toEqual({ kind: 'lecture', on: true });
+    expect(parseDirectCommand('законспектируй по физике')).toEqual({ kind: 'lecture', on: true, subject: 'физике' });
+    expect(parseDirectCommand('начни конспект лекции по линейной алгебре')).toEqual({ kind: 'lecture', on: true, subject: 'линейной алгебре' });
+    expect(parseDirectCommand('начни конспект')).toEqual({ kind: 'lecture', on: true });
+    expect(parseDirectCommand('take lecture notes for physics')).toEqual({ kind: 'lecture', on: true, subject: 'physics' });
+  });
+
+  it('закончить', () => {
+    for (const phrase of ['закончи конспект', 'Останови конспект', 'конец лекции', 'stop lecture notes', 'end the lecture']) {
+      expect(parseDirectCommand(phrase), phrase).toEqual({ kind: 'lecture', on: false });
+    }
+  });
+});

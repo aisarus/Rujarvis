@@ -145,6 +145,13 @@ function russianCatalogue(): CatalogueGroup[] {
       ],
     },
     {
+      title: 'Лекция',
+      items: [
+        { say: 'конспектируй лекцию по матанализу', does: 'записать лекцию на иврите и вести конспект в Obsidian', layer: 'direct' },
+        { say: 'закончи конспект', does: 'дописать итог и закрыть запись', layer: 'direct' },
+      ],
+    },
+    {
       title: 'Блендер (когда открыт)',
       items: [
         { say: 'сделай её синей', does: 'покрасить выделенный объект', layer: 'blender' },
@@ -274,6 +281,13 @@ function englishCatalogue(): CatalogueGroup[] {
         { say: 'mute sound', does: 'mute the system sound', layer: 'direct' },
         { say: 'play music', does: 'play and pause', layer: 'direct' },
         { say: 'next track', does: 'next song', layer: 'direct' },
+      ],
+    },
+    {
+      title: 'Lecture',
+      items: [
+        { say: 'take lecture notes for calculus', does: 'record a Hebrew lecture and keep notes in Obsidian', layer: 'direct' },
+        { say: 'stop lecture notes', does: 'write the summary and close the recording', layer: 'direct' },
       ],
     },
     {

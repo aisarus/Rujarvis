@@ -135,3 +135,73 @@ describe('перебивание', () => {
     expect(отправлено.filter((c) => c === 'jarvis-audio:speech-started')).toHaveLength(1);
   });
 });
+
+/**
+ * Режим лекции: лектор дальше, чем человек у ноутбука, и говорит подолгу.
+ *
+ * Порог речи ниже, а запись длиннее — иначе тихий голос из-за кафедры не
+ * открывает запись вовсе, а длинная мысль режется на куски по 15 секунд.
+ * Включается каналом из моста, как в приложении, а не правкой переменной.
+ */
+describe('режим лекции', () => {
+  const html = buildAudioBridgeHtml();
+  const открывающий = html.indexOf('<script>') + '<script>'.length;
+  const тело = html.slice(открывающий, html.indexOf('</script>', открывающий));
+
+  function страница(лекция: boolean): { отправлено: string[]; звук: (samples: Float32Array) => void } {
+    const отправлено: string[] = [];
+    const обработчики = new Map<string, (event: unknown, value: unknown) => void>();
+    const ipcRenderer = {
+      on: (channel: string, handler: (event: unknown, value: unknown) => void) => {
+        обработчики.set(channel, handler);
+      },
+      send: (channel: string) => {
+        отправлено.push(channel);
+      },
+    };
+    const контекст = createContext({
+      require: () => ({ ipcRenderer }),
+      setInterval: () => 0,
+      setTimeout: () => 0,
+      clearTimeout: () => undefined,
+      console,
+      navigator: { mediaDevices: {} },
+    });
+    new Script(тело).runInContext(контекст);
+    new Script('ambient = true; audioContext = { sampleRate: 16000 };').runInContext(контекст);
+    if (лекция) обработчики.get('jarvis-audio:lecture')?.(null, true);
+    const onAudio = new Script('onAudio').runInContext(контекст) as (event: unknown) => void;
+    return { отправлено, звук: (samples) => onAudio({ inputBuffer: { getChannelData: () => samples } }) };
+  }
+
+  const КУСОК = 4096;
+  /** Голос из-за кафедры: громкость ниже обычного порога речи, но выше лекционного. */
+  const издалека = (): Float32Array => {
+    const out = new Float32Array(КУСОК);
+    for (let i = 0; i < КУСОК; i += 1) out[i] = 0.02 * Math.sin((2 * Math.PI * 180 * i) / 16000);
+    return out;
+  };
+  const тишина = (): Float32Array => new Float32Array(КУСОК);
+
+  it('тихий голос издалека — речь только в режиме лекции', () => {
+    for (const лекция of [false, true]) {
+      const { отправлено, звук } = страница(лекция);
+      for (let i = 0; i < 4; i += 1) звук(издалека());
+      for (let i = 0; i < 5; i += 1) звук(тишина());
+      expect(отправлено.includes('jarvis-audio:utterance')).toBe(лекция);
+    }
+  });
+
+  it('длинная мысль лектора не режется на 15 секундах', () => {
+    const кусковНа = (секунд: number): number => Math.ceil((секунд * 16000) / КУСОК);
+    const обычно = страница(false);
+    const лекция = страница(true);
+    for (let i = 0; i < кусковНа(20); i += 1) {
+      const громко = издалека().map((x) => x * 3);
+      обычно.звук(громко);
+      лекция.звук(громко);
+    }
+    expect(обычно.отправлено).toContain('jarvis-audio:utterance');
+    expect(лекция.отправлено).not.toContain('jarvis-audio:utterance');
+  });
+});
