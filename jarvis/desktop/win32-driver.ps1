@@ -436,6 +436,19 @@ function Get-Elements {
     return $items
 }
 
+# Впереди меню «Пуск», поиск или центр уведомлений Windows?
+#
+# Живой журнал 29.09.2026: агент открыл поиск Windows, чтобы найти диктофон,
+# и «переключись на Edge» дважды кончилось «Не вышло поднять окно … впереди
+# «Поиск»». Эти окна держат фокус и не отдают его SetForegroundWindow. Узнаём
+# по процессу, а не по надписи: надпись переведена («Поиск», «חיפוש»).
+function Test-ShellOverlay([IntPtr] $handle) {
+    [uint32] $processId = 0
+    [void][Desk]::GetWindowThreadProcessId($handle, [ref] $processId)
+    $name = (Get-Process -Id $processId -ErrorAction SilentlyContinue).ProcessName
+    return @('SearchHost', 'SearchApp', 'StartMenuExperienceHost', 'ShellExperienceHost') -contains $name
+}
+
 # Окно по названию: сначала заголовок, потом имя процесса. Общее у «перейти»
 # и «свернуть»: одно и то же «эдж» обязано находить одно и то же окно.
 function Find-Window([string] $needle) {
@@ -547,6 +560,16 @@ function Invoke-Command2($message) {
             # u kazhdogo okna svoy.
             $nowFront = [Desk]::Raise($handle)
             $frontHandle = [Desk]::GetForegroundWindow()
+            if ($frontHandle -ne $handle -and (Test-ShellOverlay $frontHandle)) {
+                # Закрыть «Пуск»/поиск тем же, чем закрывает человек, — Escape, и
+                # поднять ещё раз. Только когда впереди именно они: Escape в
+                # чужом окне отменил бы там что-нибудь.
+                Send-VirtualKey 0x1B $false
+                Send-VirtualKey 0x1B $true
+                Start-Sleep -Milliseconds 250
+                $nowFront = [Desk]::Raise($handle)
+                $frontHandle = [Desk]::GetForegroundWindow()
+            }
             if ($frontHandle -ne $handle) {
                 throw "Не вышло поднять окно. Просили «$($target.title)», впереди «$nowFront»"
             }

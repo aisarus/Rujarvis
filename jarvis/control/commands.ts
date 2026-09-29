@@ -765,6 +765,9 @@ const ПРАВИЛА: Array<Rule<DirectCommand>> = [
   // 28.09.2026: ушло агенту на 44 с. «Сверни все окна» — рабочий стол, и это
   // правило стоит раньше: иначе «все окна» стало бы названием окна.
   { pattern: 'сверни (все|всё) [окна]', make: () => ({ kind: 'key', keys: 'win+d' }) },
+  // «Сверни меню пуск» (живой журнал 29.09.2026) — не окно по названию, а
+  // «Пуск»/поиск Windows поверх всего: закрывается Escape.
+  { pattern: '(сверни|закрой|убери|спрячь) [меню] (пуск|поиск)', make: () => ({ kind: 'key', keys: 'escape' }) },
   { pattern: 'сверни [окно] {куда}', make: (s) => ({ kind: 'minimize', title: s.куда as string }) },
 
   // ПРОКРУТКА: направление словом, а не таблицей форм.
@@ -791,6 +794,7 @@ const ПРАВИЛА: Array<Rule<DirectCommand>> = [
   // сворачивало окно.
   { pattern: 'minimize [this|the] [window]', make: () => ({ kind: 'key', keys: 'win+down' }) },
   { pattern: 'minimize (all|every) [windows]', make: () => ({ kind: 'key', keys: 'win+d' }) },
+  { pattern: '(close|hide|minimize) [the] (start|search) [menu]', make: () => ({ kind: 'key', keys: 'escape' }) },
   { pattern: 'minimize [the] {where}', make: (s) => ({ kind: 'minimize', title: s.where as string }) },
   { pattern: 'hide [this|the] window', make: () => ({ kind: 'key', keys: 'win+down' }) },
   { pattern: '(maximize|expand) [this|the] [window]', make: () => ({ kind: 'key', keys: 'win+up' }) },

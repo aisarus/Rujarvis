@@ -816,3 +816,13 @@ describe('мгновенное вместо агента (живой журна�
     expect(parseDirectCommand('open the website github')).toEqual({ kind: 'openSite', name: 'github' });
   });
 });
+
+describe('меню «Пуск» и поиск Windows (живой журнал 29.09.2026)', () => {
+  it('«сверни меню пуск» — Escape, а не поиск окна «меню пуск»', () => {
+    for (const phrase of ['Сверни меню пуск', 'закрой пуск', 'закрой поиск', 'убери меню пуск', 'close the start menu', 'close search']) {
+      expect(act(phrase), phrase).toBe('key:escape');
+    }
+    // Обычное окно по названию — по-прежнему окно.
+    expect(parseDirectCommand('сверни блендер')).toEqual({ kind: 'minimize', title: 'блендер' });
+  });
+});
