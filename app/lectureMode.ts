@@ -30,6 +30,8 @@ interface Лекция {
 }
 
 let идёт: Лекция | null = null;
+/** Итог прошлой лекции ещё пишется: её сервер иврита занимает тот же порт. */
+let дописывается: Promise<string> | null = null;
 
 export function lectureActive(): boolean {
   return идёт !== null;
@@ -44,6 +46,7 @@ export interface LectureStartOptions {
 
 export async function startLecture(subject: string | undefined, options: LectureStartOptions): Promise<string> {
   if (идёт) return tr('Конспект уже пишется.', 'Already taking notes.');
+  if (дописывается) return tr('Ещё дописываю прошлый конспект — через минуту.', 'Still finishing the previous notes. Give me a minute.');
 
   const dir = gpuWhisperDir(options.home);
   const files = await findGpuWhisper(dir).catch(() => null);
@@ -99,17 +102,29 @@ export function feedLecture(samples: Float32Array, sampleRate: number): void {
   идёт?.session.addAudio(samples, sampleRate);
 }
 
-export async function finishLecture(): Promise<string> {
+/**
+ * Дописать итог и погасить сервер иврита.
+ *
+ * Итог — минута-другая модели. Мост поэтому не ждёт его внутри команды:
+ * реплики разбираются по одной, и «стоп» простоял бы за итогом всё это время.
+ * Лекция перестаёт быть активной сразу — следующая фраза уже разговор.
+ */
+export function finishLecture(): Promise<string> | null {
   const была = идёт;
-  if (!была) return tr('Конспект сейчас не пишется.', 'No lecture notes are being taken.');
+  if (!была) return null;
   идёт = null;
-  try {
-    const итог = await была.session.finish();
-    console.log(`[jarvis:lecture] конспект готов: ${итог.sections} разделов, ${итог.words} слов расшифровки`);
-    return tr(`Конспект готов: разделов — ${итог.sections}.`, `Notes are ready: ${итог.sections} sections.`);
-  } finally {
-    (await была.сервер)?.stop();
-  }
+  const работа = (async (): Promise<string> => {
+    try {
+      const итог = await была.session.finish();
+      console.log(`[jarvis:lecture] конспект готов: ${итог.sections} разделов, ${итог.words} слов расшифровки`);
+      return tr(`Конспект готов: разделов — ${итог.sections}.`, `Notes are ready: ${итог.sections} sections.`);
+    } finally {
+      (await была.сервер)?.stop();
+      дописывается = null;
+    }
+  })();
+  дописывается = работа;
+  return работа;
 }
 
 /**

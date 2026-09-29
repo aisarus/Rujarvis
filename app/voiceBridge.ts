@@ -534,10 +534,22 @@ export async function runDirectCommand(
           звук(true);
           await session.speak(ответ);
         } else {
+          const итог = finishLecture();
+          if (!итог) {
+            await session.speak(tr('Конспект сейчас не пишется.', 'No lecture notes are being taken.'));
+            break;
+          }
           звук(false);
-          // Итог — минута работы модели: сказать сразу, что происходит.
-          await session.speak(tr('Дописываю итог.', 'Writing the summary.'));
-          await session.speak(await finishLecture());
+          // Итог — минута-другая модели. Ждать его здесь нельзя: реплики
+          // разбираются по одной, и «стоп» простоял бы за ним. Готово — скажет.
+          void итог
+            .then((ответ) => session.speak(ответ))
+            .catch((error: unknown) => {
+              console.error(`[jarvis:lecture] итог не дописан: ${error instanceof Error ? error.message : String(error)}`);
+              return session.speak(tr('Итог не собрался. Записанное — на диске.', 'The summary failed. What was recorded is on disk.'));
+            })
+            .catch(() => undefined);
+          await session.speak(tr('Дописываю итог — скажу, когда будет готов.', 'Writing the summary. I will tell you when it is ready.'));
         }
         break;
       }
