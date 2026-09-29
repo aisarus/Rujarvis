@@ -208,3 +208,22 @@ describe('счёт вничью и короткие слова', () => {
     expect(chooseShortcut('ии студия', ['AI Studio', 'Блокнот'], (n) => n)?.item).toBe('AI Studio');
   });
 });
+
+describe('одно слово на слух из длинной просьбы — не название (живой журнал 29.09.2026)', () => {
+  const пуск = [
+    { name: 'Пакет локализованного интерфейса на русском' },
+    { name: 'Epic Games Launcher' },
+    { name: 'Средство записи действий' },
+  ];
+  const имя = (item: { name: string }): string => item.name;
+
+  it('«какой-нибудь диктофорут интервейса» не запускает языковой пакет', () => {
+    expect(chooseShortcut('какой-нибудь диктофорут интервейса', пуск, имя)).toBeNull();
+    expect(chooseShortcut('диктофорут интервейса', пуск, имя)).toBeNull();
+  });
+
+  it('одно точное слово и одно слово целиком по-прежнему находят', () => {
+    expect(chooseShortcut('эпик', пуск, имя)?.item.name).toBe('Epic Games Launcher');
+    expect(chooseShortcut('epic launcher', пуск, имя)?.item.name).toBe('Epic Games Launcher');
+  });
+});

@@ -145,6 +145,9 @@ export const APPX_APPS_COMMAND =
   '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ' +
   '$out = foreach ($p in Get-AppxPackage) { ' +
   'if ($p.IsFramework -or $p.IsResourcePackage) { continue } ' +
+  // Языковой пакет — не программа: живой журнал 29.09.2026, «открой какой-нибудь
+  // диктофорут интервейса» запустило «Пакет локализованного интерфейса».
+  "if ($p.Name -like 'Microsoft.LanguageExperiencePack*') { continue } " +
   'try { $m = Get-AppxPackageManifest $p -ErrorAction Stop } catch { continue } ' +
   'foreach ($a in @($m.Package.Applications.Application)) { ' +
   'if (-not $a.Id) { continue } ' +

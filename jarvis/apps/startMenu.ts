@@ -266,6 +266,12 @@ export function chooseShortcut<T>(
 ): ShortcutChoice<T> | null {
   const keys = candidateKeys(spoken);
   if (keys.length === 0) return null;
+  // Ключи по каждому сказанному слову отдельно — для правила покрытия ниже.
+  const словаСказанного = normalise(spoken)
+    .split(' ')
+    .filter(Boolean)
+    .map((слово) => candidateKeys(слово))
+    .filter((ключиСлова) => ключиСлова.length > 0);
 
   let best: { item: T; name: string; exact: boolean; total: number } | null = null;
   // Имена, набравшие лучший счёт, — множеством, а не одним «вторым местом».
@@ -295,6 +301,20 @@ export function chooseShortcut<T>(
     // «эпик» inside "Epic Games Launcher" — one word of three — even though it
     // is exactly the program meant.
     if (score < 2) continue;
+
+    // …но одно слово НА СЛУХ из длинной просьбы — это не название.
+    //
+    // Живой журнал 29.09.2026: «открой какой-нибудь диктофорут интервейса»
+    // запустило «Пакет локализованного интерфейса на русском» — одно слово из
+    // трёх, «интервейса», отличалось от «интерфейса» буквой. Когда сказано два
+    // слова и больше и ни одно не совпало точно, на слух должно совпасть больше
+    // половины сказанных слов: из двух — оба. «Эпик» (одно слово) это не трогает.
+    if (!exact && словаСказанного.length >= 2) {
+      const совпало = словаСказанного.filter((ключиСлова) =>
+        ключиСлова.some((key) => words.some((word) => scoreWord(key, word) >= 2)),
+      ).length;
+      if (совпало * 2 <= словаСказанного.length) continue;
+    }
 
     // Length only breaks ties: asked for «риот», the short "Riot Client" beats
     // a longer name that merely contains the same word.
