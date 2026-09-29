@@ -97,7 +97,12 @@ export function createGpuTranscriber(options: GpuTranscriberOptions = {}): Trans
         if (typeof payload.text !== 'string') {
           throw new Error(`ответ без text: ${JSON.stringify(payload).slice(0, 200)}`);
         }
-        return { text: payload.text.trim() };
+        // Сервер whisper.cpp дописывает перевод строки после каждого сегмента,
+        // а пробел перед новым словом и так стоит в начале сегмента. Сегмент
+        // же может кончиться посреди слова: замер на лекциях на иврите
+        // 29.09.2026 дал «הרמ⏎ונית» вместо «הרמונית». Поэтому переводы строк
+        // убираются, а не меняются на пробел — иначе слово рвётся надвое.
+        return { text: payload.text.replace(/\n/gu, '').trim() };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (!options.fallback) throw error;

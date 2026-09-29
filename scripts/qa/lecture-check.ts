@@ -58,7 +58,8 @@ async function распознать(endpoint: string, samples: Float32Array): Pr
   форма.append('translate', 'false');
   const ответ = await fetch(`${endpoint}/inference`, { method: 'POST', body: форма });
   if (!ответ.ok) throw new Error(`сервер ответил HTTP ${ответ.status}`);
-  return String(((await ответ.json()) as { text?: unknown }).text ?? '').trim();
+  // Как в мосте (app/gpuTranscriber.ts): сегмент может кончиться посреди слова.
+  return String(((await ответ.json()) as { text?: unknown }).text ?? '').replace(/\n/gu, '').trim();
 }
 
 async function main(): Promise<void> {
