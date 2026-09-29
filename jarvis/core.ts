@@ -464,7 +464,13 @@ export class JarvisCore {
 
     if (clarification || continuesTalk) {
       const recent = this.recentTask();
-      if (recent) {
+      // Назван другой агент, чем вёл прошлую задачу, — это новое дело, а не
+      // продолжение. Склейка с прошлой фразой отдавала работу агенту,
+      // названному в ней, а не сейчас: живая проверка 30.09.2026, «сделай это
+      // через Codex» после задачи «через Claude Code» ушло Claude Code, в его
+      // же поток.
+      const другойАгент = Boolean(decision.requestedBackend && recent && decision.requestedBackend !== recent.backend);
+      if (recent && !другойАгент) {
         continuing = recent;
         decision = route(`${recent.utterance}. ${utterance}`, {
           basePermissions: settings.basePermissions,

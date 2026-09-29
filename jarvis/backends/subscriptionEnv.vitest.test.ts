@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { strippedKeys, subscriptionEnv } from './subscriptionEnv';
+import { agentEnv, strippedKeys, subscriptionEnv } from './subscriptionEnv';
 
 describe('окружение без ключей', () => {
   // Ровно тот случай: старый ключ в системе перебивал вход по подписке, и
@@ -69,5 +69,12 @@ describe('ключи убираются в любом регистре', () => {
 
   it('и попадает в список убранного', () => {
     expect(strippedKeys({ anthropic_api_key: 'секрет' })).toEqual(['anthropic_api_key']);
+  });
+});
+
+describe('окружение агента', () => {
+  it('инструменты — сразу, без поиска; заданное человеком не трогает (замер 29.09.2026)', () => {
+    expect(agentEnv({ PATH: 'x' }).ENABLE_TOOL_SEARCH).toBe('false');
+    expect(agentEnv({ PATH: 'x', ENABLE_TOOL_SEARCH: 'auto' }).ENABLE_TOOL_SEARCH).toBe('auto');
   });
 });

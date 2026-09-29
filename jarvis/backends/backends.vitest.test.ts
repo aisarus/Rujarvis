@@ -1633,3 +1633,36 @@ describe('Codex и красные линии в сервере (путь «Б»)
     expect(args.some((a) => a.includes('default_tools_approval_mode'))).toBe(false);
   });
 });
+
+describe('названный агент не смог', () => {
+  it('следующему сказано, что названный упал: пусть делает сам, а не запускает его (живая проверка 30.09.2026)', async () => {
+    const запросы: BackendRequest[] = [];
+    const запись = (backend: AgentBackend): AgentBackend => ({
+      ...backend,
+      run: (req: BackendRequest) => {
+        запросы.push(req);
+        return backend.run(req);
+      },
+    });
+    const готовый = (id: 'codex' | 'claude-code', итог: Partial<BackendResult>): AgentBackend =>
+      ({
+        id,
+        name: id,
+        capabilities: new Set(),
+        checkAvailability: async () => ({ id, installed: true, authenticated: true, ready: true, checkedAt: 0 }),
+        run: (): BackendRun => {
+          const result: BackendResult = { ok: false, backend: id, text: '', durationMs: 1, filesChanged: [], commands: [], ...итог };
+          const channel = new EventChannel<BackendEvent>();
+          channel.push({ type: 'completed', backend: id, result });
+          channel.close();
+          return { id: `${id}-run`, backend: id, events: channel, cancel: () => {}, result: () => Promise.resolve(result) };
+        },
+      }) as unknown as AgentBackend;
+    const manager = new BackendManager();
+    manager.register(запись(готовый('codex', { error: 'model not supported' })));
+    manager.register(запись(готовый('claude-code', { ok: true, text: 'Готово.' })));
+    const final = await manager.run(request(), { requested: 'codex' }).result();
+    expect(final.backend).toBe('claude-code');
+    expect(запросы[1]?.context?.join(' ')).toMatch(/просил codex, но он не смог.*model not supported.*не пытайся/u);
+  });
+});

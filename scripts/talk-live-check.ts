@@ -21,6 +21,7 @@ import path from 'node:path';
 import { TalkBridge, type TalkRequest } from '../jarvis/dialogue/talkBridge';
 import { TalkSession } from '../jarvis/dialogue/talkSession';
 import { createClaudeProbe, createCodexProbe } from '../jarvis/backends/cliProbes';
+import { FAST_MODEL } from '../jarvis/backends/claudeCode';
 
 /** Чей разговор меряем: Codex — для тех, у кого нет Claude Code. */
 const АГЕНТ = process.argv.includes('--codex') ? 'codex' : 'claude-code';
@@ -89,7 +90,7 @@ async function main(): Promise<void> {
   };
   const перестать = мост.serve((request) => {
     просьбы.push(request);
-    console.log(`  <- мост получил: ${request.kind} ${request.text ?? ''}`);
+    console.log(`  <- мост получил: ${request.kind}${request.quick ? ' (коротко)' : ''} ${request.text ?? ''}`);
     // Запуск отвечает тем, что у него попросили, как настоящий мост. Прежде
     // здесь была заготовка «Запускаю: собрать список ссылок» под одну фразу, и
     // на любую другую разговор честно замечал расхождение и переспрашивал.
@@ -118,6 +119,8 @@ async function main(): Promise<void> {
   const сказанное: string[] = [];
   const разговор = new TalkSession({
     agent: async () => ({ id: АГЕНТ, path: путьCLI }),
+    // Та же модель, что у приложения: разговор идёт на Sonnet.
+    model: АГЕНТ === 'claude-code' ? FAST_MODEL : undefined,
     cwd: ДОМ,
     mcpConfig: сервер,
     delta: { journalFile: ЖУРНАЛ, planFile: ПЛАН },
@@ -163,6 +166,9 @@ async function main(): Promise<void> {
     // дал «мост получил: start найти погоду в Тель-Авиве на завтра».
     // Дописывание шага проверяет третья фраза.
     'а пока отдельно найди мне погоду в Тель-Авиве на завтра',
+    // Короткое дело — одно действие на экране: разговор помечает его quick,
+    // и оно идёт быстрой полосой (Sonnet, сжатая инструкция).
+    'и ещё переключи браузер на вторую вкладку',
     // «Обе»: к этому ходу работ две — отчёт и погода. На «всё, останови»
     // разговор законно переспрашивал, какую, и 26.09.2026 проверка объявила
     // поломкой верный вопрос. В настоящем Джарвисе «всё, останови» ловит слой
@@ -230,6 +236,8 @@ async function main(): Promise<void> {
     ['pause_work дошёл до моста', виды.has('pause')],
     ['resume_work дошёл до моста', виды.has('resume')],
     ['разговор отвечал вслух', настоящиеОтветы.length > 0],
+    ['короткое дело помечено quick', просьбы.some((п) => п.kind === 'start' && п.quick === true)],
+    ['поиск погоды не помечен коротким', !просьбы.some((п) => п.kind === 'start' && п.quick === true && /погод/iu.test(п.text ?? ''))],
     ['ящик не побит', ящикБит === ''],
   ];
 

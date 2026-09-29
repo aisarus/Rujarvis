@@ -81,6 +81,13 @@ export function strippedKeys(env: NodeJS.ProcessEnv = process.env): string[] {
  */
 export function agentEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const clean = subscriptionEnv(env);
+  // Инструменты — сразу, а не через поиск. Без этой переменной Claude Code
+  // откладывает схемы MCP-инструментов и каждый раз сначала ищет их
+  // (`ToolSearch`), по круге модели на поиск. Замер 29.09.2026, короткое дело
+  // «перечисли окна»: первое действие на 5-й секунде вместо 9–11-й, всё дело
+  // 10–12 с вместо 16. Переменная не описана в документации — прочитана в
+  // самом CLI; заданную человеком не трогаем.
+  if (!clean.ENABLE_TOOL_SEARCH) clean.ENABLE_TOOL_SEARCH = 'false';
   const own = localModel();
   if (!own) return clean;
   // Токен подписки своему серверу ни к чему. Замер показал, что Claude Code и

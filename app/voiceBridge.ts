@@ -811,9 +811,20 @@ async function применитьНастройку(
  * Экспортирован для приёмки: «кликни по кнопке …» проверяется тем же
  * поиском, что у голоса, на обеих системах.
  */
+/** Столько элементов бывает у окна, чьё содержимое ещё не выставлено. */
+const ПОЧТИ_ПУСТОЕ_ДЕРЕВО = 12;
+
 export async function findNamedElement(query: string) {
-  const window = await desktop.elements();
-  const found = chooseElement(query, window.elements);
+  let window = await desktop.elements();
+  let found = chooseElement(query, window.elements);
+  // Chromium строит дерево доступности лениво: первый запрос видит только
+  // рамку окна — приёмка 30.09.2026, «сохранить» среди 5 элементов окна с
+  // кнопкой. Почти пустое дерево и ничего не нашлось — спросить ещё раз.
+  for (let попытка = 0; !found && window.elements.length < ПОЧТИ_ПУСТОЕ_ДЕРЕВО && попытка < 2; попытка += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    window = await desktop.elements();
+    found = chooseElement(query, window.elements);
+  }
   console.log(
     `[jarvis] «${query}» среди ${window.elements.length} элементов «${window.title}»: ` +
       (found ? `${found.name || found.id}` : 'не найдено'),

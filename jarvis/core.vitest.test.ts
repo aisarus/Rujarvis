@@ -972,3 +972,28 @@ describe('режим плана', () => {
     expect((запрос?.request.context ?? []).join(' ')).toContain('силуэт');
   });
 });
+
+describe('названный агент — новое дело, а не продолжение прошлого', () => {
+  it('«через Codex» после разговора с Claude Code уходит Codex, без чужой сессии (живая проверка 30.09.2026)', async () => {
+    const h = harness({
+      respond: {
+        'claude-code': () => ({ text: '47382', sessionId: 's-claude' }),
+        codex: () => ({ text: '51234', sessionId: 's-codex' }),
+      },
+    });
+    await h.core.handleUtterance('Придумай любое пятизначное число и назови только его. Сделай это через Claude Code.');
+    await tick();
+    await tick();
+    await h.core.handleUtterance('Сделай его на единицу больше');
+    await tick();
+    await tick();
+    const третья = await h.core.handleUtterance('Придумай любое пятизначное число и назови только его. Сделай это через Codex.');
+    await tick();
+    const последний = h.recorded.at(-1);
+    expect({ ход: третья.kind, агент: последний?.backend, сессия: последний?.request.sessionId }).toEqual({
+      ход: 'task',
+      агент: 'codex',
+      сессия: undefined,
+    });
+  });
+});

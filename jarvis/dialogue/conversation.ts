@@ -69,6 +69,8 @@ export interface OpenConversation {
 interface PhraseRouting {
   confidence: number;
   intent: string;
+  /** Агент, названный во фразе («сделай это через Codex»). */
+  requestedBackend?: string;
 }
 
 export function openConversation(
@@ -105,6 +107,11 @@ export function continuesConversation(
   // человек продолжает разговор. Внутри открытого разговора почти любая фраза
   // законна, и единственное настоящее исключение — «спасибо».
   if (isPleasantry(utterance)) return false;
+
+  // Названный во фразе другой агент — новое дело, а не продолжение: иначе
+  // «сделай это через Codex» при открытом разговоре с Claude Code уходило
+  // Claude Code (живая проверка 30.09.2026).
+  if (routing.requestedBackend && routing.requestedBackend !== conversation.backend) return false;
 
   // «Продолжай» без открытого разговора не значит ничего, а с ним — значит
   // ровно одно.

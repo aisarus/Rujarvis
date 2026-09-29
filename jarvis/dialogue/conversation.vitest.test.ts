@@ -75,6 +75,16 @@ describe('continuesConversation', () => {
     ).toBe(true);
   });
 
+  it('названный другой агент — новое дело, а не продолжение (живая проверка 30.09.2026)', () => {
+    const сClaude = { ...(open as NonNullable<typeof open>), backend: 'claude-code' };
+    expect(
+      continuesConversation('Придумай число. Сделай это через Codex.', { confidence: 0.3, intent: 'chat', requestedBackend: 'codex' }, сClaude),
+    ).toBe(false);
+    expect(
+      continuesConversation('сделай его больше через Claude', { confidence: 0.3, intent: 'chat', requestedBackend: 'claude-code' }, сClaude),
+    ).toBe(true);
+  });
+
   it('«продолжай» продолжает разговор, а не начинает новый', () => {
     expect(
       continuesConversation('продолжай', { confidence: 0.3, intent: 'continue' }, open),

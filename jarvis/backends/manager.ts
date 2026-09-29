@@ -330,10 +330,25 @@ export class BackendManager {
         }
 
         // Чужую сессию не поднять — этому бэкенду та же просьба без неё.
-        const своя =
+        const безЧужой =
           request.sessionId && request.sessionBackend && request.sessionBackend !== id
             ? { ...request, sessionId: undefined, sessionBackend: undefined }
             : request;
+        // Названный агент не смог — следующему это сказано прямо. Иначе
+        // «сделай это через Codex» он понимал буквально и минуту пытался сам
+        // запустить Codex из оболочки (живая проверка 30.09.2026).
+        const названный = preference.requested;
+        const своя =
+          названный && названный !== id && failures.length > 0
+            ? {
+                ...безЧужой,
+                context: [
+                  ...(безЧужой.context ?? []),
+                  `Человек просил ${this.backends.get(названный)?.name ?? названный}, но он не смог (${failures.at(-1)}). ` +
+                    `Сделай работу сам; запускать ${this.backends.get(названный)?.name ?? названный} не пытайся.`,
+                ],
+              }
+            : безЧужой;
 
         let run: BackendRun;
         try {
