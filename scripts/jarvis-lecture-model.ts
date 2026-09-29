@@ -1,20 +1,29 @@
 /**
- * Поставить модель для конспектов лекций на иврите: `pnpm jarvis:lecture-model`.
+ * Поставить модель для конспекта лекций: `pnpm jarvis:lecture-model [-- язык]`.
  *
- * ivrit.ai large-v3-turbo (1,6 ГБ, Apache-2.0) — скачать, сверить по sha256,
- * сжать у себя до q5_0 (около полугигабайта видеопамяти), исходник стереть. Нужно
- * уже поставленное распознавание на видеокарте (`pnpm jarvis:gpu-stt`): модель
- * сжимает его утилита и слушает его сервер.
+ * Язык — из аргумента, иначе из настроек (`lectureLanguage`, пусто — язык
+ * интерфейса). По умолчанию ставится large-v3-turbo q5_0 (574 МБ); языку со
+ * своей дообученной моделью — она (см. `LECTURE_MODELS` в
+ * jarvis/voice/gpuWhisper.ts). Нужно уже поставленное распознавание на
+ * видеокарте (`pnpm jarvis:gpu-stt`): модель слушает его сервер.
  */
+import path from 'node:path';
+
 import { jarvisPaths } from '../jarvis/setup/paths';
-import { gpuWhisperDir, installHebrewWhisper } from '../jarvis/voice/gpuWhisper';
+import { SettingsStore } from '../jarvis/setup/settings';
+import { gpuWhisperDir, installLectureModel, lectureModelFor } from '../jarvis/voice/gpuWhisper';
 
 async function main(): Promise<void> {
-  const dir = gpuWhisperDir(jarvisPaths().home);
-  console.log(`Модель для лекций на иврите (ivrit.ai large-v3-turbo) → ${dir}`);
+  const paths = jarvisPaths();
+  const settings = new SettingsStore(paths.settings).get();
+  const language = (process.argv.slice(2).find((a) => !a.startsWith('-')) ?? (settings.lectureLanguage || settings.language)).toLowerCase();
+  const dir = gpuWhisperDir(paths.home);
+  const source = lectureModelFor(language);
+  console.log(`Модель для лекций (язык «${language}»): ${path.basename(source.file)} → ${dir}`);
   let последняя = '';
-  const файл = await installHebrewWhisper({
+  const файл = await installLectureModel({
     dir,
+    language,
     onProgress: (_что, p) => {
       const строка =
         p.stage === 'downloading' && typeof p.ratio === 'number'

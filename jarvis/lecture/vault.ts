@@ -1,8 +1,8 @@
 /**
  * Куда класть конспекты лекций.
  *
- * Решение владельца 29.09.2026: конспекты — в Obsidian, в открытое хранилище,
- * в папку «Лекции». Obsidian хранит заметки обычными файлами `.md`, и Джарвис
+ * Конспекты — в Obsidian, в открытое хранилище, в папку «Лекции» («Lectures»
+ * у английского интерфейса). Obsidian хранит заметки обычными файлами `.md`, и Джарвис
  * дописывает в них напрямую, а открытая заметка обновляется на глазах —
  * никакого облака и никаких ключей.
  *
@@ -52,9 +52,10 @@ export interface LectureFolder {
   vault: string | null;
 }
 
-/** Папка «Лекции»: в открытом хранилище Obsidian, иначе — в папке результатов. */
+/** Папка лекций: в открытом хранилище Obsidian, иначе — в папке результатов. */
 export function lectureFolder(
   outputDir: string,
+  notes: 'ru' | 'en' = 'ru',
   readConfig: () => string | null = () => {
     try {
       return readFileSync(obsidianConfigPath(), 'utf8');
@@ -66,18 +67,18 @@ export function lectureFolder(
 ): LectureFolder {
   const текст = readConfig();
   const vault = текст ? openObsidianVault(текст, exists) : null;
-  return { folder: path.join(vault ?? outputDir, 'Лекции'), vault };
+  return { folder: path.join(vault ?? outputDir, notes === 'en' ? 'Lectures' : 'Лекции'), vault };
 }
 
 /**
  * Имя файла конспекта: дата и предмет, без знаков, которые Windows не пускает
  * в имена файлов.
  */
-export function lectureFileBase(subject: string, when: Date): string {
+export function lectureFileBase(subject: string, when: Date, notes: 'ru' | 'en' = 'ru'): string {
   const дата = `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, '0')}-${String(when.getDate()).padStart(2, '0')}`;
   const время = `${String(when.getHours()).padStart(2, '0')}${String(when.getMinutes()).padStart(2, '0')}`;
   const предмет = subject.replace(/[<>:"/\\|?*\u0000-\u001f]/gu, ' ').replace(/\s+/gu, ' ').trim().slice(0, 60);
-  return предмет ? `${дата} ${предмет}` : `${дата} ${время} Лекция`;
+  return предмет ? `${дата} ${предмет}` : `${дата} ${время} ${notes === 'en' ? 'Lecture' : 'Лекция'}`;
 }
 
 /** Ссылка, которая открывает заметку в Obsidian. */

@@ -77,6 +77,12 @@ export interface AppSettings {
    * состояние, и для слабого зрения он не работает.
    */
   bigMode: boolean;
+  /**
+   * Язык лекций для конспекта — код, который понимает Whisper («ru», «en»,
+   * «he»…). Пусто — язык интерфейса. Конспект пишется на языке интерфейса;
+   * если лекция на другом, термины идут в скобках так, как их сказал лектор.
+   */
+  lectureLanguage: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -96,6 +102,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   speechSpeed: 1,
   speechVolume: 1,
   bigMode: false,
+  lectureLanguage: '',
 };
 
 /** Пределы, за которые голосовая настройка не уводит. */
@@ -154,6 +161,8 @@ export function normaliseSettings(raw: unknown): AppSettings {
     speechSpeed: вЧисло(input.speechSpeed, DEFAULT_SETTINGS.speechSpeed, SPEECH_SPEED_RANGE),
     speechVolume: вЧисло(input.speechVolume, DEFAULT_SETTINGS.speechVolume, SPEECH_VOLUME_RANGE),
     bigMode: input.bigMode === true,
+    // Только код языка: всё прочее ушло бы в запрос к серверу распознавания.
+    lectureLanguage: /^[a-z]{2,3}$/u.test(text('lectureLanguage', '').toLowerCase()) ? text('lectureLanguage', '').toLowerCase() : '',
   };
 }
 

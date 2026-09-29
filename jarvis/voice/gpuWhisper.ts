@@ -319,33 +319,71 @@ export async function startGpuWhisper(files: GpuWhisperFiles, options: StartGpuW
   throw new Error(`сервер распознавания не ответил за ${Math.round((options.readyMs ?? 60_000) / 1000)} с: ${хвост.join(' | ')}`);
 }
 
-/* ------------------------------------------------------ иврит для лекций --- */
+/* ------------------------------------------------------ модели для лекций --- */
 
 /**
- * Модель для лекций на иврите: large-v3-turbo, дообученная ivrit.ai.
+ * Модель для конспекта лекций — крупнее той, что слушает команды.
  *
- * Small, который слушает команды, иврит знает слабо, а лекции нужна точность,
- * а не полсекунды ответа (решение владельца 29.09.2026: конспект лекций на
- * иврите). Исходник — 1,6 ГБ в f16; ставится сжатым до q5_0 у самого человека
- * утилитой whisper-quantize из той же сборки: так видеопамяти берёт около
- * полугигабайта, а качество почти то же. Лицензия Apache-2.0.
+ * small отвечает за полсекунды, и командам этого хватает. Лекции нужна
+ * точность, а не скорость: лектор далеко, говорит подолгу, а ошибка в слове
+ * переходит в конспект. Поэтому у лекции свой сервер со своей моделью.
+ *
+ * По умолчанию — large-v3-turbo в q5_0 из репозитория whisper.cpp (574 МБ,
+ * MIT). Языку, у которого есть своя дообученная модель, — она: для иврита это
+ * ivrit.ai (Apache-2.0), на записях университетских лекций 14% ошибок в
+ * словах против 35% у small (замер 29.09.2026, docs/jarvis/lecture-notes.md).
+ * Она выложена только в f16 (1,6 ГБ) и сжимается у самого человека утилитой
+ * whisper-quantize из той же сборки.
  */
-export const HEBREW_WHISPER_SOURCE = {
-  url: 'https://huggingface.co/ivrit-ai/whisper-large-v3-turbo-ggml/resolve/main/ggml-model.bin',
-  bytes: 1_624_555_275,
-  sha256: 'c8090411113357097bfafc2b8e228ec1639fa7f5fe4ecb5d054ac0ccef8641b1',
-} as const;
+export interface LectureModelSource {
+  url: string;
+  bytes: number;
+  sha256: string;
+  /** Готовая к работе модель. */
+  file: string;
+  /** Модель выложена несжатой: сжать до этого формата, а не нашлось чем — оставить как есть под `unquantizedFile`. */
+  quantize?: { type: 'q5_0'; unquantizedFile: string };
+}
 
-/** Сжатая — обычно; несжатая — когда утилиты сжатия не нашлось. Имя говорит, что внутри. */
-export const HEBREW_WHISPER_FILES = { q5: 'ggml-ivrit-turbo-q5_0.bin', f16: 'ggml-ivrit-turbo-f16.bin' } as const;
+export const LECTURE_MODELS: { general: LectureModelSource; byLanguage: Record<string, LectureModelSource> } = {
+  general: {
+    url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin',
+    bytes: 574_041_195,
+    sha256: '394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2',
+    file: 'ggml-large-v3-turbo-q5_0.bin',
+  },
+  byLanguage: {
+    he: {
+      url: 'https://huggingface.co/ivrit-ai/whisper-large-v3-turbo-ggml/resolve/main/ggml-model.bin',
+      bytes: 1_624_555_275,
+      sha256: 'c8090411113357097bfafc2b8e228ec1639fa7f5fe4ecb5d054ac0ccef8641b1',
+      file: 'ggml-ivrit-turbo-q5_0.bin',
+      quantize: { type: 'q5_0', unquantizedFile: 'ggml-ivrit-turbo-f16.bin' },
+    },
+  },
+};
 
-/** Модель для иврита, если поставлена: файл целиком (пишется в сторону и переименовывается). */
-export async function findHebrewWhisper(dir: string): Promise<string | null> {
-  for (const имя of [HEBREW_WHISPER_FILES.q5, HEBREW_WHISPER_FILES.f16]) {
+/** Какую модель ставить для лекций на этом языке. */
+export function lectureModelFor(language: string): LectureModelSource {
+  return LECTURE_MODELS.byLanguage[language] ?? LECTURE_MODELS.general;
+}
+
+async function готоваяМодель(dir: string, source: LectureModelSource): Promise<string | null> {
+  for (const имя of [source.file, source.quantize?.unquantizedFile]) {
+    if (!имя) continue;
     const файл = path.join(dir, имя);
     if ((await размер(файл)) > 0) return файл;
   }
   return null;
+}
+
+/**
+ * Модель для лекций на этом языке, если поставлена: своя для языка, иначе
+ * общая. Недокачанная (`.partial`) — не модель.
+ */
+export async function findLectureModel(dir: string, language: string): Promise<string | null> {
+  const своя = LECTURE_MODELS.byLanguage[language];
+  return (своя ? await готоваяМодель(dir, своя) : null) ?? (await готоваяМодель(dir, LECTURE_MODELS.general));
 }
 
 /** Где взять whisper-quantize: рядом с сервером на Windows, от Homebrew на маке. */
@@ -361,47 +399,54 @@ async function найтиQuantize(files: GpuWhisperFiles): Promise<string | null
 }
 
 /**
- * Поставить модель для иврита: скачать, сверить, сжать, исходник стереть.
+ * Поставить модель для лекций на этом языке: скачать, сверить; выложенную
+ * несжатой — сжать и исходник стереть.
  *
- * Нужна уже поставленная программа (`installGpuWhisper`): сжимает её утилита.
- * Нет утилиты — модель остаётся несжатой (1,6 ГБ): работает так же, только
- * берёт больше памяти.
+ * Нужна уже поставленная программа (`installGpuWhisper`): её сервер слушает
+ * лекцию, её утилита сжимает. Нечем сжать — модель остаётся несжатой:
+ * работает так же, только берёт больше памяти.
  */
-export async function installHebrewWhisper(options: InstallGpuWhisperOptions): Promise<string> {
+export async function installLectureModel(options: InstallGpuWhisperOptions & { language: string }): Promise<string> {
   const { dir } = options;
-  const уже = await findHebrewWhisper(dir);
+  const source = lectureModelFor(options.language);
+  const уже = await готоваяМодель(dir, source);
   if (уже) return уже;
   const files = await findGpuWhisper(dir);
   if (!files) throw new Error('сначала распознавание на видеокарте: pnpm jarvis:gpu-stt');
 
-  const исходник = path.join(dir, 'ggml-ivrit-turbo-f16.bin.partial');
+  const скачанный = path.join(dir, `${source.quantize?.unquantizedFile ?? source.file}.partial`);
   await downloadFile(
     {
-      url: HEBREW_WHISPER_SOURCE.url,
-      expectedBytes: HEBREW_WHISPER_SOURCE.bytes,
+      url: source.url,
+      expectedBytes: source.bytes,
       onProgress: (p) => options.onProgress?.('модель', p),
       fetchImpl: options.fetchImpl,
     },
-    исходник,
+    скачанный,
   );
-  await сверитьСумму(исходник, HEBREW_WHISPER_SOURCE.sha256, 'модель иврита ivrit.ai');
+  await сверитьСумму(скачанный, source.sha256, `модель для лекций ${path.basename(source.file)}`);
 
+  if (!source.quantize) {
+    const готовый = path.join(dir, source.file);
+    await rename(скачанный, готовый);
+    return готовый;
+  }
   const quantize = await найтиQuantize(files);
   if (quantize) {
-    const готовый = path.join(dir, HEBREW_WHISPER_FILES.q5);
-    options.onProgress?.('модель', { stage: 'extracting', message: 'сжимаю до q5_0' });
+    const готовый = path.join(dir, source.file);
+    options.onProgress?.('модель', { stage: 'extracting', message: `сжимаю до ${source.quantize.type}` });
     const сжатый = `${готовый}.partial`;
-    await promisify(execFile)(quantize, [исходник, сжатый, 'q5_0'], {
+    await promisify(execFile)(quantize, [скачанный, сжатый, source.quantize.type], {
       cwd: path.dirname(quantize),
       windowsHide: true,
       maxBuffer: 64 * 1024 * 1024,
     });
     if ((await размер(сжатый)) <= 0) throw new Error('whisper-quantize не записал сжатую модель');
     await rename(сжатый, готовый);
-    await rm(исходник, { force: true });
+    await rm(скачанный, { force: true });
     return готовый;
   }
-  const несжатый = path.join(dir, HEBREW_WHISPER_FILES.f16);
-  await rename(исходник, несжатый);
+  const несжатый = path.join(dir, source.quantize.unquantizedFile);
+  await rename(скачанный, несжатый);
   return несжатый;
 }

@@ -147,7 +147,7 @@ function russianCatalogue(): CatalogueGroup[] {
     {
       title: 'Лекция',
       items: [
-        { say: 'конспектируй лекцию по матанализу', does: 'записать лекцию на иврите и вести конспект в Obsidian', layer: 'direct' },
+        { say: 'конспектируй лекцию по матанализу', does: 'записать лекцию и вести конспект в Obsidian', layer: 'direct' },
         { say: 'закончи конспект', does: 'дописать итог и закрыть запись', layer: 'direct' },
       ],
     },
@@ -286,7 +286,7 @@ function englishCatalogue(): CatalogueGroup[] {
     {
       title: 'Lecture',
       items: [
-        { say: 'take lecture notes for calculus', does: 'record a Hebrew lecture and keep notes in Obsidian', layer: 'direct' },
+        { say: 'take lecture notes for calculus', does: 'record a lecture and keep notes in Obsidian', layer: 'direct' },
         { say: 'stop lecture notes', does: 'write the summary and close the recording', layer: 'direct' },
       ],
     },

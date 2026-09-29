@@ -2,27 +2,30 @@
  * Режим лекции в мосте: «Джарвис, конспектируй лекцию по …» — и до «закончи
  * конспект».
  *
- * Звук из аудитории идёт в конспект (`LectureSession`), а не в разговор:
- * иврит слушает свой сервер whisper.cpp с моделью ivrit.ai на соседнем порту,
- * разделы пишет Claude Code по подписке, заметка — в Obsidian и открывается
- * сразу, чтобы её было видно живой (решения владельца 29.09.2026).
+ * Звук из аудитории идёт в конспект (`LectureSession`), а не в разговор.
+ * Слушает его модель для лекций (`pnpm jarvis:lecture-model`) на своём
+ * сервере whisper.cpp на соседнем порту, разделы пишет Claude Code по
+ * подписке, заметка — в Obsidian и открывается сразу, чтобы её было видно
+ * живой.
  *
- * Сервер иврита поднимается десятки секунд. Мост его не ждёт: куски звука
- * стоят в очереди сессии и распознаются, как только он ответит. Модели иврита
- * нет — слушает общий сервер (small) с языком «иврит»: хуже, но лекция не
+ * Сервер модели поднимается секунды. Мост его не ждёт: куски звука стоят в
+ * очереди сессии и распознаются, как только он ответит. Модели для лекций
+ * нет — слушает общий сервер (small) с языком лекции: хуже, но лекция не
  * пропадает, и человеку об этом сказано.
  */
 
+import path from 'node:path';
+
 import { shell } from 'electron';
 
-import { LectureSession } from '../jarvis/lecture/session';
+import { LectureSession, type NotesLanguage } from '../jarvis/lecture/session';
 import { createClaudeSummarizer } from '../jarvis/lecture/summarize';
 import { lectureFolder, obsidianOpenUrl } from '../jarvis/lecture/vault';
 import { tr } from '../jarvis/locale/language';
-import { findGpuWhisper, findHebrewWhisper, gpuWhisperDir, startGpuWhisper, type GpuWhisperServer } from '../jarvis/voice/gpuWhisper';
+import { findGpuWhisper, findLectureModel, gpuWhisperDir, startGpuWhisper, type GpuWhisperServer } from '../jarvis/voice/gpuWhisper';
 import { createGpuTranscriber, isWhisperServerReady, WHISPER_SERVER_PORT } from './gpuTranscriber';
 
-const ПОРТ_ИВРИТА = WHISPER_SERVER_PORT + 1;
+const ПОРТ_ЛЕКЦИИ = WHISPER_SERVER_PORT + 1;
 
 interface Лекция {
   session: LectureSession;
@@ -30,7 +33,7 @@ interface Лекция {
 }
 
 let идёт: Лекция | null = null;
-/** Итог прошлой лекции ещё пишется: её сервер иврита занимает тот же порт. */
+/** Итог прошлой лекции ещё пишется: её сервер занимает тот же порт. */
 let дописывается: Promise<string> | null = null;
 
 export function lectureActive(): boolean {
@@ -40,7 +43,10 @@ export function lectureActive(): boolean {
 export interface LectureStartOptions {
   home: string;
   outputDir: string;
-  /** Адрес общего сервера распознавания — запасной, когда модели иврита нет. */
+  /** Язык лекции — код Whisper; конспект пишется на `notesLanguage`. */
+  lectureLanguage: string;
+  notesLanguage: NotesLanguage;
+  /** Адрес общего сервера распознавания — запасной, когда модели для лекций нет. */
   mainEndpoint(): string | null;
 }
 
@@ -50,19 +56,19 @@ export async function startLecture(subject: string | undefined, options: Lecture
 
   const dir = gpuWhisperDir(options.home);
   const files = await findGpuWhisper(dir).catch(() => null);
-  const иврит = files ? await findHebrewWhisper(dir).catch(() => null) : null;
+  const модель = files ? await findLectureModel(dir, options.lectureLanguage).catch(() => null) : null;
   const сервер: Promise<GpuWhisperServer | null> =
-    files && иврит
+    files && модель
       ? startGpuWhisper(
-          { server: files.server, model: иврит },
+          { server: files.server, model: модель },
           {
-            port: ПОРТ_ИВРИТА,
+            port: ПОРТ_ЛЕКЦИИ,
             isReady: isWhisperServerReady,
             readyMs: 180_000,
-            log: (строка) => console.log(`[jarvis:lecture] сервер иврита: ${строка.slice(0, 200)}`),
+            log: (строка) => console.log(`[jarvis:lecture] сервер лекции: ${строка.slice(0, 200)}`),
           },
         ).catch((error: unknown) => {
-          console.error(`[jarvis:lecture] сервер иврита не поднялся: ${error instanceof Error ? error.message : String(error)}`);
+          console.error(`[jarvis:lecture] сервер лекции не поднялся: ${error instanceof Error ? error.message : String(error)}`);
           return null;
         })
       : Promise.resolve(null);
@@ -71,13 +77,15 @@ export async function startLecture(subject: string | undefined, options: Lecture
     const свой = await сервер;
     const endpoint = свой?.endpoint ?? options.mainEndpoint();
     if (!endpoint) throw new Error('распознавать нечем: нет сервера на видеокарте (pnpm jarvis:gpu-stt)');
-    return (await createGpuTranscriber({ endpoint, language: 'he' }).transcribe(samples, sampleRate)).text;
+    return (await createGpuTranscriber({ endpoint, language: options.lectureLanguage }).transcribe(samples, sampleRate)).text;
   };
 
-  const { folder, vault } = lectureFolder(options.outputDir);
+  const { folder, vault } = lectureFolder(options.outputDir, options.notesLanguage);
   const session = new LectureSession(folder, subject ?? '', {
     transcribe,
     summarize: createClaudeSummarizer(),
+    lectureLanguage: options.lectureLanguage,
+    notesLanguage: options.notesLanguage,
     // Только счёт и события: сама лекция в журнал Джарвиса не пишется.
     log: (строка) => console.log(`[jarvis:lecture] ${строка}`),
   });
@@ -85,15 +93,16 @@ export async function startLecture(subject: string | undefined, options: Lecture
   идёт = { session, сервер };
   console.log(
     `[jarvis:lecture] конспект начат${vault ? ' в хранилище Obsidian' : ' в папке результатов (Obsidian не найден)'}; ` +
-      `иврит: ${иврит ? 'ivrit.ai large-v3-turbo' : 'модели нет — общий сервер'}`,
+      `язык лекции: ${options.lectureLanguage}, конспекта: ${options.notesLanguage}; ` +
+      `модель: ${модель ? path.basename(модель) : 'для лекций нет — общий сервер'}`,
   );
   if (vault) await shell.openExternal(obsidianOpenUrl(session.notesFile)).catch(() => undefined);
 
-  return иврит
+  return модель
     ? tr('Конспектирую. Закончить — «Джарвис, закончи конспект».', 'Taking notes. Say "Jarvis, stop lecture notes" to finish.')
     : tr(
-        'Конспектирую, но модели для иврита нет — слышу хуже. Поставить: pnpm jarvis:lecture-model.',
-        'Taking notes, but the Hebrew model is missing, so recognition is weaker. Install it with pnpm jarvis:lecture-model.',
+        'Конспектирую общим распознаванием. Точнее будет с моделью для лекций: pnpm jarvis:lecture-model.',
+        'Taking notes with the general recognition. The lecture model is more accurate: pnpm jarvis:lecture-model.',
       );
 }
 
@@ -103,7 +112,7 @@ export function feedLecture(samples: Float32Array, sampleRate: number): void {
 }
 
 /**
- * Дописать итог и погасить сервер иврита.
+ * Дописать итог и погасить сервер лекции.
  *
  * Итог — минута-другая модели. Мост поэтому не ждёт его внутри команды:
  * реплики разбираются по одной, и «стоп» простоял бы за итогом всё это время.

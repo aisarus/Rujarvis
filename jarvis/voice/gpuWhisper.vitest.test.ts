@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { findGpuWhisper, findHebrewWhisper, HEBREW_WHISPER_FILES, installHebrewWhisper, serverArgs, sha256, startGpuWhisper } from './gpuWhisper';
+import { findGpuWhisper, findLectureModel, installLectureModel, LECTURE_MODELS, lectureModelFor, serverArgs, sha256, startGpuWhisper } from './gpuWhisper';
 
 const папки: string[] = [];
 afterEach(async () => {
@@ -132,16 +132,31 @@ describe('запуск своего сервера', () => {
   });
 });
 
-describe('модель иврита для лекций', () => {
-  it('сжатая — первой, несжатая — если сжать было нечем; недокачанная — не модель', async () => {
+describe('модель для лекций', () => {
+  const иврит = LECTURE_MODELS.byLanguage.he as NonNullable<(typeof LECTURE_MODELS.byLanguage)['he']>;
+  const общая = LECTURE_MODELS.general.file;
+
+  it('своя модель — только у языка, для которого она есть; остальным — общая', () => {
+    expect(lectureModelFor('he')).toBe(иврит);
+    expect(lectureModelFor('ru')).toBe(LECTURE_MODELS.general);
+    expect(lectureModelFor('en')).toBe(LECTURE_MODELS.general);
+  });
+
+  it('находит свою, затем несжатую свою, затем общую; недокачанная — не модель', async () => {
     const dir = await временная();
-    expect(await findHebrewWhisper(dir)).toBeNull();
-    await writeFile(path.join(dir, `${HEBREW_WHISPER_FILES.q5}.partial`), 'x');
-    expect(await findHebrewWhisper(dir)).toBeNull();
-    await writeFile(path.join(dir, HEBREW_WHISPER_FILES.f16), 'x');
-    expect(await findHebrewWhisper(dir)).toBe(path.join(dir, HEBREW_WHISPER_FILES.f16));
-    await writeFile(path.join(dir, HEBREW_WHISPER_FILES.q5), 'x');
-    expect(await findHebrewWhisper(dir)).toBe(path.join(dir, HEBREW_WHISPER_FILES.q5));
+    expect(await findLectureModel(dir, 'ru')).toBeNull();
+    await writeFile(path.join(dir, `${общая}.partial`), 'x');
+    expect(await findLectureModel(dir, 'ru')).toBeNull();
+    await writeFile(path.join(dir, общая), 'x');
+    expect(await findLectureModel(dir, 'ru')).toBe(path.join(dir, общая));
+    // Своей для иврита нет — общая лучше, чем small.
+    expect(await findLectureModel(dir, 'he')).toBe(path.join(dir, общая));
+    await writeFile(path.join(dir, иврит.quantize?.unquantizedFile ?? ''), 'x');
+    expect(await findLectureModel(dir, 'he')).toBe(path.join(dir, иврит.quantize?.unquantizedFile ?? ''));
+    await writeFile(path.join(dir, иврит.file), 'x');
+    expect(await findLectureModel(dir, 'he')).toBe(path.join(dir, иврит.file));
+    // Своя модель иврита русскому не достаётся.
+    expect(await findLectureModel(dir, 'ru')).toBe(path.join(dir, общая));
   });
 
   it('поставленную не качает заново; без распознавания на видеокарте — говорит, что поставить', async () => {
@@ -149,8 +164,8 @@ describe('модель иврита для лекций', () => {
     const ничего = (): never => {
       throw new Error('качать не должен');
     };
-    await expect(installHebrewWhisper({ dir, fetchImpl: ничего as never })).rejects.toThrow(/pnpm jarvis:gpu-stt/u);
-    await writeFile(path.join(dir, HEBREW_WHISPER_FILES.q5), 'x');
-    expect(await installHebrewWhisper({ dir, fetchImpl: ничего as never })).toBe(path.join(dir, HEBREW_WHISPER_FILES.q5));
+    await expect(installLectureModel({ dir, language: 'en', fetchImpl: ничего as never })).rejects.toThrow(/pnpm jarvis:gpu-stt/u);
+    await writeFile(path.join(dir, общая), 'x');
+    expect(await installLectureModel({ dir, language: 'en', fetchImpl: ничего as never })).toBe(path.join(dir, общая));
   });
 });

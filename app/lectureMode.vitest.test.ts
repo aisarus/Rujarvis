@@ -23,10 +23,10 @@ afterEach(async () => {
 describe('режим лекции в мосте', () => {
   it('«закончи» не держит мост: лекция кончается сразу, итог приходит потом', async () => {
     папка.путь = await mkdtemp(path.join(tmpdir(), 'jarvis-lecture-mode-'));
-    const options = { home: папка.путь, outputDir: папка.путь, mainEndpoint: () => null };
+    const options = { home: папка.путь, outputDir: папка.путь, lectureLanguage: 'ru', notesLanguage: 'ru' as const, mainEndpoint: () => null };
 
-    // Модели иврита нет — об этом сказано, а не молча хуже.
-    expect(await startLecture('Физика', options)).toMatch(/иврит|Hebrew/u);
+    // Модели для лекций нет — об этом сказано, а не молча хуже.
+    expect(await startLecture('Физика', options)).toMatch(/lecture-model/u);
     expect(lectureActive()).toBe(true);
     expect(await startLecture('Физика', options)).toMatch(/уже пишется|Already/u);
 
@@ -34,7 +34,7 @@ describe('режим лекции в мосте', () => {
     expect(итог).not.toBeNull();
     // Следующая фраза — уже разговор, а не лекция.
     expect(lectureActive()).toBe(false);
-    // Прошлая ещё дописывается и держит порт сервера иврита — новая ждёт.
+    // Прошлая ещё дописывается и держит порт своего сервера — новая ждёт.
     expect(await startLecture('Химия', options)).toMatch(/дописываю|Still finishing/u);
     expect(lectureActive()).toBe(false);
 

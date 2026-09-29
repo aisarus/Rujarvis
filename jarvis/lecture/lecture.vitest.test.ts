@@ -4,7 +4,8 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { LectureSession, sectionFromReply } from './session';
+import { normaliseSettings } from '../setup/settings';
+import { finalPrompt, LectureSession, sectionFromReply, sectionPrompt } from './session';
 import { claudeSummaryArgs, createClaudeSummarizer } from './summarize';
 import { lectureFileBase, lectureFolder, obsidianOpenUrl, openObsidianVault } from './vault';
 
@@ -29,11 +30,11 @@ describe('куда класть конспекты', () => {
     });
     const есть = (): boolean => true;
     expect(openObsidianVault(config, есть)).toBe('C:/Users/x/Brain');
-    expect(lectureFolder('C:/out', () => config, есть)).toEqual({ folder: path.join('C:/Users/x/Brain', 'Лекции'), vault: 'C:/Users/x/Brain' });
+    expect(lectureFolder('C:/out', 'ru', () => config, есть)).toEqual({ folder: path.join('C:/Users/x/Brain', 'Лекции'), vault: 'C:/Users/x/Brain' });
   });
 
   it('без Obsidian — в папку результатов Джарвиса; открытого нет — последнее', () => {
-    expect(lectureFolder('C:/out', () => null)).toEqual({ folder: path.join('C:/out', 'Лекции'), vault: null });
+    expect(lectureFolder('C:/out', 'ru', () => null)).toEqual({ folder: path.join('C:/out', 'Лекции'), vault: null });
     expect(openObsidianVault(JSON.stringify({ vaults: { a: { path: 'A', ts: 1 }, b: { path: 'B', ts: 5 } } }), () => true)).toBe('B');
     expect(openObsidianVault('не json')).toBeNull();
   });
@@ -47,7 +48,7 @@ describe('куда класть конспекты', () => {
     });
     const есть = (dir: string): boolean => dir.includes('Documents');
     expect(openObsidianVault(config, есть)).toBe('C:/Users/x/Documents/Obsidian Vault');
-    expect(lectureFolder('C:/out', () => config, () => false)).toEqual({ folder: path.join('C:/out', 'Лекции'), vault: null });
+    expect(lectureFolder('C:/out', 'ru', () => config, () => false)).toEqual({ folder: path.join('C:/out', 'Лекции'), vault: null });
   });
 
   it('имя файла — дата и предмет без запрещённых знаков; ссылка открывает заметку', () => {
@@ -167,5 +168,66 @@ describe('вызов модели для раздела', () => {
       env: process.env,
     });
     await expect(summarize('x')).rejects.toThrow(/кодом 2: limit reached/u);
+  });
+});
+
+describe('языки лекции и конспекта', () => {
+  it('лекция на языке конспекта — без терминов в скобках; на другом — термины лектора в скобках', () => {
+    const свой = sectionPrompt('кусок', 'Физика', [], { lecture: 'ru', notes: 'ru' });
+    expect(свой).not.toMatch(/в скобках/u);
+    expect(свой).toMatch(/Сделай ОДИН раздел конспекта на русском/u);
+
+    const чужой = sectionPrompt('кусок', 'Физика', [], { lecture: 'he', notes: 'ru' });
+    expect(чужой).toMatch(/лекцию на иврите/u);
+    expect(чужой).toMatch(/в скобках на иврите/u);
+    expect(finalPrompt('текст', '', { lecture: 'he', notes: 'ru' })).toMatch(/термин лектора на иврите/u);
+
+    // Языка нет в списке названий — код как есть, а не пустое место.
+    expect(sectionPrompt('кусок', '', [], { lecture: 'pt', notes: 'ru' })).toMatch(/на языке «pt»/u);
+  });
+
+  it('английский конспект — промпт, отказ и заголовки по-английски', () => {
+    const свой = sectionPrompt('chunk', 'Physics', [], { lecture: 'en', notes: 'en' });
+    expect(свой).toMatch(/Write ONE section of notes in English/u);
+    expect(свой).not.toMatch(/parentheses/u);
+    expect(sectionPrompt('chunk', '', [], { lecture: 'ru', notes: 'en' })).toMatch(/lecture in Russian[\s\S]*in Russian in parentheses/u);
+    expect(finalPrompt('text', '', { lecture: 'en', notes: 'en' })).toMatch(/## Summary[\s\S]*## Concepts[\s\S]*## Exam questions/u);
+    expect(sectionFromReply('SKIP', 1, 'en')).toBeNull();
+    expect(sectionFromReply('- point', 2, 'en')).toBe('### Section 2\n- point');
+  });
+
+  it('английский конспект целиком: имена файлов, папка, итог над разделами', async () => {
+    const папка = await временная();
+    const сессия = new LectureSession(
+      папка,
+      '',
+      {
+        transcribe: async () => 'today we talk about limits of functions',
+        summarize: async (prompt) => (prompt.includes('## Summary') ? '## Summary\nLimits.' : '### Limits\n- a limit is where a function tends'),
+        lectureLanguage: 'en',
+        notesLanguage: 'en',
+        sectionEveryMs: 0,
+        sectionMinWords: 1,
+      },
+      new Date(2026, 8, 29, 10, 5),
+    );
+    await сессия.start();
+    сессия.addAudio(new Float32Array(1600), 16_000);
+    const итог = await сессия.finish();
+    expect(path.basename(итог.notesFile)).toBe('2026-09-29 1005 Lecture.md');
+    expect(path.basename(итог.transcriptFile)).toBe('2026-09-29 1005 Lecture — transcript.md');
+    const заметка = await readFile(итог.notesFile, 'utf8');
+    expect(заметка).toContain('Transcript: [[2026-09-29 1005 Lecture — transcript]]');
+    expect(заметка.indexOf('## Summary')).toBeLessThan(заметка.indexOf('## Notes'));
+    expect(заметка.indexOf('## Notes')).toBeLessThan(заметка.indexOf('### Limits'));
+    expect(lectureFolder('C:/out', 'en', () => null)).toEqual({ folder: path.join('C:/out', 'Lectures'), vault: null });
+  });
+
+  it('язык лекции в настройках — только код языка; пусто — язык интерфейса', () => {
+    expect(normaliseSettings({ lectureLanguage: 'HE' }).lectureLanguage).toBe('he');
+    expect(normaliseSettings({}).lectureLanguage).toBe('');
+    for (const плохой of ['иврит', 'he; rm -rf', 'hebrew', 7]) {
+      expect(normaliseSettings({ lectureLanguage: плохой }).lectureLanguage, String(плохой)).toBe('');
+    }
   });
 });
