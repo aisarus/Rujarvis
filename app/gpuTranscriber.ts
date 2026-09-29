@@ -63,6 +63,23 @@ export async function isWhisperServerReady(endpoint = WHISPER_SERVER_URL): Promi
   }
 }
 
+/**
+ * Текст сервера whisper.cpp → текст фразы.
+ *
+ * Сервер дописывает перевод строки после каждого сегмента, а пробел перед
+ * новым словом и так стоит в начале сегмента. Сегмент же может кончиться
+ * посреди слова: замер на лекциях на иврите 29.09.2026 дал «הרמ⏎ונית» вместо
+ * «הרמונית». Поэтому переводы строк убираются, а не меняются на пробел —
+ * иначе слово рвётся надвое.
+ *
+ * Там же модель иврита ставила в начало сегментов невидимые знаки
+ * направления письма (U+202B и родня). Их не видно, но с ними текст не
+ * находится поиском, а фраза не совпадает с командой.
+ */
+export function cleanWhisperText(text: string): string {
+  return text.replace(/\n/gu, '').replace(/[‎‏‪-‮⁦-⁩]/gu, '').trim();
+}
+
 export function createGpuTranscriber(options: GpuTranscriberOptions = {}): Transcriber {
   const endpoint = options.endpoint ?? WHISPER_SERVER_URL;
   const timeoutMs = options.timeoutMs ?? 20_000;
@@ -97,12 +114,7 @@ export function createGpuTranscriber(options: GpuTranscriberOptions = {}): Trans
         if (typeof payload.text !== 'string') {
           throw new Error(`ответ без text: ${JSON.stringify(payload).slice(0, 200)}`);
         }
-        // Сервер whisper.cpp дописывает перевод строки после каждого сегмента,
-        // а пробел перед новым словом и так стоит в начале сегмента. Сегмент
-        // же может кончиться посреди слова: замер на лекциях на иврите
-        // 29.09.2026 дал «הרמ⏎ונית» вместо «הרמונית». Поэтому переводы строк
-        // убираются, а не меняются на пробел — иначе слово рвётся надвое.
-        return { text: payload.text.replace(/\n/gu, '').trim() };
+        return { text: cleanWhisperText(payload.text) };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (!options.fallback) throw error;

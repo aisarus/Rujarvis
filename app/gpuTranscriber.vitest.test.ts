@@ -31,6 +31,12 @@ describe('распознавание через сервер whisper.cpp', () =>
     expect(text).toBe('בעצם שקולה לתנועה הרמונית.');
   });
 
+  it('невидимых знаков направления письма в тексте нет (модель иврита, 29.09.2026)', async () => {
+    const endpoint = await whisperServer(' מהלך אחרון\n ‫של רוטינת הכנה‏.\n');
+    const { text } = await createGpuTranscriber({ endpoint, language: 'he' }).transcribe(new Float32Array(1600), 16_000);
+    expect(text).toBe('מהלך אחרון של רוטינת הכנה.');
+  });
+
   it('между сегментами-словами остаётся пробел: он стоит в начале сегмента', async () => {
     const endpoint = await whisperServer(' Поставь громкость\n на семьдесят\n.\n');
     const { text } = await createGpuTranscriber({ endpoint }).transcribe(new Float32Array(1600), 16_000);

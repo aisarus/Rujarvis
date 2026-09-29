@@ -22,12 +22,13 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import path from 'node:path';
 
+import { createGpuTranscriber } from '../../app/gpuTranscriber';
 import { LectureSession } from '../../jarvis/lecture/session';
 import { createClaudeSummarizer } from '../../jarvis/lecture/summarize';
 import { jarvisPaths } from '../../jarvis/setup/paths';
 import { findGpuWhisper, findHebrewWhisper, gpuWhisperDir, startGpuWhisper } from '../../jarvis/voice/gpuWhisper';
 import { DEFAULT_VOICE, isVoiceInstalled, Speaker } from '../../jarvis/voice/tts';
-import { decodeWav, encodeWav16, resampleTo16k } from '../../jarvis/voice/wav';
+import { decodeWav, resampleTo16k } from '../../jarvis/voice/wav';
 
 const КУСОК_СЕКУНД = 20;
 
@@ -49,18 +50,6 @@ const отвечает = async (endpoint: string): Promise<boolean> => {
     return false;
   }
 };
-
-async function распознать(endpoint: string, samples: Float32Array): Promise<string> {
-  const форма = new FormData();
-  форма.append('file', new Blob([new Uint8Array(encodeWav16(samples, 16_000))], { type: 'audio/wav' }), 'speech.wav');
-  форма.append('response_format', 'json');
-  форма.append('language', 'he');
-  форма.append('translate', 'false');
-  const ответ = await fetch(`${endpoint}/inference`, { method: 'POST', body: форма });
-  if (!ответ.ok) throw new Error(`сервер ответил HTTP ${ответ.status}`);
-  // Как в мосте (app/gpuTranscriber.ts): сегмент может кончиться посреди слова.
-  return String(((await ответ.json()) as { text?: unknown }).text ?? '').replace(/\n/gu, '').trim();
-}
 
 async function main(): Promise<void> {
   const запись = process.argv.slice(2).find((a) => !a.startsWith('--'));
@@ -115,10 +104,14 @@ async function main(): Promise<void> {
   const признаки = устройство.filter((с) => !/\bno\b|failed|not found|error/iu.test(с));
   console.log(`  считает: ${признаки.some((с) => /cuda/iu.test(с)) ? 'CUDA' : признаки.some((с) => /metal/iu.test(с)) ? 'Metal' : 'процессор или не видно из вывода сервера'}`);
 
+  // Тот же клиент, что у моста: проверяется то, что пишет Джарвис, а не свой запрос.
+  const ухо = createGpuTranscriber({ endpoint: сервер.endpoint, language: 'he', timeoutMs: 120_000 });
+  const распознать = async (samples: Float32Array): Promise<string> => (await ухо.transcribe(samples, 16_000)).text;
+
   try {
     if (!запись) {
       const t0 = performance.now();
-      const текст = await распознать(сервер.endpoint, звук);
+      const текст = await распознать(звук);
       console.log(`  фраза Piper (по-русски) → «${текст}» — ${Math.round(performance.now() - t0)} мс`);
       console.log(текст ? '  сервер иврита отвечает' : 'НЕ ПРОШЛО: сервер иврита ответил пустым текстом');
       console.log('НЕЧЕМ МЕРИТЬ качество иврита: нет записи. Передайте её: pnpm jarvis:lecture-check -- лекция.wav');
@@ -129,10 +122,14 @@ async function main(): Promise<void> {
     const папка = path.join(paths.data, 'lecture-check', new Date().toISOString().replace(/[:.]/gu, '-'));
     await mkdir(папка, { recursive: true });
     const времена: number[] = [];
+    // Часы идут вместе со звуком: запись подаётся разом, а метки должны быть
+    // такими, как на живой лекции.
+    let часы = 0;
     const сессия = new LectureSession(папка, 'Проверка', {
+      now: () => часы,
       transcribe: async (samples) => {
         const t0 = performance.now();
-        const текст = await распознать(сервер.endpoint, samples);
+        const текст = await распознать(samples);
         времена.push((performance.now() - t0) / 1000 / (samples.length / 16_000));
         return текст;
       },
@@ -143,7 +140,11 @@ async function main(): Promise<void> {
     });
     await сессия.start();
     const кусок = КУСОК_СЕКУНД * 16_000;
-    for (let at = 0; at < звук.length; at += кусок) сессия.addAudio(звук.subarray(at, at + кусок), 16_000);
+    for (let at = 0; at < звук.length; at += кусок) {
+      const часть = звук.subarray(at, at + кусок);
+      часы = ((at + часть.length) / 16_000) * 1000;
+      сессия.addAudio(часть, 16_000);
+    }
     const t0 = Date.now();
     const итог = await сессия.finish();
     const заметка = await readFile(итог.notesFile, 'utf8');

@@ -91,9 +91,10 @@ describe('конспект лекции на ходу', () => {
     const итог = await сессия.finish();
 
     const расшифровка = await readFile(итог.transcriptFile, 'utf8');
+    // Метка — начало куска: кусок в 0,8 с, пришедший на 30-й секунде, начался на 29-й.
     expect(расшифровка).toContain('**[00:00]**');
-    expect(расшифровка).toContain('**[00:30]**');
-    expect(расшифровка).toContain('**[01:01]**');
+    expect(расшифровка).toContain('**[00:29]**');
+    expect(расшифровка).toContain('**[01:00]**');
 
     const конспект = await readFile(итог.notesFile, 'utf8');
     // Итог стоит над разделами, разделы — по порядку.
