@@ -36,6 +36,10 @@ await Promise.all([
   esbuild.build({ ...common, entryPoints: ['scripts/qa/electron-cua-check.ts'], outfile: 'dist/qa/cua-check.cjs' }),
   // Онбординг настоящим окном мастера — на обеих системах, в CI.
   esbuild.build({ ...common, entryPoints: ['scripts/qa/onboarding-check.ts'], outfile: 'dist/qa/onboarding-check.cjs' }),
+  // Микрофон из файла: что обработка звука Chromium делает с голосом из аудитории.
+  esbuild.build({ ...common, entryPoints: ['scripts/qa/fake-mic-capture.ts'], outfile: 'dist/qa/fake-mic.cjs' }),
+  // Конспект по файлу: mp3, m4a и видео раскрывает окно микрофона.
+  esbuild.build({ ...common, entryPoints: ['scripts/qa/lecture-file-check.ts'], outfile: 'dist/qa/lecture-file-check.cjs' }),
 ]);
 
 // Скрипт драйвера мыши и клавиатуры сервер ищет рядом с собой.

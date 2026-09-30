@@ -149,6 +149,8 @@ function russianCatalogue(): CatalogueGroup[] {
       items: [
         { say: 'конспектируй лекцию по матанализу', does: 'записать лекцию и вести конспект в Obsidian', layer: 'direct' },
         { say: 'закончи конспект', does: 'дописать итог и закрыть запись', layer: 'direct' },
+        { say: 'перенеси конспект в социологию', does: 'лекция идёт — писать в этот курс; кончилась — перенести её туда', layer: 'direct' },
+        { say: 'конспект по последней записи', does: 'конспект по свежему звуку или видео из «Загрузок»', layer: 'direct' },
       ],
     },
     {
@@ -288,6 +290,8 @@ function englishCatalogue(): CatalogueGroup[] {
       items: [
         { say: 'take lecture notes for calculus', does: 'record a lecture and keep notes in Obsidian', layer: 'direct' },
         { say: 'stop lecture notes', does: 'write the summary and close the recording', layer: 'direct' },
+        { say: 'move the notes to sociology', does: 'during a lecture — write to that course; after — move it there', layer: 'direct' },
+        { say: 'notes from the latest recording', does: 'notes from the newest audio or video in Downloads', layer: 'direct' },
       ],
     },
     {

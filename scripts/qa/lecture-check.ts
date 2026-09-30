@@ -4,8 +4,8 @@
  * Язык лекции — `--language=xx`, иначе из настроек (пусто — язык интерфейса);
  * конспект — на языке интерфейса. Поднимает свой сервер whisper.cpp с моделью
  * для лекций на свободном порту (работающему Джарвису не мешает), режет
- * запись на куски по 20 секунд — как
- * их отдаёт микрофон в режиме лекции — и гонит через `LectureSession` с
+ * запись на куски по паузам, до 28 секунд — как
+ * их режет живая лекция — и гонит через `LectureSession` с
  * настоящим Claude Code по подписке. Пишет в папку данных Джарвиса, а не в
  * хранилище Obsidian: проверка не должна оставлять заметок среди лекций.
  *
@@ -26,6 +26,10 @@ import { createServer } from 'node:net';
 import path from 'node:path';
 
 import { createGpuTranscriber } from '../../app/gpuTranscriber';
+import { splitAtPauses } from '../../jarvis/lecture/audioCut';
+import { listCourses, parseFrontmatter } from '../../jarvis/lecture/courses';
+import { finalizeLecture } from '../../jarvis/lecture/finalize';
+import { BAD_CONFIDENCE } from '../../jarvis/lecture/hearing';
 import { LectureSession } from '../../jarvis/lecture/session';
 import { createClaudeSummarizer } from '../../jarvis/lecture/summarize';
 import { jarvisPaths } from '../../jarvis/setup/paths';
@@ -33,8 +37,6 @@ import { SettingsStore } from '../../jarvis/setup/settings';
 import { findGpuWhisper, findLectureModel, gpuWhisperDir, startGpuWhisper } from '../../jarvis/voice/gpuWhisper';
 import { DEFAULT_VOICE, isVoiceInstalled, Speaker } from '../../jarvis/voice/tts';
 import { decodeWav, resampleTo16k } from '../../jarvis/voice/wav';
-
-const КУСОК_СЕКУНД = 20;
 
 /** Фраза для проверки без записи и примета, по которой видно, что услышано верно. */
 const ФРАЗА: Record<'ru' | 'en', { сказать: string; ждём: string }> = {
@@ -68,7 +70,7 @@ async function main(): Promise<void> {
   const язык = (process.argv.find((a) => a.startsWith('--language='))?.slice('--language='.length) || settings.lectureLanguage || settings.language).toLowerCase();
   const конспект = settings.language;
   console.log('');
-  console.log(`Конспект лекции: язык лекции «${язык}», конспект — «${конспект}»; куски по 20 с, разделы — Claude Code по подписке`);
+  console.log(`Конспект лекции: язык лекции «${язык}», конспект — «${конспект}»; куски по паузам, разделы — Claude Code по подписке`);
   const dir = gpuWhisperDir(paths.home);
   const files = await findGpuWhisper(dir);
   if (!files) {
@@ -119,8 +121,13 @@ async function main(): Promise<void> {
   console.log(`  считает: ${признаки.some((с) => /cuda/iu.test(с)) ? 'CUDA' : признаки.some((с) => /metal/iu.test(с)) ? 'Metal' : 'процессор или не видно из вывода сервера'}`);
 
   // Тот же клиент, что у моста: проверяется то, что пишет Джарвис, а не свой запрос.
-  const ухо = createGpuTranscriber({ endpoint: сервер.endpoint, language: язык, timeoutMs: 120_000 });
-  const распознать = async (samples: Float32Array): Promise<string> => (await ухо.transcribe(samples, 16_000)).text;
+  const ухо = createGpuTranscriber({ endpoint: сервер.endpoint, language: язык, timeoutMs: 120_000, withConfidence: true });
+  const уверенность: number[] = [];
+  const распознать = async (samples: Float32Array): Promise<string> => {
+    const { text, confidence } = await ухо.transcribe(samples, 16_000);
+    if (confidence !== undefined) уверенность.push(confidence);
+    return text;
+  };
 
   try {
     if (!запись) {
@@ -139,16 +146,18 @@ async function main(): Promise<void> {
       return;
     }
 
+    // Проверочная «папка лекций» с двумя курсами: модель обязана выбрать из
+    // них или назвать новый, а лекция — лечь в папку курса с темой в имени.
     const папка = path.join(paths.data, 'lecture-check', new Date().toISOString().replace(/[:.]/gu, '-'));
     await mkdir(папка, { recursive: true });
+    const курсы = конспект === 'en' ? ['History of Humankind', 'Physics'] : ['История человечества', 'Физика'];
+    for (const курс of курсы) await mkdir(path.join(папка, курс), { recursive: true });
     const времена: number[] = [];
-    // Часы идут вместе со звуком: запись подаётся разом, а метки должны быть
-    // такими, как на живой лекции.
-    let часы = 0;
+    // Метки и разделы считаются по самому звуку, а не по часам: запись
+    // подаётся разом, а конспект выходит таким же, как на живой лекции.
     const сессия = new LectureSession(папка, конспект === 'en' ? 'Check' : 'Проверка', {
       lectureLanguage: язык,
       notesLanguage: конспект,
-      now: () => часы,
       transcribe: async (samples) => {
         const t0 = performance.now();
         const текст = await распознать(samples);
@@ -156,32 +165,46 @@ async function main(): Promise<void> {
         return текст;
       },
       summarize: createClaudeSummarizer(),
-      // Раздел — по словам, а не по часам: запись идёт быстрее живой лекции.
-      sectionEveryMs: 0,
       log: (строка) => console.log(`  ${строка}`),
     });
     await сессия.start();
-    const кусок = КУСОК_СЕКУНД * 16_000;
-    for (let at = 0; at < звук.length; at += кусок) {
-      const часть = звук.subarray(at, at + кусок);
-      часы = ((at + часть.length) / 16_000) * 1000;
-      сессия.addAudio(часть, 16_000);
-    }
+    // Куски — по паузам, как их режет живая лекция.
+    for (const [от, до] of splitAtPauses(звук, 16_000)) сессия.addAudio(звук.subarray(от, до), 16_000);
     const t0 = Date.now();
-    const итог = await сессия.finish();
-    const заметка = await readFile(итог.notesFile, 'utf8');
+    const итог = await сессия.finish(listCourses(папка));
+    const место = await finalizeLecture({
+      root: папка,
+      notesFile: итог.notesFile,
+      transcriptFile: итог.transcriptFile,
+      audioFile: итог.audioFile,
+      notes: конспект,
+      when: сессия.startedAt,
+      durationSec: итог.durationSec,
+      course: null,
+      modelCourse: итог.course,
+      topic: итог.topic,
+    });
+    const заметка = await readFile(место.notesFile, 'utf8');
+    const свойства = parseFrontmatter(заметка);
+    const среднее = уверенность.length > 0 ? уверенность.reduce((a, b) => a + b, 0) / уверенность.length : null;
     const естьИтог = заметка.includes(конспект === 'en' ? '## Summary' : '## Кратко');
     const скорость = времена.length > 0 ? Math.max(...времена) : 0;
     console.log(`  расшифровка: ${итог.words} слов; распознавание — не медленнее ${скорость.toFixed(2)} × реального времени`);
     console.log(`  разделов: ${итог.sections}; итог: ${естьИтог ? 'есть' : 'нет'}; конспект собран за ${Math.round((Date.now() - t0) / 1000)} с после записи`);
-    console.log(`  конспект: ${итог.notesFile}`);
-    console.log(`  расшифровка: ${итог.transcriptFile}`);
+    console.log(`  курс по мнению модели: «${итог.course ?? '—'}», тема: «${итог.topic ?? '—'}» → ${path.relative(папка, место.notesFile)}`);
+    console.log(`  уверенность распознавания: ${среднее === null ? 'сервер не сказал' : среднее.toFixed(2)} (порог «слышно плохо» — ${BAD_CONFIDENCE})`);
+    console.log(`  конспект: ${место.notesFile}`);
 
     const провалы = [
       итог.words === 0 ? 'расшифровка пустая' : '',
       итог.sections === 0 ? 'ни одного раздела' : '',
       заметка.includes('Раздел не собрался') || заметка.includes('This section failed') ? 'раздел не собрался' : '',
       !естьИтог ? 'нет итога' : '',
+      !итог.topic ? 'модель не назвала тему' : '',
+      !итог.course ? 'модель не назвала курс' : '',
+      !свойства ? 'в заметке нет свойств лекции' : '',
+      !/^### .+ \(\d[\d:]*–\d[\d:]*\)$/mu.test(заметка) ? 'у разделов нет времени' : '',
+      среднее === null ? 'сервер не дал уверенности' : '',
       скорость > 1 ? 'распознавание медленнее реального времени' : '',
     ].filter(Boolean);
     console.log(провалы.length === 0 ? 'ПРОШЛО' : `НЕ ПРОШЛО: ${провалы.join('; ')}`);

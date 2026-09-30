@@ -13,7 +13,8 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { finalPrompt, NOTES_WORDS, sectionFromReply, sectionPrompt, type NotesLanguage } from './session';
+import { splitCourseAndTopic } from './courses';
+import { finalPrompt, NOTES_WORDS, sectionFromReply, sectionPrompt, sectionTitle, withRange, type NotesLanguage } from './session';
 
 export interface TranscriptChunk {
   /** Секунды от начала лекции. */
@@ -40,21 +41,31 @@ function слов(текст: string): number {
   return текст.split(/\s+/u).filter(Boolean).length;
 }
 
+export interface TranscriptSection {
+  text: string;
+  /** Секунды от начала лекции: первый кусок раздела и начало следующего. */
+  from: number;
+  to: number;
+}
+
 /** Разделы: не чаще раза в `everySec` и не меньше `minWords` слов; остаток — последним. */
-export function groupSections(куски: readonly TranscriptChunk[], everySec = 300, minWords = 120): string[] {
-  const разделы: string[] = [];
+export function groupSections(куски: readonly TranscriptChunk[], everySec = 300, minWords = 120): TranscriptSection[] {
+  const разделы: TranscriptSection[] = [];
   let копится: string[] = [];
   let начало = куски[0]?.at ?? 0;
-  for (const кусок of куски) {
+  let от = начало;
+  for (const [i, кусок] of куски.entries()) {
     копится.push(кусок.text);
     const текст = копится.join(' ');
     if (кусок.at - начало >= everySec && слов(текст) >= minWords) {
-      разделы.push(текст);
+      const до = куски[i + 1]?.at ?? кусок.at;
+      разделы.push({ text: текст, from: от, to: до });
       копится = [];
       начало = кусок.at;
+      от = до;
     }
   }
-  if (копится.join(' ').trim()) разделы.push(копится.join(' '));
+  if (копится.join(' ').trim()) разделы.push({ text: копится.join(' '), from: от, to: куски[куски.length - 1]?.at ?? от });
   return разделы;
 }
 
@@ -63,12 +74,17 @@ export interface FinishFromTranscriptOptions {
   summarize(prompt: string): Promise<string>;
   lectureLanguage: string;
   notesLanguage: NotesLanguage;
+  /** Курсы человека: модель выбирает из них, к какому относится лекция. */
+  courses?: readonly string[];
   log?(line: string): void;
 }
 
 export interface FinishFromTranscriptResult {
   sections: number;
   summary: boolean;
+  /** Курс и тема — как их назвала модель. */
+  course?: string;
+  topic?: string;
   /** Почему ничего не сделано: уже дописан, нет расшифровки. */
   skipped?: string;
 }
@@ -94,11 +110,11 @@ export async function finishFromTranscript(options: FinishFromTranscriptOptions)
   // лекция, закрытая на тридцатой минуте, получала шесть разделов дважды).
   const место0 = заметка.indexOf(с.notes);
   const живые = место0 >= 0
-    ? [...заметка.slice(место0).matchAll(/^###\s+(.+)$/gmu)].map((m) => (m[1] ?? '').trim())
+    ? [...заметка.slice(место0).matchAll(/^###\s+(.+)$/gmu)].map((m) => sectionTitle(m[1] ?? ''))
     : [];
   const заголовки: string[] = [...живые];
   const разделы: string[] = [];
-  for (const [номер, текст] of groupSections(куски).entries()) {
+  for (const [номер, { text: текст, from, to }] of groupSections(куски).entries()) {
     if (номер < живые.length) continue;
     let раздел: string | null;
     try {
@@ -109,13 +125,19 @@ export async function finishFromTranscript(options: FinishFromTranscriptOptions)
       раздел = `### ${с.section} ${номер + 1}\n${с.failed(причина.slice(0, 120))}`;
     }
     if (!раздел) continue;
-    заголовки.push(раздел.split('\n')[0]?.replace(/^###\s*/u, '') ?? `${с.section} ${номер + 1}`);
-    разделы.push(раздел);
+    заголовки.push(sectionTitle(раздел.split('\n')[0] ?? '') || `${с.section} ${номер + 1}`);
+    разделы.push(withRange(раздел, from * 1000, to * 1000));
   }
 
   let итог = '';
+  let course: string | undefined;
+  let topic: string | undefined;
   try {
-    итог = (await options.summarize(finalPrompt(куски.map((к) => к.text).join('\n'), subject, языки))).trim();
+    const ответ = splitCourseAndTopic(
+      await options.summarize(finalPrompt(куски.map((к) => к.text).join('\n'), subject, языки, options.courses ?? [])),
+    );
+    ({ course, topic } = ответ);
+    итог = ответ.rest;
   } catch (error) {
     options.log?.(`итог не собрался: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -129,5 +151,5 @@ export async function finishFromTranscript(options: FinishFromTranscriptOptions)
       ? `${заметка.slice(0, место)}${итог ? `${итог}\n\n` : ''}${заметка.slice(место).trimEnd()}\n\n${тело}`
       : `${заметка.trimEnd()}\n\n${итог ? `${итог}\n\n` : ''}${с.notes}\n\n${тело}`;
   await writeFile(options.notesFile, новая, 'utf8');
-  return { sections: разделы.length, summary: Boolean(итог) };
+  return { sections: разделы.length, summary: Boolean(итог), course, topic };
 }

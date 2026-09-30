@@ -13,12 +13,12 @@
  *   - put a global hotkey in front of the whole thing
  */
 
-import { app, BrowserWindow, globalShortcut, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, shell } from 'electron';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -85,9 +85,22 @@ import {
   type SettingsStore,
 } from '../jarvis/setup/settings';
 import { installVoice, isVoiceInstalled, Speaker } from '../jarvis/voice/tts';
-import { AUDIO_BRIDGE_CHANNELS, buildAudioBridgeHtml } from './audioBridgePage';
+import { AUDIO_BRIDGE_CHANNELS, buildAudioBridgeHtml, LECTURE_PROCESSING } from './audioBridgePage';
 import { cloudSpeechKey, createElevenLabsTranscriber } from './cloudTranscriber';
-import { abandonLecture, feedLecture, finishLecture, lectureActive, lectureState, onLectureState, startLecture } from './lectureMode';
+import {
+  abandonLecture,
+  feedLecture,
+  finishLecture,
+  LECTURE_FILE_EXTENSIONS,
+  lectureActive,
+  lectureFromFile,
+  lectureState,
+  onLectureState,
+  setLectureCourse,
+  startLecture,
+  type LectureStartOptions,
+} from './lectureMode';
+import { createFileDecoder } from './lectureFileDecode';
 import { lectureHeardForJarvis } from '../jarvis/lecture/voiceGate';
 import {
   createGpuTranscriber,
@@ -424,13 +437,75 @@ function setDictation(on: boolean): void {
   console.log(on ? '[jarvis] диктовка началась' : '[jarvis] диктовка окончена');
 }
 
-/** Окно микрофона в режиме лекции слышит тише и пишет длиннее. */
+/** Окно микрофона в режиме лекции пишет сплошь и без шумоподавления. */
 function звукЛекции(on: boolean): void {
   try {
-    if (окноЗвука && !окноЗвука.isDestroyed()) окноЗвука.webContents.send(AUDIO_BRIDGE_CHANNELS.lecture, on);
+    if (окноЗвука && !окноЗвука.isDestroyed()) {
+      окноЗвука.webContents.send(AUDIO_BRIDGE_CHANNELS.lecture, { on, processing: LECTURE_PROCESSING });
+    }
   } catch {
     // Окно микрофона могло упасть — конспект всё равно пишется.
   }
+}
+
+/** Где лекции и на каком языке — одно для голоса, кнопки и файла. */
+function настройкиЛекции(): LectureStartOptions {
+  return {
+    home: PATHS.home,
+    // Пусто в настройках — лекция на языке интерфейса.
+    lectureLanguage: settings().lectureLanguage || settings().language,
+    notesLanguage: settings().language,
+    outputDir:
+      settings().outputDir ||
+      jarvisOutputDir(process.env, app.getPath('desktop'), settings().language === 'en' ? 'Jarvis' : 'Джарвис'),
+    mainEndpoint: () => серверРаспознавания?.endpoint ?? (process.env.JARVIS_GPU_STT?.trim() || null),
+  };
+}
+
+/**
+ * Файл → звук кусками: WAV — здесь, mp3, m4a и видео — окном микрофона.
+ * Окно берётся в момент вызова: его пересоздают после падения.
+ */
+const раскрытьФайл = createFileDecoder(() => окноЗвука);
+
+/** Конспект по файлу; сообщает, как вышло. Файл не назван — окно выбора. */
+async function конспектПоФайлу(file: string | null, сообщить: (текст: string) => Promise<void> | void): Promise<void> {
+  let путь = file;
+  if (!путь) {
+    const выбор = await dialog.showOpenDialog({
+      title: tr('Запись лекции', 'Lecture recording'),
+      properties: ['openFile'],
+      filters: [{ name: tr('Звук и видео', 'Audio and video'), extensions: LECTURE_FILE_EXTENSIONS }],
+    });
+    путь = выбор.canceled ? null : (выбор.filePaths[0] ?? null);
+    if (!путь) return;
+  }
+  console.log(`[jarvis:lecture] конспект по файлу: ${path.basename(путь)}`);
+  await сообщить(tr(`Беру ${path.basename(путь)}. Когда будет готово — скажу.`, `Taking ${path.basename(путь)}. I will tell you when it is ready.`));
+  const итог = await lectureFromFile(путь, {
+    ...настройкиЛекции(),
+    decode: раскрытьФайл,
+    trash: (старый) => shell.trashItem(старый),
+  });
+  await сообщить(итог);
+}
+
+/** Самая свежая запись в «Загрузках» за сутки — для «конспект по последней записи». */
+function последняяЗапись(): string | null {
+  const папка = app.getPath('downloads');
+  const сутки = Date.now() - 24 * 60 * 60 * 1000;
+  let лучший: { путь: string; когда: number } | null = null;
+  try {
+    for (const имя of readdirSync(папка)) {
+      if (!LECTURE_FILE_EXTENSIONS.includes(path.extname(имя).slice(1).toLowerCase())) continue;
+      const путь = path.join(папка, имя);
+      const когда = statSync(путь).mtimeMs;
+      if (когда >= сутки && (!лучший || когда > лучший.когда)) лучший = { путь, когда };
+    }
+  } catch {
+    return null;
+  }
+  return лучший?.путь ?? null;
 }
 
 /**
@@ -446,16 +521,7 @@ async function переключитьЛекцию(
   сообщить: (текст: string) => Promise<void> | void,
 ): Promise<void> {
   if (on) {
-    const ответ = await startLecture(subject, {
-      home: PATHS.home,
-      // Пусто в настройках — лекция на языке интерфейса.
-      lectureLanguage: settings().lectureLanguage || settings().language,
-      notesLanguage: settings().language,
-      outputDir:
-        settings().outputDir ||
-        jarvisOutputDir(process.env, app.getPath('desktop'), settings().language === 'en' ? 'Jarvis' : 'Джарвис'),
-      mainEndpoint: () => серверРаспознавания?.endpoint ?? (process.env.JARVIS_GPU_STT?.trim() || null),
-    });
+    const ответ = await startLecture(subject, настройкиЛекции());
     if (lectureActive()) звукЛекции(true);
     await сообщить(ответ);
     return;
@@ -580,6 +646,23 @@ export async function runDirectCommand(
       }
       case 'lecture': {
         await переключитьЛекцию(command.on, command.subject, (текст) => session.speak(текст));
+        break;
+      }
+      case 'lectureCourse': {
+        await session.speak(await setLectureCourse(command.course));
+        break;
+      }
+      case 'lectureFile': {
+        const файл = последняяЗапись();
+        if (!файл) {
+          await session.speak(tr('В «Загрузках» нет записей за сутки.', 'No recordings in Downloads from the last day.'));
+          break;
+        }
+        // Не ждём: расшифровка — минуты, а реплики разбираются по одной.
+        void конспектПоФайлу(файл, (текст) => session.speak(текст)).catch((error: unknown) => {
+          console.error(`[jarvis:lecture] конспект по файлу не вышел: ${error instanceof Error ? error.message : String(error)}`);
+          return session.speak(tr('Конспект по файлу не вышел — причина в журнале.', 'Notes from the file failed — see the log.'));
+        });
         break;
       }
       case 'volume': {
@@ -926,6 +1009,10 @@ function describeDirect(command: DirectCommand): string {
       return `свернул ${command.title}`;
     case 'lecture':
       return command.on ? 'начал конспект лекции' : 'закончил конспект лекции';
+    case 'lectureCourse':
+      return `курс лекции: ${command.course}`;
+    case 'lectureFile':
+      return 'конспект по последней записи';
     case 'volume':
       return `громкость ${command.level}%`;
     case 'openSite':
@@ -1332,8 +1419,24 @@ async function поднятьМост(options: {
         },
       );
     },
+    onCourse: (course) => {
+      console.log(`[jarvis:lecture] курс на плашке: ${course || 'угадать'}`);
+      void setLectureCourse(course)
+        .then((текст) => overlay.note(session.status, текст))
+        .catch((error: unknown) => console.error(`[jarvis:lecture] курс не сменился: ${error instanceof Error ? error.message : String(error)}`));
+    },
+    onFile: (file) => {
+      if (lectureState() !== 'off') return;
+      void конспектПоФайлу(file, (текст) => overlay.note(session.status, текст)).catch((error: unknown) => {
+        console.error(`[jarvis:lecture] конспект по файлу не вышел: ${error instanceof Error ? error.message : String(error)}`);
+        overlay.note(session.status, tr('Конспект по файлу не вышел — причина в журнале.', 'Notes from the file failed — see the log.'));
+      });
+    },
   });
-  const отписатьЛекцию = onLectureState((state) => overlay.setLecture(state));
+  const отписатьЛекцию = onLectureState((state, info) => {
+    overlay.setLecture(state);
+    overlay.setLectureInfo(info);
+  });
   // Крупный режим — из настроек, и сразу: его могли включить голосом в прошлый
   // раз, и при запуске плашка обязана быть такой, какой её оставили.
   overlay.setBig(settings().bigMode);
@@ -1502,6 +1605,15 @@ async function поднятьМост(options: {
     });
   };
 
+  // Звук лекции — сплошь, мимо слуха команд. Микрофон выключен — в запись
+  // ложится тишина той же длины: выключенное не записывается, а минуты
+  // расшифровки не съезжают относительно звука.
+  ipcMain.on(AUDIO_BRIDGE_CHANNELS.lectureAudio, (_event, payload: { samples?: Float32Array; sampleRate?: number } | null) => {
+    if (!payload?.samples || !payload.sampleRate || !lectureActive()) return;
+    const samples = toFloat32(payload.samples);
+    feedLecture(muted ? new Float32Array(samples.length) : samples, payload.sampleRate);
+  });
+
   ipcMain.on(AUDIO_BRIDGE_CHANNELS.utterance, (_event, payload: RecordedAudio | null) => {
     if (!payload) return;
 
@@ -1528,12 +1640,11 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
     {
       try {
         const samples = toFloat32(payload.samples);
-        // Лекция: звук аудитории — в конспект, а не в разговор. В конспект —
-        // раньше русского слуха: упади общий сервер, лекция всё равно
-        // пишется. Дальше проходит только управление, имя и прямые команды
-        // (`lectureHeardForJarvis`): каша из аудитории — не разговор.
+        // Лекция: звук аудитории идёт в конспект своим сплошным потоком
+        // (`lectureAudio`), а сюда — только фразы. Дальше проходит лишь
+        // управление, имя и прямые команды (`lectureHeardForJarvis`): каша
+        // из аудитории — не разговор.
         const лекция = lectureActive();
-        if (лекция) feedLecture(samples, payload.sampleRate);
         const started = Date.now();
         const { text } = await transcriber.transcribe(samples, payload.sampleRate);
         const распознано = Date.now();

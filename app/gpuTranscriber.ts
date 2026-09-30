@@ -21,6 +21,13 @@ export interface GpuTranscriberOptions {
   endpoint?: string;
   language?: string;
   timeoutMs?: number;
+  /**
+   * Вместе с текстом — уверенность распознавания (`confidence`): средняя
+   * логарифмическая вероятность по сегментам, взвешенная длительностью.
+   * Нужна слуху лекции: в гулком зале Whisper пишет столько же слов, только
+   * неверных, и видно это лишь по его собственной уверенности.
+   */
+  withConfidence?: boolean;
   /** Used when the local server is not answering, so speech is never lost. */
   fallback?: Transcriber;
 }
@@ -80,7 +87,32 @@ export function cleanWhisperText(text: string): string {
   return text.replace(/\n/gu, '').replace(/[‎‏‪-‮⁦-⁩]/gu, '').trim();
 }
 
-export function createGpuTranscriber(options: GpuTranscriberOptions = {}): Transcriber {
+/** Распознанное и уверенность; её нет — сервер не сказал. */
+export interface ConfidentResult {
+  text: string;
+  confidence?: number;
+}
+
+/** Средняя уверенность по сегментам ответа `verbose_json`, взвешенная их длительностью. */
+export function segmentConfidence(segments: unknown): number | undefined {
+  if (!Array.isArray(segments)) return undefined;
+  let вес = 0;
+  let сумма = 0;
+  for (const сегмент of segments as Array<{ start?: unknown; end?: unknown; avg_logprob?: unknown }>) {
+    const длина = Number(сегмент.end) - Number(сегмент.start);
+    if (typeof сегмент.avg_logprob !== 'number' || !Number.isFinite(сегмент.avg_logprob) || !(длина > 0)) continue;
+    вес += длина;
+    сумма += сегмент.avg_logprob * длина;
+  }
+  return вес > 0 ? сумма / вес : undefined;
+}
+
+/** Тот же `Transcriber`, но ответ может нести и уверенность. */
+export interface ConfidentTranscriber extends Transcriber {
+  transcribe(samples: Float32Array, sampleRate: number): Promise<ConfidentResult>;
+}
+
+export function createGpuTranscriber(options: GpuTranscriberOptions = {}): ConfidentTranscriber {
   const endpoint = options.endpoint ?? WHISPER_SERVER_URL;
   const timeoutMs = options.timeoutMs ?? 20_000;
 
@@ -92,7 +124,7 @@ export function createGpuTranscriber(options: GpuTranscriberOptions = {}): Trans
       try {
         const form = new FormData();
         form.append('file', new Blob([new Uint8Array(encodeWav16(samples, sampleRate))], { type: 'audio/wav' }), 'speech.wav');
-        form.append('response_format', 'json');
+        form.append('response_format', options.withConfidence ? 'verbose_json' : 'json');
         if (options.language) form.append('language', options.language);
         // Without this the server will happily "translate" Russian into
         // English, which is not what a Russian assistant wants.
@@ -105,7 +137,7 @@ export function createGpuTranscriber(options: GpuTranscriberOptions = {}): Trans
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-        const payload = (await response.json()) as { text?: unknown };
+        const payload = (await response.json()) as { text?: unknown; segments?: unknown };
         // Пустая строка — это тишина. Отсутствие поля — это сломанный ответ.
         //
         // Раньше одно выдавалось за другое: `?? ''` превращал `{"error": ...}`
@@ -114,7 +146,9 @@ export function createGpuTranscriber(options: GpuTranscriberOptions = {}): Trans
         if (typeof payload.text !== 'string') {
           throw new Error(`ответ без text: ${JSON.stringify(payload).slice(0, 200)}`);
         }
-        return { text: cleanWhisperText(payload.text) };
+        return options.withConfidence
+          ? { text: cleanWhisperText(payload.text), confidence: segmentConfidence(payload.segments) }
+          : { text: cleanWhisperText(payload.text) };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (!options.fallback) throw error;

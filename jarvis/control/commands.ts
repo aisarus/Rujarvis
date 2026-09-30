@@ -39,6 +39,10 @@ export type DirectCommand =
   | { kind: 'openSite'; name: string }
   /** Конспект лекции: начать (с предметом, если назван) или закончить. */
   | { kind: 'lecture'; on: boolean; subject?: string }
+  /** Курс лекции: идёт — писать в него; кончилась — перенести последнюю туда. */
+  | { kind: 'lectureCourse'; course: string }
+  /** Конспект по самой свежей записи из «Загрузок». */
+  | { kind: 'lectureFile' }
   | { kind: 'dictation'; on: boolean }
   | { kind: 'clickNamed'; query: string }
   /** N-я ссылка страницы в браузере; -1 — последняя. */
@@ -706,6 +710,19 @@ const ПРАВИЛА: Array<Rule<DirectCommand>> = [
   { pattern: '(take|start) [the] lecture notes', make: () => ({ kind: 'lecture', on: true }) },
   { pattern: '(stop|end|finish) [the] lecture notes', make: () => ({ kind: 'lecture', on: false }) },
   { pattern: '(end|finish) [the] lecture', make: () => ({ kind: 'lecture', on: false }) },
+  // Курс и файл — явными словами «конспект»/«лекция»: «это не то, это
+  // другое» в разговоре не должно переносить лекции.
+  // Слово «курс» — отдельной формой и раньше: необязательное слово грамматика
+  // сначала пропускает, и оно ушло бы в название.
+  { pattern: '(перенеси|переложи) (конспект|лекцию) в курс {курс}', make: (s) => ({ kind: 'lectureCourse', course: s.курс as string }) },
+  { pattern: '(перенеси|переложи) (конспект|лекцию) в {курс}', make: (s) => ({ kind: 'lectureCourse', course: s.курс as string }) },
+  { pattern: '(пиши|запиши|записывай) (конспект|лекцию) в курс {курс}', make: (s) => ({ kind: 'lectureCourse', course: s.курс as string }) },
+  { pattern: '(пиши|запиши|записывай) (конспект|лекцию) в {курс}', make: (s) => ({ kind: 'lectureCourse', course: s.курс as string }) },
+  { pattern: 'move [the] (notes|lecture) to the course {course}', make: (s) => ({ kind: 'lectureCourse', course: s.course as string }) },
+  { pattern: 'move [the] (notes|lecture) to [the] {course}', make: (s) => ({ kind: 'lectureCourse', course: s.course as string }) },
+  { pattern: 'file [the] (notes|lecture) under {course}', make: (s) => ({ kind: 'lectureCourse', course: s.course as string }) },
+  { pattern: '[сделай] конспект (по|из) (последней|свежей|последнего|свежего) (записи|файла)', make: () => ({ kind: 'lectureFile' }) },
+  { pattern: '[take] [lecture] notes from [the] (last|latest) (recording|file)', make: () => ({ kind: 'lectureFile' }) },
 
   // ЗАПИСЬ — кнопкой активного окна (диктофон, OBS), а не агентом: живой
   // журнал 29.09.2026 — «начни записывать» четыре минуты, «останови запись»

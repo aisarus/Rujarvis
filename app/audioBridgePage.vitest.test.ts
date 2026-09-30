@@ -148,15 +148,22 @@ describe('режим лекции', () => {
   const открывающий = html.indexOf('<script>') + '<script>'.length;
   const тело = html.slice(открывающий, html.indexOf('</script>', открывающий));
 
-  function страница(лекция: boolean): { отправлено: string[]; звук: (samples: Float32Array) => void } {
-    const отправлено: string[] = [];
-    const обработчики = new Map<string, (event: unknown, value: unknown) => void>();
+  interface Страница {
+    отправлено: Array<{ канал: string; что: unknown }>;
+    звук: (samples: Float32Array) => void;
+    микрофон: unknown[];
+  }
+
+  async function страница(лекция: boolean): Promise<Страница> {
+    const отправлено: Array<{ канал: string; что: unknown }> = [];
+    const микрофон: unknown[] = [];
+    const обработчики = new Map<string, (event: unknown, value: unknown) => unknown>();
     const ipcRenderer = {
-      on: (channel: string, handler: (event: unknown, value: unknown) => void) => {
+      on: (channel: string, handler: (event: unknown, value: unknown) => unknown) => {
         обработчики.set(channel, handler);
       },
-      send: (channel: string) => {
-        отправлено.push(channel);
+      send: (channel: string, что: unknown) => {
+        отправлено.push({ канал: channel, что });
       },
     };
     const контекст = createContext({
@@ -165,17 +172,23 @@ describe('режим лекции', () => {
       setTimeout: () => 0,
       clearTimeout: () => undefined,
       console,
-      navigator: { mediaDevices: {} },
+      // Микрофон записывает, с какой обработкой его просили, и отказывает:
+      // дальше страница в проверке не идёт.
+      navigator: { mediaDevices: { getUserMedia: async (c: unknown) => { микрофон.push(c); throw new Error('нет микрофона в проверке'); } } },
     });
     new Script(тело).runInContext(контекст);
     new Script('ambient = true; audioContext = { sampleRate: 16000 };').runInContext(контекст);
-    if (лекция) обработчики.get('jarvis-audio:lecture')?.(null, true);
+    if (лекция) {
+      await обработчики.get('jarvis-audio:lecture')?.(null, { on: true, processing: { echoCancellation: false, noiseSuppression: false, autoGainControl: true } });
+      // Микрофон в проверке не поднимается — возвращаем «поднятый».
+      new Script('audioContext = { sampleRate: 16000 };').runInContext(контекст);
+    }
     const onAudio = new Script('onAudio').runInContext(контекст) as (event: unknown) => void;
-    return { отправлено, звук: (samples) => onAudio({ inputBuffer: { getChannelData: () => samples } }) };
+    return { отправлено, микрофон, звук: (samples) => onAudio({ inputBuffer: { getChannelData: () => samples } }) };
   }
 
   const КУСОК = 4096;
-  /** Голос из-за кафедры: громкость ниже обычного порога речи, но выше лекционного. */
+  /** Голос из-за кафедры: тише порога речи для команд. */
   const издалека = (): Float32Array => {
     const out = new Float32Array(КУСОК);
     for (let i = 0; i < КУСОК; i += 1) out[i] = 0.02 * Math.sin((2 * Math.PI * 180 * i) / 16000);
@@ -183,25 +196,37 @@ describe('режим лекции', () => {
   };
   const тишина = (): Float32Array => new Float32Array(КУСОК);
 
-  it('тихий голос издалека — речь только в режиме лекции', () => {
+  it('звук лекции идёт сплошь — и тишина тоже, до последнего отсчёта', async () => {
+    const { отправлено, звук } = await страница(true);
+    for (let i = 0; i < 4; i += 1) звук(издалека());
+    for (let i = 0; i < 5; i += 1) звук(тишина());
+    const куски = отправлено.filter((о) => о.канал === 'jarvis-audio:lecture-audio').map((о) => (о.что as { samples: Float32Array }).samples);
+    expect(куски.length).toBeGreaterThan(0);
+    // По секунде: 9 кусков по 4096 — два блока, остаток ждёт своей секунды.
+    expect(куски.every((к) => к.length >= 16000)).toBe(true);
+    expect(куски.reduce((n, к) => n + к.length, 0)).toBeLessThanOrEqual(9 * КУСОК);
+    expect(9 * КУСОК - куски.reduce((n, к) => n + к.length, 0)).toBeLessThan(16000);
+  });
+
+  it('фразы для команд в лекции — с обычным порогом: далёкий лектор слуху команд не нужен', async () => {
     for (const лекция of [false, true]) {
-      const { отправлено, звук } = страница(лекция);
+      const { отправлено, звук } = await страница(лекция);
       for (let i = 0; i < 4; i += 1) звук(издалека());
       for (let i = 0; i < 5; i += 1) звук(тишина());
-      expect(отправлено.includes('jarvis-audio:utterance')).toBe(лекция);
+      expect(отправлено.some((о) => о.канал === 'jarvis-audio:utterance')).toBe(false);
     }
   });
 
-  it('длинная мысль лектора не режется на 15 секундах', () => {
-    const кусковНа = (секунд: number): number => Math.ceil((секунд * 16000) / КУСОК);
-    const обычно = страница(false);
-    const лекция = страница(true);
-    for (let i = 0; i < кусковНа(20); i += 1) {
-      const громко = издалека().map((x) => x * 3);
-      обычно.звук(громко);
-      лекция.звук(громко);
-    }
-    expect(обычно.отправлено).toContain('jarvis-audio:utterance');
-    expect(лекция.отправлено).not.toContain('jarvis-audio:utterance');
+  it('без лекции звук в конспект не уходит', async () => {
+    const { отправлено, звук } = await страница(false);
+    for (let i = 0; i < 10; i += 1) звук(издалека());
+    expect(отправлено.some((о) => о.канал === 'jarvis-audio:lecture-audio')).toBe(false);
+  });
+
+  it('лекция берёт микрофон заново — без шумо- и эхоподавления', async () => {
+    const { микрофон } = await страница(true);
+    await new Promise((r) => setImmediate(r));
+    expect(микрофон[0]).toMatchObject({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true } });
   });
 });
+

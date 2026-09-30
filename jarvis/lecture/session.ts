@@ -25,6 +25,7 @@ import { closeSync, openSync, statSync, writeSync } from 'node:fs';
 import { appendFile, mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { splitCourseAndTopic } from './courses';
 import { lectureFileBase } from './vault';
 
 /** На каком языке пишется конспект — язык интерфейса. */
@@ -37,8 +38,7 @@ export interface LectureDeps {
   lectureLanguage?: string;
   /** Язык конспекта. По умолчанию — русский. */
   notesLanguage?: NotesLanguage;
-  now?(): number;
-  /** Не чаще, чем раз в столько, — раздел конспекта. */
+  /** Не чаще, чем раз в столько звука, — раздел конспекта. */
   sectionEveryMs?: number;
   /** И не меньше стольких новых слов расшифровки. */
   sectionMinWords?: number;
@@ -51,6 +51,11 @@ export interface LectureResult {
   audioFile: string;
   words: number;
   sections: number;
+  /** Сколько звука записано, секунды. */
+  durationSec: number;
+  /** Курс и тема — как их назвала модель в итоге; итога нет — нет и их. */
+  course?: string;
+  topic?: string;
 }
 
 /** Слова самой заметки: заголовки и подписи — на языке конспекта. */
@@ -107,7 +112,7 @@ function слова(текст: string): number {
   return текст.split(/\s+/u).filter(Boolean).length;
 }
 
-function метка(мс: number): string {
+export function метка(мс: number): string {
   const всего = Math.max(0, Math.floor(мс / 1000));
   const часы = Math.floor(всего / 3600);
   const минуты = Math.floor((всего % 3600) / 60);
@@ -168,14 +173,25 @@ export function sectionPrompt(
   ].join('\n');
 }
 
-export function finalPrompt(расшифровка: string, subject: string, языки: PromptLanguages = { lecture: 'ru', notes: 'ru' }): string {
+export function finalPrompt(
+  расшифровка: string,
+  subject: string,
+  языки: PromptLanguages = { lecture: 'ru', notes: 'ru' },
+  курсы: readonly string[] = [],
+): string {
   const чужой = языки.lecture !== языки.notes;
   const язык = названиеЯзыка(языки.lecture, языки.notes);
   if (языки.notes === 'en') {
     return [
       `Below is the whole transcript of a lecture${чужой ? ` in ${язык}` : ''} (automatic recognition, with errors).`,
-      `Subject: ${subject || 'not given'}.`,
-      'Write three parts in English markdown, with no introduction and nothing made up:',
+      `Subject as the student named it: ${subject || 'not given'}.`,
+      `The student's courses: ${курсы.length > 0 ? курсы.join('; ') : 'none yet'}.`,
+      '',
+      'Start with two lines:',
+      "Course: <which of the student's courses this lecture belongs to, exactly as listed; if none fits — a short name for a new course, in English>",
+      'Topic: <the topic of this lecture in 3–6 words, in English>',
+      '',
+      'Then write three parts in English markdown, with no introduction and nothing made up:',
       '## Summary — 3–6 sentences: what the lecture is about and the main conclusion.',
       чужой
         ? `## Concepts — 5–15 lines like "- term in English (the lecturer's term in ${язык}) — one line of explanation".`
@@ -188,8 +204,14 @@ export function finalPrompt(расшифровка: string, subject: string, я�
   }
   return [
     `Ниже — вся расшифровка лекции${чужой ? ` на ${язык}` : ''} (распознавание автоматическое, с ошибками).`,
-    `Предмет: ${subject || 'не назван'}.`,
-    'Напиши на русском три части в markdown, без вступлений и без выдуманного:',
+    `Предмет, как его назвал студент: ${subject || 'не назван'}.`,
+    `Курсы студента: ${курсы.length > 0 ? курсы.join('; ') : 'пока нет'}.`,
+    '',
+    'Начни с двух строк:',
+    'Предмет: <к какому из курсов студента относится лекция — точно как в списке; если ни один не подходит — короткое название нового курса по-русски, в именительном падеже>',
+    'Тема: <тема этой лекции в 3–6 словах, по-русски>',
+    '',
+    'Дальше напиши на русском три части в markdown, без вступлений и без выдуманного:',
     '## Кратко — 3–6 предложений: о чём лекция и главный вывод.',
     чужой
       ? `## Понятия — 5–15 строк вида «- термин по-русски (термин лектора на ${язык}) — одна строка объяснения».`
@@ -212,19 +234,33 @@ export function sectionFromReply(ответ: string, номер: number, notes: 
   return текст.startsWith('### ') ? текст : `### ${NOTES_WORDS[notes].section} ${номер}\n${текст}`;
 }
 
+/** Время раздела — в его заголовке: «### Пределы (12:40–17:55)». */
+export function withRange(раздел: string, отМс: number, доМс: number): string {
+  const [первая, ...остальное] = раздел.split('\n');
+  return [`${первая ?? ''} (${метка(отМс)}–${метка(доМс)})`, ...остальное].join('\n');
+}
+
+/** Название раздела без «### » и без времени. */
+export function sectionTitle(строка: string): string {
+  return строка.replace(/^###\s*/u, '').replace(/\s*\(\d[\d:]*–\d[\d:]*\)\s*$/u, '').trim();
+}
+
 export class LectureSession {
   readonly notesFile: string;
   readonly transcriptFile: string;
   readonly audioFile: string;
+  /** Когда лекция началась — для свойств заметки и расписания. */
+  readonly startedAt: Date;
 
-  private readonly начало: number;
-  private readonly now: () => number;
   private расшифровка: Promise<void> = Promise.resolve();
   private разделы: Promise<void> = Promise.resolve();
-  private копится: string[] = [];
+  private копится: Array<{ текст: string; от: number; до: number }> = [];
   private readonly вся: string[] = [];
   private readonly заголовки: string[] = [];
-  private последнийРаздел: number;
+  /** Сколько звука принято, мс: запись сплошная, и это же — место в WAV. */
+  private мсЗвука = 0;
+  /** Где кончился прошлый раздел, мс звука. */
+  private последнийРаздел = 0;
   private номерРаздела = 0;
   private байтЗвука = 0;
   private частотаЗвука = 16_000;
@@ -245,9 +281,7 @@ export class LectureSession {
     this.notesFile = path.join(folder, `${base}.md`);
     this.transcriptFile = path.join(folder, `${base} — ${this.слова.transcriptFile}.md`);
     this.audioFile = path.join(folder, `${base}.wav`);
-    this.now = deps.now ?? Date.now;
-    this.начало = this.now();
-    this.последнийРаздел = this.начало;
+    this.startedAt = when;
   }
 
   async start(): Promise<void> {
@@ -276,12 +310,15 @@ export class LectureSession {
   /**
    * Кусок звука лекции: в запись, в расшифровку, и — когда накопилось — в раздел.
    *
-   * Кусок приходит, когда кончился, а метка — на его начало: иначе у
-   * 28-секундного куска она на полминуты позже сказанного.
+   * Запись сплошная, тишина тоже пишется: метка куска — его место в самом
+   * звуке, а не время прихода. По ней потом включается звук «с той минуты»,
+   * и она обязана с ним совпадать.
    */
   addAudio(samples: Float32Array, sampleRate: number): void {
     if (this.закончена) return;
-    const когда = this.now() - this.начало - (samples.length / sampleRate) * 1000;
+    const когда = this.мсЗвука;
+    const конец = когда + (samples.length / sampleRate) * 1000;
+    this.мсЗвука = конец;
     this.расшифровка = this.расшифровка.then(async () => {
       if (this.байтЗвука === 0) this.частотаЗвука = sampleRate;
       const pcm = pcm16(samples);
@@ -297,7 +334,7 @@ export class LectureSession {
       }
       if (!текст) return;
       await appendFile(this.transcriptFile, `**[${метка(когда)}]** ${текст}\n\n`, 'utf8');
-      this.копится.push(текст);
+      this.копится.push({ текст, от: когда, до: конец });
       this.вся.push(текст);
       this.deps.log?.(`кусок ${метка(когда)}: ${слова(текст)} слов`);
       this.maybeSection(false);
@@ -306,14 +343,16 @@ export class LectureSession {
 
   /** Раздел, когда накопилось достаточно и прошло достаточно; `всё` — при завершении. */
   private maybeSection(всё: boolean): void {
-    const накоплено = this.копится.join(' ');
+    const накоплено = this.копится.map((к) => к.текст).join(' ');
     if (!накоплено.trim()) return;
     const порогСлов = this.deps.sectionMinWords ?? 120;
     const порогВремени = this.deps.sectionEveryMs ?? 5 * 60_000;
-    if (!всё && (слова(накоплено) < порогСлов || this.now() - this.последнийРаздел < порогВремени)) return;
+    const от = this.копится[0]?.от ?? 0;
+    const до = this.копится[this.копится.length - 1]?.до ?? от;
+    if (!всё && (слова(накоплено) < порогСлов || до - this.последнийРаздел < порогВремени)) return;
 
     this.копится = [];
-    this.последнийРаздел = this.now();
+    this.последнийРаздел = до;
     const номер = ++this.номерРаздела;
     const заголовки = [...this.заголовки];
     this.разделы = this.разделы.then(async () => {
@@ -326,8 +365,8 @@ export class LectureSession {
         раздел = `### ${this.слова.section} ${номер}\n${this.слова.failed(причина.slice(0, 120))}`;
       }
       if (!раздел) return;
-      this.заголовки.push(раздел.split('\n')[0]?.replace(/^###\s*/u, '') ?? `${this.слова.section} ${номер}`);
-      await appendFile(this.notesFile, `${раздел}\n\n`, 'utf8');
+      this.заголовки.push(sectionTitle(раздел.split('\n')[0] ?? '') || `${this.слова.section} ${номер}`);
+      await appendFile(this.notesFile, `${withRange(раздел, от, до)}\n\n`, 'utf8');
     });
   }
 
@@ -362,17 +401,24 @@ export class LectureSession {
     }
   }
 
-  /** Дописать последний раздел, итог — над разделами, и закрыть запись звука. */
-  async finish(): Promise<LectureResult> {
+  /**
+   * Дописать последний раздел, итог — над разделами, и закрыть запись звука.
+   * `курсы` — курсы человека: модель выбирает из них, к какому относится лекция.
+   */
+  async finish(курсы: readonly string[] = []): Promise<LectureResult> {
     this.закончена = true;
     await this.расшифровка;
     this.maybeSection(true);
     await this.разделы;
 
     const расшифровка = this.вся.join('\n');
+    let course: string | undefined;
+    let topic: string | undefined;
     if (расшифровка.trim()) {
       try {
-        const итог = (await this.deps.summarize(finalPrompt(расшифровка, this.subject, this.языки))).trim();
+        const ответ = splitCourseAndTopic(await this.deps.summarize(finalPrompt(расшифровка, this.subject, this.языки, курсы)));
+        ({ course, topic } = ответ);
+        const итог = ответ.rest;
         if (итог) {
           const заметка = await readFile(this.notesFile, 'utf8');
           const место = заметка.indexOf(this.слова.notes);
@@ -396,6 +442,9 @@ export class LectureSession {
       audioFile: this.audioFile,
       words: слова(расшифровка),
       sections: this.заголовки.length,
+      durationSec: this.мсЗвука / 1000,
+      course,
+      topic,
     };
   }
 }

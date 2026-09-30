@@ -23,7 +23,19 @@ import { currentLanguage, tr } from '../jarvis/locale/language';
 export const STATUS_OVERLAY_CHANNEL = 'jarvis-overlay:status';
 
 /** Состояние конспекта, как его показывает кнопка. */
-export type LectureButtonState = 'off' | 'starting' | 'on' | 'finishing';
+export type LectureButtonState = 'off' | 'starting' | 'on' | 'finishing' | 'importing';
+
+/**
+ * Что показать под кнопками, пока идёт лекция: курс, в который она пишется,
+ * список курсов для выбора и предупреждение, если лектора плохо слышно.
+ */
+export interface LectureInfo {
+  /** Курс, выбранный человеком или угаданный; null — решит модель по содержанию. */
+  course: string | null;
+  courses: string[];
+  /** Строка под кнопками, пока она верна: «лектора слышно плохо…», «расшифровываю файл…». */
+  line?: string;
+}
 
 /** Подписи — при сборке страницы: язык читается из настроек позже загрузки модуля. */
 function lectureButtonLabels(): Record<LectureButtonState, string> {
@@ -32,6 +44,7 @@ function lectureButtonLabels(): Record<LectureButtonState, string> {
     starting: tr('Начинаю…', 'Starting…'),
     on: tr('■ Закончить конспект', '■ Stop lecture notes'),
     finishing: tr('Дописываю итог…', 'Writing the summary…'),
+    importing: tr('Конспектирую файл…', 'Notes from a file…'),
   };
 }
 
@@ -145,7 +158,23 @@ export function buildOverlayHtml(): string {
   #bar button:hover { background: #3f3f46; }
   #bar button.on { background: #7f1d1d; border-color: #ef4444; }
   #bar button:disabled { opacity: 0.55; cursor: default; }
+  #bar button.drop { border-color: #38bdf8; background: #0c4a6e; }
   body.big #bar button { font-size: 20px; padding: 10px 18px; }
+  #courses { display: none; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; }
+  #courses.open { display: flex; }
+  #courses button {
+    cursor: pointer; font: 600 12px "Segoe UI", system-ui, sans-serif;
+    color: #e4e4e7; background: #1f2937; border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px; padding: 5px 10px;
+  }
+  #courses button.chosen { border-color: #22c55e; }
+  body.big #courses button { font-size: 18px; padding: 8px 14px; }
+  #info {
+    display: none; padding: 0 12px 10px; font-size: 12px; color: #fbbf24;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  #info.on { display: block; }
+  body.big #info { font-size: 18px; }
 </style>
 </head>
 <body>
@@ -158,20 +187,83 @@ export function buildOverlayHtml(): string {
 </div>
 <div id="bar">
   <button id="lecture" type="button">${lectureButtonLabels().off}</button>
+  <button id="course" type="button" style="display:none"></button>
+  <button id="file" type="button" title="${tr('Или перетащите файл сюда', 'Or drop a file here')}">${tr('Из файла…', 'From a file…')}</button>
 </div>
+<div id="courses"></div>
+<div id="info"></div>
 <script>
 const { ipcRenderer } = require('electron');
 const pill = document.getElementById('pill');
 const lectureButton = document.getElementById('lecture');
+const courseButton = document.getElementById('course');
+const fileButton = document.getElementById('file');
+const coursesBox = document.getElementById('courses');
+const info = document.getElementById('info');
 const lectureLabels = ${JSON.stringify(lectureButtonLabels())};
+const WORDS = ${JSON.stringify({
+    course: tr('Курс: ', 'Course: '),
+    guess: tr('угадаю по лекции', 'guess from the lecture'),
+    guessItem: tr('Угадать по лекции', 'Guess from the lecture'),
+  })};
 lectureButton.addEventListener('click', () => {
   ipcRenderer.send(${JSON.stringify(STATUS_OVERLAY_CHANNEL + ':lecture')});
 });
+courseButton.addEventListener('click', () => {
+  coursesBox.classList.toggle('open');
+  подогнатьВысоту();
+});
+fileButton.addEventListener('click', () => {
+  ipcRenderer.send(${JSON.stringify(STATUS_OVERLAY_CHANNEL + ':file')}, null);
+});
+// Файл можно бросить на кнопку: плашка — ручка перетаскивания окна, и файл,
+// брошенный на неё, до страницы не доходит, а кнопки из неё вынуты.
+for (const цель of [fileButton, lectureButton]) {
+  цель.addEventListener('dragover', (e) => { e.preventDefault(); fileButton.classList.add('drop'); });
+  цель.addEventListener('dragleave', () => fileButton.classList.remove('drop'));
+  цель.addEventListener('drop', (e) => {
+    e.preventDefault();
+    fileButton.classList.remove('drop');
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!f) return;
+    const путь = require('electron').webUtils.getPathForFile(f);
+    if (путь) ipcRenderer.send(${JSON.stringify(STATUS_OVERLAY_CHANNEL + ':file')}, путь);
+  });
+}
 function showLecture(state) {
-  const now = state === 'on' || state === 'finishing' || state === 'starting' ? state : 'off';
+  const now = state === 'on' || state === 'finishing' || state === 'starting' || state === 'importing' ? state : 'off';
   lectureButton.textContent = lectureLabels[now];
   lectureButton.classList.toggle('on', now === 'on');
-  lectureButton.disabled = now === 'finishing' || now === 'starting';
+  lectureButton.disabled = now === 'finishing' || now === 'starting' || now === 'importing';
+  courseButton.style.display = now === 'on' ? '' : 'none';
+  fileButton.style.display = now === 'off' ? '' : 'none';
+  if (now !== 'on') coursesBox.classList.remove('open');
+}
+let последнийСписок = '';
+function showLectureInfo(li) {
+  const курс = li && li.course;
+  courseButton.textContent = WORDS.course + (курс || WORDS.guess) + ' ▾';
+  const список = JSON.stringify(li ? [li.course, li.courses] : null);
+  if (список !== последнийСписок) {
+    последнийСписок = список;
+    coursesBox.textContent = '';
+    const пункты = (li ? li.courses : []).map((имя) => [имя, имя]).concat([[WORDS.guessItem, '']]);
+    for (const [подпись, значение] of пункты) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = подпись;
+      b.classList.toggle('chosen', (курс || '') === значение);
+      b.addEventListener('click', () => {
+        coursesBox.classList.remove('open');
+        ipcRenderer.send(${JSON.stringify(STATUS_OVERLAY_CHANNEL + ':course')}, значение);
+        подогнатьВысоту();
+      });
+      coursesBox.appendChild(b);
+    }
+  }
+  const строка = li && li.line ? li.line : '';
+  info.textContent = строка;
+  info.classList.toggle('on', Boolean(строка));
 }
 const dot = document.getElementById('dot');
 const label = document.getElementById('label');
@@ -197,7 +289,12 @@ let noteUntil = 0;
 let последняяВысота = 0;
 function подогнатьВысоту() {
   requestAnimationFrame(() => {
-    const нужно = Math.ceil(pill.getBoundingClientRect().height + document.getElementById('bar').getBoundingClientRect().height) + 2;
+    const нужно = Math.ceil(
+      pill.getBoundingClientRect().height +
+      document.getElementById('bar').getBoundingClientRect().height +
+      coursesBox.getBoundingClientRect().height +
+      info.getBoundingClientRect().height,
+    ) + 2;
     if (нужно === последняяВысота) return;
     последняяВысота = нужно;
     ipcRenderer.send(${JSON.stringify(STATUS_OVERLAY_CHANNEL + ':height')}, нужно);
@@ -211,6 +308,7 @@ ipcRenderer.on(${JSON.stringify(STATUS_OVERLAY_CHANNEL)}, (_event, status) => {
   // Крупный режим переключается на ходу: его меняют голосом.
   document.body.classList.toggle('big', Boolean(status.big));
   showLecture(status.lecture);
+  showLectureInfo(status.lectureInfo);
   dot.className = status.indicator;
   label.textContent = status.label;
   pill.classList.toggle('asleep', !status.awake && status.indicator === 'idle');
@@ -250,12 +348,18 @@ export interface StatusOverlay {
   setBig(big: boolean): void;
   /** Что показывать на кнопке конспекта. */
   setLecture(state: LectureButtonState): void;
+  /** Курс лекции, список курсов и строка под кнопками; null — убрать. */
+  setLectureInfo(info: LectureInfo | null): void;
   dispose(): void;
 }
 
 export interface StatusOverlayOptions {
   /** Нажата кнопка конспекта: начать или закончить. */
   onLectureButton?: () => void;
+  /** Выбран курс из списка; пусто — угадать по содержанию. */
+  onCourse?: (course: string) => void;
+  /** Файл для конспекта: брошен на кнопку (путь) или нажата «Из файла…» (null). */
+  onFile?: (file: string | null) => void;
 }
 
 interface SavedPosition {
@@ -303,6 +407,7 @@ function savePosition(position: SavedPosition): void {
 export function createStatusOverlay(options: StatusOverlayOptions = {}): StatusOverlay {
   let крупно = false;
   let лекция: LectureButtonState = 'off';
+  let сведения: LectureInfo | null = null;
   // Последнее состояние, чтобы перерисовать кнопку, не дожидаясь новой фразы.
   let последнее: Record<string, unknown> | null = null;
   const dir = mkdtempSync(path.join(os.tmpdir(), 'jarvis-overlay-'));
@@ -373,7 +478,7 @@ export function createStatusOverlay(options: StatusOverlayOptions = {}): StatusO
     последнее = payload;
     try {
       if (window.isDestroyed() || window.webContents.isDestroyed()) return;
-      window.webContents.send(STATUS_OVERLAY_CHANNEL, { ...payload, lecture: лекция });
+      window.webContents.send(STATUS_OVERLAY_CHANNEL, { ...payload, lecture: лекция, lectureInfo: сведения });
     } catch {
       // Кадр исчез между проверкой и отправкой. Индикатор поднимется сам.
     }
@@ -385,6 +490,18 @@ export function createStatusOverlay(options: StatusOverlayOptions = {}): StatusO
     options.onLectureButton?.();
   };
   ipcMain.on(`${STATUS_OVERLAY_CHANNEL}:lecture`, onLecture);
+  // Курс — только из списка, который плашке и показали.
+  const onCourse = (event: Electron.IpcMainEvent, course: unknown): void => {
+    if (window.isDestroyed() || event.sender !== window.webContents || typeof course !== 'string') return;
+    if (course && !сведения?.courses.includes(course)) return;
+    options.onCourse?.(course);
+  };
+  ipcMain.on(`${STATUS_OVERLAY_CHANNEL}:course`, onCourse);
+  const onFile = (event: Electron.IpcMainEvent, file: unknown): void => {
+    if (window.isDestroyed() || event.sender !== window.webContents) return;
+    options.onFile?.(typeof file === 'string' && file ? file : null);
+  };
+  ipcMain.on(`${STATUS_OVERLAY_CHANNEL}:file`, onFile);
 
   return {
     note(status, text) {
@@ -397,6 +514,11 @@ export function createStatusOverlay(options: StatusOverlayOptions = {}): StatusO
       if (лекция === state) return;
       лекция = state;
       // Без заметки: иначе прошлая строка «услышал…» всплыла бы заново.
+      if (последнее) send({ ...последнее, note: undefined });
+    },
+    setLectureInfo(info) {
+      if (JSON.stringify(info) === JSON.stringify(сведения)) return;
+      сведения = info;
       if (последнее) send({ ...последнее, note: undefined });
     },
     setBig(big) {
@@ -422,6 +544,8 @@ export function createStatusOverlay(options: StatusOverlayOptions = {}): StatusO
       // того, как его закрыли, и переживёт выключение самого Джарвиса.
       похоронено = true;
       ipcMain.removeListener(`${STATUS_OVERLAY_CHANNEL}:lecture`, onLecture);
+      ipcMain.removeListener(`${STATUS_OVERLAY_CHANNEL}:course`, onCourse);
+      ipcMain.removeListener(`${STATUS_OVERLAY_CHANNEL}:file`, onFile);
       if (ожидание) {
         clearTimeout(ожидание);
         ожидание = null;

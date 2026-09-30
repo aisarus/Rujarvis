@@ -37,6 +37,8 @@
     "jarvis:gpu-stt": "tsx scripts/jarvis-gpu-stt.ts",
     "jarvis:gpu-stt-check": "tsx scripts/qa/gpu-stt-check.ts",
     "jarvis:lecture-check": "tsx scripts/qa/lecture-check.ts",
+    "jarvis:lecture-room": "node build.mjs && tsx scripts/qa/lecture-room-check.ts",
+    "jarvis:lecture-file-check": "node build.mjs && electron dist/qa/lecture-file-check.cjs",
     "jarvis:lecture-finish": "tsx scripts/jarvis-lecture-finish.ts",
     "jarvis:lecture-model": "tsx scripts/jarvis-lecture-model.ts",
     "jarvis:roundtrip": "tsx scripts/voice-roundtrip.ts",

@@ -19,8 +19,17 @@ export const AUDIO_BRIDGE_CHANNELS = {
   speechStarted: 'jarvis-audio:speech-started',
   pushResult: 'jarvis-audio:push-result',
   startAmbient: 'jarvis-audio:start-ambient',
-  /** Режим лекции: порог речи мягче, куски длиннее. */
+  /** Режим лекции: сплошная запись и свой набор обработки звука. */
   lecture: 'jarvis-audio:lecture',
+  /** Звук лекции — сплошь, по секунде, тишину тоже. */
+  lectureAudio: 'jarvis-audio:lecture-audio',
+  /**
+   * Раскрыть звук или видео — это умеет только Chromium. Либо файл целиком
+   * (`path`), либо уже вырезанный кусок (`bytes`, см. mediaSlices.ts).
+   */
+  decodeFile: 'jarvis-audio:decode-file',
+  /** Раскрытый звук — поминутно, одним каналом; последним — «готово» или ошибка. */
+  decoded: 'jarvis-audio:decoded',
   stopAmbient: 'jarvis-audio:stop-ambient',
   startPush: 'jarvis-audio:start-push',
   stopPush: 'jarvis-audio:stop-push',
@@ -39,6 +48,26 @@ export const AUDIO_BRIDGE_CHANNELS = {
 
 /** 16 kHz is what the recogniser wants, so ask the browser for it directly. */
 const TARGET_SAMPLE_RATE = 16_000;
+
+/** Обработка звука Chromium: что включено для команд и что — для лекции. */
+export interface AudioProcessing {
+  echoCancellation: boolean;
+  noiseSuppression: boolean;
+  autoGainControl: boolean;
+}
+
+export const COMMAND_PROCESSING: AudioProcessing = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+
+/**
+ * Лекция — без шумо- и эхоподавления, с автоусилением.
+ *
+ * Замер «зала» 30.09.2026 (`pnpm jarvis:lecture-room`): та же лекция через
+ * обработку Chromium, как для команд, — 8% ошибок распознавания против 2% у
+ * сырого звука уже в тихой комнате. Шумоподавление настроено на голос в
+ * полуметре и срезает далёкого лектора так, что вернуть нельзя. Автоусиление
+ * безвредно (1%) и нужно: тихий лектор иначе тонет в пороге речи.
+ */
+export const LECTURE_PROCESSING: AudioProcessing = { echoCancellation: false, noiseSuppression: false, autoGainControl: true };
 
 export function buildAudioBridgeHtml(): string {
   return `<!doctype html>
@@ -88,17 +117,36 @@ const MIN_SPEECH_MS = 400;
 // тогда, когда в комнате шум или музыка и тишины не наступает вовсе, и любая
 // команда в этот момент ждала бы вдвое дольше.
 const MAX_UTTERANCE_MS = 15000;
-// Режим лекции (решение владельца 29.09.2026): лектор в аудитории дальше и
-// тише человека у ноутбука, и порог, подобранный под голос рядом, не услышал
-// бы его вовсе. Порог речи мягче, а кусок длиннее — до окна Whisper в 30 с:
-// лекция — это не команды, и ждать ответа тут некому. Порог перебивания не
-// трогается: собственный голос Джарвиса не должен перебивать сам себя.
-const LECTURE_RMS_FACTOR = 0.4;
-const LECTURE_MAX_UTTERANCE_MS = 28000;
+// Режим лекции: звук идёт в конспект СПЛОШЬ, отдельно от фраз для команд.
+//
+// Раньше лекция шла теми же фразами, что и команды, только с порогом мягче:
+// тишина между фразами выбрасывалась, и минута в расшифровке расходилась с
+// минутой в записи, а тихого лектора порог мог не пропустить вовсе. Теперь
+// каждая секунда уходит в конспект, а фразы режутся по-прежнему — для команд
+// («Джарвис, закончи конспект») и с прежним порогом: человек у ноутбука
+// громче лектора, и лишние куски из аудитории слуху команд ни к чему.
+//
+// Обработку звука для лекции задаёт главный процесс: шумоподавление,
+// настроенное на голос в полуметре, съедает далёкого лектора, и вернуть
+// срезанное потом нельзя.
 let lecture = false;
+const commandProcessing = ${JSON.stringify(COMMAND_PROCESSING)};
+let lectureProcessing = commandProcessing;
+let lectureBlock = [];
+let lectureSamples = 0;
 
 function speechThreshold() {
-  return lecture ? SPEECH_RMS * LECTURE_RMS_FACTOR : SPEECH_RMS;
+  return SPEECH_RMS;
+}
+
+function sendLectureBlock() {
+  if (lectureSamples === 0 || !audioContext) return;
+  const out = new Float32Array(lectureSamples);
+  let at = 0;
+  for (const part of lectureBlock) { out.set(part, at); at += part.length; }
+  lectureBlock = [];
+  lectureSamples = 0;
+  ipcRenderer.send(CH.lectureAudio, { sampleRate: audioContext.sampleRate, samples: out });
 }
 
 let audioContext = null;
@@ -202,11 +250,19 @@ function emit(channel, closedBy) {
 
 function onAudio(event) {
   lastAudioAt = Date.now();
-  if (!ambient && !pushing) return;
+  if (!ambient && !pushing && !lecture) return;
 
   const input = event.inputBuffer.getChannelData(0);
   const copy = new Float32Array(input.length);
   copy.set(input);
+
+  if (lecture) {
+    lectureBlock.push(copy);
+    lectureSamples += copy.length;
+    // По секунде: не гонять через границу процессов каждые 256 мс.
+    if (lectureSamples >= audioContext.sampleRate) sendLectureBlock();
+  }
+  if (!ambient && !pushing) return;
 
   let sum = 0;
   for (let i = 0; i < input.length; i += 1) sum += input[i] * input[i];
@@ -280,7 +336,7 @@ function onAudio(event) {
     return;
   }
 
-  const closedByLength = samplesToMs(bufferedSamples) >= (lecture ? LECTURE_MAX_UTTERANCE_MS : MAX_UTTERANCE_MS);
+  const closedByLength = samplesToMs(bufferedSamples) >= MAX_UTTERANCE_MS;
 
   if (closedBySilence || closedByLength) {
     emit(CH.utterance, closedBySilence ? 'silence' : 'length');
@@ -340,7 +396,7 @@ async function restartCapture(reason) {
 // does not always fire, and a device change does not always end the track.
 setInterval(function () {
   if (restarting) return;
-  if (!ambient && !pushing) return;
+  if (!ambient && !pushing && !lecture) return;
   // Сторож пробует СНОВА, пока слушание включено.
   //
   // Раньше он выходил по пустому audioContext, а неудачный перезапуск оставлял
@@ -370,14 +426,22 @@ async function ensureCapture() {
 }
 
 async function raiseCapture() {
+  const processing = lecture ? lectureProcessing : commandProcessing;
   stream = await navigator.mediaDevices.getUserMedia({
     audio: {
       channelCount: 1,
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
+      echoCancellation: processing.echoCancellation,
+      noiseSuppression: processing.noiseSuppression,
+      autoGainControl: processing.autoGainControl,
     },
   });
+  // Что Chromium включил НА САМОМ ДЕЛЕ — в журнал: «попросили выключить» ещё
+  // не значит «выключено».
+  const settings = stream.getAudioTracks()[0] && stream.getAudioTracks()[0].getSettings();
+  if (settings) {
+    ipcRenderer.send(CH.error, 'микрофон: ' + (lecture ? 'лекция' : 'команды') +
+      ', эхо ' + settings.echoCancellation + ', шум ' + settings.noiseSuppression + ', усиление ' + settings.autoGainControl);
+  }
   stream.getAudioTracks().forEach(function (track) {
     track.onended = function () { restartCapture('поток микрофона оборван'); };
   });
@@ -399,8 +463,46 @@ async function raiseCapture() {
   lastAudioAt = Date.now();
 }
 
-ipcRenderer.on(CH.lecture, (_event, on) => {
-  lecture = Boolean(on);
+ipcRenderer.on(CH.lecture, async (_event, payload) => {
+  const on = Boolean(payload && payload.on);
+  if (payload && payload.processing) lectureProcessing = payload.processing;
+  if (on === lecture) return;
+  if (!on) sendLectureBlock();
+  lecture = on;
+  lectureBlock = [];
+  lectureSamples = 0;
+  // Обработка задаётся при взятии микрофона — берём его заново с нужной.
+  if (audioContext) await restartCapture(on ? 'режим лекции' : 'лекция кончилась');
+  else if (on) {
+    try { await ensureCapture(); } catch (error) { ipcRenderer.send(CH.error, String((error && error.message) || error)); }
+  }
+});
+
+// Файл или его кусок → звук одним каналом на 16 кГц. Раскрывает сам
+// Chromium: mp3, m4a, видео — без внешних программ. Отдаём поминутно: даже
+// кусок в пять минут через границу процессов лучше не таскать одним куском.
+ipcRenderer.on(CH.decodeFile, async (_event, request) => {
+  const id = request && request.id;
+  try {
+    const bytes = request.bytes ? request.bytes : require('fs').readFileSync(request.path);
+    const whole = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength;
+    const buffer = whole ? bytes.buffer : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    const decoded = await new OfflineAudioContext(1, TARGET_SAMPLE_RATE, TARGET_SAMPLE_RATE).decodeAudioData(buffer);
+    const channels = decoded.numberOfChannels;
+    const part = decoded.sampleRate * 60;
+    for (let at = 0; at < decoded.length; at += part) {
+      const length = Math.min(part, decoded.length - at);
+      const out = new Float32Array(length);
+      for (let c = 0; c < channels; c += 1) {
+        const data = decoded.getChannelData(c);
+        for (let i = 0; i < length; i += 1) out[i] += data[at + i] / channels;
+      }
+      ipcRenderer.send(CH.decoded, { id, sampleRate: decoded.sampleRate, samples: out });
+    }
+    ipcRenderer.send(CH.decoded, { id, sampleRate: decoded.sampleRate, done: true });
+  } catch (error) {
+    ipcRenderer.send(CH.decoded, { id, error: String((error && error.message) || error) });
+  }
 });
 
 ipcRenderer.on(CH.startAmbient, async () => {
