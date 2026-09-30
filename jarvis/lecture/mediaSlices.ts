@@ -343,7 +343,12 @@ async function frameSlices(file: string, вид: 'mp3' | 'adts', seconds: number
  * в один канал на родной частоте. Запись с диктофона на полтора часа — это
  * гигабайт, и целиком в память ей незачем.
  */
-export async function readWavParts(file: string, onPart: (samples: Float32Array, sampleRate: number) => void, seconds = SLICE_SECONDS): Promise<number> {
+export async function readWavParts(
+  file: string,
+  onPart: (samples: Float32Array, sampleRate: number) => void,
+  seconds = SLICE_SECONDS,
+  между?: () => Promise<void>,
+): Promise<number> {
   const fh = await open(file, 'r');
   try {
     const размерФайла = (await fh.stat()).size;
@@ -394,6 +399,7 @@ export async function readWavParts(file: string, onPart: (samples: Float32Array,
           }
           всего += кадров;
           onPart(out, частота);
+          await между?.();
         }
         return всего / частота;
       }

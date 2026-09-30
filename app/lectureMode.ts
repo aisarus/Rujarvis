@@ -380,7 +380,7 @@ export interface LectureFileOptions extends LectureStartOptions {
    * лекция целиком — сотни мегабайт, и держать её в памяти незачем: куски
    * сразу уходят в запись и распознавание.
    */
-  decode(file: string, onPart: (samples: Float32Array, sampleRate: number) => void): Promise<void>;
+  decode(file: string, onPart: (samples: Float32Array, sampleRate: number) => void, между?: () => Promise<void>): Promise<void>;
   /** В Корзину, а не насовсем. */
   trash(file: string): Promise<void>;
 }
@@ -453,12 +453,17 @@ export async function lectureFromFile(file: string, options: LectureFileOptions)
     const запись = new LectureRecorder((samples, rate) => session.addAudio(samples, rate));
     let сломалось: string | null = null;
     try {
-      await options.decode(file, (samples, rate) => {
-        const звук = resampleTo16k(samples, rate);
-        раскрыто += звук.length / 16_000;
-        запись.push(звук, 16_000);
-        показать();
-      });
+      await options.decode(
+        file,
+        (samples, rate) => {
+          const звук = resampleTo16k(samples, rate);
+          раскрыто += звук.length / 16_000;
+          запись.push(звук, 16_000);
+          показать();
+        },
+        // Не больше десяти минут звука в очереди распознавания.
+        () => session.backlog(600),
+      );
     } catch (error) {
       сломалось = error instanceof Error ? error.message : String(error);
       console.error(`[jarvis:lecture] файл раскрылся не весь: ${сломалось}`);

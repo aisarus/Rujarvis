@@ -259,6 +259,8 @@ export class LectureSession {
   private readonly заголовки: string[] = [];
   /** Сколько звука принято, мс: запись сплошная, и это же — место в WAV. */
   private мсЗвука = 0;
+  /** Сколько секунд звука ждёт распознавания. */
+  private вОчереди = 0;
   /** Где кончился прошлый раздел, мс звука. */
   private последнийРаздел = 0;
   private номерРаздела = 0;
@@ -319,26 +321,40 @@ export class LectureSession {
     const когда = this.мсЗвука;
     const конец = когда + (samples.length / sampleRate) * 1000;
     this.мсЗвука = конец;
+    const секунд = samples.length / sampleRate;
+    this.вОчереди += секунд;
+    // Упавший кусок не должен останавливать очередь: цепочка обещаний после
+    // отказа пропускала бы все следующие куски до конца лекции.
     this.расшифровка = this.расшифровка.then(async () => {
-      if (this.байтЗвука === 0) this.частотаЗвука = sampleRate;
-      const pcm = pcm16(samples);
-      await appendFile(this.audioFile, pcm);
-      this.байтЗвука += pcm.length;
-
-      let текст = '';
       try {
-        текст = (await this.deps.transcribe(samples, sampleRate)).trim();
+        await this.кусок(samples, sampleRate, когда, конец);
       } catch (error) {
-        this.deps.log?.(`кусок не распознан: ${error instanceof Error ? error.message : String(error)}`);
-        return;
+        this.deps.log?.(`кусок ${метка(когда)} не записан: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        this.вОчереди -= секунд;
       }
-      if (!текст) return;
-      await appendFile(this.transcriptFile, `**[${метка(когда)}]** ${текст}\n\n`, 'utf8');
-      this.копится.push({ текст, от: когда, до: конец });
-      this.вся.push(текст);
-      this.deps.log?.(`кусок ${метка(когда)}: ${слова(текст)} слов`);
-      this.maybeSection(false);
     });
+  }
+
+  private async кусок(samples: Float32Array, sampleRate: number, когда: number, конец: number): Promise<void> {
+    if (this.байтЗвука === 0) this.частотаЗвука = sampleRate;
+    const pcm = pcm16(samples);
+    await appendFile(this.audioFile, pcm);
+    this.байтЗвука += pcm.length;
+
+    let текст = '';
+    try {
+      текст = (await this.deps.transcribe(samples, sampleRate)).trim();
+    } catch (error) {
+      this.deps.log?.(`кусок не распознан: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    if (!текст) return;
+    await appendFile(this.transcriptFile, `**[${метка(когда)}]** ${текст}\n\n`, 'utf8');
+    this.копится.push({ текст, от: когда, до: конец });
+    this.вся.push(текст);
+    this.deps.log?.(`кусок ${метка(когда)}: ${слова(текст)} слов`);
+    this.maybeSection(false);
   }
 
   /** Раздел, когда накопилось достаточно и прошло достаточно; `всё` — при завершении. */
@@ -385,6 +401,16 @@ export class LectureSession {
     // И ещё раз, когда очередь допишет уже принятые куски: иначе их звук
     // оказался бы за объявленным размером и не проигрывался бы.
     void this.расшифровка.finally(() => this.заголовокПоРазмеру());
+  }
+
+  /**
+   * Дождаться, пока в очереди распознавания останется не больше `maxSec`
+   * звука. Файл раскрывается быстрее, чем распознаётся (полтора часа — за
+   * полминуты против десяти минут), и без этого весь звук лежал бы в памяти
+   * очередью.
+   */
+  async backlog(maxSec: number): Promise<void> {
+    while (this.вОчереди > maxSec) await new Promise((готово) => setTimeout(готово, 200));
   }
 
   private заголовокПоРазмеру(): void {

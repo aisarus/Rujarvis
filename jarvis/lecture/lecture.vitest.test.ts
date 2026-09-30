@@ -138,6 +138,42 @@ describe('конспект лекции на ходу', () => {
     expect(await readFile(итог.transcriptFile, 'utf8')).toContain('נדבר על גבולות');
   });
 
+  it('очередь распознавания: backlog ждёт, пока в ней не останется лишнего', async () => {
+    const папка = await временная();
+    // Распознавание отвечает, только когда его отпустят.
+    const ждут: Array<() => void> = [];
+    let готово = 0;
+    const сессия = new LectureSession(папка, '', {
+      transcribe: async () => {
+        await new Promise<void>((r) => ждут.push(r));
+        готово += 1;
+        return '';
+      },
+      summarize: async () => '',
+    });
+    await сессия.start();
+    for (let i = 0; i < 3; i += 1) сессия.addAudio(new Float32Array(16_000 * 10), 16_000);
+    let дождались = false;
+    const ждём = сессия.backlog(15).then(() => {
+      дождались = true;
+    });
+    const отпустить = async (): Promise<void> => {
+      while (ждут.length === 0) await new Promise((r) => setTimeout(r, 5));
+      ждут.shift()?.();
+    };
+    await отпустить();
+    await new Promise((r) => setTimeout(r, 250));
+    // 30 с в очереди, один кусок распознан — осталось 20, больше 15: ждём дальше.
+    expect(дождались).toBe(false);
+    await отпустить();
+    await ждём;
+    expect(готово).toBe(2);
+    await отпустить();
+    await сессия.backlog(0);
+    expect(готово).toBe(3);
+    await сессия.finish();
+  });
+
   it('ответ модели без заголовка получает заголовок', () => {
     expect(sectionFromReply('- пункт', 3)).toBe('### Раздел 3\n- пункт');
     expect(sectionFromReply('ПРОПУСК.', 1)).toBeNull();

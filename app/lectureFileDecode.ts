@@ -58,11 +58,17 @@ function раскрытьВОкне(окно: BrowserWindow, запрос: { pat
   });
 }
 
-export function createFileDecoder(окноМикрофона: () => BrowserWindow | null): (file: string, onPart: OnPart) => Promise<void> {
-  return async (file, onPart) => {
+/**
+ * `между` — ждать между кусками: распознавание медленнее раскрытия, и без
+ * этого весь звук копился бы в очереди.
+ */
+export function createFileDecoder(
+  окноМикрофона: () => BrowserWindow | null,
+): (file: string, onPart: OnPart, между?: () => Promise<void>) => Promise<void> {
+  return async (file, onPart, между) => {
     const имя = path.basename(file);
     if (/\.wav$/iu.test(file)) {
-      await readWavParts(file, onPart);
+      await readWavParts(file, onPart, undefined, между);
       return;
     }
     const окно = окноМикрофона();
@@ -76,6 +82,7 @@ export function createFileDecoder(окноМикрофона: () => BrowserWindo
       for (let i = 0; i < куски.count; i += 1) {
         const bytes = await куски.read(i);
         if (bytes.length > 0) await раскрытьВОкне(окно, { bytes }, onPart, `${имя}, кусок ${i + 1}`);
+        await между?.();
       }
     } finally {
       await куски.close();
