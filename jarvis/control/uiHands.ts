@@ -114,15 +114,18 @@ export class UiHands {
     return describeScreen(active.title, windows, active.elements);
   }
 
-  /** Какие окна открыты — для отказа: «не нашёл» без соседей ничего не объясняет. */
-  async nearby(limit = 8): Promise<string> {
+  /**
+   * Какие окна открыты — для отказа: «не нашёл» без соседей ничего не
+   * объясняет. У окна без заголовка — имя программы: на маке так у окон
+   * Электрона, и маковский драйвер называл их так же. null — список не
+   * прочитался; пустая строка — окон правда нет.
+   */
+  async nearby(limit = 8): Promise<string | null> {
     try {
-      return realWindows(await this.o.desktop.windows())
-        .slice(0, limit)
-        .map((w) => w.title)
-        .join(', ');
+      const имена = (await this.o.desktop.windows()).map((w) => ({ title: w.title.trim() || ((w as { app?: string }).app ?? '').trim() }));
+      return [...new Set(realWindows(имена).map((w) => w.title))].slice(0, limit).join(', ');
     } catch {
-      return '';
+      return null;
     }
   }
 

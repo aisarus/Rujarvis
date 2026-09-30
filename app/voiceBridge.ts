@@ -654,7 +654,10 @@ export async function runDirectCommand(
         const итог = await руки.switchTo(command.title);
         if (!итог) {
           const рядом = await руки.nearby();
-          throw new Error(`не нашёл ни окна, ни вкладки «${command.title}»${рядом ? `. На экране: ${рядом}` : ''}`);
+          throw new Error(
+            `не нашёл ни окна, ни вкладки «${command.title}»` +
+              (рядом === null ? '' : рядом ? `. На экране: ${рядом}` : '. На экране ни одного окна'),
+          );
         }
         console.log(`[jarvis] ${итог}`);
         break;

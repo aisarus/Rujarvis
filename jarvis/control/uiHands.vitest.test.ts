@@ -81,6 +81,18 @@ describe('UiHands', () => {
     expect(await руки.nearby()).toBe('Claude, Discord');
   });
 
+  it('окно без заголовка называет программой, пустой экран отличает от сбоя', async () => {
+    // CI на маке 30.09.2026: у окон Электрона нет заголовка, и список выходил пустым.
+    const безЗаголовка = { ...окно(''), app: 'Electron' } as DesktopWindow;
+    expect(await стол([безЗаголовка, окно('Finder')], []).руки.nearby()).toBe('Electron, Finder');
+    expect(await стол([], []).руки.nearby()).toBe('');
+    const { руки } = стол([], []);
+    (руки as unknown as { o: { desktop: DesktopControl } }).o.desktop.windows = async () => {
+      throw new Error('нет доступа');
+    };
+    expect(await руки.nearby()).toBeNull();
+  });
+
   it('не нашлось — null, без броска: фразу забирает разговор', async () => {
     const { руки, сделано } = стол([окно('Claude')], CLAUDE);
     expect(await руки.switchTo('телеграм')).toBeNull();
