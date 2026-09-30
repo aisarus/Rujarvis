@@ -34,6 +34,12 @@ const STRINGS = {
     yourAnswer: 'твой ответ', correctAnswer: 'верный ответ',
     tasksTitle: 'Задачи', showHint: 'Подсказка', showSolution: 'Решение', solved: 'Решил', failed: 'Не вышло', answer: 'Ответ:', noTasks: 'Задач пока нет: в лекциях не было расчётов или кода.',
     listen: '▶ {0}', close: 'Закрыть', error: 'Не вышло: {0}',
+    examLabel: 'Экзамен:', save: 'Сохранить', saved: 'Сохранено', clear: 'Убрать', daysLeft: 'через {0} дн.',
+    scheduleLabel: 'Расписание:', addSlot: '+ пара', remove: '✕', days: ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'],
+    newCourse: '+ Новый курс', courseName: 'Название курса', hebrewName: 'На иврите (как у лектора)', courseCode: 'Код курса', create: 'Создать', cancel: 'Отмена',
+    prepareAll: 'Заготовить вопросы ко всем лекциям', prepareAllDone: 'В очереди лекций: {0}. Готово будет в фоне.', nothingToPrepare: 'Все лекции уже заготовлены.',
+    mic: '🎤 Голосом', stopRec: '■ Готово', recognizing: 'Распознаю…', micDenied: 'Микрофон недоступен: {0}',
+    toCardsDone: 'В карточках',
   },
   en: {
     title: 'Study', today: 'Today', courses: 'Courses', cards: 'Cards', back: '← Back',
@@ -60,6 +66,12 @@ const STRINGS = {
     yourAnswer: 'your answer', correctAnswer: 'correct answer',
     tasksTitle: 'Problems', showHint: 'Hint', showSolution: 'Solution', solved: 'Solved', failed: 'Did not work', answer: 'Answer:', noTasks: 'No problems yet: the lectures had no calculations or code.',
     listen: '▶ {0}', close: 'Close', error: 'Failed: {0}',
+    examLabel: 'Exam:', save: 'Save', saved: 'Saved', clear: 'Remove', daysLeft: 'in {0} days',
+    scheduleLabel: 'Schedule:', addSlot: '+ class', remove: '✕', days: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+    newCourse: '+ New course', courseName: 'Course name', hebrewName: 'In the lecture language', courseCode: 'Course code', create: 'Create', cancel: 'Cancel',
+    prepareAll: 'Prepare questions for all lectures', prepareAllDone: 'Lectures queued: {0}. They will be ready in the background.', nothingToPrepare: 'All lectures are already prepared.',
+    mic: '🎤 By voice', stopRec: '■ Done', recognizing: 'Recognising…', micDenied: 'Microphone unavailable: {0}',
+    toCardsDone: 'In cards',
   },
 }[LANG];
 
@@ -214,18 +226,103 @@ async function renderToday() {
   view.append(items, el('h2', {}, t('courses')));
   const grid = el('div', { class: 'grid' });
   for (const c of today.courses) grid.append(courseTile(c));
-  view.append(grid);
+  view.append(grid, prepareAllRow());
 }
 renderToday.refreshable = true;
 
+/** «Заготовить вопросы ко всем лекциям» — вместо команды в терминале. */
+function prepareAllRow() {
+  const note = el('span', { class: 'small muted' });
+  const btn = el('button', { class: 'btn', onclick: async () => {
+    btn.disabled = true;
+    try {
+      const n = await call('prepareAll');
+      note.textContent = n ? t('prepareAllDone', n) : t('nothingToPrepare');
+    } catch (error) {
+      note.textContent = t('error', error.message);
+    } finally {
+      btn.disabled = false;
+    }
+  } }, t('prepareAll'));
+  return el('div', { class: 'row', style: 'margin-top:16px;flex-wrap:wrap' }, btn, note);
+}
+
 async function renderCourses() {
   const { today } = await call('today');
-  view.append(el('h1', {}, t('courses')));
+  view.append(el('div', { class: 'row spread' }, el('h1', {}, t('courses')), el('button', { class: 'btn', onclick: () => newCourseForm(form) }, t('newCourse'))));
+  const form = el('div');
+  view.append(form);
   const grid = el('div', { class: 'grid' });
   for (const c of today.courses) grid.append(courseTile(c));
-  view.append(grid);
+  view.append(grid, prepareAllRow());
 }
-renderCourses.refreshable = true;
+renderCourses.refreshable = false;
+
+/** Новый курс: название, на иврите, код — папка и страница в Obsidian появятся сами. */
+function newCourseForm(box) {
+  box.textContent = '';
+  const name = el('input', { type: 'text', placeholder: t('courseName') });
+  const hebrew = el('input', { type: 'text', placeholder: t('hebrewName'), dir: 'auto' });
+  const code = el('input', { type: 'text', placeholder: t('courseCode') });
+  const note = el('div', { class: 'small error' });
+  const create = async () => {
+    if (!name.value.trim()) { name.focus(); return; }
+    try {
+      const created = await call('createCourse', name.value, hebrew.value, code.value);
+      tab = 'courses';
+      show(courseRender(created));
+    } catch (error) {
+      note.textContent = t('error', error.message);
+    }
+  };
+  box.append(el('div', { class: 'card stack', style: 'margin-bottom:12px' },
+    el('div', { class: 'row', style: 'flex-wrap:wrap' }, name, hebrew, code),
+    el('div', { class: 'row' },
+      el('button', { class: 'btn primary', onclick: create }, t('create')),
+      el('button', { class: 'btn', onclick: () => { box.textContent = ''; } }, t('cancel')),
+    ),
+    note,
+  ));
+  name.focus();
+}
+
+/** Экзамен и расписание курса — полями, а не строкой в странице курса. */
+function courseSettings(c) {
+  const note = el('span', { class: 'small muted' });
+  const saved = () => { note.textContent = t('saved'); setTimeout(() => show(courseRender(c.name)), 400); };
+  const fail = (error) => { note.textContent = t('error', error.message); };
+
+  const date = el('input', { type: 'date', value: c.exam || '' });
+  const examRow = el('div', { class: 'row', style: 'flex-wrap:wrap' },
+    el('b', {}, t('examLabel')), date,
+    el('button', { class: 'btn small', onclick: () => call('setExam', c.name, date.value).then(saved, fail) }, t('save')),
+    c.exam ? el('button', { class: 'btn small', onclick: () => call('setExam', c.name, '').then(saved, fail) }, t('clear')) : null,
+    c.exam && c.daysToExam >= 0 ? el('span', { class: 'small muted' }, t('daysLeft', c.daysToExam)) : null,
+  );
+
+  const hhmm = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  const minutes = (v) => { const [h, m] = String(v).split(':').map(Number); return h * 60 + m; };
+  const slots = (c.slots || []).map((s) => ({ ...s }));
+  const list = el('div', { class: 'stack' });
+  const drawSlots = () => {
+    list.textContent = '';
+    slots.forEach((s, i) => {
+      const day = el('select', { onchange: () => { s.day = Number(day.value); } }, ...STRINGS.days.map((d, k) => el('option', { value: k, selected: k === s.day }, d)));
+      const from = el('input', { type: 'time', value: hhmm(s.from), onchange: () => { s.from = minutes(from.value); } });
+      const to = el('input', { type: 'time', value: hhmm(s.to), onchange: () => { s.to = minutes(to.value); } });
+      list.append(el('div', { class: 'row' }, day, from, '—', to,
+        el('button', { class: 'btn small', onclick: () => { slots.splice(i, 1); drawSlots(); } }, t('remove'))));
+    });
+  };
+  drawSlots();
+  const scheduleRow = el('div', { class: 'stack' },
+    el('div', { class: 'row' }, el('b', {}, t('scheduleLabel')),
+      el('button', { class: 'btn small', onclick: () => { slots.push({ day: new Date().getDay(), from: 600, to: 780 }); drawSlots(); } }, t('addSlot')),
+      el('button', { class: 'btn small', onclick: () => call('setSchedule', c.name, slots).then(saved, fail) }, t('save'))),
+    list,
+  );
+  return el('div', { class: 'card stack', style: 'margin:10px 0 14px' }, examRow, scheduleRow, note);
+}
 
 // ——— Курс ———
 
@@ -242,7 +339,7 @@ async function renderCourse(name) {
     el('button', { class: 'link', onclick: () => show(tab === 'courses' ? renderCourses : renderToday) }, t('back')),
     el('h1', {}, c.name),
     el('div', { class: 'muted', dir: 'auto' }, sub),
-    el('p', { class: 'hint' }, c.exam ? (c.daysToExam >= 0 ? t('exam', c.exam, c.daysToExam) : t('examPast', c.exam)) : t('noExam')),
+    courseSettings(c),
     el('div', { class: 'row', style: 'margin-bottom:14px;flex-wrap:wrap' },
       el('button', { class: 'btn primary', onclick: () => show(() => renderQuiz({ course: name })) }, t('courseQuiz')),
       el('button', { class: 'btn', onclick: () => show(() => renderExamSetup(name)) }, t('examTraining')),
@@ -357,6 +454,15 @@ async function renderQuiz(scope) {
           !fb.correct ? el('div', { class: 'small muted', style: 'margin-top:6px' }, t('wasAdded')) : null,
           el('div', { class: 'row', style: 'margin-top:10px;flex-wrap:wrap' },
             sourceButtons(fb.source),
+            // Ошибка уже в карточках сама; верный ответ — карточкой по желанию.
+            fb.correct ? (() => {
+              const b = el('button', { class: 'btn small', onclick: async () => {
+                await call('addCard', session.id, index);
+                b.textContent = t('toCardsDone');
+                b.disabled = true;
+              } }, t('toCards'));
+              return b;
+            })() : null,
             el('span', { style: 'flex:1' }),
             el('button', { class: 'btn primary', onclick: next }, index + 1 < session.questions.length ? t('next') : t('finish')),
           ),
@@ -399,7 +505,8 @@ async function renderQuiz(scope) {
           feedback.textContent = t('error', error.message);
         }
       } }, t('check'));
-      const openBox = el('div', { class: 'stack', style: 'display:none' }, area, el('div', {}, checkBtn));
+      const micBtn = el('button', { class: 'btn', onclick: () => recordInto(area, micBtn, feedback) }, t('mic'));
+      const openBox = el('div', { class: 'stack', style: 'display:none' }, area, el('div', { class: 'row' }, micBtn, checkBtn));
       own.append(el('button', { class: 'link small', onclick: () => { openBox.style.display = 'flex'; area.focus(); } }, t('ownWords')), openBox);
     }
 
@@ -425,6 +532,75 @@ async function renderQuiz(scope) {
   };
 
   draw();
+}
+
+// ——— Ответ голосом ———
+
+/** Запись идёт: чем её остановить. Одна на окно. */
+let recording = null;
+
+/**
+ * Ответ голосом прямо в окне: нажал — говоришь — «Готово». Звук уходит
+ * слуху Джарвиса, текст дописывается в поле ответа. Пока идёт запись,
+ * Джарвис не принимает услышанное за команды.
+ */
+async function recordInto(area, btn, errorBox) {
+  if (recording) { recording.stop(); return; }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  } catch (error) {
+    errorBox.textContent = t('micDenied', error.message);
+    return;
+  }
+  await call('recording', true).catch(() => undefined);
+  const ctx = new AudioContext({ sampleRate: 16000 });
+  const source = ctx.createMediaStreamSource(stream);
+  const proc = ctx.createScriptProcessor(4096, 1, 1);
+  const parts = [];
+  let total = 0;
+  let stopped = false;
+  const stop = async () => {
+    if (stopped) return;
+    stopped = true;
+    recording = null;
+    cleanup = null;
+    proc.onaudioprocess = null;
+    stream.getTracks().forEach((track) => track.stop());
+    await ctx.close().catch(() => undefined);
+    await call('recording', false).catch(() => undefined);
+    btn.textContent = t('recognizing');
+    btn.disabled = true;
+    try {
+      const out = new Float32Array(total);
+      let at = 0;
+      for (const p of parts) { out.set(p, at); at += p.length; }
+      const text = total > 1600 ? await call('transcribe', out, 16000) : '';
+      if (text) area.value = area.value.trim() ? `${area.value.trim()} ${text}` : text;
+      area.focus();
+    } catch (error) {
+      errorBox.textContent = t('error', error.message);
+    } finally {
+      btn.textContent = t('mic');
+      btn.disabled = false;
+    }
+  };
+  proc.onaudioprocess = (e) => {
+    const chunk = new Float32Array(e.inputBuffer.getChannelData(0));
+    parts.push(chunk);
+    total += chunk.length;
+    // Не больше полутора минут: ответ, а не лекция.
+    if (total > 16000 * 90) stop();
+  };
+  source.connect(proc);
+  const mute = ctx.createGain();
+  mute.gain.value = 0;
+  proc.connect(mute);
+  mute.connect(ctx.destination);
+  recording = { stop };
+  // Ушли с экрана посреди записи — запись закрывается, Джарвис снова слушает.
+  cleanup = () => { stop(); };
+  btn.textContent = t('stopRec');
 }
 
 // ——— Карточки ———

@@ -21,6 +21,12 @@ export interface StudyWindowDeps {
   service(): StudyService;
   preparing(): string[];
   prepare(notesFile: string): void;
+  /** Заготовить всё незаготовленное; сколько поставлено в очередь. */
+  prepareAll?(): number;
+  /** Ответ голосом → текст. */
+  transcribe?(samples: Float32Array, sampleRate: number): Promise<string>;
+  /** Окно записывает ответ голосом: мост пусть не слушает команды. */
+  recording?(on: boolean): void;
   language(): 'ru' | 'en';
   /** Не показывать окно — для проверки без экрана и без фокуса. */
   hidden?: boolean;
@@ -90,6 +96,31 @@ function зарегистрировать(): void {
   обработать('tasks', (course, lecture) => служба().tasks(строка(course), typeof lecture === 'string' && lecture ? lecture : undefined));
   обработать('taskMark', (course, id, solved) => служба().markTask(строка(course), строка(id), Boolean(solved)));
   обработать('prepare', (notesFile) => deps?.prepare(строка(notesFile)));
+  обработать('prepareAll', () => deps?.prepareAll?.() ?? 0);
+  обработать('setExam', (course, date) => служба().setExam(строка(course), typeof date === 'string' && date ? date : null));
+  обработать('setSchedule', (course, slots) => {
+    if (!Array.isArray(slots)) throw new Error('ожидался список пар');
+    служба().setSchedule(
+      строка(course),
+      slots.map((s) => {
+        const пара = (s ?? {}) as { day?: unknown; from?: unknown; to?: unknown };
+        return { day: число(пара.day), from: число(пара.from), to: число(пара.to) };
+      }),
+    );
+  });
+  обработать('createCourse', (name, hebrew, code) =>
+    служба().createCourse(строка(name), { hebrew: typeof hebrew === 'string' ? hebrew : '', code: typeof code === 'string' ? code : '' }),
+  );
+  обработать('addCard', (id, index) => служба().addCardFromQuestion(строка(id), число(index)));
+  обработать('recording', (on) => deps?.recording?.(Boolean(on)));
+  обработать('transcribe', async (samples, sampleRate) => {
+    if (!deps?.transcribe) throw new Error('ответ голосом недоступен');
+    const звук = samples instanceof Float32Array ? samples : new Float32Array(samples as ArrayBuffer);
+    if (звук.length === 0) throw new Error('пустая запись');
+    // Не больше двух минут: ответ на вопрос, а не лекция.
+    if (звук.length / число(sampleRate) > 120) throw new Error('запись длиннее двух минут');
+    return (await deps.transcribe(звук, число(sampleRate))).trim();
+  });
   // Заметка открывается в Obsidian, звук — адресом файла для проигрывателя
   // окна. Пути приходят из банков лекций, не со страницы, — но проверяем, что
   // это заметка и звук, а не что угодно.

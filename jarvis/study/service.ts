@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { listCourses, listLectures, readCourseInfo, type CourseInfo } from '../lecture/courses';
+import { listCourses, listLectures, readCourseInfo, writeCourseInfo, type CourseInfo, type CourseSlot } from '../lecture/courses';
 import { sectionTitle, type NotesLanguage } from '../lecture/session';
 import { readLectureSource } from './generate';
 import { STATE_PRIORITY, topicKnowledge, type ForgettingRisk, type KnowledgeState } from './knowledge';
@@ -63,6 +63,8 @@ export interface CourseView {
   credits?: number;
   lecturer?: string;
   schedule: string;
+  /** Пары — для правки в окне. */
+  slots: CourseSlot[];
   exam?: string;
   daysToExam?: number;
   dueCards: number;
@@ -258,6 +260,7 @@ export class StudyService {
       credits: инфо.credits,
       lecturer: инфо.lecturer,
       schedule: инфо.slots.map((s) => `${ДНИ[s.day]} ${время(s.from)}`).join(', '),
+      slots: инфо.slots,
       exam: инфо.exam,
       daysToExam,
       dueCards: [...темы.values()].reduce((n, t) => n + t.dueCards, 0),
@@ -502,6 +505,49 @@ export class StudyService {
       review,
       chosen: s.items.map((x) => x.chosen ?? null),
     };
+  }
+
+  // ——— Правка курса кнопками ———
+
+  /** Дата экзамена — в страницу курса; null — убрать. */
+  setExam(course: string, date: string | null): void {
+    writeCourseInfo(this.o.vaultRoot(), course, { exam: date });
+  }
+
+  setSchedule(course: string, slots: CourseSlot[]): void {
+    for (const s of slots) {
+      if (!Number.isInteger(s.day) || s.day < 0 || s.day > 6 || !(s.from >= 0 && s.to > s.from && s.to <= 24 * 60)) throw new Error('пара без дня или со временем задом наперёд');
+    }
+    writeCourseInfo(this.o.vaultRoot(), course, { slots: [...slots].sort((a, b) => a.day - b.day || a.from - b.from) });
+  }
+
+  /** Новый курс — папка и страница в хранилище. Такой уже есть — ошибка, а не второй. */
+  createCourse(name: string, extra: { hebrew?: string; code?: string } = {}): string {
+    const имя = name.trim();
+    if (!имя) throw new Error('пустое название курса');
+    if (this.курсы().some((к) => к.toLowerCase() === имя.toLowerCase())) throw new Error(`курс «${имя}» уже есть`);
+    writeCourseInfo(this.o.vaultRoot(), имя, { hebrew: extra.hebrew ?? '', code: extra.code ?? '' });
+    return имя;
+  }
+
+  /** «В карточки» у вопроса квиза — вопрос на лицевой стороне, ответ с разбором на обороте. */
+  addCardFromQuestion(sessionId: string, index: number): void {
+    const s = this.сессии.get(sessionId);
+    const item = s?.items[index];
+    if (!s || !item) throw new Error('такого вопроса нет');
+    const id = `${item.q.id}#вручную`;
+    this.o.store.updateProgress(s.course, (p) => {
+      if (p.extraCards.some((c) => c.id === id || c.id === `${item.q.id}#ошибка`)) return;
+      const верный = item.q.options[item.q.correctIndex];
+      p.extraCards.push({
+        id,
+        topicId: item.q.topicId,
+        front: item.q.promptTranslation ? `${item.q.prompt}\n${item.q.promptTranslation}` : item.q.prompt,
+        back: `${верный?.text ?? ''}${верный?.translation ? ` — ${верный.translation}` : ''}\n${item.q.explanation}`,
+        source: item.q.source,
+        origin: 'manual',
+      });
+    });
   }
 
   // ——— Карточки ———

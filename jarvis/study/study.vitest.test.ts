@@ -330,6 +330,40 @@ describe('служба учёбы: сегодня, квиз, карточки, �
     expect(() => s.answerExam(экзамен.id, 0, 1)).toThrow(/уже сдан/u);
   });
 
+  it('кнопки окна: экзамен, расписание, новый курс — в страницу курса; остальное на странице цело', async () => {
+    const { s, vault } = await служба();
+    await writeFile(path.join(vault, 'Микро', 'Микро.md'), "---\nкурс: 'Микро'\nиврит: 'מיקרו'\n---\n# Микро\n\nМои заметки о курсе.\n", 'utf8');
+    s.setExam('Микро', '2027-02-10');
+    s.setSchedule('Микро', [
+      { day: 4, from: 600, to: 720 },
+      { day: 2, from: 960, to: 1140 },
+    ]);
+    const страница = await readFile(path.join(vault, 'Микро', 'Микро.md'), 'utf8');
+    expect(страница).toContain("иврит: 'מיקרו'");
+    expect(страница).toContain('экзамен: 2027-02-10');
+    expect(страница).toContain("расписание: 'вт 16:00-19:00; чт 10:00-12:00'");
+    expect(страница).toContain('Мои заметки о курсе.');
+    expect(s.course('Микро')).toMatchObject({ exam: '2027-02-10', schedule: 'вт 16:00, чт 10:00' });
+    s.setExam('Микро', null);
+    expect(s.course('Микро').exam).toBeUndefined();
+    expect(() => s.setExam('Микро', '10.02.2027')).toThrow(/ГГГГ-ММ-ДД/u);
+    expect(() => s.setSchedule('Микро', [{ day: 2, from: 900, to: 800 }])).toThrow(/задом наперёд/u);
+
+    expect(s.createCourse('Статистика', { hebrew: 'סטטיסטיקה', code: '66-4104' })).toBe('Статистика');
+    expect(s.course('Статистика')).toMatchObject({ hebrew: 'סטטיסטיקה', code: '66-4104', lectures: [] });
+    expect(() => s.createCourse('статистика')).toThrow(/уже есть/u);
+  });
+
+  it('«в карточки» у верного ответа — карточка вручную, одна', async () => {
+    const { s, store } = await служба();
+    const квиз = s.startQuiz({ course: 'Микро', topic: '2026-10-20 — Спрос#1' });
+    const верный = квиз.questions[0]!.options.findIndex((o) => o.text === 'כמות מבוקשת במחיר');
+    s.answerQuiz(квиз.id, 0, верный);
+    s.addCardFromQuestion(квиз.id, 0);
+    s.addCardFromQuestion(квиз.id, 0);
+    expect(store.progress('Микро').extraCards.map((c) => c.origin)).toEqual(['manual']);
+  });
+
   it('задачи: решил — отмечено; лекция без банка — в «не заготовлено»', async () => {
     const { s, store, vault } = await служба();
     const [задача] = s.tasks('Микро');

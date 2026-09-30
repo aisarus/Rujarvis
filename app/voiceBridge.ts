@@ -102,7 +102,7 @@ import {
   type LectureStartOptions,
 } from './lectureMode';
 import { createFileDecoder } from './lectureFileDecode';
-import { prepareStudyFor, showStudy } from './study';
+import { prepareStudyFor, setStudyHearing, showStudy } from './study';
 import { lectureHeardForJarvis } from '../jarvis/lecture/voiceGate';
 import {
   createGpuTranscriber,
@@ -291,6 +291,8 @@ let showWork = true;
  * тишины.
  */
 let muted = false;
+/** Окно учёбы записывает ответ голосом — услышанное не команда. */
+let учёбаЗаписывает = false;
 /** Окно микрофона: режим лекции переключает в нём порог речи. */
 let окноЗвука: BrowserWindow | null = null;
 /** Свой сервер распознавания на видеокарте: pid записан при запуске, гасится ровно он. */
@@ -1444,6 +1446,15 @@ async function поднятьМост(options: {
   });
   // Лекция легла в курс — вопросы, карточки и задачи к ней готовятся в фоне.
   onLectureFiled(prepareStudyFor);
+  // Ответ голосом в окне учёбы — тем же слухом; пока окно пишет ответ,
+  // услышанное не команда Джарвису.
+  setStudyHearing(
+    async (samples, sampleRate) => (await transcriber.transcribe(samples, sampleRate)).text,
+    (on) => {
+      учёбаЗаписывает = on;
+      console.log(on ? '[jarvis:study] окно учёбы пишет ответ — команды не слушаю' : '[jarvis:study] ответ записан — слушаю команды');
+    },
+  );
   const отписатьЛекцию = onLectureState((state, info) => {
     overlay.setLecture(state);
     overlay.setLectureInfo(info);
@@ -1646,8 +1657,9 @@ function первая_строка(текст: string): string {
 
 async function handleUtterance(payload: RecordedAudio): Promise<void> {
     // Немой режим — раньше всего, даже раньше распознавания: тратить на
-    // выключенный микрофон секунду работы видеокарты незачем.
-    if (muted) return;
+    // выключенный микрофон секунду работы видеокарты незачем. Окно учёбы
+    // пишет ответ голосом — то же: это ответ на вопрос, а не просьба.
+    if (muted || учёбаЗаписывает) return;
     {
       try {
         const samples = toFloat32(payload.samples);
@@ -2387,6 +2399,8 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
       // бы поднять свой.
       поколениеМоста += 1;
       отписатьЛекцию();
+      setStudyHearing(null, null);
+      учёбаЗаписывает = false;
       abandonLecture();
       окноЗвука = null;
       серверРаспознавания?.stop();

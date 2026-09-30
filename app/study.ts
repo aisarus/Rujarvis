@@ -98,12 +98,47 @@ export function prepareStudyFor(notesFile: string): void {
   });
 }
 
+/** Все лекции хранилища, у которых банка ещё нет, а материал есть, — в очередь. Сколько поставлено. */
+export function prepareAllStudy(): number {
+  const s = studyService();
+  let поставлено = 0;
+  for (const курс of s.today().courses.map((c) => c.name)) {
+    for (const л of s.course(курс).unprepared) {
+      if (л.empty) continue;
+      prepareStudyFor(л.notesFile);
+      поставлено += 1;
+    }
+  }
+  return поставлено;
+}
+
+type Слух = (samples: Float32Array, sampleRate: number) => Promise<string>;
+
+let слух: Слух | null = null;
+let приЗаписи: ((on: boolean) => void) | null = null;
+
+/**
+ * Слух Джарвиса для ответа голосом в окне учёбы — его даёт голосовой мост,
+ * когда поднят. `onRecording` — мост на время записи не принимает
+ * услышанное за команды: ответ на вопрос — не просьба к Джарвису.
+ */
+export function setStudyHearing(transcribe: Слух | null, onRecording: ((on: boolean) => void) | null): void {
+  слух = transcribe;
+  приЗаписи = onRecording;
+}
+
 export function showStudy(): void {
   if (!настройка) return;
   openStudyWindow({
     service: studyService,
     preparing: preparingLectures,
     prepare: prepareStudyFor,
+    prepareAll: prepareAllStudy,
+    transcribe: async (samples, sampleRate) => {
+      if (!слух) throw new Error('слух Джарвиса не запущен — ответ голосом недоступен, напишите текстом');
+      return слух(samples, sampleRate);
+    },
+    recording: (on) => приЗаписи?.(on),
     language: () => настройка?.settings().language ?? 'ru',
   });
 }

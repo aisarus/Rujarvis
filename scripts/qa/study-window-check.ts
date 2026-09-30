@@ -19,7 +19,7 @@ import { cpSync, existsSync, mkdtempSync, readdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { app } from 'electron';
+import { app, session } from 'electron';
 
 import { openStudyWindow, studyWindowForCheck } from '../../app/studyWindow';
 import { createClaudeSummarizer } from '../../jarvis/lecture/summarize';
@@ -32,6 +32,10 @@ import { StudyStore } from '../../jarvis/study/store';
 const ждать = (мс: number): Promise<void> => new Promise((r) => setTimeout(r, мс));
 
 app.setPath('userData', mkdtempSync(path.join(os.tmpdir(), 'jarvis-study-check-')));
+// Подставной микрофон Chromium (гудок): ответ голосом проверяется без
+// настоящего микрофона и без человека рядом.
+app.commandLine.appendSwitch('use-fake-device-for-media-stream');
+app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
 
 void app.whenReady().then(async () => {
   const paths = jarvisPaths();
@@ -49,15 +53,29 @@ void app.whenReady().then(async () => {
   const service = new StudyService({ store: new StudyStore(копия), vaultRoot: () => vault, notes: settings.language, summarize: createClaudeSummarizer() });
 
   const ошибки: string[] = [];
-  openStudyWindow({ service: () => service, preparing: () => [], prepare: () => undefined, language: () => settings.language, hidden: true });
+  const запись: boolean[] = [];
+  let секундЗвука = 0;
+  session.defaultSession.setPermissionRequestHandler((_c, permission, callback) => callback(permission === 'media'));
+  openStudyWindow({
+    service: () => service,
+    preparing: () => [],
+    prepare: () => undefined,
+    language: () => settings.language,
+    hidden: true,
+    recording: (on) => запись.push(on),
+    transcribe: async (samples, rate) => {
+      секундЗвука = samples.length / rate;
+      return 'проверка голосом';
+    },
+  });
   const окно = studyWindowForCheck();
   if (!окно) {
     console.log('НЕ ПРОШЛО: окно не создалось');
     app.exit(1);
     return;
   }
-  окно.webContents.on('console-message', (_e, level, message) => {
-    if (level >= 3) ошибки.push(message);
+  окно.webContents.on('console-message', (event) => {
+    if (event.level === 'error') ошибки.push(event.message);
   });
   await new Promise<void>((r) => окно.webContents.once('did-finish-load', () => r()));
   const js = <T>(код: string): Promise<T> => окно.webContents.executeJavaScript(код) as Promise<T>;
@@ -104,6 +122,23 @@ void app.whenReady().then(async () => {
     })()`);
     console.log(`  ${звук}`);
     if (!звук.startsWith('звук открыт')) провалы.push(звук);
+
+    // Ответ голосом: следующий вопрос, «Ответить своими словами», 🎤 — полторы секунды — «Готово».
+    await js("[...document.querySelectorAll('button')].find((b) => b.textContent === 'Дальше' || b.textContent === 'Next')?.click()");
+    await ждать(500);
+    await js("[...document.querySelectorAll('button')].find((b) => b.textContent === 'Ответить своими словами' || b.textContent === 'Answer in my own words')?.click()");
+    await js("[...document.querySelectorAll('button')].find((b) => b.textContent.startsWith('🎤'))?.click()");
+    await ждать(1500);
+    await js("[...document.querySelectorAll('button')].find((b) => b.textContent.startsWith('■'))?.click()");
+    let ответ = '';
+    for (let i = 0; i < 20 && !ответ; i += 1) {
+      await ждать(150);
+      ответ = await js<string>("document.querySelector('textarea')?.value ?? ''");
+    }
+    console.log(`  ответ голосом: «${ответ}», записано ${секундЗвука.toFixed(1)} с, команды на время записи: ${запись.map((on) => (on ? 'выкл' : 'вкл')).join(' → ')}`);
+    if (ответ !== 'проверка голосом') провалы.push('ответ голосом не попал в поле');
+    if (секундЗвука < 0.8) провалы.push(`записано всего ${секундЗвука.toFixed(1)} с`);
+    if (запись.join(',') !== 'true,false') провалы.push(`слух команд на время записи не выключался и не возвращался: ${запись.join(',')}`);
   } else {
     провалы.push('в «Сегодня» нет курса с лекциями');
   }

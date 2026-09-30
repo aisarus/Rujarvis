@@ -22,6 +22,13 @@ contextBridge.exposeInMainWorld('study', {
   tasks: (course: string, lecture?: string) => call('tasks', course, lecture ?? ''),
   taskMark: (course: string, id: string, solved: boolean) => call('taskMark', course, id, solved),
   prepare: (notesFile: string) => call('prepare', notesFile),
+  prepareAll: () => call('prepareAll'),
+  setExam: (course: string, date: string) => call('setExam', course, date),
+  setSchedule: (course: string, slots: Array<{ day: number; from: number; to: number }>) => call('setSchedule', course, slots),
+  createCourse: (name: string, hebrew: string, code: string) => call('createCourse', name, hebrew, code),
+  addCard: (id: string, index: number) => call('addCard', id, index),
+  recording: (on: boolean) => call('recording', on),
+  transcribe: (samples: Float32Array, sampleRate: number) => call('transcribe', samples, sampleRate),
   openNote: (file: string) => call('openNote', file),
   audioUrl: (file: string) => call('audioUrl', file),
   onChanged: (listener: (preparing: string[]) => void) => {

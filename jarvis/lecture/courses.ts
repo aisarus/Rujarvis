@@ -17,7 +17,7 @@
  * это «истории». Поэтому курсы сравниваются по основам слов, а не по буквам.
  */
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import type { NotesLanguage } from './session';
@@ -353,6 +353,58 @@ export function guessByDeclared(when: Date, courses: readonly CourseInfo[]): str
     }
   }
   return лучший?.курс ?? null;
+}
+
+const ДНИ_ИМЕНА = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+
+function чч(минут: number): string {
+  return `${String(Math.floor(минут / 60)).padStart(2, '0')}:${String(минут % 60).padStart(2, '0')}`;
+}
+
+/** Пары → строка расписания страницы курса: «вт 10:00-13:00; чт 12:00-14:00». */
+export function formatSchedule(slots: readonly CourseSlot[]): string {
+  return slots.map((s) => `${ДНИ_ИМЕНА[s.day] ?? 'вс'} ${чч(s.from)}-${чч(s.to)}`).join('; ');
+}
+
+function вЯмл(значение: string): string {
+  return `'${значение.replace(/'/gu, "''")}'`;
+}
+
+export interface CoursePatch {
+  hebrew?: string;
+  code?: string;
+  slots?: CourseSlot[];
+  /** YYYY-MM-DD; null — убрать. */
+  exam?: string | null;
+}
+
+/**
+ * Поменять свойства страницы курса — из окна учёбы, кнопками, а не правкой
+ * файла. Остальные свойства и всё, что человек написал на странице, остаются
+ * как были; страницы нет — она создаётся.
+ */
+export function writeCourseInfo(root: string, course: string, patch: CoursePatch): void {
+  const имя = safeName(course, 80);
+  if (!имя) throw new Error('пустое название курса');
+  const папка = path.join(root, имя);
+  const файл = path.join(папка, `${имя}.md`);
+  mkdirSync(папка, { recursive: true });
+  let текст = existsSync(файл) ? readFileSync(файл, 'utf8') : `---\nкурс: ${вЯмл(имя)}\n---\n\n# ${имя}\n\n${COURSE_WORDS.ru.listStart}\n${COURSE_WORDS.ru.listEnd}\n`;
+  if (!/^---\r?\n[\s\S]*?\r?\n---/u.test(текст)) текст = `---\nкурс: ${вЯмл(имя)}\n---\n\n${текст}`;
+  const поставить = (ключи: string[], значение: string | null): void => {
+    const m = /^---\r?\n([\s\S]*?)\r?\n---/u.exec(текст);
+    const строки = (m?.[1] ?? '').split(/\r?\n/u).filter((с) => !ключи.some((к) => new RegExp(`^${к}\\s*:`, 'iu').test(с)));
+    if (значение !== null) строки.push(`${ключи[0]}: ${значение}`);
+    текст = текст.replace(/^---\r?\n[\s\S]*?\r?\n---/u, `---\n${строки.join('\n')}\n---`);
+  };
+  if (patch.hebrew !== undefined) поставить(['иврит', 'hebrew'], patch.hebrew.trim() ? вЯмл(patch.hebrew.trim()) : null);
+  if (patch.code !== undefined) поставить(['код', 'code'], patch.code.trim() ? вЯмл(patch.code.trim()) : null);
+  if (patch.slots !== undefined) поставить(['расписание', 'schedule'], patch.slots.length > 0 ? вЯмл(formatSchedule(patch.slots)) : null);
+  if (patch.exam !== undefined) {
+    if (patch.exam !== null && !/^\d{4}-\d{2}-\d{2}$/u.test(patch.exam)) throw new Error('дата экзамена — ГГГГ-ММ-ДД');
+    поставить(['экзамен', 'exam'], patch.exam);
+  }
+  writeFileSync(файл, текст, 'utf8');
 }
 
 /** Курсы для модели: имя и, если есть, название на иврите — лектор говорит на нём. */
