@@ -24,6 +24,18 @@ export const TALK_TOOLS = [
   'resume_work',
   'add_step',
   'work_now',
+  // Руки на экране (uiHands.ts через мост).
+  'screen_overview',
+  'switch_to',
+  'press_control',
+  'open_menu',
+  'press_keys',
+  'type_text',
+  'send_to_claude',
+  'claude_waiting',
+  'open_claude_session',
+  'new_claude_session',
+  'open_site',
 ] as const;
 
 /** Как эти же глаголы называются в `--allowedTools`. */

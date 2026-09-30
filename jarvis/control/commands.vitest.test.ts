@@ -63,6 +63,58 @@ describe('сочетания', () => {
   });
 });
 
+describe('сочетание вслух', () => {
+  it.each([
+    ['нажми alt tab', 'key:alt+tab'],
+    ['контрол шифт т', 'key:ctrl+shift+t'],
+    ['альт эф четыре', 'key:alt+f4'],
+    ['нажми вин д', 'key:win+d'],
+    ['контрол плюс шифт плюс эскейп', 'key:ctrl+shift+escape'],
+    ['press control shift t', 'key:ctrl+shift+t'],
+  ])('«%s» → %s', (phrase, expected) => {
+    expect(act(phrase)).toBe(expected);
+  });
+
+  it('одна буква без модификатора — не сочетание, а кнопка по названию', () => {
+    expect(act('нажми т')).toBe('clickNamed');
+  });
+});
+
+describe('приложение Claude', () => {
+  it.each([
+    ['Напиши клоду: почини сборку, пожалуйста.', 'почини сборку, пожалуйста.'],
+    ['Джарвис, скажи клауду проверь тесты', 'проверь тесты'],
+    ['спроси клода, что с CI?', 'что с CI?'],
+    ['Tell Claude to run the tests.', 'run the tests.'],
+    ['ask cloud what failed', 'what failed'],
+  ])('«%s» — текст Claude как сказан', (phrase, text) => {
+    expect(parseDirectCommandInPhrase(phrase)).toEqual({ kind: 'claudeSend', text });
+  });
+
+  it('«напиши» без Claude — не ему', () => {
+    expect(parseDirectCommand('напиши письмо маме')?.kind).not.toBe('claudeSend');
+    expect(parseDirectCommand('напиши привет')?.kind).not.toBe('claudeSend');
+  });
+
+  it.each([
+    ['клод код', { kind: 'claudeMode', mode: 'code' }],
+    ['переключись на клод чат', { kind: 'claudeMode', mode: 'chat' }],
+    ['switch to claude code', { kind: 'claudeMode', mode: 'code' }],
+    ['кто ждёт ответа', { kind: 'claudeWaiting' }],
+    ['какие сессии ждут', { kind: 'claudeWaiting' }],
+    ['which sessions are waiting', { kind: 'claudeWaiting' }],
+    ['открой сессию мерчант', { kind: 'claudeSession', name: 'мерчант' }],
+    ['go to session merchant', { kind: 'claudeSession', name: 'merchant' }],
+    ['новая сессия', { kind: 'claudeNew' }],
+    ['создай новую сессию в проекте мерчант', { kind: 'claudeNew', project: 'мерчант' }],
+    ['start a new session in merchant', { kind: 'claudeNew', project: 'merchant' }],
+    ['прерви клода', { kind: 'claudeInterrupt' }],
+    ['interrupt claude', { kind: 'claudeInterrupt' }],
+  ])('«%s»', (phrase, expected) => {
+    expect(parseDirectCommand(phrase)).toEqual(expected);
+  });
+});
+
 describe('прокрутка', () => {
   it('крутит вниз и вверх', () => {
     expect(act('прокрути вниз')).toBe('scroll:-3');

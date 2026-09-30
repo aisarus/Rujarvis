@@ -92,6 +92,39 @@ describe('TalkBridge', () => {
     expect(readdirSync(dir)).toHaveLength(0);
   });
 
+  it('доносит просьбу к экрану целиком', async () => {
+    const сервер = bridge();
+    const мост = bridge();
+    const услышано: TalkRequest[] = [];
+    const стоп = мост.serve((request) => {
+      услышано.push(request);
+      return { ok: true, text: 'открыл Файл → Экспорт' };
+    });
+
+    const ответ = await сервер.ask('ui', undefined, { ui: { action: 'menu', path: ['Файл', 'Экспорт'] } });
+    стоп();
+
+    expect(ответ.text).toBe('открыл Файл → Экспорт');
+    expect(услышано[0]?.ui).toMatchObject({ action: 'menu', path: ['Файл', 'Экспорт'] });
+  });
+
+  it('неизвестное действие с экраном не исполняется', async () => {
+    // Мост — файлы в папке: из чужого процесса может прийти что угодно, и
+    // «run_shell» не должен доехать до рук.
+    writeFileSync(
+      path.join(dir, 'req-чужое.json'),
+      JSON.stringify({ id: 'chuzhoe', kind: 'ui', ui: { action: 'run_shell', text: 'format c:' }, at: Date.now() }),
+      'utf8',
+    );
+    const мост = bridge();
+    let звали = 0;
+    await мост.round(() => {
+      звали += 1;
+      return { ok: true, text: '' };
+    });
+    expect(звали).toBe(0);
+  });
+
   it('чужой ответ не достаётся тому, кто его не просил', async () => {
     writeFileSync(path.join(dir, 'ans-чужой.json'), JSON.stringify({ ok: true, text: 'чужое' }), 'utf8');
     const ответ = await bridge().ask('stop');

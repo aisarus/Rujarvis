@@ -118,7 +118,8 @@ import { createGridOverlay, type GridOverlay } from './gridOverlay';
 import { createHelpOverlay, type HelpOverlay } from './helpOverlay';
 import { createLogWindow, type LogWindow } from './logWindow';
 import { obviousAside } from '../jarvis/dialogue/aside';
-import { TalkBridge } from '../jarvis/dialogue/talkBridge';
+import { TalkBridge, type TalkUiRequest } from '../jarvis/dialogue/talkBridge';
+import { UiHands } from '../jarvis/control/uiHands';
 import { pickTalkAgent, TalkSession, talkUnavailableReason } from '../jarvis/dialogue/talkSession';
 import { ЭХО_РАЗГОВОРА } from '../jarvis/dialogue/workDelta';
 import { RunLogStore } from '../jarvis/observe/runLogStore';
@@ -235,6 +236,61 @@ const echoGuard = new EchoGuard();
  * похода к модели.
  */
 const desktop = createDesktopDriver();
+
+/**
+ * Руки для интерфейса — одни на прямые команды и на разговор: переключиться
+ * на окно, вкладку или раздел, нажать, пройти меню, клавиши, приложение Claude.
+ */
+const руки = new UiHands({
+  desktop,
+  browserTab: (name) => перейтиНаВкладку(desktop, name),
+  windowNames: (name) => windowCandidates(name),
+  log: (line) => console.log(`[jarvis] ${line}`),
+});
+
+/** Запрос экрана от разговора: исполнить руками модели — с её ограничениями. */
+async function экранДляРазговора(ui: TalkUiRequest): Promise<{ ok: boolean; text: string }> {
+  try {
+    switch (ui.action) {
+      case 'screen':
+        return { ok: true, text: await руки.screen() };
+      case 'switch': {
+        if (!ui.target) return { ok: false, text: 'Не сказано, куда переключиться.' };
+        const итог = await руки.switchTo(ui.target, 'model');
+        return итог ? { ok: true, text: итог } : { ok: false, text: `Не нашёл «${ui.target}». Посмотри screen_overview и возьми точное название.` };
+      }
+      case 'press':
+        if (!ui.target) return { ok: false, text: 'Не сказано, что нажать.' };
+        return { ok: true, text: await руки.press(ui.target, 'model', ui.window) };
+      case 'menu':
+        return { ok: true, text: await руки.menu(ui.path ?? [], 'model') };
+      case 'keys':
+        if (!ui.keys) return { ok: false, text: 'Не сказано, какие клавиши.' };
+        return { ok: true, text: await руки.keys(ui.keys, 'model') };
+      case 'type':
+        if (!ui.text) return { ok: false, text: 'Не сказано, что напечатать.' };
+        return { ok: true, text: await руки.type(ui.text, ui.target) };
+      case 'site': {
+        if (!ui.target?.trim()) return { ok: false, text: 'Не сказано, какой сайт.' };
+        const адрес = адресСайта(ui.target);
+        await shell.openExternal(адрес);
+        return { ok: true, text: `открыл ${new URL(адрес).hostname}` };
+      }
+      case 'claude_send':
+        if (!ui.text?.trim()) return { ok: false, text: 'Не сказано, что написать Claude.' };
+        return { ok: true, text: await руки.claudeSend(ui.text.trim()) };
+      case 'claude_waiting':
+        return { ok: true, text: await руки.claudeWaiting() };
+      case 'claude_session':
+        if (!ui.target) return { ok: false, text: 'Не сказано, какую сессию.' };
+        return { ok: true, text: await руки.claudeOpenSession(ui.target) };
+      case 'claude_new':
+        return { ok: true, text: await руки.claudeNewSession(ui.target) };
+    }
+  } catch (error) {
+    return { ok: false, text: error instanceof Error ? error.message : String(error) };
+  }
+}
 
 /**
  * Идёт ли диктовка.
@@ -590,42 +646,12 @@ export async function runDirectCommand(
         await desktop.type(command.text);
         break;
       case 'focus': {
-        // Псевдоним нужен по той же причине, что и при закрытии: «хром» в
-        // заголовке окна не встречается, а "Chrome" встречается.
-        // Оконное имя вперёд пускового: «блендер» как окно это Blender, а
-        // запустить его надо ярлыком из меню «Пуск» — это разные строки.
-        const варианты = windowCandidates(command.title);
-        // Сначала по псевдониму, потом по сказанному вслух. Псевдоним знает
-        // имя программы, но окно может называться иначе — «Riot Client» в
-        // таблице нет, а сказать про него человек может.
-        let found: { title: string } | null = null;
-        // Причину последней попытки не теряем.
-        //
-        // Раньше здесь стоял пустой `catch`, и человек слышал «не
-        // получилось» без единой подсказки: ни что искали, ни что рядом.
-        // Драйвер теперь перечисляет, что на экране, - и это должно дойти
-        // до человека, а не осесть в пустых скобках.
-        let почему = '';
-        for (const candidate of варианты) {
-          try {
-            found = await desktop.focus(candidate);
-            break;
-          } catch (error) {
-            почему = error instanceof Error ? error.message : String(error);
-          }
-        }
-        if (!found) {
-          // Окна нет — может быть, это вкладка браузера позади: у окна в
-          // заголовке только активная вкладка. Живой журнал 28.09.2026:
-          // «вернись на вкладку с Инбар» — «не нашёл окно», хотя вкладка была.
-          const вкладка = await перейтиНаВкладку(desktop, command.title).catch(() => null);
-          if (вкладка) {
-            console.log(`[jarvis] переключился на вкладку «${вкладка.name}»`);
-            break;
-          }
-          throw new Error(`не нашёл ни окна, ни вкладки «${command.title}»${почему ? `: ${почему}` : ''}`);
-        }
-        console.log(`[jarvis] переключился на «${found.title}»`);
+        // Вкладка в активном окне, окно на слух, псевдонимы программ, вкладка
+        // браузера — всё в `UiHands.switchTo`. Раньше здесь был только поиск
+        // по подстроке заголовка: «переключись на клад» не находило Claude.
+        const итог = await руки.switchTo(command.title);
+        if (!итог) throw new Error(`не нашёл ни окна, ни вкладки «${command.title}»`);
+        console.log(`[jarvis] ${итог}`);
         break;
       }
       case 'setting': {
@@ -656,6 +682,24 @@ export async function runDirectCommand(
         showStudy();
         break;
       }
+      case 'claudeSend':
+        console.log(`[jarvis] ${await руки.claudeSend(command.text)}`);
+        break;
+      case 'claudeWaiting':
+        await session.speak(await руки.claudeWaiting());
+        break;
+      case 'claudeSession':
+        console.log(`[jarvis] ${await руки.claudeOpenSession(command.name)}`);
+        break;
+      case 'claudeNew':
+        console.log(`[jarvis] ${await руки.claudeNewSession(command.project)}`);
+        break;
+      case 'claudeInterrupt':
+        console.log(`[jarvis] ${await руки.claudeInterrupt()}`);
+        break;
+      case 'claudeMode':
+        console.log(`[jarvis] ${await руки.claudeMode(command.mode)}`);
+        break;
       case 'lectureCourse': {
         await session.speak(await setLectureCourse(command.course));
         break;
@@ -689,12 +733,9 @@ export async function runDirectCommand(
         break;
       }
       case 'clickNamed': {
-        // Не нашли — не кликаем. Промах мимо названной кнопки хуже отказа:
-        // он срабатывает, человек его не ждал, и заметит не сразу.
-        const found = await findNamedElement(command.query);
-        if (!found) throw new Error(`не нашёл «${command.query}» в активном окне`);
-        await desktop.click({ x: found.x, y: found.y });
-        console.log(`[jarvis] кликнул «${found.name || found.id}» в (${found.x}, ${found.y})`);
+        // Не нашли или похоже несколько — не кликаем. Промах мимо названной
+        // кнопки хуже отказа: он срабатывает, человек его не ждал.
+        console.log(`[jarvis] ${await руки.press(command.query, 'person')}`);
         break;
       }
       case 'dictation':
@@ -1021,6 +1062,19 @@ function describeDirect(command: DirectCommand): string {
       return `курс лекции: ${command.course}`;
     case 'study':
       return 'открыл окно учёбы';
+    case 'claudeSend':
+      // Без текста: продиктованное в журнал не идёт (`speechLogging`).
+      return 'написал Claude';
+    case 'claudeWaiting':
+      return 'кто ждёт в Claude';
+    case 'claudeSession':
+      return `сессия Claude «${command.name}»`;
+    case 'claudeNew':
+      return command.project ? `новая сессия Claude в «${command.project}»` : 'новая сессия Claude';
+    case 'claudeInterrupt':
+      return 'прервал ответ Claude';
+    case 'claudeMode':
+      return command.mode === 'code' ? 'Claude: Code' : 'Claude: Chat';
     case 'lectureFile':
       return 'конспект по последней записи';
     case 'volume':
@@ -1518,8 +1572,9 @@ async function поднятьМост(options: {
    * отличался от не-вопроса знаком. Человек сказал про это прямо, когда на
    * «ты понял что надо делать?» получил «Учту» и тишину.
    *
-   * Руки у разговора чужие: пять глаголов, и каждый из них идёт через
-   * рабочий поток со всеми разрешениями человека.
+   * Руки у разговора — глаголы работы (через рабочий поток со всеми
+   * разрешениями человека) и руки на экране (`руки`, с отказом модели в
+   * покупке, отправке, Enter и перезаписи).
    */
   const talkBridgeDir = path.join(path.dirname(journalFile()), 'talk-bridge');
   const talk = new TalkSession({
@@ -1565,7 +1620,15 @@ async function поднятьМост(options: {
   const talkBridge = new TalkBridge(talkBridgeDir);
   // Просьба, пережившая перезапуск, — не память, а неожиданность.
   talkBridge.clear();
-  stopTalkBridge = talkBridge.serve((request) => {
+  stopTalkBridge = talkBridge.serve(async (request) => {
+    // Руки на экране: разговор переключает, жмёт и ходит по меню сам.
+    if (request.kind === 'ui') {
+      if (!request.ui) return { ok: false, text: 'Пустая просьба к экрану.' };
+      const ответ = await экранДляРазговора(request.ui);
+      console.log(`[jarvis] разговор → экран ${request.ui.action}: ${ответ.ok ? 'да' : 'нет'} — ${short(ответ.text, 160)}`);
+      if (ответ.ok && request.ui.action !== 'screen') note('command', `разговор: ${short(ответ.text, 120)}`);
+      return ответ;
+    }
     if (request.kind !== 'start') {
       const ответ = applyWorkControl(request.kind, jarvis.tasks);
       if (ответ.done) {
@@ -1861,22 +1924,30 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
         // попадает и уходит агенту, как и должно.
         // И последним предложением после вступления: «Что ещё умеем?
         // Переключись на Edge» — живой лог 27.09.2026, раньше уходило агенту.
-        const direct = command ? parseDirectCommandInPhrase(command) : null;
+        let direct = command ? parseDirectCommandInPhrase(command) : null;
 
-        if (direct?.kind === 'clickNamed') {
-          // Клик по названию — единственная прямая команда, которая может
-          // честно не найтись. Тогда она не ошибка, а повод посмотреть на
-          // экран: задача уходит агенту, а не упирается в «не получилось».
-          const found = await findNamedElement(direct.query);
-          if (found) {
-            await runAction(`клик по «${direct.query}»`, async () => {
-              await desktop.click({ x: found.x, y: found.y });
-              note('command', `кликнул «${found.name || found.id}»`);
-            });
+        // «Нажми …» и «переключись на …» могут честно не найтись. Тогда это не
+        // ошибка, а повод посмотреть на экран: фраза уходит разговору, у
+        // которого есть список на экране и руки (`UiHands`), — он выберет
+        // похожее или переспросит. Раньше здесь писалось «отдаю агенту», а
+        // команда всё равно выполнялась дальше и падала с «не нашёл».
+        if (direct?.kind === 'clickNamed' || direct?.kind === 'focus') {
+          const цель = direct.kind === 'clickNamed' ? direct.query : direct.title;
+          const названо = direct.kind;
+          let итог: string | null = null;
+          try {
+            итог = названо === 'clickNamed' ? await руки.press(цель, 'person') : await руки.switchTo(цель);
+          } catch (error) {
+            console.log(`[jarvis] «${logged(цель)}» напрямую не вышло: ${error instanceof Error ? error.message : String(error)}`);
+          }
+          if (итог) {
+            console.log(`[jarvis] ${итог}`);
+            note('command', итог);
             session.keepAwake();
             return;
           }
-          console.log('[jarvis] названное не найдено — отдаю агенту');
+          console.log('[jarvis] напрямую не нашлось — отдаю разговору, он видит экран');
+          direct = null;
         }
 
         if (direct) {

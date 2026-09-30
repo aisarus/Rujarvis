@@ -321,6 +321,19 @@ describe('TalkSession', () => {
       'mcp__jarvis-talk__resume_work',
       'mcp__jarvis-talk__add_step',
       'mcp__jarvis-talk__work_now',
+      // Руки на экране: исполняет Джарвис (`uiHands.ts`) с отказом модели в
+      // покупке, отправке, Enter и перезаписи.
+      'mcp__jarvis-talk__screen_overview',
+      'mcp__jarvis-talk__switch_to',
+      'mcp__jarvis-talk__press_control',
+      'mcp__jarvis-talk__open_menu',
+      'mcp__jarvis-talk__press_keys',
+      'mcp__jarvis-talk__type_text',
+      'mcp__jarvis-talk__send_to_claude',
+      'mcp__jarvis-talk__claude_waiting',
+      'mcp__jarvis-talk__open_claude_session',
+      'mcp__jarvis-talk__new_claude_session',
+      'mcp__jarvis-talk__open_site',
     ]);
     expect(ключи[0]?.tools).not.toContain('Bash');
     expect(ключи[0]?.tools).not.toContain('Write');

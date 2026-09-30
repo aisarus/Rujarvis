@@ -79,6 +79,20 @@ export interface DesktopControl {
 type Command = Record<string, unknown> & { cmd: string };
 
 /**
+ * Список из ответа PowerShell — всегда массивом.
+ *
+ * `ConvertTo-Json` пустой список отдаёт как `{}` или `null`, а список из
+ * одного — одиночным объектом. Живая проверка 30.09.2026: впереди окно игры
+ * без единого элемента, `elements` пришёл `{}`, и «что на экране» упало на
+ * `for … of`.
+ */
+export function списком<T>(value: unknown): T[] {
+  if (Array.isArray(value)) return value as T[];
+  if (value && typeof value === 'object' && Object.keys(value).length > 0) return [value as T];
+  return [];
+}
+
+/**
  * Где лежит скрипт драйвера.
  *
  * Этот модуль живёт в двух мирах сразу. В MCP-сервере он запускается через
@@ -260,7 +274,7 @@ export class DesktopDriver {
   }
 
   windows(): Promise<DesktopWindow[]> {
-    return this.send<{ windows: DesktopWindow[] }>({ cmd: 'windows' }).then((r) => r.windows ?? []);
+    return this.send<{ windows: unknown }>({ cmd: 'windows' }).then((r) => списком<DesktopWindow>(r.windows));
   }
 
   cursor(): Promise<{ x: number; y: number }> {
@@ -298,7 +312,10 @@ export class DesktopDriver {
    * угадываются по пикселям. Замер на этой машине — около 60 мс на окно.
    */
   elements(): Promise<{ title: string; elements: UiElement[] }> {
-    return this.send({ cmd: 'elements' });
+    return this.send<{ title?: unknown; elements?: unknown }>({ cmd: 'elements' }).then((r) => ({
+      title: typeof r.title === 'string' ? r.title : '',
+      elements: списком<UiElement>(r.elements),
+    }));
   }
 
   focus(title: string): Promise<{ title: string }> {

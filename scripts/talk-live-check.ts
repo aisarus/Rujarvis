@@ -29,6 +29,15 @@ const ИМЯ = АГЕНТ === 'codex' ? 'Codex' : 'Claude Code';
 import { makePlan, renderPlan, type Plan } from '../jarvis/agent/plan';
 import { resolveDesktopMcpLaunch } from '../jarvis/desktop/launch';
 
+/** Что «на экране» для подставных рук: приложение Claude впереди. */
+const ЭКРАН = [
+  'Окна: Claude (активно); Google Chrome; main.ts - Visual Studio Code',
+  'Активное окно: Claude',
+  'RadioButton: Chat and Cowork | Code',
+  'Button: New | New session in jarvis-code | Idle Голосовой слой | Awaiting input Починить сборку | Stop',
+  'Edit: Prompt',
+].join(String.fromCharCode(10));
+
 const ДОМ = mkdtempSync(path.join(os.tmpdir(), 'jarvis-talk-live-'));
 const МОСТ = path.join(ДОМ, 'bridge');
 const ЖУРНАЛ = path.join(ДОМ, 'journal.json');
@@ -90,6 +99,14 @@ async function main(): Promise<void> {
   };
   const перестать = мост.serve((request) => {
     просьбы.push(request);
+    if (request.kind === 'ui') {
+      // Руки на экране — тоже подставные: ничего не жмут, а отвечают, как
+      // ответил бы настоящий Джарвис, и записывают, что попросили.
+      console.log(`  <- мост получил: ui ${JSON.stringify(request.ui)}`);
+      if (request.ui?.action === 'screen') return { ok: true, text: ЭКРАН };
+      if (request.ui?.action === 'claude_waiting') return { ok: true, text: 'Ждут ответа: Починить сборку. Новый ответ: Учёба по конспектам.' };
+      return { ok: true, text: `сделано: ${request.ui?.action ?? '?'}` };
+    }
     console.log(`  <- мост получил: ${request.kind}${request.quick ? ' (коротко)' : ''} ${request.text ?? ''}`);
     // Запуск отвечает тем, что у него попросили, как настоящий мост. Прежде
     // здесь была заготовка «Запускаю: собрать список ссылок» под одну фразу, и
@@ -166,9 +183,15 @@ async function main(): Promise<void> {
     // дал «мост получил: start найти погоду в Тель-Авиве на завтра».
     // Дописывание шага проверяет третья фраза.
     'а пока отдельно найди мне погоду в Тель-Авиве на завтра',
-    // Короткое дело — одно действие на экране: разговор помечает его quick,
-    // и оно идёт быстрой полосой (Sonnet, сжатая инструкция).
-    'и ещё переключи браузер на вторую вкладку',
+    // Короткое дело прежде шло агенту быстрой полосой (quick). Теперь у
+    // разговора свои руки: сайт — одним вызовом open_site. Первый прогон
+    // 30.09.2026 без него собирал сайт из новой вкладки, печати адреса и
+    // просьбы к человеку нажать Enter — пять вызовов и 13 секунд.
+    'и ещё открой в браузере сайт ютуба',
+    // Руки на экране: приложение Claude голосом (просьба владельца 30.09.2026).
+    'переключись в клоде на раздел код',
+    'напиши клоду: проверь, почему упала сборка',
+    'какие сессии в клоде ждут ответа',
     // «Обе»: к этому ходу работ две — отчёт и погода. На «всё, останови»
     // разговор законно переспрашивал, какую, и 26.09.2026 проверка объявила
     // поломкой верный вопрос. В настоящем Джарвисе «всё, останови» ловит слой
@@ -236,9 +259,13 @@ async function main(): Promise<void> {
     ['pause_work дошёл до моста', виды.has('pause')],
     ['resume_work дошёл до моста', виды.has('resume')],
     ['разговор отвечал вслух', настоящиеОтветы.length > 0],
-    ['короткое дело помечено quick', просьбы.some((п) => п.kind === 'start' && п.quick === true)],
+    ['сайт открыт одним вызовом, без агента', просьбы.some((п) => п.kind === 'ui' && п.ui?.action === 'site' && /ют|you/iu.test(п.ui.target ?? '')) && !просьбы.some((п) => п.kind === 'start' && /ют|you/iu.test(п.text ?? ''))],
     ['поиск погоды не помечен коротким', !просьбы.some((п) => п.kind === 'start' && п.quick === true && /погод/iu.test(п.text ?? ''))],
     ['ящик не побит', ящикБит === ''],
+    ['руки: переключил или нажал сам', просьбы.some((п) => п.kind === 'ui' && ['switch', 'press', 'menu', 'keys'].includes(п.ui?.action ?? ''))],
+    ['руки: написал Claude', просьбы.some((п) => п.kind === 'ui' && п.ui?.action === 'claude_send' && /сборк/iu.test(п.ui.text ?? ''))],
+    ['руки: спросил, кто ждёт', просьбы.some((п) => п.kind === 'ui' && п.ui?.action === 'claude_waiting')],
+    ['экранное дело не ушло в работу', !просьбы.some((п) => п.kind === 'start' && /клод|claude|сборк|сесси/iu.test(п.text ?? ''))],
   ];
 
   let плохо = 0;

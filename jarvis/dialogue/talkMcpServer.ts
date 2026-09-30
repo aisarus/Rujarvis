@@ -4,9 +4,14 @@
  * ## Почему это отдельный сервер, а не часть рабочего
  *
  * Не для порядка, а ради безопасности. Роль задаётся при запуске процесса:
- * в рабочем сервере этих глаголов нет вовсе, а здесь нет ни экрана, ни мыши,
- * ни браузера, ни файлов. Разговор не может «случайно» дотянуться до рабочих
+ * в рабочем сервере этих глаголов нет вовсе, а здесь нет ни браузера, ни
+ * файлов, ни команд. Разговор не может «случайно» дотянуться до рабочих
  * инструментов — их нет в его процессе, а не «есть, но запрещены».
+ *
+ * Экран у разговора есть, но узкий и чужими руками (30.09.2026): переключиться,
+ * нажать, пройти меню, клавиши, текст в поле, приложение Claude. Всё это
+ * просьбы к главному процессу через мост, а исполняет и проверяет там
+ * `uiHands.ts`: покупку, отправку и Enter модель не нажимает.
  *
  * ## Почему часть рычагов работает прямо здесь, а часть через мост
  *
@@ -33,7 +38,7 @@ import { z } from 'zod';
 import { JournalStore } from '../memory/journalStore';
 import { NoteStore } from './noteStore';
 import { PlanStore } from '../agent/planStore';
-import { TalkBridge } from './talkBridge';
+import { TalkBridge, type TalkUiRequest } from './talkBridge';
 import { TALK_SERVER } from './talkSession';
 import { addStep, renderPlan } from '../agent/plan';
 import { jarvisDataRoot } from '../setup/paths';
@@ -207,6 +212,145 @@ export function createTalkMcpServer(bridge = new TalkBridge(bridgeDir())): McpSe
       if (recent.length > 0) parts.push(`Недавно:\n${recent.join('\n')}`);
       return say(parts.join('\n\n'));
     },
+  );
+
+  // ——— Руки на экране ———
+  //
+  // Раньше у разговора их не было вовсе, и «переключись на клуб» (ослышка
+  // «Клода») уходило агенту — десять секунд на одно нажатие, — а «не нашёл»
+  // от прямой команды было концом. Теперь разговор видит список на экране и
+  // жмёт сам. Исполняет главный процесс (`uiHands.ts`) — там же проверка
+  // красных линий: покупку, отправку и Enter модель не нажимает.
+  const ui = async (request: TalkUiRequest) => {
+    const answer = await bridge.ask('ui', undefined, { ui: request });
+    return answer.ok ? say(answer.text) : refused(answer.text);
+  };
+
+  server.registerTool(
+    'screen_overview',
+    {
+      title: 'Что на экране',
+      description:
+        'Окна, активное окно и то, что в нём можно открыть или нажать: вкладки, разделы, пункты меню, ' +
+        'кнопки, поля — с точными названиями. Зови, когда человек просит переключиться, открыть или нажать, ' +
+        'а ты не уверен, как это называется на экране (названия часто по-английски или на иврите).',
+      inputSchema: {},
+    },
+    () => ui({ action: 'screen' }),
+  );
+
+  server.registerTool(
+    'switch_to',
+    {
+      title: 'Переключиться',
+      description:
+        'Переключиться на окно, вкладку браузера или вкладку/раздел внутри активного окна — по названию. ' +
+        'Лучше точное название из screen_overview; ослышку («клад» про Claude) исправь сам.',
+      inputSchema: { target: z.string().describe('Название окна, вкладки или раздела.') },
+    },
+    ({ target }) => ui({ action: 'switch', target }),
+  );
+
+  server.registerTool(
+    'press_control',
+    {
+      title: 'Нажать',
+      description:
+        'Нажать кнопку, пункт, ссылку или переключатель в активном окне (или в названном окне — сначала ' +
+        'переключится). Кнопки покупки и отправки тебе нельзя — это нажимает только человек.',
+      inputSchema: {
+        target: z.string().describe('Точное название с экрана.'),
+        window: z.string().optional().describe('Окно, в котором нажать, если не в активном.'),
+      },
+    },
+    ({ target, window }) => ui({ action: 'press', target, window }),
+  );
+
+  server.registerTool(
+    'open_menu',
+    {
+      title: 'Пройти по меню',
+      description: 'Меню по пути в активном окне: ["Файл", "Экспорт", "FBX"] — каждый шаг раскрывает следующий.',
+      inputSchema: { path: z.array(z.string()).min(1).max(8).describe('Пункты по порядку, как на экране.') },
+    },
+    ({ path }) => ui({ action: 'menu', path }),
+  );
+
+  server.registerTool(
+    'press_keys',
+    {
+      title: 'Клавиши',
+      description: 'Сочетание клавиш в активном окне: "ctrl+shift+t", "alt+tab", "f5". Enter тебе нельзя — он может отправить сообщение.',
+      inputSchema: { keys: z.string().describe('Клавиши через плюс.') },
+    },
+    ({ keys }) => ui({ action: 'keys', keys }),
+  );
+
+  server.registerTool(
+    'type_text',
+    {
+      title: 'Напечатать',
+      description: 'Напечатать текст в активное окно — в названное поле, если указано (например, в поиск). Enter не нажимается.',
+      inputSchema: {
+        text: z.string().describe('Что напечатать.'),
+        field: z.string().optional().describe('Поле по названию с экрана.'),
+      },
+    },
+    ({ text, field }) => ui({ action: 'type', text, target: field }),
+  );
+
+  server.registerTool(
+    'send_to_claude',
+    {
+      title: 'Написать Claude',
+      description:
+        'Отправить сообщение в открытую сессию приложения Claude (Claude Code или чат): текст в поле ввода и ' +
+        'отправка. Зови, когда человек говорит «напиши клоду…», «скажи клоду…», «спроси у клода…».',
+      inputSchema: { text: z.string().describe('Сообщение словами человека.') },
+    },
+    ({ text }) => ui({ action: 'claude_send', text }),
+  );
+
+  server.registerTool(
+    'claude_waiting',
+    {
+      title: 'Какие сессии Claude ждут',
+      description: 'Какие сессии в приложении Claude ждут ответа человека и где новый ответ.',
+      inputSchema: {},
+    },
+    () => ui({ action: 'claude_waiting' }),
+  );
+
+  server.registerTool(
+    'open_claude_session',
+    {
+      title: 'Открыть сессию Claude',
+      description: 'Открыть сессию в приложении Claude по названию (на слух: неточное название подойдёт).',
+      inputSchema: { name: z.string().describe('Название сессии.') },
+    },
+    ({ name }) => ui({ action: 'claude_session', target: name }),
+  );
+
+  server.registerTool(
+    'new_claude_session',
+    {
+      title: 'Новая сессия Claude',
+      description: 'Новая сессия в приложении Claude — в папке проекта, если назван («в Rujarvis»).',
+      inputSchema: { project: z.string().optional().describe('Проект (папка) для сессии.') },
+    },
+    ({ project }) => ui({ action: 'claude_new', target: project }),
+  );
+
+  server.registerTool(
+    'open_site',
+    {
+      title: 'Открыть сайт',
+      description:
+        'Открыть сайт в браузере человека — там его вход и закладки: по имени («ютуб», «гитхаб») или адресу. ' +
+        'Одним вызовом, без нажатий: не собирай это из новой вкладки, печати адреса и Enter.',
+      inputSchema: { name: z.string().describe('Имя сайта или адрес.') },
+    },
+    ({ name }) => ui({ action: 'site', target: name }),
   );
 
   return server;

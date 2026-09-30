@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-import { DesktopDriver, driverScriptPath } from './driver';
+import { DesktopDriver, driverScriptPath, списком } from './driver';
 
 describe('драйвер рабочего стола', () => {
   it('находит свой PowerShell-скрипт', () => {
@@ -58,4 +58,14 @@ describe('прогрев драйвера', () => {
     const тёплая = await первая(true);
     expect(тёплая, `тёплая ${Math.round(тёплая)} мс, холодная ${Math.round(холодная)} мс`).toBeLessThan(холодная / 2);
   }, 60_000);
+});
+
+describe('списком', () => {
+  it('ответ PowerShell — всегда массив: пустой `{}`, `null` и одиночный объект', () => {
+    expect(списком({})).toEqual([]);
+    expect(списком(null)).toEqual([]);
+    expect(списком(undefined)).toEqual([]);
+    expect(списком({ name: 'OK' })).toEqual([{ name: 'OK' }]);
+    expect(списком([1, 2])).toEqual([1, 2]);
+  });
 });

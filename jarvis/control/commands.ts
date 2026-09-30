@@ -45,6 +45,18 @@ export type DirectCommand =
   | { kind: 'lectureFile' }
   /** Окно учёбы: квизы, карточки, экзамен. */
   | { kind: 'study' }
+  /** Приложение Claude: написать в открытую сессию и отправить. */
+  | { kind: 'claudeSend'; text: string }
+  /** Какие сессии Claude ждут ответа. */
+  | { kind: 'claudeWaiting' }
+  /** Открыть сессию Claude по названию. */
+  | { kind: 'claudeSession'; name: string }
+  /** Новая сессия Claude — в проекте, если назван. */
+  | { kind: 'claudeNew'; project?: string }
+  /** Прервать ответ Claude — кнопкой Stop в приложении. */
+  | { kind: 'claudeInterrupt' }
+  /** Раздел приложения Claude: Code или Chat. */
+  | { kind: 'claudeMode'; mode: 'code' | 'chat' }
   | { kind: 'dictation'; on: boolean }
   | { kind: 'clickNamed'; query: string }
   /** N-я ссылка страницы в браузере; -1 — последняя. */
@@ -618,6 +630,11 @@ const CLICKS: Record<string, { button: 'left' | 'right' | 'middle'; double?: boo
 };
 
 export function parseDirectCommand(utterance: string): DirectCommand | null {
+  // «Напиши клоду …» — раньше нормализации: текст уходит Claude как сказан,
+  // с заглавными и знаками, а не строчными словами без запятых.
+  const клоду = readClaudeSend(utterance);
+  if (клоду) return клоду;
+
   const exact = normalise(utterance);
   if (!exact) return null;
 
@@ -731,6 +748,39 @@ const ПРАВИЛА: Array<Rule<DirectCommand>> = [
   { pattern: '(открой|покажи) окно (учёбы|учебы)', make: () => ({ kind: 'study' }) },
   { pattern: '(учёба|учеба)', make: () => ({ kind: 'study' }) },
   { pattern: '(open|show) [the] study [window]', make: () => ({ kind: 'study' }) },
+
+  // ПРИЛОЖЕНИЕ CLAUDE (просьба владельца 30.09.2026: «напрямую контактировать с
+  // Claude Code голосом полностью»). «Прерви», а не «останови»: «останови» и
+  // «стоп» — слова остановки самого Джарвиса, их занимать нельзя.
+  { pattern: '(открой|включи|покажи) (клод|клауд|клад) код', make: () => ({ kind: 'claudeMode', mode: 'code' }) },
+  { pattern: '(переключись|перейди) (на|в) (клод|клауд|клад) код', make: () => ({ kind: 'claudeMode', mode: 'code' }) },
+  { pattern: '(клод|клауд|клад) код', make: () => ({ kind: 'claudeMode', mode: 'code' }) },
+  { pattern: '(открой|включи|покажи) (клод|клауд|клад) чат', make: () => ({ kind: 'claudeMode', mode: 'chat' }) },
+  { pattern: '(переключись|перейди) (на|в) (клод|клауд|клад) чат', make: () => ({ kind: 'claudeMode', mode: 'chat' }) },
+  { pattern: '(клод|клауд|клад) чат', make: () => ({ kind: 'claudeMode', mode: 'chat' }) },
+  { pattern: '[open] (claude|cloud) code', make: () => ({ kind: 'claudeMode', mode: 'code' }) },
+  { pattern: 'switch to (claude|cloud) code', make: () => ({ kind: 'claudeMode', mode: 'code' }) },
+  { pattern: '[open] (claude|cloud) chat', make: () => ({ kind: 'claudeMode', mode: 'chat' }) },
+  { pattern: 'switch to (claude|cloud) chat', make: () => ({ kind: 'claudeMode', mode: 'chat' }) },
+  { pattern: 'какие сессии (ждут|ждет|ждёт) [ответа]', make: () => ({ kind: 'claudeWaiting' }) },
+  { pattern: 'кто (ждет|ждёт) [ответа]', make: () => ({ kind: 'claudeWaiting' }) },
+  { pattern: 'что (ждет|ждёт) в (клоде|клауде|кладе)', make: () => ({ kind: 'claudeWaiting' }) },
+  { pattern: 'which sessions are waiting', make: () => ({ kind: 'claudeWaiting' }) },
+  { pattern: 'who is waiting [for] [an] [answer]', make: () => ({ kind: 'claudeWaiting' }) },
+  { pattern: '(открой|покажи) сессию {имя}', make: (s) => ({ kind: 'claudeSession', name: s.имя as string }) },
+  { pattern: '(перейди|переключись) (в|на) сессию {имя}', make: (s) => ({ kind: 'claudeSession', name: s.имя as string }) },
+  { pattern: '(open|show) [the] session {name}', make: (s) => ({ kind: 'claudeSession', name: s.name as string }) },
+  { pattern: '(go|switch) to [the] session {name}', make: (s) => ({ kind: 'claudeSession', name: s.name as string }) },
+  { pattern: '[создай|открой|начни] (новая|новую) сессия в проекте {проект}', make: (s) => ({ kind: 'claudeNew', project: s.проект as string }) },
+  { pattern: '[создай|открой|начни] (новая|новую) сессию в проекте {проект}', make: (s) => ({ kind: 'claudeNew', project: s.проект as string }) },
+  { pattern: '[создай|открой|начни] (новая|новую) сессия в {проект}', make: (s) => ({ kind: 'claudeNew', project: s.проект as string }) },
+  { pattern: '[создай|открой|начни] (новая|новую) сессию в {проект}', make: (s) => ({ kind: 'claudeNew', project: s.проект as string }) },
+  { pattern: '[создай|открой|начни] (новая|новую) (сессия|сессию)', make: () => ({ kind: 'claudeNew' }) },
+  { pattern: '[start|open|create] [a] new session in [the] project {project}', make: (s) => ({ kind: 'claudeNew', project: s.project as string }) },
+  { pattern: '[start|open|create] [a] new session in [the] {project}', make: (s) => ({ kind: 'claudeNew', project: s.project as string }) },
+  { pattern: '[start|open|create] [a] new session', make: () => ({ kind: 'claudeNew' }) },
+  { pattern: 'прерви (клода|клауда|клада|клод|ответ)', make: () => ({ kind: 'claudeInterrupt' }) },
+  { pattern: 'interrupt (claude|cloud)', make: () => ({ kind: 'claudeInterrupt' }) },
 
   // ЗАПИСЬ — кнопкой активного окна (диктофон, OBS), а не агентом: живой
   // журнал 29.09.2026 — «начни записывать» четыре минуты, «останови запись»
@@ -919,6 +969,11 @@ function readDirect(phrase: string): DirectCommand | null {
   const key = KEYS[stripPressVerb(phrase)] ?? KEYS[phrase];
   if (key) return { kind: 'key', keys: key };
 
+  // Сочетание клавиш словами — до клика по названию: «нажми Alt Tab» (живой
+  // журнал 30.09.2026) искало на экране кнопку с названием «alt».
+  const combo = readKeyCombo(phrase);
+  if (combo) return combo;
+
   const amount = SCROLLS[phrase];
   if (amount !== undefined) return { kind: 'scroll', amount };
 
@@ -1092,6 +1147,30 @@ function громкостьЧислом(phrase: string): DirectCommand | null {
   return level !== null && level >= 0 && level <= 100 ? { kind: 'volume', level } : null;
 }
 
+/** Как распознаватель пишет «Claude»: клод, клоду, клауд, клад, cloud. */
+const CLAUDE_СЛОВОМ = String.raw`(?:клод|клауд|клад|клот|claude|cloud|clod)(?:у|а|е|ом)?(?!\p{L})`;
+const НАПИШИ_CLAUDE = new RegExp(
+  String.raw`^(?:напиши|скажи|передай|отправь|спроси|попроси)\s+` + CLAUDE_СЛОВОМ + String.raw`[\s,:.!—-]*(\S.*)$`,
+  'isu',
+);
+const TELL_CLAUDE = new RegExp(
+  String.raw`^(?:tell|ask|write to|message|send to)\s+` + CLAUDE_СЛОВОМ + String.raw`[\s,:.!—-]*(\S.*)$`,
+  'isu',
+);
+const ОБРАЩЕНИЕ = new RegExp(String.raw`^(?:${[...WAKE_WORD_VARIANTS, 'jarvis'].join('|')})[\s,.!]+`, 'iu');
+
+/**
+ * «Напиши клоду: почини сборку» — текст в открытую сессию приложения Claude.
+ * Получатель — Claude, а не человек, поэтому это не «общение с людьми».
+ */
+function readClaudeSend(utterance: string): DirectCommand | null {
+  const фраза = utterance.trim().replace(ОБРАЩЕНИЕ, '');
+  const найдено = НАПИШИ_CLAUDE.exec(фраза) ?? TELL_CLAUDE.exec(фраза);
+  // «Tell Claude to run the tests» — Claude получает «run the tests».
+  const text = найдено?.[1]?.replace(/^(?:to|that)\s+/iu, '').trim();
+  return text ? { kind: 'claudeSend', text } : null;
+}
+
 function readFocus(phrase: string): DirectCommand | null {
   for (const prefix of FOCUS_PREFIXES) {
     if (!phrase.startsWith(`${prefix} `)) continue;
@@ -1119,6 +1198,72 @@ function readDictation(phrase: string): DirectCommand | null {
     return { kind: 'type', text };
   }
   return null;
+}
+
+/** Названия клавиш вслух → имена драйвера. Модификаторы — отдельно: они идут первыми. */
+const МОДИФИКАТОРЫ: Record<string, string> = {
+  ctrl: 'ctrl', control: 'ctrl', контрол: 'ctrl', контроль: 'ctrl', ктрл: 'ctrl', кантрол: 'ctrl',
+  alt: 'alt', альт: 'alt', альтом: 'alt',
+  shift: 'shift', шифт: 'shift', шифтом: 'shift',
+  win: 'win', windows: 'win', виндовс: 'win', вин: 'win', виндоус: 'win',
+};
+
+const КЛАВИШИ_ВСЛУХ: Record<string, string> = {
+  tab: 'tab', таб: 'tab', enter: 'enter', энтер: 'enter', ентер: 'enter', интер: 'enter',
+  escape: 'escape', esc: 'escape', эскейп: 'escape', эскейпт: 'escape',
+  space: 'space', пробел: 'space', спейс: 'space',
+  delete: 'delete', делит: 'delete', backspace: 'backspace', бекспейс: 'backspace', бэкспейс: 'backspace',
+  home: 'home', хоум: 'home', end: 'end', энд: 'end',
+  up: 'up', вверх: 'up', down: 'down', вниз: 'down', left: 'left', влево: 'left', right: 'right', вправо: 'right',
+  pageup: 'pageup', pagedown: 'pagedown',
+};
+
+/** Буква вслух → клавиша: латинская как есть, русская — по звучанию («т» — T). */
+const БУКВА_ПО_ЗВУКУ: Record<string, string> = {
+  а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ж: 'j', з: 'z', и: 'i', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o',
+  п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'c', ы: 'y', э: 'e', икс: 'x', эф: 'f', зет: 'z', ку: 'q',
+};
+
+const ЧИСЛА_F: Record<string, number> = {
+  один: 1, два: 2, три: 3, четыре: 4, пять: 5, шесть: 6, семь: 7, восемь: 8, девять: 9, десять: 10, одиннадцать: 11, двенадцать: 12,
+};
+
+function клавишаВслух(слово: string): string | null {
+  if (КЛАВИШИ_ВСЛУХ[слово]) return КЛАВИШИ_ВСЛУХ[слово] ?? null;
+  const f = /^(?:f|ф)(\d{1,2})$/u.exec(слово);
+  if (f && Number(f[1]) >= 1 && Number(f[1]) <= 12) return `f${f[1]}`;
+  if (/^[a-z0-9]$/u.test(слово)) return слово;
+  return БУКВА_ПО_ЗВУКУ[слово] ?? null;
+}
+
+/**
+ * «Нажми альт таб», «контрол шифт т», «ctrl shift esc», «альт эф четыре».
+ *
+ * Сочетание — это хотя бы один модификатор и ровно одна клавиша после них.
+ * Одиночные клавиши без модификатора знает таблица `KEYS`; здесь их не берём,
+ * иначе «нажми т» стало бы буквой, а не кнопкой с таким названием.
+ */
+export function readKeyCombo(phrase: string): DirectCommand | null {
+  // «Контрол плюс шифт плюс т» — «плюс» только разделитель.
+  const слова = stripPressVerb(phrase)
+    .split(/[\s+]+/u)
+    .filter((w) => w && w !== 'плюс' && w !== 'plus');
+  if (слова.length < 2 || слова.length > 5) return null;
+  const модификаторы: string[] = [];
+  let i = 0;
+  for (; i < слова.length && МОДИФИКАТОРЫ[слова[i] ?? '']; i += 1) {
+    const м = МОДИФИКАТОРЫ[слова[i] ?? ''] as string;
+    if (!модификаторы.includes(м)) модификаторы.push(м);
+  }
+  if (модификаторы.length === 0) return null;
+  const хвост = слова.slice(i);
+  // «Эф четыре» — одна клавиша двумя словами.
+  if (хвост.length === 2 && (хвост[0] === 'эф' || хвост[0] === 'f') && ЧИСЛА_F[хвост[1] ?? '']) {
+    return { kind: 'key', keys: [...модификаторы, `f${ЧИСЛА_F[хвост[1] ?? '']}`].join('+') };
+  }
+  if (хвост.length !== 1) return null;
+  const клавиша = клавишаВслух(хвост[0] ?? '');
+  return клавиша ? { kind: 'key', keys: [...модификаторы, клавиша].join('+') } : null;
 }
 
 function stripPressVerb(phrase: string): string {

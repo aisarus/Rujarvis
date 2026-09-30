@@ -38,10 +38,36 @@ import {
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-/** Что разговор просит сделать руками рабочего потока. */
-export type TalkCommandKind = 'start' | 'stop' | 'pause' | 'resume';
+/** Что разговор просит сделать руками рабочего потока — или руками на экране (`ui`). */
+export type TalkCommandKind = 'start' | 'stop' | 'pause' | 'resume' | 'ui';
 
-const ВИДЫ = new Set<TalkCommandKind>(['start', 'stop', 'pause', 'resume']);
+const ВИДЫ = new Set<TalkCommandKind>(['start', 'stop', 'pause', 'resume', 'ui']);
+
+/** Действие на экране по просьбе разговора — исполняет главный процесс (`uiHands.ts`). */
+export type TalkUiAction =
+  | 'screen'
+  | 'switch'
+  | 'press'
+  | 'menu'
+  | 'keys'
+  | 'type'
+  /** Сайт по имени или адресу — в браузере человека. */
+  | 'site'
+  | 'claude_send'
+  | 'claude_waiting'
+  | 'claude_session'
+  | 'claude_new';
+
+const ДЕЙСТВИЯ = new Set<TalkUiAction>(['screen', 'switch', 'press', 'menu', 'keys', 'type', 'site', 'claude_send', 'claude_waiting', 'claude_session', 'claude_new']);
+
+export interface TalkUiRequest {
+  action: TalkUiAction;
+  target?: string;
+  window?: string;
+  path?: string[];
+  keys?: string;
+  text?: string;
+}
 
 export interface TalkRequest {
   id: string;
@@ -50,6 +76,8 @@ export interface TalkRequest {
   text?: string;
   /** Короткое дело для `start` — быстрая полоса. */
   quick?: boolean;
+  /** Действие на экране для `ui`. */
+  ui?: TalkUiRequest;
   at: number;
 }
 
@@ -99,9 +127,9 @@ export class TalkBridge {
    * Отказ — такой же ответ, как согласие. Молчание в инструменте читается
    * моделью как успех, и разговор скажет человеку «запустил» про незапущенное.
    */
-  async ask(kind: TalkCommandKind, text?: string, { quick }: { quick?: boolean } = {}): Promise<TalkAnswer> {
+  async ask(kind: TalkCommandKind, text?: string, { quick, ui }: { quick?: boolean; ui?: TalkUiRequest } = {}): Promise<TalkAnswer> {
     const id = randomUUID();
-    const request: TalkRequest = { id, kind, text, ...(quick ? { quick: true } : {}), at: this.now() };
+    const request: TalkRequest = { id, kind, text, ...(quick ? { quick: true } : {}), ...(ui ? { ui } : {}), at: this.now() };
 
     try {
       mkdirSync(this.dir, { recursive: true });
@@ -257,16 +285,36 @@ function readRequest(file: string): TalkRequest | null {
     // id идёт в имя файла ответа: из чужого процесса мог прийти и «../../x».
     if (typeof request.id !== 'string' || !/^[a-z0-9-]{1,64}$/iu.test(request.id)) return null;
     if (!ВИДЫ.has(request.kind as TalkCommandKind)) return null;
+    const ui = request.kind === 'ui' ? readUi(request.ui) : undefined;
+    if (request.kind === 'ui' && !ui) return null;
     return {
       id: request.id,
       kind: request.kind as TalkCommandKind,
       text: typeof request.text === 'string' ? request.text : undefined,
       ...(request.quick === true ? { quick: true } : {}),
+      ...(ui ? { ui } : {}),
       at: typeof request.at === 'number' ? request.at : 0,
     };
   } catch {
     return null;
   }
+}
+
+/** Запрос экрана из чужого процесса — только известные действия и строки разумной длины. */
+function readUi(raw: unknown): TalkUiRequest | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+  if (!ДЕЙСТВИЯ.has(r.action as TalkUiAction)) return undefined;
+  const строка = (v: unknown, max: number): string | undefined => (typeof v === 'string' && v.length <= max ? v : undefined);
+  const path = Array.isArray(r.path) ? r.path.filter((x): x is string => typeof x === 'string' && x.length <= 120).slice(0, 8) : undefined;
+  return {
+    action: r.action as TalkUiAction,
+    target: строка(r.target, 200),
+    window: строка(r.window, 200),
+    path,
+    keys: строка(r.keys, 60),
+    text: строка(r.text, 4000),
+  };
 }
 
 function drop(file: string): void {

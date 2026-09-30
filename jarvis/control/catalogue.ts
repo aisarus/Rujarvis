@@ -114,6 +114,8 @@ function russianCatalogue(): CatalogueGroup[] {
         { say: 'сохрани', does: 'сохранить', layer: 'direct' },
         { say: 'найди', does: 'поиск по странице', layer: 'direct' },
         { say: 'обнови', does: 'обновить', layer: 'direct' },
+        { say: 'нажми контрол шифт т', does: 'любое сочетание: модификаторы и одна клавиша', layer: 'direct' },
+        { say: 'альт эф четыре', does: 'alt+f4', layer: 'direct' },
       ],
     },
     {
@@ -152,6 +154,18 @@ function russianCatalogue(): CatalogueGroup[] {
         { say: 'перенеси конспект в социологию', does: 'лекция идёт — писать в этот курс; кончилась — перенести её туда', layer: 'direct' },
         { say: 'конспект по последней записи', does: 'конспект по свежему звуку или видео из «Загрузок»', layer: 'direct' },
         { say: 'открой учёбу', does: 'окно учёбы: что повторить сегодня, квизы, карточки, экзамен', layer: 'direct' },
+      ],
+    },
+    {
+      title: 'Приложение Claude',
+      items: [
+        { say: 'клод код', does: 'открыть Claude и раздел Code', layer: 'direct' },
+        { say: 'клод чат', does: 'раздел Chat', layer: 'direct' },
+        { say: 'напиши клоду почини сборку', does: 'написать в открытую сессию и отправить', layer: 'direct' },
+        { say: 'кто ждёт ответа', does: 'какие сессии ждут ответа и где новый ответ', layer: 'direct' },
+        { say: 'открой сессию джарвис код', does: 'открыть сессию по названию', layer: 'direct' },
+        { say: 'новая сессия в мерчант', does: 'новая сессия в проекте', layer: 'direct' },
+        { say: 'прерви клода', does: 'кнопка Stop: прервать ответ', layer: 'direct' },
       ],
     },
     {
@@ -259,6 +273,8 @@ function englishCatalogue(): CatalogueGroup[] {
         { say: 'save', does: 'save', layer: 'direct' },
         { say: 'find', does: 'search the page', layer: 'direct' },
         { say: 'refresh', does: 'reload', layer: 'direct' },
+        { say: 'press control shift t', does: 'any combination: modifiers and one key', layer: 'direct' },
+        { say: 'alt f4', does: 'alt+f4', layer: 'direct' },
       ],
     },
     {
@@ -294,6 +310,18 @@ function englishCatalogue(): CatalogueGroup[] {
         { say: 'move the notes to sociology', does: 'during a lecture — write to that course; after — move it there', layer: 'direct' },
         { say: 'notes from the latest recording', does: 'notes from the newest audio or video in Downloads', layer: 'direct' },
         { say: 'open study', does: 'the study window: what to review today, quizzes, cards, exam practice', layer: 'direct' },
+      ],
+    },
+    {
+      title: 'Claude app',
+      items: [
+        { say: 'claude code', does: 'open Claude on the Code tab', layer: 'direct' },
+        { say: 'claude chat', does: 'the Chat tab', layer: 'direct' },
+        { say: 'tell claude to fix the build', does: 'type into the open session and send', layer: 'direct' },
+        { say: 'who is waiting', does: 'which sessions wait for you and which have new replies', layer: 'direct' },
+        { say: 'open session merchant', does: 'open a session by name', layer: 'direct' },
+        { say: 'new session in merchant', does: 'a new session in a project', layer: 'direct' },
+        { say: 'interrupt claude', does: 'the Stop button: interrupt the reply', layer: 'direct' },
       ],
     },
     {
