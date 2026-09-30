@@ -18,6 +18,7 @@ import { jarvisPaths } from '../jarvis/setup/paths';
 import { SettingsStore } from '../jarvis/setup/settings';
 import { запроситьРазрешения, чегоНеХватает, type Система } from './macPermissions';
 import { openSettingsWindow } from './settingsWindow';
+import { configureStudy, showStudy } from './study';
 import { uiStrings } from './ui/strings';
 import { startJarvisVoiceBridge, type JarvisVoiceBridge } from './voiceBridge';
 
@@ -58,6 +59,9 @@ const settings = new SettingsStore(PATHS.settings);
 // проверке своей модели приходит оттуда.
 setLanguage(settings.get().language);
 settings.subscribe((next) => setLanguage(next.language));
+
+// Учёба: окно открывается из трея, с плашки и голосом.
+configureStudy({ settings: () => settings.get(), paths: PATHS });
 let bridge: JarvisVoiceBridge | null = null;
 let starting: Promise<void> | null = null;
 let tray: Tray | null = null;
@@ -198,6 +202,7 @@ function refreshTray(): void {
       { label: status, enabled: false },
       { type: 'separator' },
       { label: t.trayEvents, enabled: Boolean(bridge), click: () => bridge?.showEvents() },
+      { label: t.trayStudy, click: () => showStudy() },
       // Микрофон — и мышью тоже.
       //
       // Выключался он только сочетанием Ctrl+M, а голосом вернуть слух нельзя

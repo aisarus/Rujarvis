@@ -151,6 +151,7 @@ function russianCatalogue(): CatalogueGroup[] {
         { say: 'закончи конспект', does: 'дописать итог и закрыть запись', layer: 'direct' },
         { say: 'перенеси конспект в социологию', does: 'лекция идёт — писать в этот курс; кончилась — перенести её туда', layer: 'direct' },
         { say: 'конспект по последней записи', does: 'конспект по свежему звуку или видео из «Загрузок»', layer: 'direct' },
+        { say: 'открой учёбу', does: 'окно учёбы: что повторить сегодня, квизы, карточки, экзамен', layer: 'direct' },
       ],
     },
     {
@@ -292,6 +293,7 @@ function englishCatalogue(): CatalogueGroup[] {
         { say: 'stop lecture notes', does: 'write the summary and close the recording', layer: 'direct' },
         { say: 'move the notes to sociology', does: 'during a lecture — write to that course; after — move it there', layer: 'direct' },
         { say: 'notes from the latest recording', does: 'notes from the newest audio or video in Downloads', layer: 'direct' },
+        { say: 'open study', does: 'the study window: what to review today, quizzes, cards, exam practice', layer: 'direct' },
       ],
     },
     {

@@ -209,6 +209,11 @@ bash "$HOME/Library/Application Support/Rujarvis/src/uninstall.sh"
   Расшифровка уходит в Claude Code по подписке, звук — никуда. Проверено на
   записанных лекциях; живой микрофон в аудитории ещё не пробовали.
   [Подробно](docs/jarvis/lecture-notes.md).
+- Учёба по конспектам: окно «Учёба» (трей, плашка, «Джарвис, учёба») — что
+  повторить сегодня, курсы с темами и честной шкалой знания, квиз на языке
+  лекции с переводом и звуком лектора с той минуты, карточки, тренировка
+  экзамена, задачи. Вопросы готовит Claude Code по подписке после каждой
+  лекции. [Подробно](docs/jarvis/study.md).
 
 Нашли ошибку — [issue](https://github.com/aisarus/Rujarvis/issues) с логом
 (прочитайте его перед отправкой).
@@ -246,6 +251,7 @@ pnpm jarvis:roundtrip -- --en   # голос по кругу на настоящ
 - [Установка, настройки и что остаётся на диске](docs/jarvis/install.md)
 - [Архитектура и хук красных линий](docs/jarvis/architecture.md)
 - [Конспект лекции](docs/jarvis/lecture-notes.md)
+- [Учёба по конспектам](docs/jarvis/study.md)
 - [Заметки о дизайне](docs/jarvis/design/)
 - [Как помочь](CONTRIBUTING.md) · [Безопасность](SECURITY.md) · [Поддержка](SUPPORT.md)
 

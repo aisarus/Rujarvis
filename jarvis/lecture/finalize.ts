@@ -28,6 +28,7 @@ import {
   matchCourse,
   parseFrontmatter,
   safeName,
+  stripCourseGloss,
   withFrontmatter,
   type LectureMeta,
 } from './courses';
@@ -98,7 +99,8 @@ export async function finalizeLecture(input: FinalizeInput): Promise<FinalizeRes
   const с = NOTES_WORDS[input.notes];
   const к = COURSE_WORDS[input.notes];
   const известные = listCourses(input.root);
-  const названный = input.modelCourse ? safeName(input.modelCourse, 60) : '';
+  // Модель повторяет строку списка целиком — «Курс (на иврите)»: скобки прочь.
+  const названный = input.modelCourse ? safeName(stripCourseGloss(input.modelCourse), 60) : '';
   const курс =
     (input.course ? matchCourse(input.course, известные) ?? safeName(input.course, 60) : null) ||
     (названный ? matchCourse(названный, известные) ?? названный : '') ||

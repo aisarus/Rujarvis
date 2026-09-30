@@ -95,12 +95,14 @@ import {
   lectureActive,
   lectureFromFile,
   lectureState,
+  onLectureFiled,
   onLectureState,
   setLectureCourse,
   startLecture,
   type LectureStartOptions,
 } from './lectureMode';
 import { createFileDecoder } from './lectureFileDecode';
+import { prepareStudyFor, showStudy } from './study';
 import { lectureHeardForJarvis } from '../jarvis/lecture/voiceGate';
 import {
   createGpuTranscriber,
@@ -648,6 +650,10 @@ export async function runDirectCommand(
         await переключитьЛекцию(command.on, command.subject, (текст) => session.speak(текст));
         break;
       }
+      case 'study': {
+        showStudy();
+        break;
+      }
       case 'lectureCourse': {
         await session.speak(await setLectureCourse(command.course));
         break;
@@ -1011,6 +1017,8 @@ function describeDirect(command: DirectCommand): string {
       return command.on ? 'начал конспект лекции' : 'закончил конспект лекции';
     case 'lectureCourse':
       return `курс лекции: ${command.course}`;
+    case 'study':
+      return 'открыл окно учёбы';
     case 'lectureFile':
       return 'конспект по последней записи';
     case 'volume':
@@ -1425,6 +1433,7 @@ async function поднятьМост(options: {
         .then((текст) => overlay.note(session.status, текст))
         .catch((error: unknown) => console.error(`[jarvis:lecture] курс не сменился: ${error instanceof Error ? error.message : String(error)}`));
     },
+    onStudy: () => showStudy(),
     onFile: (file) => {
       if (lectureState() !== 'off') return;
       void конспектПоФайлу(file, (текст) => overlay.note(session.status, текст)).catch((error: unknown) => {
@@ -1433,6 +1442,8 @@ async function поднятьМост(options: {
       });
     },
   });
+  // Лекция легла в курс — вопросы, карточки и задачи к ней готовятся в фоне.
+  onLectureFiled(prepareStudyFor);
   const отписатьЛекцию = onLectureState((state, info) => {
     overlay.setLecture(state);
     overlay.setLectureInfo(info);

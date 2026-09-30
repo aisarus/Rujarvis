@@ -27,7 +27,7 @@ import path from 'node:path';
 
 import { createGpuTranscriber } from '../../app/gpuTranscriber';
 import { splitAtPauses } from '../../jarvis/lecture/audioCut';
-import { listCourses, parseFrontmatter } from '../../jarvis/lecture/courses';
+import { coursesForModel, parseFrontmatter } from '../../jarvis/lecture/courses';
 import { finalizeLecture } from '../../jarvis/lecture/finalize';
 import { BAD_CONFIDENCE } from '../../jarvis/lecture/hearing';
 import { LectureSession } from '../../jarvis/lecture/session';
@@ -171,7 +171,7 @@ async function main(): Promise<void> {
     // Куски — по паузам, как их режет живая лекция.
     for (const [от, до] of splitAtPauses(звук, 16_000)) сессия.addAudio(звук.subarray(от, до), 16_000);
     const t0 = Date.now();
-    const итог = await сессия.finish(listCourses(папка));
+    const итог = await сессия.finish(coursesForModel(папка));
     const место = await finalizeLecture({
       root: папка,
       notesFile: итог.notesFile,

@@ -123,7 +123,12 @@ export function renderFrontmatter(meta: LectureMeta, notes: NotesLanguage): stri
 }
 
 /** Свойства из начала заметки; не лекция Джарвиса — null. */
-export function parseFrontmatter(text: string): LectureMeta | null {
+/**
+ * Свойства в начале заметки — плоско, ключ → строка. Значения в двойных
+ * кавычках (как пишет Джарвис) и в одинарных (так Obsidian и люди пишут
+ * иврит с апострофом: `'מתמטיקה א'''`) раскрываются.
+ */
+export function frontmatterFields(text: string): Map<string, string> | null {
   const m = /^---\r?\n([\s\S]*?)\r?\n---/u.exec(text);
   if (!m) return null;
   const поля = new Map<string, string>();
@@ -137,9 +142,17 @@ export function parseFrontmatter(text: string): LectureMeta | null {
       } catch {
         значение = значение.slice(1, -1);
       }
+    } else if (/^'.*'$/u.test(значение)) {
+      значение = значение.slice(1, -1).replace(/''/gu, "'");
     }
     поля.set((пара[1] ?? '').trim().toLowerCase(), значение);
   }
+  return поля;
+}
+
+export function parseFrontmatter(text: string): LectureMeta | null {
+  const поля = frontmatterFields(text);
+  if (!поля) return null;
   const взять = (ключ: keyof (typeof СВОЙСТВА)['ru']): string | undefined => поля.get(СВОЙСТВА.ru[ключ]) ?? поля.get(СВОЙСТВА.en[ключ]);
   const course = взять('course');
   const date = взять('date');
@@ -257,6 +270,102 @@ export function coursePage(existing: string | null, course: string, lectures: re
     return `${existing.trimEnd()}\n\n${блок}\n`;
   }
   return `# ${course}\n\n${блок}\n`;
+}
+
+// ——— Страница курса: код, иврит, расписание, экзамен ———
+
+/** Пара в неделе: день (0 — воскресенье, как у `Date.getDay`) и минуты от полуночи. */
+export interface CourseSlot {
+  day: number;
+  from: number;
+  to: number;
+}
+
+export interface CourseInfo {
+  name: string;
+  code?: string;
+  hebrew?: string;
+  credits?: number;
+  lecturer?: string;
+  slots: CourseSlot[];
+  /** Дата экзамена, YYYY-MM-DD. */
+  exam?: string;
+}
+
+const ДНИ: Record<string, number> = {
+  вс: 0, пн: 1, вт: 2, ср: 3, чт: 4, пт: 5, сб: 6,
+  sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6,
+};
+
+/** «вт 10:00-13:00; чт 12:00-14:00» → пары. Непонятное пропускается. */
+export function parseSchedule(text: string): CourseSlot[] {
+  const пары: CourseSlot[] = [];
+  for (const кусок of text.split(/[;,]/u)) {
+    const m = /^\s*([a-zа-яё]{2,3})\.?\s+(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})\s*$/iu.exec(кусок);
+    const день = m ? ДНИ[(m[1] ?? '').toLowerCase()] : undefined;
+    if (!m || день === undefined) continue;
+    пары.push({ day: день, from: Number(m[2]) * 60 + Number(m[3]), to: Number(m[4]) * 60 + Number(m[5]) });
+  }
+  return пары;
+}
+
+/** Что написано на странице курса (`Лекции/<курс>/<курс>.md`). Страницы нет — только имя. */
+export function readCourseInfo(root: string, course: string): CourseInfo {
+  let поля: Map<string, string> | null = null;
+  try {
+    поля = frontmatterFields(readFileSync(path.join(root, course, `${course}.md`), 'utf8'));
+  } catch {
+    поля = null;
+  }
+  const взять = (...ключи: string[]): string | undefined => {
+    for (const к of ключи) {
+      const v = поля?.get(к)?.trim();
+      if (v) return v;
+    }
+    return undefined;
+  };
+  const кредиты = Number(взять('кредиты', 'credits'));
+  const экзамен = взять('экзамен', 'exam');
+  return {
+    name: course,
+    code: взять('код', 'code'),
+    hebrew: взять('иврит', 'hebrew'),
+    credits: Number.isFinite(кредиты) && кредиты > 0 ? кредиты : undefined,
+    lecturer: взять('лектор', 'lecturer'),
+    slots: parseSchedule(взять('расписание', 'schedule') ?? ''),
+    exam: экзамен && /^\d{4}-\d{2}-\d{2}$/u.test(экзамен) ? экзамен : undefined,
+  };
+}
+
+/**
+ * Курс по расписанию со страниц курсов: пара в этот день недели, и сейчас —
+ * от получаса до её начала до её конца. Кнопку нажимают и заранее, и с
+ * опозданием. Две пары подходят — ближайшая по началу.
+ */
+export function guessByDeclared(when: Date, courses: readonly CourseInfo[]): string | null {
+  const сейчас = when.getHours() * 60 + when.getMinutes();
+  let лучший: { курс: string; до: number } | null = null;
+  for (const к of courses) {
+    for (const пара of к.slots) {
+      if (пара.day !== when.getDay() || сейчас < пара.from - 30 || сейчас > пара.to) continue;
+      const до = Math.abs(сейчас - пара.from);
+      if (!лучший || до < лучший.до) лучший = { курс: к.name, до };
+    }
+  }
+  return лучший?.курс ?? null;
+}
+
+/** Курсы для модели: имя и, если есть, название на иврите — лектор говорит на нём. */
+export function coursesForModel(root: string): string[] {
+  return listCourses(root).map((курс) => {
+    const иврит = readCourseInfo(root, курс).hebrew;
+    return иврит ? `${курс} (${иврит})` : курс;
+  });
+}
+
+/** «Курс (на иврите)» → «Курс»: модель повторяет строку списка целиком. */
+export function stripCourseGloss(name: string): string {
+  return name.replace(/\s*\([^)]*\)\s*$/u, '').trim();
 }
 
 /** Строки «Предмет: …» и «Тема: …» в начале ответа модели — и остальной ответ. */

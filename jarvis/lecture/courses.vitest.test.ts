@@ -9,13 +9,17 @@ import { segmentConfidence } from '../../app/gpuTranscriber';
 import { chunkLevel, cutAtPause, splitAtPauses } from './audioCut';
 import {
   coursePage,
+  guessByDeclared,
   guessBySchedule,
   lectureBase,
   listCourses,
   matchCourse,
   parseFrontmatter,
+  parseSchedule,
+  readCourseInfo,
   renderFrontmatter,
   splitCourseAndTopic,
+  stripCourseGloss,
   withFrontmatter,
 } from './courses';
 import { finalizeLecture, moveLecture } from './finalize';
@@ -121,6 +125,30 @@ describe('курсы', () => {
     expect(guessBySchedule(new Date(2026, 8, 29, 12, 30), лекции)).toBeNull(); // не тот час
   });
 
+  it('страница курса: иврит с апострофом, расписание, экзамен — и курс по расписанию с первой пары', async () => {
+    const root = await временная();
+    await mkdir(path.join(root, 'Математика А'));
+    await writeFile(
+      path.join(root, 'Математика А', 'Математика А.md'),
+      "---\nкурс: 'Математика А'\nкод: '66-4102'\nиврит: 'מתמטיקה א'''\nкредиты: 3\nрасписание: 'вт 16:00-19:00; чт 10:00-12:00'\nэкзамен: 2027-02-10\n---\n# Математика А\n",
+      'utf8',
+    );
+    const info = readCourseInfo(root, 'Математика А');
+    expect(info).toMatchObject({ code: '66-4102', hebrew: "מתמטיקה א'", credits: 3, exam: '2027-02-10' });
+    expect(info.slots).toEqual([
+      { day: 2, from: 960, to: 1140 },
+      { day: 4, from: 600, to: 720 },
+    ]);
+    const микро = { name: 'Микро', slots: parseSchedule('вт 10:00–13:00') };
+    // 20.10.2026 — вторник.
+    expect(guessByDeclared(new Date(2026, 9, 20, 15, 40), [info, микро])).toBe('Математика А'); // за двадцать минут до пары
+    expect(guessByDeclared(new Date(2026, 9, 20, 10, 5), [info, микро])).toBe('Микро');
+    expect(guessByDeclared(new Date(2026, 9, 20, 19, 30), [info, микро])).toBeNull();
+    expect(guessByDeclared(new Date(2026, 9, 21, 16, 0), [info, микро])).toBeNull(); // среда
+    expect(stripCourseGloss("Математика А (מתמטיקה א')")).toBe('Математика А');
+    expect(readCourseInfo(root, 'Нет такого')).toEqual({ name: 'Нет такого', slots: [] });
+  });
+
   it('свойства заметки: туда и обратно, в обоих языках, с двоеточием в теме', () => {
     const meta = { course: 'История', number: 3, date: '2026-09-29', start: '10:05', topic: 'Неолит: начало', duration: '1:28' };
     expect(parseFrontmatter(renderFrontmatter(meta, 'ru'))).toEqual(meta);
@@ -160,6 +188,7 @@ describe('курсы', () => {
     expect(withRange('### Пределы\n- пункт', 760_000, 1_075_000)).toBe('### Пределы (12:40–17:55)\n- пункт');
     expect(sectionTitle('### Пределы (12:40–17:55)')).toBe('Пределы');
     expect(sectionTitle('### Пределы (1:02:03–1:07:00)')).toBe('Пределы');
+    expect(sectionTitle('### Тема куска: Большая история')).toBe('Большая история');
   });
 
   it('разделы по расшифровке знают свои минуты', () => {

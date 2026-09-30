@@ -28,6 +28,8 @@ const common = {
 await Promise.all([
   esbuild.build({ ...common, entryPoints: ['app/main.ts'], outfile: 'dist/app/main.cjs' }),
   esbuild.build({ ...common, entryPoints: ['app/preload.ts'], outfile: 'dist/app/preload.cjs' }),
+  // Мост окна учёбы.
+  esbuild.build({ ...common, entryPoints: ['app/studyPreload.ts'], outfile: 'dist/app/studyPreload.cjs' }),
   esbuild.build({ ...common, entryPoints: ['jarvis/desktop/serve.ts'], outfile: 'dist/jarvis/desktop/mcp.cjs' }),
   // Приёмка: те же слои, тот же драйвер, но без микрофона (pnpm jarvis:qa).
   esbuild.build({ ...common, entryPoints: ['scripts/qa/acceptance.ts'], outfile: 'dist/qa/acceptance.cjs' }),
@@ -40,6 +42,8 @@ await Promise.all([
   esbuild.build({ ...common, entryPoints: ['scripts/qa/fake-mic-capture.ts'], outfile: 'dist/qa/fake-mic.cjs' }),
   // Конспект по файлу: mp3, m4a и видео раскрывает окно микрофона.
   esbuild.build({ ...common, entryPoints: ['scripts/qa/lecture-file-check.ts'], outfile: 'dist/qa/lecture-file-check.cjs' }),
+  // Окно учёбы настоящим Электроном, скрытым.
+  esbuild.build({ ...common, entryPoints: ['scripts/qa/study-window-check.ts'], outfile: 'dist/qa/study-window-check.cjs' }),
 ]);
 
 // Скрипт драйвера мыши и клавиатуры сервер ищет рядом с собой.

@@ -10,7 +10,7 @@
 import { closeSync, openSync, readdirSync, readFileSync, statSync, writeSync } from 'node:fs';
 import path from 'node:path';
 
-import { listCourses } from '../jarvis/lecture/courses';
+import { coursesForModel, listCourses } from '../jarvis/lecture/courses';
 import { finalizeLecture } from '../jarvis/lecture/finalize';
 import { finishFromTranscript } from '../jarvis/lecture/finishFromTranscript';
 import { createClaudeSummarizer } from '../jarvis/lecture/summarize';
@@ -98,7 +98,7 @@ async function main(): Promise<void> {
     summarize: createClaudeSummarizer(),
     lectureLanguage,
     notesLanguage: notes,
-    courses: listCourses(root),
+    courses: coursesForModel(root),
     log: (строка) => console.log(`  ${строка}`),
   });
   if (итог.skipped) {

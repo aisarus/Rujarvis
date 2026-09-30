@@ -41,6 +41,8 @@
     "jarvis:lecture-file-check": "node build.mjs && electron dist/qa/lecture-file-check.cjs",
     "jarvis:lecture-finish": "tsx scripts/jarvis-lecture-finish.ts",
     "jarvis:lecture-model": "tsx scripts/jarvis-lecture-model.ts",
+    "jarvis:study-prepare": "tsx scripts/jarvis-study-prepare.ts",
+    "jarvis:study-window-check": "node build.mjs && electron dist/qa/study-window-check.cjs",
     "jarvis:roundtrip": "tsx scripts/voice-roundtrip.ts",
     "jarvis:mac-check": "tsx scripts/probe-darwin-driver.ts",
     "jarvis:health": "node scripts/health.mjs",

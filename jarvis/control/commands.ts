@@ -43,6 +43,8 @@ export type DirectCommand =
   | { kind: 'lectureCourse'; course: string }
   /** Конспект по самой свежей записи из «Загрузок». */
   | { kind: 'lectureFile' }
+  /** Окно учёбы: квизы, карточки, экзамен. */
+  | { kind: 'study' }
   | { kind: 'dictation'; on: boolean }
   | { kind: 'clickNamed'; query: string }
   /** N-я ссылка страницы в браузере; -1 — последняя. */
@@ -723,6 +725,12 @@ const ПРАВИЛА: Array<Rule<DirectCommand>> = [
   { pattern: 'file [the] (notes|lecture) under {course}', make: (s) => ({ kind: 'lectureCourse', course: s.course as string }) },
   { pattern: '[сделай] конспект (по|из) (последней|свежей|последнего|свежего) (записи|файла)', make: () => ({ kind: 'lectureFile' }) },
   { pattern: '[take] [lecture] notes from [the] (last|latest) (recording|file)', make: () => ({ kind: 'lectureFile' }) },
+  // ОКНО УЧЁБЫ.
+  // Многословных вариантов в скобках грамматика не знает — каждый своей строкой.
+  { pattern: '(открой|покажи) (учёбу|учебу)', make: () => ({ kind: 'study' }) },
+  { pattern: '(открой|покажи) окно (учёбы|учебы)', make: () => ({ kind: 'study' }) },
+  { pattern: '(учёба|учеба)', make: () => ({ kind: 'study' }) },
+  { pattern: '(open|show) [the] study [window]', make: () => ({ kind: 'study' }) },
 
   // ЗАПИСЬ — кнопкой активного окна (диктофон, OBS), а не агентом: живой
   // журнал 29.09.2026 — «начни записывать» четыре минуты, «останови запись»

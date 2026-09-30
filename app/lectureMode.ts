@@ -37,7 +37,16 @@ import path from 'node:path';
 import { shell } from 'electron';
 
 import { chunkLevel } from '../jarvis/lecture/audioCut';
-import { guessBySchedule, listCourses, listLectures, matchCourse, parseFrontmatter } from '../jarvis/lecture/courses';
+import {
+  coursesForModel,
+  guessByDeclared,
+  guessBySchedule,
+  listCourses,
+  listLectures,
+  matchCourse,
+  parseFrontmatter,
+  readCourseInfo,
+} from '../jarvis/lecture/courses';
 import { finalizeLecture, moveLecture } from '../jarvis/lecture/finalize';
 import { HearingMonitor, SILENT_CHUNK_SHARE } from '../jarvis/lecture/hearing';
 import { LectureRecorder } from '../jarvis/lecture/recorder';
@@ -190,6 +199,17 @@ async function поднятьСлух(options: LectureStartOptions): Promise<С�
   };
 }
 
+/**
+ * Курс по времени: сначала расписание со страниц курсов (оно известно с
+ * первой пары), затем — выученное по прошлым лекциям.
+ */
+function угадатьКурс(root: string, когда: Date): string | null {
+  return (
+    guessByDeclared(когда, listCourses(root).map((курс) => readCourseInfo(root, курс))) ??
+    guessBySchedule(когда, listLectures(root).map((л) => л.meta))
+  );
+}
+
 async function начатьЛекцию(subject: string | undefined, options: LectureStartOptions): Promise<string> {
   const слух = await поднятьСлух(options);
   const { folder: root, vault } = lectureFolder(options.outputDir, options.notesLanguage);
@@ -198,7 +218,7 @@ async function начатьЛекцию(subject: string | undefined, options: Le
   // Назван голосом — ищем среди своих курсов (падеж не важен); не назван —
   // по расписанию. Названный, но новый курс называет в конце модель: «по
   // социологии» — это ещё не имя папки.
-  const курс = subject ? matchCourse(subject, курсы) : guessBySchedule(когда, listLectures(root).map((л) => л.meta));
+  const курс = subject ? matchCourse(subject, курсы) : угадатьКурс(root, когда);
 
   const монитор = new HearingMonitor();
   const лекция: { value: Лекция | null } = { value: null };
@@ -292,6 +312,13 @@ export async function setLectureCourse(course: string): Promise<string> {
   return tr(`Перенёс в курс «${итог.course}», лекция ${итог.number}.`, `Moved to the course "${итог.course}", lecture ${итог.number}.`);
 }
 
+let приРазложенной: ((notesFile: string) => void) | null = null;
+
+/** Кто узнаёт о лекции, легшей в курс, — заготовка учёбы. */
+export function onLectureFiled(handler: ((notesFile: string) => void) | null): void {
+  приРазложенной = handler;
+}
+
 /** Разложить по курсу и сказать, что вышло. */
 async function разложить(
   л: { root: string; notes: NotesLanguage; курс: string | null; when: Date },
@@ -313,6 +340,12 @@ async function разложить(
       ...extra,
     });
     последняя = { notesFile: место.notesFile, root: л.root, notes: л.notes };
+    // Учёба по лекции — в фоне: заготовка — минуты модели, а конспект уже готов.
+    try {
+      приРазложенной?.(место.notesFile);
+    } catch (error) {
+      console.error(`[jarvis:lecture] заготовка учёбы не запустилась: ${error instanceof Error ? error.message : String(error)}`);
+    }
     console.log(`[jarvis:lecture] конспект готов: курс «${место.course}», лекция ${место.number}, ${итог.sections} разделов, ${итог.words} слов`);
     const тема = итог.topic ? tr(`«${итог.topic}» — `, `"${итог.topic}" — `) : '';
     return tr(
@@ -344,7 +377,7 @@ export function finishLecture(): Promise<string> | null {
   была.recorder.flush();
   const работа = (async (): Promise<string> => {
     try {
-      const итог = await была.session.finish(listCourses(была.root));
+      const итог = await была.session.finish(coursesForModel(была.root));
       return await разложить({ ...была, when: была.session.startedAt }, итог);
     } finally {
       (await была.сервер)?.stop();
@@ -483,8 +516,8 @@ export async function lectureFromFile(file: string, options: LectureFileOptions)
     // Когда шла лекция: у своей — из свойств, у чужого файла — время файла
     // минус длительность (телефон пишет время конца записи).
     const когда = метаСвоей?.start ? new Date(`${метаСвоей.date}T${метаСвоей.start}:00`) : new Date(времяФайла - раскрыто * 1000);
-    const курс = курсСвоей ?? guessBySchedule(когда, listLectures(root).map((л) => л.meta));
-    const итог = await session.finish(listCourses(root));
+    const курс = курсСвоей ?? угадатьКурс(root, когда);
+    const итог = await session.finish(coursesForModel(root));
     if (файлом) {
       файлом.строка = tr('Раскладываю по курсу…', 'Filing into the course…');
       оповестить();

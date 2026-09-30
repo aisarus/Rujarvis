@@ -136,7 +136,7 @@ export function sectionPrompt(
       'Below is a new chunk of the verbatim transcript. Recognition is automatic and has errors: restore the meaning, not the letters.',
       '',
       'Write ONE section of notes in English:',
-      '- the first line is a heading like "### Topic of the chunk";',
+      '- the first line is a heading: "### " and the topic of this chunk in your own words (for example, "### The demand curve");',
       '- then 3–8 bullet points "- …" with the essentials: definitions, formulas, examples, what the lecturer stressed;',
       чужой
         ? `- terms in English with the lecturer's own word in ${язык} in parentheses;`
@@ -158,7 +158,7 @@ export function sectionPrompt(
     'Ниже — новый кусок дословной расшифровки. Распознавание автоматическое, в нём бывают ошибки: восстанавливай смысл, а не буквы.',
     '',
     'Сделай ОДИН раздел конспекта на русском:',
-    '- первая строка — заголовок вида «### Тема куска»;',
+    '- первая строка — заголовок: «### » и тема этого куска своими словами (например, «### Кривая спроса»);',
     '- дальше 3–8 пунктов «- …» с главным: определения, формулы, примеры, что лектор подчеркнул;',
     чужой ? `- термины — по-русски и в скобках на ${язык}, как их сказал лектор;` : '- термины — как их сказал лектор;',
     '- без вступлений, без пересказа прошлых разделов, без выдуманного;',
@@ -242,7 +242,13 @@ export function withRange(раздел: string, отМс: number, доМс: numb
 
 /** Название раздела без «### » и без времени. */
 export function sectionTitle(строка: string): string {
-  return строка.replace(/^###\s*/u, '').replace(/\s*\(\d[\d:]*–\d[\d:]*\)\s*$/u, '').trim();
+  return строка
+    .replace(/^###\s*/u, '')
+    .replace(/\s*\(\d[\d:]*–\d[\d:]*\)\s*$/u, '')
+    // Прежний промпт показывал заголовок «### Тема куска», и модель
+    // иногда повторяла его буквально: «Тема куска: Большая история».
+    .replace(/^(тема куска|topic of the chunk)\s*[:—-]\s*/iu, '')
+    .trim();
 }
 
 export class LectureSession {

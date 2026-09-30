@@ -189,6 +189,7 @@ export function buildOverlayHtml(): string {
   <button id="lecture" type="button">${lectureButtonLabels().off}</button>
   <button id="course" type="button" style="display:none"></button>
   <button id="file" type="button" title="${tr('Или перетащите файл сюда', 'Or drop a file here')}">${tr('Из файла…', 'From a file…')}</button>
+  <button id="study" type="button">${tr('Учёба', 'Study')}</button>
 </div>
 <div id="courses"></div>
 <div id="info"></div>
@@ -215,6 +216,9 @@ courseButton.addEventListener('click', () => {
 });
 fileButton.addEventListener('click', () => {
   ipcRenderer.send(${JSON.stringify(STATUS_OVERLAY_CHANNEL + ':file')}, null);
+});
+document.getElementById('study').addEventListener('click', () => {
+  ipcRenderer.send(${JSON.stringify(STATUS_OVERLAY_CHANNEL + ':study')});
 });
 // Файл можно бросить на кнопку: плашка — ручка перетаскивания окна, и файл,
 // брошенный на неё, до страницы не доходит, а кнопки из неё вынуты.
@@ -360,6 +364,8 @@ export interface StatusOverlayOptions {
   onCourse?: (course: string) => void;
   /** Файл для конспекта: брошен на кнопку (путь) или нажата «Из файла…» (null). */
   onFile?: (file: string | null) => void;
+  /** Кнопка «Учёба». */
+  onStudy?: () => void;
 }
 
 interface SavedPosition {
@@ -502,6 +508,11 @@ export function createStatusOverlay(options: StatusOverlayOptions = {}): StatusO
     options.onFile?.(typeof file === 'string' && file ? file : null);
   };
   ipcMain.on(`${STATUS_OVERLAY_CHANNEL}:file`, onFile);
+  const onStudy = (event: Electron.IpcMainEvent): void => {
+    if (window.isDestroyed() || event.sender !== window.webContents) return;
+    options.onStudy?.();
+  };
+  ipcMain.on(`${STATUS_OVERLAY_CHANNEL}:study`, onStudy);
 
   return {
     note(status, text) {
@@ -546,6 +557,7 @@ export function createStatusOverlay(options: StatusOverlayOptions = {}): StatusO
       ipcMain.removeListener(`${STATUS_OVERLAY_CHANNEL}:lecture`, onLecture);
       ipcMain.removeListener(`${STATUS_OVERLAY_CHANNEL}:course`, onCourse);
       ipcMain.removeListener(`${STATUS_OVERLAY_CHANNEL}:file`, onFile);
+      ipcMain.removeListener(`${STATUS_OVERLAY_CHANNEL}:study`, onStudy);
       if (ожидание) {
         clearTimeout(ожидание);
         ожидание = null;
