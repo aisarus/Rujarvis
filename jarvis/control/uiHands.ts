@@ -22,7 +22,7 @@ import { labelRisk } from '../risk/toolGate';
 import type { DesktopControl, DesktopWindow } from '../desktop/driver';
 import { chooseElement, type UiElement } from './elements';
 import { pickBySound } from './soundMatch';
-import { describeScreen, planSwitch } from './switchTarget';
+import { describeScreen, planSwitch, realWindows } from './switchTarget';
 
 export interface UiHandsOptions {
   desktop: DesktopControl;
@@ -95,9 +95,35 @@ export class UiHands {
     return окно;
   }
 
+  /**
+   * Элементы для выбора, а не для нажатия: не прочиталось — пусто. На маке
+   * чтение переднего окна падает, когда впереди процесс без окон («Can't get
+   * window 1»), и переключение на другое окно из-за этого не должно падать.
+   */
+  private async elementsOrNone(): Promise<{ title: string; elements: UiElement[] }> {
+    try {
+      return await this.elements();
+    } catch (error) {
+      this.o.log?.(`элементы активного окна не прочитались: ${error instanceof Error ? error.message : String(error)}`);
+      return { title: '', elements: [] };
+    }
+  }
+
   async screen(): Promise<string> {
-    const [windows, active] = await Promise.all([this.o.desktop.windows(), this.elements()]);
+    const [windows, active] = await Promise.all([this.o.desktop.windows(), this.elementsOrNone()]);
     return describeScreen(active.title, windows, active.elements);
+  }
+
+  /** Какие окна открыты — для отказа: «не нашёл» без соседей ничего не объясняет. */
+  async nearby(limit = 8): Promise<string> {
+    try {
+      return realWindows(await this.o.desktop.windows())
+        .slice(0, limit)
+        .map((w) => w.title)
+        .join(', ');
+    } catch {
+      return '';
+    }
   }
 
   private async нажать(e: UiElement, who: Who): Promise<void> {
@@ -126,7 +152,7 @@ export class UiHands {
    * окна, вкладка браузера. Не нашлось — null, без броска: решает зовущий.
    */
   async switchTo(target: string, who: Who = 'person'): Promise<string | null> {
-    const [windows, active] = await Promise.all([this.o.desktop.windows(), this.elements()]);
+    const [windows, active] = await Promise.all([this.o.desktop.windows(), this.elementsOrNone()]);
     const план = planSwitch(target, windows, active.elements);
     if (план?.kind === 'element') {
       await this.нажать(план.element, who);

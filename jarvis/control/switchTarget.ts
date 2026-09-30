@@ -36,6 +36,11 @@ const СВОИ = new Set([
   'NVIDIA GeForce Overlay', 'Интерфейс ввода Windows', 'Windows Input Experience',
 ]);
 
+/** Окна, куда можно переключиться, — без своих и служебных. */
+export function realWindows<T extends SwitchWindow>(windows: readonly T[]): T[] {
+  return windows.filter((w) => !СВОИ.has(w.title.trim()));
+}
+
 export type SwitchPlan =
   | { kind: 'element'; element: UiElement }
   | { kind: 'window'; title: string };
@@ -45,8 +50,7 @@ export function planSwitch(query: string, windows: readonly SwitchWindow[], elem
   const внутри = pickBySound(query, вкладки, (e) => e.name);
   if (внутри?.sure && внутри.score >= 0.9) return { kind: 'element', element: внутри.item };
 
-  const окна = windows.filter((w) => !СВОИ.has(w.title.trim()));
-  const окно = pickBySound(query, окна, (w) => w.title);
+  const окно = pickBySound(query, realWindows(windows), (w) => w.title);
   if (окно?.sure) return { kind: 'window', title: окно.item.title };
 
   // Внутри окна — уверенно, но не так твёрдо, как в первом шаге: окна не
@@ -61,7 +65,7 @@ export function planSwitch(query: string, windows: readonly SwitchWindow[], elem
  * списка точное имя, а не сочиняет своё.
  */
 export function describeScreen(activeTitle: string, windows: readonly SwitchWindow[], elements: readonly UiElement[], limit = 90): string {
-  const окна = windows.filter((w) => !СВОИ.has(w.title.trim())).map((w) => `${w.title}${w.focused ? ' (активно)' : w.minimized ? ' (свёрнуто)' : ''}`);
+  const окна = realWindows(windows).map((w) => `${w.title}${w.focused ? ' (активно)' : w.minimized ? ' (свёрнуто)' : ''}`);
   const группы = new Map<string, string[]>();
   for (const e of elements) {
     if (!e.name.trim() || e.enabled === false) continue;

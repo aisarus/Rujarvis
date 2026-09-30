@@ -63,6 +63,24 @@ describe('UiHands', () => {
     expect(сделано).toEqual(['focus Claude', 'focus Google Chrome']);
   });
 
+  it('не прочиталось переднее окно — окно по имени всё равно находится', async () => {
+    // CI на маке 30.09.2026: впереди процесс без окон, чтение элементов
+    // падает («Can't get window 1»), и переключение падало вместе с ним.
+    const { руки, сделано } = стол([окно('Claude'), окно('Discord')], []);
+    const сломанный = руки as unknown as { o: { desktop: DesktopControl } };
+    сломанный.o.desktop.elements = async () => {
+      throw new Error("Can't get window 1");
+    };
+    expect(await руки.switchTo('дискорд')).toContain('Discord');
+    expect(сделано).toEqual(['focus Discord']);
+    expect(await руки.screen()).toContain('Discord');
+  });
+
+  it('для отказа перечисляет окна — без своих и служебных', async () => {
+    const { руки } = стол([окно('Claude'), окно('Jarvis'), окно('NVIDIA GeForce Overlay'), окно('Discord')], []);
+    expect(await руки.nearby()).toBe('Claude, Discord');
+  });
+
   it('не нашлось — null, без броска: фразу забирает разговор', async () => {
     const { руки, сделано } = стол([окно('Claude')], CLAUDE);
     expect(await руки.switchTo('телеграм')).toBeNull();

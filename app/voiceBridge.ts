@@ -257,7 +257,9 @@ async function экранДляРазговора(ui: TalkUiRequest): Promise<{ 
       case 'switch': {
         if (!ui.target) return { ok: false, text: 'Не сказано, куда переключиться.' };
         const итог = await руки.switchTo(ui.target, 'model');
-        return итог ? { ok: true, text: итог } : { ok: false, text: `Не нашёл «${ui.target}». Посмотри screen_overview и возьми точное название.` };
+        if (итог) return { ok: true, text: итог };
+        const рядом = await руки.nearby();
+        return { ok: false, text: `Не нашёл «${ui.target}».${рядом ? ` На экране: ${рядом}.` : ''} Посмотри screen_overview и возьми точное название.` };
       }
       case 'press':
         if (!ui.target) return { ok: false, text: 'Не сказано, что нажать.' };
@@ -650,7 +652,10 @@ export async function runDirectCommand(
         // браузера — всё в `UiHands.switchTo`. Раньше здесь был только поиск
         // по подстроке заголовка: «переключись на клад» не находило Claude.
         const итог = await руки.switchTo(command.title);
-        if (!итог) throw new Error(`не нашёл ни окна, ни вкладки «${command.title}»`);
+        if (!итог) {
+          const рядом = await руки.nearby();
+          throw new Error(`не нашёл ни окна, ни вкладки «${command.title}»${рядом ? `. На экране: ${рядом}` : ''}`);
+        }
         console.log(`[jarvis] ${итог}`);
         break;
       }
