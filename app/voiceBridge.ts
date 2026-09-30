@@ -844,6 +844,9 @@ export async function runDirectCommand(
         await session.speak(tr('Оверлей ещё не готов.', 'The overlay is not ready yet.'));
         break;
       case 'gridClick': {
+        // Без сетки на экране «нажми 7» — клик в случайное место. Живой
+        // журнал тестера 30.09.2026: «Нажми 7DM» кликнуло в клетку 7.
+        if (!gridOverlay?.visible()) throw new Error('сетка не показана — сначала «сетка»');
         const layout = gridOverlay?.layout();
         const point = layout ? cellCenter(command.cell, layout) : null;
         if (!point) throw new Error(`клетки ${command.cell} нет в сетке`);
@@ -1939,10 +1942,17 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
         // которого есть список на экране и руки (`UiHands`), — он выберет
         // похожее или переспросит. Раньше здесь писалось «отдаю агенту», а
         // команда всё равно выполнялась дальше и падала с «не нашёл».
+        // Клетка сетки без сетки на экране — не клик вслепую, а незнакомая фраза.
+        if ((direct?.kind === 'gridClick' || direct?.kind === 'gridRefine') && !gridOverlay?.visible()) {
+          console.log('[jarvis] клетка без сетки на экране — не кликаю, отдаю разговору');
+          direct = null;
+        }
+
         if (direct?.kind === 'clickNamed' || direct?.kind === 'focus') {
           const цель = direct.kind === 'clickNamed' ? direct.query : direct.title;
           const названо = direct.kind;
           let итог: string | null = null;
+          const искал = Date.now();
           try {
             итог = названо === 'clickNamed' ? await руки.press(цель, 'person') : await руки.switchTo(цель);
           } catch (error) {
@@ -1954,7 +1964,7 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
             session.keepAwake();
             return;
           }
-          console.log('[jarvis] напрямую не нашлось — отдаю разговору, он видит экран');
+          console.log(`[jarvis] напрямую не нашлось за ${Date.now() - искал} мс — отдаю разговору, он видит экран`);
           direct = null;
         }
 

@@ -82,9 +82,11 @@ describe('UiHands', () => {
   });
 
   it('окно без заголовка называет программой, пустой экран отличает от сбоя', async () => {
-    // CI на маке 30.09.2026: у окон Электрона нет заголовка, и список выходил пустым.
-    const безЗаголовка = { ...окно(''), app: 'Electron' } as DesktopWindow;
-    expect(await стол([безЗаголовка, окно('Finder')], []).руки.nearby()).toBe('Electron, Finder');
+    // CI на маке 30.09.2026: у окон без заголовка список выходил пустым.
+    // «Electron» без заголовка — само окно Джарвиса, его не называем.
+    const безЗаголовка = { ...окно(''), app: 'Keynote' } as DesktopWindow;
+    const своё = { ...окно(''), app: 'Electron' } as DesktopWindow;
+    expect(await стол([безЗаголовка, своё, окно('Finder')], []).руки.nearby()).toBe('Keynote, Finder');
     expect(await стол([], []).руки.nearby()).toBe('');
     const { руки } = стол([], []);
     (руки as unknown as { o: { desktop: DesktopControl } }).o.desktop.windows = async () => {

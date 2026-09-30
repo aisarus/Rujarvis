@@ -122,8 +122,8 @@ export class UiHands {
    */
   async nearby(limit = 8): Promise<string | null> {
     try {
-      const имена = (await this.o.desktop.windows()).map((w) => ({ title: w.title.trim() || ((w as { app?: string }).app ?? '').trim() }));
-      return [...new Set(realWindows(имена).map((w) => w.title))].slice(0, limit).join(', ');
+      const окна = realWindows(await this.o.desktop.windows());
+      return [...new Set(окна.map((w) => w.title.trim() || (w as { app?: string }).app?.trim() || ''))].filter(Boolean).slice(0, limit).join(', ');
     } catch {
       return null;
     }
@@ -169,8 +169,10 @@ export class UiHands {
       try {
         const окно = await this.o.desktop.focus(имя);
         return `переключился на «${окно.title}»`;
-      } catch {
-        // Следующее имя.
+      } catch (error) {
+        // Следующее имя — но причину в журнал: на маке окно может найтись и
+        // не подняться (нет «Универсального доступа»), и без неё не понять.
+        this.o.log?.(`окно «${имя}» не поднялось: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     const вкладка = await this.o.browserTab?.(target).catch(() => null);
