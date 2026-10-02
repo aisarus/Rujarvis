@@ -31,7 +31,7 @@ import { coursesForModel, parseFrontmatter } from '../../jarvis/lecture/courses'
 import { finalizeLecture } from '../../jarvis/lecture/finalize';
 import { BAD_CONFIDENCE } from '../../jarvis/lecture/hearing';
 import { LectureSession } from '../../jarvis/lecture/session';
-import { createClaudeSummarizer } from '../../jarvis/lecture/summarize';
+import { createClaudeSummarizer, createFinalSummarizer } from '../../jarvis/lecture/summarize';
 import { jarvisPaths } from '../../jarvis/setup/paths';
 import { SettingsStore } from '../../jarvis/setup/settings';
 import { findGpuWhisper, findLectureModel, gpuWhisperDir, startGpuWhisper } from '../../jarvis/voice/gpuWhisper';
@@ -165,6 +165,7 @@ async function main(): Promise<void> {
         return текст;
       },
       summarize: createClaudeSummarizer(),
+      summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`  ${строка}`) }),
       log: (строка) => console.log(`  ${строка}`),
     });
     await сессия.start();

@@ -51,7 +51,7 @@ import { finalizeLecture, moveLecture } from '../jarvis/lecture/finalize';
 import { HearingMonitor, SILENT_CHUNK_SHARE } from '../jarvis/lecture/hearing';
 import { LectureRecorder } from '../jarvis/lecture/recorder';
 import { LectureSession, NOTES_WORDS, type NotesLanguage } from '../jarvis/lecture/session';
-import { createClaudeSummarizer } from '../jarvis/lecture/summarize';
+import { createClaudeSummarizer, createFinalSummarizer } from '../jarvis/lecture/summarize';
 import { lectureFolder, obsidianOpenUrl } from '../jarvis/lecture/vault';
 import { tr } from '../jarvis/locale/language';
 import { findGpuWhisper, findLectureModel, gpuWhisperDir, startGpuWhisper, type GpuWhisperServer } from '../jarvis/voice/gpuWhisper';
@@ -256,6 +256,7 @@ async function начатьЛекцию(subject: string | undefined, options: Le
     {
       transcribe,
       summarize: createClaudeSummarizer(),
+      summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
       lectureLanguage: options.lectureLanguage,
       notesLanguage: options.notesLanguage,
       // Только счёт и события: сама лекция в журнал Джарвиса не пишется.
@@ -476,6 +477,7 @@ export async function lectureFromFile(file: string, options: LectureFileOptions)
           return текст;
         },
         summarize: createClaudeSummarizer(),
+        summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`[jarvis:lecture] файл: ${строка}`) }),
         lectureLanguage: options.lectureLanguage,
         notesLanguage: options.notesLanguage,
         log: (строка) => console.log(`[jarvis:lecture] файл: ${строка}`),

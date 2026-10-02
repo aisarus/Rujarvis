@@ -13,7 +13,7 @@ import path from 'node:path';
 import { coursesForModel, listCourses } from '../jarvis/lecture/courses';
 import { finalizeLecture } from '../jarvis/lecture/finalize';
 import { finishFromTranscript } from '../jarvis/lecture/finishFromTranscript';
-import { createClaudeSummarizer } from '../jarvis/lecture/summarize';
+import { createClaudeSummarizer, createFinalSummarizer } from '../jarvis/lecture/summarize';
 import { lectureFolder } from '../jarvis/lecture/vault';
 import { jarvisOutputDir, jarvisPaths } from '../jarvis/setup/paths';
 import { SettingsStore } from '../jarvis/setup/settings';
@@ -96,6 +96,7 @@ async function main(): Promise<void> {
   const итог = await finishFromTranscript({
     notesFile: заметка,
     summarize: createClaudeSummarizer(),
+    summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`  ${строка}`) }),
     lectureLanguage,
     notesLanguage: notes,
     courses: coursesForModel(root),

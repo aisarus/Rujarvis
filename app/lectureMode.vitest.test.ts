@@ -17,10 +17,11 @@ vi.mock('../jarvis/lecture/vault', async (importOriginal) => ({
 }));
 
 // Модель конспекта понарошку: курс, тема и итог — без настоящего Claude Code.
-vi.mock('../jarvis/lecture/summarize', () => ({
-  createClaudeSummarizer: () => async (prompt: string) =>
-    prompt.includes('## Кратко') ? 'Предмет: История\nТема: Аграрная революция\n\n## Кратко\nО земледелии.' : '### Земледелие\n- пункт',
-}));
+vi.mock('../jarvis/lecture/summarize', () => {
+  const модель = () => async (prompt: string) =>
+    prompt.includes('## Кратко') ? 'Предмет: История\nТема: Аграрная революция\n\n## Кратко\nО земледелии.' : '### Земледелие\n- пункт';
+  return { createClaudeSummarizer: модель, createFinalSummarizer: модель };
+});
 
 const { finishLecture, lectureActive, lectureFromFile, lectureState, onLectureState, startLecture } = await import('./lectureMode');
 const { parseFrontmatter } = await import('../jarvis/lecture/courses');

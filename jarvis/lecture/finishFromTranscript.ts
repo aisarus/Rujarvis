@@ -72,6 +72,8 @@ export function groupSections(куски: readonly TranscriptChunk[], everySec =
 export interface FinishFromTranscriptOptions {
   notesFile: string;
   summarize(prompt: string): Promise<string>;
+  /** Итог — сильнейшей моделью; нет — тем же `summarize`. */
+  summarizeFinal?(prompt: string): Promise<string>;
   lectureLanguage: string;
   notesLanguage: NotesLanguage;
   /** Курсы человека: модель выбирает из них, к какому относится лекция. */
@@ -134,7 +136,7 @@ export async function finishFromTranscript(options: FinishFromTranscriptOptions)
   let topic: string | undefined;
   try {
     const ответ = splitCourseAndTopic(
-      await options.summarize(finalPrompt(куски.map((к) => к.text).join('\n'), subject, языки, options.courses ?? [])),
+      await (options.summarizeFinal ?? options.summarize)(finalPrompt(куски.map((к) => к.text).join('\n'), subject, языки, options.courses ?? [])),
     );
     ({ course, topic } = ответ);
     итог = ответ.rest;

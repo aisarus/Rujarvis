@@ -34,6 +34,8 @@ export type NotesLanguage = 'ru' | 'en';
 export interface LectureDeps {
   transcribe(samples: Float32Array, sampleRate: number): Promise<string>;
   summarize(prompt: string): Promise<string>;
+  /** Итог лекции — сильнейшей моделью (`createFinalSummarizer`); нет — тем же `summarize`. */
+  summarizeFinal?(prompt: string): Promise<string>;
   /** Язык лекции — код Whisper («ru», «en», «he»…). По умолчанию — язык конспекта. */
   lectureLanguage?: string;
   /** Язык конспекта. По умолчанию — русский. */
@@ -448,7 +450,8 @@ export class LectureSession {
     let topic: string | undefined;
     if (расшифровка.trim()) {
       try {
-        const ответ = splitCourseAndTopic(await this.deps.summarize(finalPrompt(расшифровка, this.subject, this.языки, курсы)));
+        const итогом = this.deps.summarizeFinal ?? this.deps.summarize;
+        const ответ = splitCourseAndTopic(await итогом(finalPrompt(расшифровка, this.subject, this.языки, курсы)));
         ({ course, topic } = ответ);
         const итог = ответ.rest;
         if (итог) {

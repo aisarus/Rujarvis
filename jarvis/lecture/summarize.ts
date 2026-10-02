@@ -34,6 +34,39 @@ export interface SummarizerOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+/** Не ответил первый — спросить второго: итог лекции не должен пропасть из-за лимита одной модели. */
+export function withFallback(
+  first: (prompt: string) => Promise<string>,
+  second: (prompt: string) => Promise<string>,
+  log?: (line: string) => void,
+): (prompt: string) => Promise<string> {
+  return async (prompt) => {
+    try {
+      return await first(prompt);
+    } catch (error) {
+      log?.(`итог: первая модель не ответила (${error instanceof Error ? error.message : String(error)}) — беру запасную`);
+      return second(prompt);
+    }
+  };
+}
+
+/**
+ * Итог лекции — Opus, с Sonnet в запасе.
+ *
+ * Итог один на всю лекцию: он сводит шумную расшифровку (на иврите — с ошибкой
+ * в каждом седьмом слове даже в тихой комнате) в связный текст на другом
+ * языке и выбирает курс и тему. Это работа для сильнейшей модели, а лимиты
+ * подписки один вызов за лекцию не съест. Разделы — 15–20 вызовов — остаются
+ * на Sonnet.
+ */
+export function createFinalSummarizer(options: SummarizerOptions & { log?(line: string): void } = {}): (prompt: string) => Promise<string> {
+  return withFallback(
+    createClaudeSummarizer({ ...options, model: 'opus' }),
+    createClaudeSummarizer({ ...options, model: 'sonnet' }),
+    options.log,
+  );
+}
+
 export function createClaudeSummarizer(options: SummarizerOptions = {}): (prompt: string) => Promise<string> {
   return async (prompt: string): Promise<string> => {
     const command = options.command ?? resolveCli('claude');

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { normaliseSettings } from '../setup/settings';
 import { finishFromTranscript, parseTranscript } from './finishFromTranscript';
 import { finalPrompt, LectureSession, sectionFromReply, sectionPrompt } from './session';
-import { claudeSummaryArgs, createClaudeSummarizer } from './summarize';
+import { claudeSummaryArgs, createClaudeSummarizer, withFallback } from './summarize';
 import { lectureFileBase, lectureFolder, obsidianOpenUrl, openObsidianVault } from './vault';
 
 const папки: string[] = [];
@@ -184,6 +184,51 @@ describe('конспект лекции на ходу', () => {
 function papka(папка: string): string {
   return папка;
 }
+
+describe('итог лекции — сильнейшей моделью', () => {
+  it('итог уходит в summarizeFinal, разделы — в summarize', async () => {
+    const папка = await временная();
+    const разделами: string[] = [];
+    const итогом: string[] = [];
+    const сессия = new LectureSession(papka(папка), 'Матанализ', {
+      transcribe: async (samples) => 'מילה '.repeat(samples.length / 8000).trim(),
+      summarize: async (prompt) => {
+        разделами.push(prompt);
+        return '### Пределы\n- предел (גבול)';
+      },
+      summarizeFinal: async (prompt) => {
+        итогом.push(prompt);
+        return 'Предмет: Математический анализ\nТема: Пределы\n\n## Кратко\nО пределах.';
+      },
+      sectionEveryMs: 10_000,
+      sectionMinWords: 10,
+    });
+    await сессия.start();
+    сессия.addAudio(new Float32Array(16_000 * 12), 16_000);
+    const итог = await сессия.finish(['Математический анализ']);
+    expect(итогом).toHaveLength(1);
+    expect(разделами.length).toBeGreaterThan(0);
+    expect(разделами.some((p) => p.includes('## Кратко'))).toBe(false);
+    expect(итог.topic).toBe('Пределы');
+  });
+
+  it('первая модель не ответила — итог пишет запасная, а не пропадает', async () => {
+    const журнал: string[] = [];
+    const итог = withFallback(
+      async () => {
+        throw new Error('limit reached');
+      },
+      async (prompt) => `запасная: ${prompt}`,
+      (строка) => журнал.push(строка),
+    );
+    expect(await итог('итог')).toBe('запасная: итог');
+    expect(журнал[0]).toContain('limit reached');
+  });
+
+  it('opus — тем же вызовом CLI, только моделью', () => {
+    expect(claudeSummaryArgs('opus')).toEqual(expect.arrayContaining(['--model', 'opus', '--strict-mcp-config']));
+  });
+});
 
 describe('вызов модели для раздела', () => {
   it('промпт — через stdin, ответ — текстом; без MCP и с подпиской', async () => {
