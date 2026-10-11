@@ -24,7 +24,7 @@ import {
 } from './courses';
 import { finalizeLecture, moveLecture } from './finalize';
 import { groupSections } from './finishFromTranscript';
-import { BAD_CONFIDENCE, HearingMonitor } from './hearing';
+import { BAD_CONFIDENCE, HearingMonitor, isSilentChunk } from './hearing';
 import { LectureRecorder } from './recorder';
 import { sectionTitle, withRange } from './session';
 
@@ -339,6 +339,25 @@ describe('слышно ли лектора', () => {
       expect(слух.observe({ seconds: 28, level: { ...уровень, speechShare: 0 }, text: null })).toBeNull();
       expect(слух.observe({ seconds: 28, level: уровень, text: 'а' })).toBeNull();
     }
+  });
+
+  it('лектор в зале — не тишина, даже когда он всего на 4 дБ громче шума', () => {
+    // Первая пара в аудитории, 11.10.2026: лектор −35 дБ, зал −39, «громких»
+    // кадров 2% — и в куске чистый иврит с уверенностью −0,05.
+    expect(isSilentChunk({ speechDb: -35, floorDb: -39, speechShare: 0.02 })).toBe(false);
+    expect(isSilentChunk({ speechDb: -34, floorDb: -38, speechShare: 0 })).toBe(false);
+    // Выключенный микрофон, цифровой ноль — тишина.
+    expect(isSilentChunk({ speechDb: -120, floorDb: -120, speechShare: 0 })).toBe(true);
+    expect(isSilentChunk(chunkLevel(new Float32Array(16_000 * 5), 16_000))).toBe(true);
+  });
+
+  it('вердикт выносится и в зале, где «громких» кадров почти нет', () => {
+    // До 11.10.2026 речь считалась долей «громких» кадров — в зале это 2%, и
+    // 45 секунд речи не набиралось никогда: вердикт молчал всю пару.
+    const слух = new HearingMonitor();
+    const зал = { speechDb: -35, floorDb: -39, speechShare: 0.02 };
+    expect(слух.observe({ seconds: 25, level: зал, text: 'מילה', confidence: -0.4 })).toBeNull();
+    expect(слух.observe({ seconds: 25, level: зал, text: 'מילה', confidence: -0.4 })).toBe('bad');
   });
 
   it('порог «плохо» лежит между замеренными «терпимо» и «половина слов мимо»', () => {

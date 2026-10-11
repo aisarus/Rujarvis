@@ -48,7 +48,7 @@ import {
   readCourseInfo,
 } from '../jarvis/lecture/courses';
 import { finalizeLecture, moveLecture } from '../jarvis/lecture/finalize';
-import { HearingMonitor, SILENT_CHUNK_SHARE } from '../jarvis/lecture/hearing';
+import { HearingMonitor, isSilentChunk } from '../jarvis/lecture/hearing';
 import { LectureRecorder } from '../jarvis/lecture/recorder';
 import { LectureSession, NOTES_WORDS, type NotesLanguage } from '../jarvis/lecture/session';
 import { createClaudeSummarizer, createFinalSummarizer } from '../jarvis/lecture/summarize';
@@ -227,7 +227,7 @@ async function начатьЛекцию(subject: string | undefined, options: Le
     const секунд = samples.length / sampleRate;
     // Тишину не распознаём: на ней Whisper выдумывает субтитры. В запись она
     // всё равно легла — сессия пишет звук раньше распознавания.
-    if (уровень.speechShare < SILENT_CHUNK_SHARE) {
+    if (isSilentChunk(уровень)) {
       слышно(монитор.observe({ seconds: секунд, level: уровень, text: null }));
       return '';
     }
@@ -471,7 +471,7 @@ export async function lectureFromFile(file: string, options: LectureFileOptions)
       {
         transcribe: async (samples, rate) => {
           const уровень = chunkLevel(samples, rate);
-          const текст = уровень.speechShare < SILENT_CHUNK_SHARE ? '' : (await распознать(samples, rate)).text;
+          const текст = isSilentChunk(уровень) ? '' : (await распознать(samples, rate)).text;
           распознано += samples.length / rate;
           показать();
           return текст;
