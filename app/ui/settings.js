@@ -186,6 +186,21 @@ function speechPlaceCard() {
   return card;
 }
 
+/** На каком языке лекции: Whisper слушает этот язык, конспект — на языке интерфейса. */
+function lectureLanguageCard() {
+  const s = t();
+  const choices = [['', s.lectureLanguageSame], ['he', s.langHe], ['ru', s.langRu], ['en', s.langEn], ['ar', s.langAr], ['fr', s.langFr], ['de', s.langDe], ['es', s.langEs]];
+  const current = data.settings.lectureLanguage || '';
+  // Код, вписанный в файл настроек руками, не теряется из списка.
+  if (current && !choices.some(([value]) => value === current)) choices.push([current, current]);
+  const card = el(`<div class="card" id="lecture-language"><label class="field">${s.lectureLanguage}</label>
+    <div class="row"><select>${choices.map(([value, name]) => `<option value="${value}" ${value === current ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></div>
+    <p class="hint" style="margin:10px 0 0">${s.lectureLanguageHint}</p></div>`);
+  const select = card.querySelector('select');
+  select.onchange = () => update({ lectureLanguage: select.value });
+  return card;
+}
+
 function modelsCard() {
   const s = t();
   const lang = data.settings.language;
@@ -456,6 +471,7 @@ function renderSettings(main, nav) {
   if (tab === 'voice') {
     main.append(speechPlaceCard());
     main.append(modelsCard());
+    main.append(lectureLanguageCard());
     main.append(el(`<h2 style="margin-top:8px">${s.stepMic}</h2>`), micCard());
   }
   if (tab === 'agents') {

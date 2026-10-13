@@ -33,6 +33,12 @@
     Модель распознавания: tiny, base, small, turbo, medium.
     По умолчанию выбирается по объёму памяти и видеокарте.
 
+.PARAMETER LectureLanguage
+    Язык лекций для конспекта, код Whisper: he, ru, en… Если есть видеокарта
+    NVIDIA, ставится и модель для лекций на этом языке (для иврита — ivrit.ai,
+    1,6 ГБ), а язык записывается в настройки. Без параметра распознавание на
+    видеокарте всё равно ставится, а модель для лекций — нет.
+
 .PARAMETER Autostart
     Запускать Rujarvis при входе в Windows.
 
@@ -48,6 +54,8 @@ param(
     [string] $Branch = 'main',
     [ValidateSet('tiny', 'base', 'small', 'turbo', 'medium')]
     [string] $WhisperModel,
+    [ValidatePattern('^[a-z]{2,3}$')]
+    [string] $LectureLanguage,
     [switch] $Autostart,
     [switch] $NoLaunch
 )
@@ -657,6 +665,20 @@ if ($moved.Count -gt 0) {
     $moved | ForEach-Object { Write-Ok $_ }
 }
 
+<#
+    Есть ли видеокарта NVIDIA: распознавание на видеокарте — сборка whisper.cpp
+    с CUDA, и без NVIDIA её ставить незачем. Не ответила система — считаем,
+    что нет: лишние сотни мегабайт хуже честной подсказки.
+#>
+function Test-NvidiaGpu {
+    try {
+        return @(Get-CimInstance Win32_VideoController -ErrorAction Stop | Where-Object { $_.Name -match 'NVIDIA' }).Count -gt 0
+    }
+    catch {
+        return $false
+    }
+}
+
 Push-Location $SourceDir
 try {
     Write-Step 'Ставлю зависимости и собираю'
@@ -668,6 +690,30 @@ try {
     $setupArgs = @('jarvis:setup', '--', '--language', $Language)
     if ($WhisperModel) { $setupArgs += @('--model', $WhisperModel) }
     Invoke-Checked -FilePath 'pnpm' -Arguments $setupArgs -What 'jarvis:setup'
+
+    # Распознавание на видеокарте — команды быстрее, и без него конспект лекций
+    # только пишет звук: расшифровать нечем. Не поставилось — установка не
+    # срывается, а говорит, как повторить.
+    Write-Step 'Распознавание на видеокарте'
+    if (Test-NvidiaGpu) {
+        try {
+            Invoke-Checked -FilePath 'pnpm' -Arguments @('jarvis:gpu-stt') -What 'jarvis:gpu-stt'
+            Write-Ok 'Распознавание на видеокарте поставлено.'
+            if ($LectureLanguage) {
+                Write-Step "Модель для конспекта лекций (язык $LectureLanguage)"
+                Invoke-Checked -FilePath 'pnpm' -Arguments @('jarvis:lecture-model', '--', $LectureLanguage) -What 'jarvis:lecture-model'
+                Write-Ok "Модель для лекций поставлена; язык лекций — $LectureLanguage."
+            }
+        }
+        catch {
+            $again = 'pnpm jarvis:gpu-stt'
+            if ($LectureLanguage) { $again += " и pnpm jarvis:lecture-model -- $LectureLanguage" }
+            Write-Note "Не поставилось: $($_.Exception.Message). Повторить в папке ${SourceDir}: $again"
+        }
+    }
+    else {
+        Write-Note 'Видеокарты NVIDIA нет — распознавание на видеокарте не ставлю. Конспект лекций будет записывать звук, но расшифровать его будет нечем.'
+    }
 }
 finally {
     Pop-Location

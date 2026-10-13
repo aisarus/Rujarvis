@@ -15,8 +15,17 @@ import { gpuWhisperDir, installLectureModel, lectureModelFor } from '../jarvis/v
 
 async function main(): Promise<void> {
   const paths = jarvisPaths();
-  const settings = new SettingsStore(paths.settings).get();
-  const language = (process.argv.slice(2).find((a) => !a.startsWith('-')) ?? (settings.lectureLanguage || settings.language)).toLowerCase();
+  const store = new SettingsStore(paths.settings);
+  const settings = store.get();
+  const названный = process.argv.slice(2).find((a) => !a.startsWith('-'))?.toLowerCase();
+  const language = (названный ?? (settings.lectureLanguage || settings.language)).toLowerCase();
+  // Язык назван явно — это и есть язык лекций: модель для иврита ставят под
+  // лекции на иврите. Установщик (`-LectureLanguage he`) больше ничего не
+  // делает, и без этой строки Джарвис слушал бы лекцию на языке интерфейса.
+  if (названный && /^[a-z]{2,3}$/u.test(названный) && settings.lectureLanguage !== названный) {
+    store.update({ lectureLanguage: названный });
+    console.log(`Язык лекций в настройках: «${названный}»`);
+  }
   const dir = gpuWhisperDir(paths.home);
   const source = lectureModelFor(language);
   console.log(`Модель для лекций (язык «${language}»): ${path.basename(source.file)} → ${dir}`);

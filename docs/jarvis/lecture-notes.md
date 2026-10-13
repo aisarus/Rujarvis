@@ -231,12 +231,24 @@ opus, webm, flac, mp4, mov, mkv.
 
 ## Установка
 
-Нужно распознавание на видеокарте (`pnpm jarvis:gpu-stt`), затем — по желанию,
-для точности — модель для лекций:
+На Windows с видеокартой NVIDIA установщик ставит распознавание на
+видеокарте сам, а с `-LectureLanguage` — и модель для лекций, записывая язык в
+настройки:
+
+```powershell
+$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; & $f -LectureLanguage he
+```
+
+Без NVIDIA конспект записывает звук, а расшифровать его нечем — так Джарвис и
+говорит, и на плашке строка «Только запись». На маке установщик этого шага пока
+не делает. Руками, в папке `src`:
 
 ```bash
-pnpm jarvis:lecture-model
+pnpm jarvis:gpu-stt
+pnpm jarvis:lecture-model -- he
 ```
+
+Язык лекций меняется и в настройках: вкладка «Речь», «Язык лекций».
 
 large-v3-turbo в q5_0 из репозитория whisper.cpp: 574 МБ, около
 полугигабайта видеопамяти, sha256 сверяется. Без неё конспект пишется, но

@@ -23,7 +23,7 @@ vi.mock('../jarvis/lecture/summarize', () => {
   return { createClaudeSummarizer: модель, createFinalSummarizer: модель };
 });
 
-const { finishLecture, lectureActive, lectureFromFile, lectureState, onLectureState, startLecture } = await import('./lectureMode');
+const { finishLecture, lectureActive, lectureFromFile, lectureInfo, lectureState, onLectureState, startLecture } = await import('./lectureMode');
 const { parseFrontmatter } = await import('../jarvis/lecture/courses');
 const { encodeWav16 } = await import('../jarvis/voice/wav');
 const { readWavParts } = await import('../jarvis/lecture/mediaSlices');
@@ -38,8 +38,12 @@ describe('режим лекции в мосте', () => {
     папка.путь = await mkdtemp(path.join(tmpdir(), 'jarvis-lecture-mode-'));
     const options = { home: папка.путь, outputDir: папка.путь, lectureLanguage: 'ru', notesLanguage: 'ru' as const, mainEndpoint: () => null };
 
-    // Модели для лекций нет — об этом сказано, а не молча хуже.
-    expect(await startLecture('Физика', options)).toMatch(/lecture-model/u);
+    // Ни модели для лекций, ни общего сервера: звук пишется, а расшифровать
+    // нечем — так и сказано. До 13.10.2026 здесь ждали «Конспектирую общим
+    // распознаванием», и тест закреплял неправду: на чистой машине конспект
+    // выходил пустым.
+    expect(await startLecture('Физика', options)).toMatch(/нечем|nothing to transcribe/u);
+    expect(lectureInfo()?.line).toMatch(/Только запись|Recording only/u);
     expect(lectureActive()).toBe(true);
     expect(await startLecture('Физика', options)).toMatch(/уже пишется|Already/u);
 

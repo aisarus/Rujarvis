@@ -266,7 +266,27 @@ async function начатьЛекцию(subject: string | undefined, options: Le
   );
   await session.start();
   const recorder = new LectureRecorder((samples, sampleRate) => session.addAudio(samples, sampleRate));
-  лекция.value = { session, сервер: слух.сервер, recorder, root, notes: options.notesLanguage, курс, слух: монитор };
+  // Нет ни модели для лекций, ни общего сервера — звук пишется, а расшифровать
+  // его нечем. Так и сказать: «конспектирую» здесь было бы ложью, и человек
+  // узнал бы об этом вечером над пустой заметкой.
+  const нечем = !слух.модель && !options.mainEndpoint();
+  лекция.value = {
+    session,
+    сервер: слух.сервер,
+    recorder,
+    root,
+    notes: options.notesLanguage,
+    курс,
+    слух: монитор,
+    ...(нечем
+      ? {
+          строка: tr(
+            'Только запись: расшифровать нечем (нет распознавания на видеокарте). Конспект — потом из файла.',
+            'Recording only: nothing to transcribe with (no GPU recognition). Notes later from the file.',
+          ),
+        }
+      : {}),
+  };
   идёт = лекция.value;
   оповестить();
   console.log(
@@ -279,6 +299,12 @@ async function начатьЛекцию(subject: string | undefined, options: Le
   const гдеКурс = курс
     ? tr(`Курс — «${курс}».`, `Course: "${курс}".`)
     : tr('Курс определю по лекции.', 'I will work out the course from the lecture.');
+  if (нечем) {
+    return tr(
+      'Записываю звук лекции, но расшифровать его нечем: не установлено распознавание на видеокарте (pnpm jarvis:gpu-stt). Конспект сделаю потом из этой записи.',
+      'Recording the lecture, but there is nothing to transcribe it with: GPU recognition is not installed (pnpm jarvis:gpu-stt). I will make the notes from this recording later.',
+    );
+  }
   return слух.модель
     ? tr(`Конспектирую. ${гдеКурс} Закончить — «Джарвис, закончи конспект».`, `Taking notes. ${гдеКурс} Say "Jarvis, stop lecture notes" to finish.`)
     : tr(

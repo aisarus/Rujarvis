@@ -25,6 +25,7 @@ $f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/ais
 | `-WhisperModel tiny\|base\|small\|turbo\|medium` | Модель распознавания; по умолчанию — по объёму памяти и видеокарте |
 | `-InstallRoot <папка>` | Где жить Джарвису; по умолчанию `%LOCALAPPDATA%\Rujarvis` |
 | `-Branch <ветка>` | Ветка репозитория; по умолчанию `main` |
+| `-LectureLanguage he\|ru\|en…` | Язык лекций для конспекта. При видеокарте NVIDIA ставится модель для лекций на этом языке (иврит — ivrit.ai, 1,6 ГБ), язык пишется в настройки |
 | `-Autostart` | Запускать при входе в Windows |
 | `-NoLaunch` | Не запускать приложение в конце |
 
