@@ -3,9 +3,13 @@
     Установка Rujarvis — голосового ассистента для Windows (русский и английский).
 
 .DESCRIPTION
-    Одна команда в PowerShell:
+    Одна строка в PowerShell, из любой папки:
 
-        irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 | iex
+        $f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; & $f
+
+    Именно файлом, а не строкой через `iex`: у этого файла есть BOM (без него
+    Windows PowerShell 5.1 не разберёт кириллицу), а строка с BOM в начале
+    ломает открывающий `<#` — см. scripts/check-install-script.ps1.
 
     Что делает, по шагам:
       1. ставит недостающее через winget: Git и Node.js 22 (pnpm — через corepack);
