@@ -239,8 +239,17 @@ export async function installGpuWhisper(options: InstallGpuWhisperOptions): Prom
 }
 
 /** Аргументы сервера: только этот компьютер, язык — в каждом запросе. */
+/**
+ * Модель — именем файла: сервер запускается из её папки (см. startGpuWhisper).
+ *
+ * whisper-server на Windows получает аргументы в кодировке ANSI. Путь с
+ * буквами вне неё — «C:\Users\Алексей\…» на Windows с ивритской или
+ * английской системной кодировкой — доходит знаками вопроса, модель не
+ * открывается, сервер падает (журнал тестера 20.10.2026). Имена моделей —
+ * латиницей всегда, а папку передаёт сама система, без перекодировки.
+ */
 export function serverArgs(files: GpuWhisperFiles, port: number): string[] {
-  return ['-m', files.model, '--host', '127.0.0.1', '--port', String(port), '-t', '4'];
+  return ['-m', path.basename(files.model), '--host', '127.0.0.1', '--port', String(port), '-t', '4'];
 }
 
 export interface GpuWhisperServer {
@@ -269,7 +278,9 @@ export interface StartGpuWhisperOptions {
 export async function startGpuWhisper(files: GpuWhisperFiles, options: StartGpuWhisperOptions): Promise<GpuWhisperServer> {
   const команда = options.command ?? { file: files.server, args: serverArgs(files, options.port) };
   const child = spawn(команда.file, команда.args, {
-    cwd: path.dirname(команда.file),
+    // Папка модели: в аргументах только её имя (serverArgs). Библиотеки сервера
+    // Windows ищет рядом с самим сервером, папка запуска им не мешает.
+    cwd: options.command ? path.dirname(команда.file) : path.dirname(files.model),
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -436,8 +447,9 @@ export async function installLectureModel(options: InstallGpuWhisperOptions & { 
     const готовый = path.join(dir, source.file);
     options.onProgress?.('модель', { stage: 'extracting', message: `сжимаю до ${source.quantize.type}` });
     const сжатый = `${готовый}.partial`;
-    await promisify(execFile)(quantize, [скачанный, сжатый, source.quantize.type], {
-      cwd: path.dirname(quantize),
+    // Та же беда с кодировкой, что у сервера (serverArgs): файлы — именами, из их папки.
+    await promisify(execFile)(quantize, [path.basename(скачанный), path.basename(сжатый), source.quantize.type], {
+      cwd: dir,
       windowsHide: true,
       maxBuffer: 64 * 1024 * 1024,
     });

@@ -62,6 +62,16 @@ describe('установленное распознавание на видео�
     expect(args).toEqual(expect.arrayContaining(['--host', '127.0.0.1', '--port', '8178', '-m', 'm.bin']));
   });
 
+  it('модель — именем файла, а не путём: путь с «Алексей» сервер на не-русской Windows не откроет', () => {
+    // Живой журнал тестера 20.10.2026: whisper-server получает argv в
+    // кодировке ANSI, кириллица в имени пользователя становится «???????»,
+    // модель не открывается, сервер падает (0xC0000409).
+    const модель = path.join('C:', 'Users', 'Алексей', 'AppData', 'Local', 'Rujarvis', 'models', 'whisper-gpu', 'ggml-ivrit-turbo-q5_0.bin');
+    const args = serverArgs({ server: 'whisper-server.exe', model: модель }, 8179);
+    expect(args).toEqual(expect.arrayContaining(['-m', 'ggml-ivrit-turbo-q5_0.bin']));
+    expect(args.join(' ')).not.toContain('Алексей');
+  });
+
   it('контрольная сумма — sha256 содержимого', async () => {
     const dir = await временная();
     const файл = path.join(dir, 'x.bin');
