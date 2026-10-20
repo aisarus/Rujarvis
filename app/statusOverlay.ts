@@ -207,7 +207,7 @@ export function buildOverlayHtml(): string {
 <div id="bar">
   <button id="lecture" type="button">${lectureButtonLabels().off}</button>
   <button id="course" type="button" style="display:none"></button>
-  <button id="file" type="button" title="${tr('Или перетащите файл сюда', 'Or drop a file here')}">${tr('Из файла…', 'From a file…')}</button>
+  <button id="file" type="button" title="${tr('Запись лекции или учебный документ (PDF, Word, PowerPoint, фото). Можно перетащить файл сюда', 'A lecture recording or a study document (PDF, Word, PowerPoint, photo). You can drop a file here')}">${tr('Из файла…', 'From a file…')}</button>
   <button id="study" type="button">${tr('Учёба', 'Study')}</button>
 </div>
 <div id="sources">
