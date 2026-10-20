@@ -119,7 +119,8 @@ export interface TodayView {
   date: string;
   classes: Array<{ course: string; time: string }>;
   items: TodayItem[];
-  courses: Array<{ name: string; counts: Record<KnowledgeState, number>; lectures: number; dueCards: number }>;
+  /** `hebrew` — название на языке лекций со страницы курса: плитка показывает его под русским. */
+  courses: Array<{ name: string; hebrew?: string; counts: Record<KnowledgeState, number>; lectures: number; dueCards: number }>;
 }
 
 /** Вопрос как его видит окно: без верного ответа, варианты перемешаны. */
@@ -332,7 +333,7 @@ export class StudyService {
       for (const s of инфо.slots) if (s.day === сегодня.getDay()) classes.push({ course: name, time: время(s.from) });
       const вид = this.course(name);
       карточек += вид.dueCards;
-      courses.push({ name, counts: вид.counts, lectures: вид.lectures.length, dueCards: вид.dueCards });
+      courses.push({ name, hebrew: инфо.hebrew || undefined, counts: вид.counts, lectures: вид.lectures.length, dueCards: вид.dueCards });
       for (const л of вид.lectures) {
         if (!л.quizzed && л.topics.some((t) => t.questions > 0)) {
           items.push({

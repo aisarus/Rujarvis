@@ -34,6 +34,9 @@ contextBridge.exposeInMainWorld('study', {
   transcribe: (samples: Float32Array, sampleRate: number) => call('transcribe', samples, sampleRate),
   openNote: (file: string) => call('openNote', file),
   audioUrl: (file: string) => call('audioUrl', file),
+  onLook: (listener: (look: string) => void) => {
+    ipcRenderer.on('jarvis-look', (_event, look: string) => listener(look));
+  },
   onChanged: (listener: (preparing: string[]) => void) => {
     ipcRenderer.on(`${CHANNEL}:changed`, (_event, preparing: string[]) => listener(preparing));
   },

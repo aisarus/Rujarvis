@@ -19,7 +19,7 @@ vi.mock('../jarvis/lecture/vault', async (importOriginal) => ({
 // Модель конспекта понарошку: курс, тема и итог — без настоящего Claude Code.
 vi.mock('../jarvis/lecture/summarize', () => {
   const модель = () => async (prompt: string) =>
-    prompt.includes('## Кратко') ? 'Предмет: История\nТема: Аграрная революция\n\n## Кратко\nО земледелии.' : '### Земледелие\n- пункт';
+    prompt.includes('[!abstract]') ? 'Предмет: История\nТема: Аграрная революция\n\n## Кратко\nО земледелии.' : '### Земледелие\n- пункт';
   return { createAgentSummarizer: модель, createAgentFinalSummarizer: модель };
 });
 

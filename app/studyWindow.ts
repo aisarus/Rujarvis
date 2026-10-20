@@ -13,6 +13,7 @@ import { BrowserWindow, ipcMain, shell } from 'electron';
 
 import { obsidianOpenUrl } from '../jarvis/lecture/vault';
 import type { StudyService } from '../jarvis/study/service';
+import { currentLook, windowBackground } from './look';
 import { APP_ROOT } from './root';
 
 export const STUDY_CHANNEL = 'jarvis-study';
@@ -168,7 +169,7 @@ export function openStudyWindow(options: StudyWindowDeps): void {
     minWidth: 720,
     minHeight: 540,
     title: options.language() === 'en' ? 'Study' : 'Учёба',
-    backgroundColor: '#0f1115',
+    backgroundColor: windowBackground(),
     autoHideMenuBar: true,
     show: false,
     icon: path.join(APP_ROOT, 'resources', 'icon.png'),
@@ -183,5 +184,5 @@ export function openStudyWindow(options: StudyWindowDeps): void {
   window.on('closed', () => {
     window = null;
   });
-  void window.loadFile(path.join(APP_ROOT, 'app', 'ui', 'study.html'), { query: { lang: options.language() } });
+  void window.loadFile(path.join(APP_ROOT, 'app', 'ui', 'study.html'), { query: { lang: options.language(), look: currentLook() } });
 }

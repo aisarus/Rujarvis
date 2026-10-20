@@ -37,6 +37,8 @@ import path from 'node:path';
 
 import type { StoryLine } from '../jarvis/observe/storyline';
 import { currentLanguage, tr } from '../jarvis/locale/language';
+import type { Look } from '../jarvis/setup/settings';
+import { currentLook, looksCssUrl, windowBackground } from './look';
 
 export const LOG_WINDOW_CHANNELS = {
   line: 'jarvis-log:line',
@@ -93,53 +95,63 @@ export function следуетЗаНизом(scrollHeight: number, clientHeight:
   return scrollHeight - clientHeight - scrollTop < 40;
 }
 
-export function buildLogWindowHtml(): string {
+export function buildLogWindowHtml(look: Look = currentLook()): string {
   return `<!doctype html>
-<html lang="${currentLanguage()}">
+<html lang="${currentLanguage()}" data-look="${look}">
 <head><meta charset="utf-8"><title>${tr('Джарвис — что делаю', 'Jarvis — what I am doing')}</title>
+<link rel="stylesheet" href="${looksCssUrl()}">
 <style>
+  /* Цвета и шрифты — вида, выбранного в настройках (looks.css). Строки разных
+     событий — цветом состояний плашки: что услышано, что задумано, что
+     сделано и что сломалось, видно не читая. */
   html, body {
-    margin: 0; padding: 0; height: 100%; background: #0f0f12; overflow: hidden;
-    font-family: "Segoe UI", system-ui, sans-serif; color: #e4e4e7;
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: var(--bg, #0f1530); color: var(--text, #eef1ff);
+    font-family: var(--font-ui, "Segoe UI", system-ui, sans-serif);
   }
   #head {
     display: flex; align-items: baseline; gap: 10px;
-    padding: 12px 16px 10px; border-bottom: 1px solid rgba(255,255,255,0.08);
+    padding: 12px 16px 10px; border-bottom: 1px solid var(--line, #2b376b);
   }
   #title { font-size: 14px; font-weight: 600; }
-  #count { font-size: 12px; color: #71717a; }
+  #count { font-size: 12px; color: var(--muted, #8f99c7); }
   #feed {
     height: calc(100% - 44px); overflow-y: auto; padding: 8px 0 16px;
-    scrollbar-width: thin; scrollbar-color: #3f3f46 transparent;
+    scrollbar-width: thin; scrollbar-color: var(--line-2, #3a4782) transparent;
   }
   .row {
     display: grid; grid-template-columns: 58px 1fr; gap: 10px;
     padding: 4px 16px; font-size: 13px; line-height: 1.45;
   }
-  .time { color: #52525b; font-variant-numeric: tabular-nums; font-size: 12px; }
+  .time { color: var(--muted, #8f99c7); font-variant-numeric: tabular-nums; font-size: 12px; }
   .what { min-width: 0; }
   .text { font-weight: 500; }
   .detail {
-    color: #a1a1aa; margin-left: 6px; font-weight: 400;
+    color: var(--text-2, #c3caee); margin-left: 6px; font-weight: 400;
     word-break: break-word;
   }
   .row.task {
     margin-top: 14px; padding-top: 12px;
-    border-top: 1px solid rgba(255,255,255,0.08);
+    border-top: 1px solid var(--line, #2b376b);
   }
-  .row.task .text { color: #fafafa; font-size: 14px; font-weight: 700; }
-  .row.start .text, .row.done .text { color: #4ade80; }
-  .row.error .text { color: #f87171; }
-  .row.error .detail { color: #fca5a5; }
-  .row.said .text { color: #c4b5fd; font-weight: 400; }
-  .row.plan .text { color: #fde047; font-weight: 700; }
-  .row.plan .detail { color: #fef3c7; }
-  .row.note .text { color: #f0abfc; }
-  .row.note .detail { color: #f5d0fe; }
-  .row.file .text { color: #7dd3fc; }
-  .row.command .text { color: #fbbf24; }
+  .row.task .text { color: var(--text); font-size: 14px; font-weight: 700; }
+  .row.start .text, .row.done .text { color: var(--ok); }
+  .row.error .text, .row.error .detail { color: var(--bad); }
+  .row.said .text { color: var(--st-think); font-weight: 400; }
+  .row.plan .text { color: var(--warn); font-weight: 700; }
+  .row.note .text { color: var(--st-speak); }
+  .row.file .text { color: var(--st-trans); }
+  .row.command .text { color: var(--st-work); }
   .row.command .detail { font-family: Consolas, "Cascadia Mono", monospace; }
-  #empty { padding: 28px 16px; color: #52525b; font-size: 13px; }
+  #empty { padding: 28px 16px; color: var(--muted); font-size: 13px; }
+  /* Маркер: светлые маркеры текстом не читаются — цвет уходит в метку слева. */
+  [data-look="marker"] .row .text { color: var(--text); }
+  [data-look="marker"] .row.error .text { color: var(--bad); }
+  [data-look="marker"] .row:is(.said, .plan, .note, .file, .command, .start, .done) { box-shadow: inset 4px 0 0 var(--k); }
+  [data-look="marker"] .row.said { --k: var(--m-lilac); } [data-look="marker"] .row.plan { --k: var(--m-yellow); }
+  [data-look="marker"] .row.note { --k: var(--m-pink); } [data-look="marker"] .row.file { --k: var(--m-blue); }
+  [data-look="marker"] .row.command { --k: var(--m-orange); } [data-look="marker"] .row:is(.start, .done) { --k: var(--m-green); }
+  [data-look="tetrad"] #title { font: 700 22px/1 var(--font-hand); }
 </style>
 </head>
 <body>
@@ -280,6 +292,8 @@ export function createLogWindow(): LogWindow {
       return;
     }
 
+    // Страница — в нынешнем виде: его могли сменить, пока окно было закрыто.
+    writeFileSync(pagePath, buildLogWindowHtml(), 'utf8');
     const work = screen.getPrimaryDisplay().workArea;
     window = new BrowserWindow({
       width: WIDTH,
@@ -287,7 +301,7 @@ export function createLogWindow(): LogWindow {
       x: work.x + work.width - WIDTH - MARGIN,
       y: work.y + MARGIN,
       title: tr('Джарвис — что делаю', 'Jarvis — what I am doing'),
-      backgroundColor: '#0f0f12',
+      backgroundColor: windowBackground(),
       show: false,
       // Не «всегда сверху»: это окно читают подолгу, и отнимать им место у
       // того, над чем человек работает, значит заставить его это окно закрыть.

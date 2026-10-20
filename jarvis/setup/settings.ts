@@ -16,8 +16,22 @@ import { DEFAULT_WHISPER_MODEL, WHISPER_MODEL_IDS, type WhisperModelId } from '.
 import { DEFAULT_VOICE, VOICES } from '../voice/tts';
 
 import type { Language } from '../locale/language';
+import { NOTES_STYLES, type NotesStyle } from '../notes/style';
 
-export type { Language };
+export type { Language, NotesStyle };
+
+/**
+ * Вид окон: тетрадь в клетку, белый лист с маркерами, кольцо Джарвиса.
+ *
+ * Выбирает человек, а не мы: владелец посмотрел три варианта и попросил все
+ * три — переключаемыми (20.10.2026).
+ */
+export type Look = 'tetrad' | 'marker' | 'ring';
+export const LOOKS: readonly Look[] = ['tetrad', 'marker', 'ring'];
+
+/** Тема: как в системе, светлая или тёмная. */
+export type ThemeChoice = 'system' | 'light' | 'dark';
+export const THEMES: readonly ThemeChoice[] = ['system', 'light', 'dark'];
 
 /**
  * Что из речи писать в лог.
@@ -89,6 +103,12 @@ export interface AppSettings {
    * если лекция на другом, термины идут в скобках так, как их сказал лектор.
    */
   lectureLanguage: string;
+  /** Вид окон и плашки. */
+  look: Look;
+  /** Светлая, тёмная или как в системе — для всех окон сразу. */
+  theme: ThemeChoice;
+  /** Как оформлять конспект лекции в Obsidian (`jarvis/notes/style.ts`). */
+  notesStyle: NotesStyle;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -110,6 +130,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   speechVolume: 1,
   bigMode: false,
   lectureLanguage: '',
+  look: 'ring',
+  theme: 'system',
+  notesStyle: 'razbor',
 };
 
 /** Пределы, за которые голосовая настройка не уводит. */
@@ -171,6 +194,9 @@ export function normaliseSettings(raw: unknown): AppSettings {
     bigMode: input.bigMode === true,
     // Только код языка: всё прочее ушло бы в запрос к серверу распознавания.
     lectureLanguage: /^[a-z]{2,3}$/u.test(text('lectureLanguage', '').toLowerCase()) ? text('lectureLanguage', '').toLowerCase() : '',
+    look: LOOKS.includes(input.look as Look) ? (input.look as Look) : DEFAULT_SETTINGS.look,
+    theme: THEMES.includes(input.theme as ThemeChoice) ? (input.theme as ThemeChoice) : DEFAULT_SETTINGS.theme,
+    notesStyle: NOTES_STYLES.includes(input.notesStyle as NotesStyle) ? (input.notesStyle as NotesStyle) : DEFAULT_SETTINGS.notesStyle,
   };
 }
 

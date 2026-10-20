@@ -57,6 +57,7 @@ import { LectureSession, NOTES_WORDS, type NotesLanguage } from '../jarvis/lectu
 import { createAgentFinalSummarizer, createAgentSummarizer } from '../jarvis/lecture/summarize';
 import type { AgentChoice } from '../jarvis/backends/types';
 import { lectureFolder, obsidianOpenUrl } from '../jarvis/lecture/vault';
+import type { NotesStyle } from '../jarvis/notes/style';
 import { tr } from '../jarvis/locale/language';
 import { findGpuWhisper, findLectureModel, gpuWhisperDir, otherLectureModels, startGpuWhisper, type GpuWhisperServer } from '../jarvis/voice/gpuWhisper';
 import { resampleTo16k } from '../jarvis/voice/wav';
@@ -146,6 +147,8 @@ export interface LectureStartOptions {
   lectureLanguage: string;
   /** Язык интерфейса: папка «Лекции» и конспект, если у курса свой не задан. */
   notesLanguage: NotesLanguage;
+  /** Вид конспекта в Obsidian — из настроек. */
+  notesStyle?: NotesStyle;
   /** Адрес общего сервера распознавания — запасной, когда модели для лекций нет. */
   mainEndpoint(): string | null;
   /** Откуда звук: микрофон (аудитория) или звук компьютера (Zoom). По умолчанию — микрофон. */
@@ -299,6 +302,7 @@ async function начатьЛекцию(subject: string | undefined, options: Le
       summarizeFinal: createAgentFinalSummarizer({ prefer: options.agent, log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
       lectureLanguage: языки.lecture,
       notesLanguage: языки.notes,
+      notesStyle: options.notesStyle,
       // Только счёт и события: сама лекция в журнал Джарвиса не пишется.
       log: (строка) => console.log(`[jarvis:lecture] ${строка}`),
     },
@@ -553,6 +557,7 @@ export async function lectureFromFile(file: string, options: LectureFileOptions)
         summarizeFinal: createAgentFinalSummarizer({ prefer: options.agent, log: (строка) => console.log(`[jarvis:lecture] файл: ${строка}`) }),
         lectureLanguage: языки.lecture,
         notesLanguage: языки.notes,
+        notesStyle: options.notesStyle,
         log: (строка) => console.log(`[jarvis:lecture] файл: ${строка}`),
       },
       new Date(времяФайла),

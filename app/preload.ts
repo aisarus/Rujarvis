@@ -26,6 +26,9 @@ contextBridge.exposeInMainWorld('jarvis', {
   onUpdateState: (listener: (state: unknown) => void) => {
     ipcRenderer.on(`${CHANNEL}:updateState`, (_event, state) => listener(state));
   },
+  onLook: (listener: (look: string) => void) => {
+    ipcRenderer.on('jarvis-look', (_event, look) => listener(look));
+  },
   onPage: (listener: (page: string) => void) => {
     ipcRenderer.on(`${CHANNEL}:page`, (_event, page) => listener(page));
   },

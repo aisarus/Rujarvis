@@ -417,6 +417,9 @@ export interface CoursePatch {
   language?: string;
   /** Язык конспекта курса: ru, en; пусто — как в настройках. */
   notesLanguage?: string;
+  /** Лектор и кредиты — их приносит силлабус из конвейера документов. */
+  lecturer?: string;
+  credits?: number;
 }
 
 /**
@@ -455,6 +458,8 @@ export function writeCourseInfo(root: string, course: string, patch: CoursePatch
     if (язык && язык !== 'ru' && язык !== 'en') throw new Error(tr(`конспект пишется по-русски или по-английски, а не «${patch.notesLanguage}»`, `notes are written in Russian or English, not "${patch.notesLanguage}"`));
     поставить(['конспект', 'notes'], язык || null);
   }
+  if (patch.lecturer !== undefined) поставить(['лектор', 'lecturer'], patch.lecturer.trim() ? вЯмл(patch.lecturer.trim()) : null);
+  if (patch.credits !== undefined) поставить(['кредиты', 'credits'], patch.credits > 0 ? String(patch.credits) : null);
   writeFileSync(файл, текст, 'utf8');
 }
 

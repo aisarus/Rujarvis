@@ -13,6 +13,7 @@ import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
 
 import { cloudSpeechKey } from './cloudTranscriber';
+import { applyAppearance, currentLook, windowBackground } from './look';
 import { терминалДляВхода } from './loginTerminal';
 import { APP_ROOT } from './root';
 import { cliStatus, createClaudeProbe, createCodexProbe, createGeminiProbe } from '../jarvis/backends/cliProbes';
@@ -86,7 +87,7 @@ export function openSettingsWindow(options: SettingsWindowOptions): void {
     minWidth: 640,
     minHeight: 520,
     title: UI_STRINGS[options.settings.get().language].windowTitle,
-    backgroundColor: '#0f1115',
+    backgroundColor: windowBackground(),
     autoHideMenuBar: true,
     show: false,
     icon: path.join(APP_ROOT, 'resources', 'icon.png'),
@@ -104,7 +105,7 @@ export function openSettingsWindow(options: SettingsWindowOptions): void {
     preview = null;
   });
   void window.loadFile(path.join(APP_ROOT, 'app', 'ui', 'settings.html'), {
-    query: { page: какуюСтраницу(options) },
+    query: { page: какуюСтраницу(options), look: currentLook() },
   });
 }
 
@@ -215,6 +216,9 @@ function applyPatch(patch: Partial<AppSettings>): AppSettings {
   const before = options.settings.get();
   const after = options.settings.update(подобратьГолос(patch, before));
   const changed = (Object.keys(after) as Array<keyof AppSettings>).filter((key) => before[key] !== after[key]);
+  // Вид и тема — сразу и во всех окнах, в том числе посреди первого запуска:
+  // там их и выбирают, глядя на само окно.
+  if (changed.includes('look') || changed.includes('theme')) applyAppearance(after);
   if (changed.length > 0 && after.onboarded) options.onSettingsChanged(changed);
   return after;
 }

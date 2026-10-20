@@ -8,10 +8,17 @@
 const API = window.study;
 const LANG = new URLSearchParams(location.search).get('lang') === 'en' ? 'en' : 'ru';
 
+// Вид окна: при открытии — из адреса, потом — по сообщению главного процесса.
+function applyLook(look) {
+  if (['tetrad', 'marker', 'ring'].includes(look)) document.documentElement.dataset.look = look;
+}
+applyLook(new URLSearchParams(location.search).get('look'));
+if (API.onLook) API.onLook(applyLook);
+
 const STRINGS = {
   ru: {
     title: 'Учёба', today: 'Сегодня', courses: 'Курсы', cards: 'Карточки', back: '← Назад',
-    classesToday: 'Сегодня пары: {0}', noClasses: 'Сегодня пар нет',
+    classesLabel: 'Сегодня пары', noClasses: 'Сегодня пар нет',
     preparing: 'Готовлю вопросы: {0}…',
     allDone: 'На сегодня всё. Можно пройти квиз по любому курсу.',
     start: 'Начать', pass: 'Пройти', review: 'Разобрать', refresh: 'Освежить', train: 'Тренировка', solve: 'Решать',
@@ -51,7 +58,7 @@ const STRINGS = {
   },
   en: {
     title: 'Study', today: 'Today', courses: 'Courses', cards: 'Cards', back: '← Back',
-    classesToday: 'Classes today: {0}', noClasses: 'No classes today',
+    classesLabel: 'Classes today', noClasses: 'No classes today',
     preparing: 'Preparing questions: {0}…',
     allDone: 'Nothing due today. You can take a quiz in any course.',
     start: 'Start', pass: 'Take', review: 'Review', refresh: 'Refresh', train: 'Train', solve: 'Solve',
@@ -144,7 +151,7 @@ function drawTabs() {
   const tabs = document.getElementById('tabs');
   tabs.textContent = '';
   for (const [id, label, render] of [['today', t('today'), renderToday], ['courses', t('courses'), renderCourses], ['cards', t('cards'), () => renderCards()]]) {
-    tabs.append(el('button', { class: tab === id ? 'active' : '', onclick: () => { tab = id; show(render); } }, label));
+    tabs.append(el('button', { class: tab === id ? 'active' : '', onclick: () => { tab = id; show(render); } }, el('span', {}, label)));
   }
   status.textContent = preparing.length ? t('preparing', preparing.join(', ')) : '';
 }
@@ -191,13 +198,25 @@ function sourceButtons(source) {
 
 // ——— Сегодня ———
 
+/**
+ * Полоска состояния тем курса. Те же доли — и кольцом (`--ring`): в виде
+ * «Кольцо» полоска рисуется кольцом, в остальных — полосой.
+ */
 function stateBar(counts) {
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
   const bar = el('div', { class: 'bar' });
   if (!total) return bar;
+  const цвет = { strong: 'var(--ok)', fragile: 'var(--accent)', weak: 'var(--warn)', covered: 'var(--line-2)' };
+  const дуги = [];
+  let от = 0;
   for (const s of ['strong', 'fragile', 'weak', 'covered']) {
-    if (counts[s]) bar.append(el('span', { class: `s-${s}`, style: `width:${(counts[s] / total) * 100}%` }));
+    if (!counts[s]) continue;
+    const доля = (counts[s] / total) * 100;
+    bar.append(el('span', { class: `s-${s}`, style: `width:${доля}%` }));
+    дуги.push(`${цвет[s]} ${от}% ${от + доля}%`);
+    от += доля;
   }
+  bar.style.setProperty('--ring', `conic-gradient(${дуги.join(', ')})`);
   return bar;
 }
 
@@ -205,10 +224,18 @@ function countsLine(counts) {
   return ['strong', 'fragile', 'weak', 'covered'].filter((s) => counts[s]).map((s) => `${t(`st.${s}`)} ${counts[s]}`).join(' · ');
 }
 
+/** Цвет курса — по имени: один и тот же на плитке, в парах дня и после перезапуска. */
+function hueOf(name) {
+  let h = 0;
+  for (const ch of String(name)) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+  return `h${(h % 6) + 1}`;
+}
+
 function courseTile(c) {
-  return el('button', { class: 'card', style: 'text-align:start;cursor:pointer', onclick: () => show(courseRender(c.name)) },
-    el('div', { class: 'row spread' }, el('b', {}, c.name), c.dueCards ? el('span', { class: 'pill' }, t('dueCards', c.dueCards)) : null),
-    el('div', { class: 'small muted' }, c.lectures ? `${t('lectures', c.lectures)}${countsLine(c.counts) ? ` · ${countsLine(c.counts)}` : ''}` : t('lectures', 0)),
+  return el('button', { class: `card tile ${hueOf(c.name)}`, onclick: () => show(courseRender(c.name)) },
+    el('div', { class: 'top' }, el('b', { class: 'name' }, el('span', {}, c.name)), c.dueCards ? el('span', { class: 'pill' }, t('dueCards', c.dueCards)) : null),
+    c.hebrew ? el('div', { class: 'he', dir: 'auto' }, c.hebrew) : null,
+    el('div', { class: 'meta' }, c.lectures ? `${t('lectures', c.lectures)}${countsLine(c.counts) ? ` · ${countsLine(c.counts)}` : ''}` : t('lectures', 0)),
     stateBar(c.counts),
   );
 }
@@ -229,15 +256,20 @@ async function renderToday() {
   const date = new Date().toLocaleDateString(LANG === 'en' ? 'en-GB' : 'ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
   view.append(
     el('h1', {}, date.charAt(0).toUpperCase() + date.slice(1)),
-    el('p', { class: 'hint' }, today.classes.length ? t('classesToday', today.classes.map((c) => `${c.course} ${c.time}`).join(' · ')) : t('noClasses')),
+    today.classes.length
+      ? el('div', { class: 'classes' }, el('span', { class: 'muted' }, t('classesLabel')),
+        ...today.classes.map((c) => el('span', { class: `class ${hueOf(c.course)}` }, el('b', {}, c.time), ' ', c.course)))
+      : el('p', { class: 'hint' }, t('noClasses')),
   );
   const items = el('div', { class: 'stack' });
-  for (const it of today.items) {
-    items.append(el('div', { class: `card item ${it.kind === 'weak' ? 'warn' : it.kind === 'exam' ? 'exam' : ''}` },
-      el('div', { class: 'what' }, el('div', {}, el('b', {}, it.title)), el('div', { class: 'small muted' }, it.detail)),
-      el('button', { class: 'btn', onclick: () => runAction(it.action) }, t(ACTION_LABEL[it.kind] || 'start')),
+  // Первое дело дня — главной кнопкой: с него и начинать.
+  today.items.forEach((it, i) => {
+    items.append(el('div', { class: `card item kind-${it.kind}` },
+      el('i', { class: 'mark', 'aria-hidden': 'true' }),
+      el('div', { class: 'what' }, el('div', {}, el('b', {}, it.title)), el('div', { class: 'small muted detail' }, it.detail)),
+      el('button', { class: i === 0 ? 'btn primary' : 'btn', onclick: () => runAction(it.action) }, t(ACTION_LABEL[it.kind] || 'start')),
     ));
-  }
+  });
   if (!today.items.length) items.append(el('p', { class: 'muted' }, t('allDone')));
   view.append(items, el('h2', {}, t('courses')));
   const grid = el('div', { class: 'grid' });
@@ -492,6 +524,22 @@ function unpreparedBox(u) {
   );
 }
 
+/**
+ * Вариант ответа: номер отдельным значком, текст (на языке лекции — своим
+ * направлением письма), перевод и разбор. Номер не склеивается с текстом: в
+ * строке на иврите «1.» уезжал на другой край.
+ */
+function optionParts(o, i, why) {
+  return [
+    el('span', { class: 'onum', 'aria-hidden': 'true' }, i + 1),
+    el('span', { class: 'obody' },
+      el('span', { class: 'otext', dir: 'auto' }, el('span', { class: 'omark' }, o.text)),
+      o.translation && showTranslation ? el('span', { class: 'tr', dir: 'auto' }, o.translation) : null,
+      why,
+    ),
+  ];
+}
+
 // ——— Квиз ———
 
 let showTranslation = true;
@@ -528,9 +576,7 @@ async function renderQuiz(scope) {
       q.promptTranslation ? translationToggle(draw) : el('span'),
     );
     const options = q.options.map((o, i) => el('button', { class: 'option', onclick: () => choose(i) },
-      el('div', { dir: 'auto' }, `${i + 1}. ${o.text}`),
-      o.translation && showTranslation ? el('div', { class: 'tr', dir: 'auto' }, o.translation) : null,
-      el('div', { class: 'why', dir: 'auto', style: 'display:none' }),
+      ...optionParts(o, i, el('div', { class: 'why', dir: 'auto', style: 'display:none' })),
     ));
     const feedback = el('div', { class: 'feedback' });
     const own = el('div', { style: 'margin-top:10px' });
@@ -827,7 +873,7 @@ function renderExam(course, session) {
           busy = false;
         }
         draw();
-      } }, el('div', { dir: 'auto' }, `${i + 1}. ${o.text}`), o.translation && showTranslation ? el('div', { class: 'tr', dir: 'auto' }, o.translation) : null)),
+      } }, ...optionParts(o, i, null))),
     );
     keyHandler = (e) => {
       if (/^[1-4]$/.test(e.key)) view.querySelectorAll('.option')[Number(e.key) - 1]?.click();

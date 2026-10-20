@@ -12,6 +12,14 @@ const KEY_WORDS = {
 
 let data = null;
 let page = new URLSearchParams(location.search).get('page') === 'onboarding' ? 'onboarding' : 'settings';
+
+// Вид — сразу, до первой отрисовки: настройки ещё едут из главного процесса.
+const LOOKS = ['tetrad', 'marker', 'ring'];
+function applyLook(look) {
+  if (LOOKS.includes(look)) document.documentElement.dataset.look = look;
+}
+applyLook(new URLSearchParams(location.search).get('look'));
+if (api.onLook) api.onLook(applyLook);
 let step = 0;
 let tab = 'general';
 /** Ход загрузок: `${kind}:${id}` → { stage, ratio, message }. */
@@ -297,6 +305,40 @@ function stopMic() {
   micStream = null;
 }
 
+/**
+ * Вид и тема. Каждая карточка вида нарисована в своём виде — человек
+ * выбирает, глядя на образец, а не на название.
+ */
+function appearanceCard() {
+  const s = t();
+  const looks = [['tetrad', s.lookTetrad, s.lookTetradHint], ['marker', s.lookMarker, s.lookMarkerHint], ['ring', s.lookRing, s.lookRingHint]];
+  const themes = [['system', s.themeSystem], ['light', s.themeLight], ['dark', s.themeDark]];
+  const listening = data.settings.language === 'en' ? 'Listening…' : 'Слушаю…';
+  const node = el(`<div class="card" id="appearance">
+    <div class="row" style="margin-bottom:10px"><h2>${s.lookTitle}</h2>
+      <div class="seg" role="radiogroup">${themes.map(([id, name]) => `<button type="button" role="radio" data-theme="${id}" class="${data.settings.theme === id ? 'on' : ''}" aria-checked="${data.settings.theme === id}">${escapeHtml(name)}</button>`).join('')}</div></div>
+    <p class="hint" style="margin:0 0 12px">${s.lookHint}</p>
+    <div class="looks">${looks.map(([id, name, hint]) => `<button type="button" class="look-card ${data.settings.look === id ? 'selected' : ''}" data-look="${id}" aria-pressed="${data.settings.look === id}">
+      <div class="look-mini paper"><div class="mini-pill"><i class="mini-dot"></i>${listening}</div><div class="mini-btns"><i></i><i></i><i></i></div></div>
+      <div class="look-name"><b>${escapeHtml(name)}</b><span>${escapeHtml(hint)}</span></div></button>`).join('')}</div>
+  </div>`);
+  for (const button of node.querySelectorAll('.look-card')) button.onclick = () => { applyLook(button.dataset.look); update({ look: button.dataset.look }); };
+  for (const button of node.querySelectorAll('[data-theme]')) button.onclick = () => update({ theme: button.dataset.theme });
+  return node;
+}
+
+/** Как оформлять конспект лекции в Obsidian. */
+function notesStyleCard() {
+  const s = t();
+  const styles = [['razbor', s.notesRazbor, s.notesRazborHint], ['questions', s.notesQuestions, s.notesQuestionsHint], ['bilingual', s.notesBilingual, s.notesBilingualHint]];
+  const node = el(`<div class="card" id="notes-style"><h2>${s.notesStyleTitle}</h2>
+    <p class="hint" style="margin:4px 0 12px">${s.notesStyleHint}</p>
+    <div class="notes-styles">${styles.map(([id, name, hint]) => `<button type="button" data-style="${id}" class="${data.settings.notesStyle === id ? 'selected' : ''}" aria-pressed="${data.settings.notesStyle === id}"><i></i><div><b>${escapeHtml(name)}</b><span>${escapeHtml(hint)}</span></div></button>`).join('')}</div>
+  </div>`);
+  for (const button of node.querySelectorAll('[data-style]')) button.onclick = () => update({ notesStyle: button.dataset.style });
+  return node;
+}
+
 function languageChoice() {
   const node = el(`<div class="choice">
     <button data-lang="ru"><b>Русский</b><span>«Джарвис, открой браузер»</span></button>
@@ -421,7 +463,11 @@ function stepReady() {
 function renderWizard(main) {
   const s = t();
   const name = STEPS[step];
-  main.append(el(`<div class="steps">${STEPS.map((_, i) => `<i class="${i <= step ? 'on' : ''}"></i>`).join('')}</div>`));
+  const короткие = [s.stepShortLanguage, s.stepShortAgent, s.stepShortModels, s.stepShortMic, s.stepShortReady];
+  main.append(
+    el(`<div class="wiz-brand"><span class="logo"></span>Rujarvis</div>`),
+    el(`<ol class="steps">${STEPS.map((_, i) => `<li class="${i < step ? 'done' : i === step ? 'now' : ''}"${i === step ? ' aria-current="step"' : ''}><span>${escapeHtml(короткие[i])}</span></li>`).join('')}</ol>`),
+  );
   const titles = {
     language: [s.onboardingTitle, s.onboardingIntro],
     agent: [s.stepAgent, s.stepAgentHint],
@@ -431,7 +477,10 @@ function renderWizard(main) {
   };
   main.append(el(`<h1>${titles[name][0]}</h1>`), el(`<p class="hint">${titles[name][1]}</p>`));
 
-  if (name === 'language') main.append(languageChoice());
+  if (name === 'language') {
+    main.append(languageChoice());
+    main.append(el('<div style="height:14px"></div>'), appearanceCard());
+  }
   if (name === 'agent') {
     main.append(agentCard('claude', 'Claude Code', false));
     main.append(agentCard('codex', s.codexOptional, true));
@@ -561,7 +610,7 @@ function renderSettings(main, nav) {
   const s = t();
   const labels = { general: s.tabGeneral, voice: s.tabVoice, agents: s.tabAgents, folders: s.tabFolders, keys: s.tabKeys };
   for (const id of TABS) {
-    const button = el(`<button class="${id === tab ? 'active' : ''}">${labels[id]}</button>`);
+    const button = el(`<button class="${id === tab ? 'active' : ''}"><span>${labels[id]}</span></button>`);
     button.onclick = () => { tab = id; if (id !== 'voice') stopMic(); if (id === 'agents') refresh(); else render(); };
     nav.append(button);
   }
@@ -569,7 +618,9 @@ function renderSettings(main, nav) {
 
   if (tab === 'general') {
     main.append(el(`<p class="hint">${s.stepLanguageHint}</p>`), languageChoice());
-    main.append(el('<div style="height:14px"></div>'), redLinesCard());
+    main.append(el('<div style="height:14px"></div>'), appearanceCard());
+    main.append(notesStyleCard());
+    main.append(redLinesCard());
     main.append(updateCard());
     main.append(reportCard());
   }
@@ -625,6 +676,7 @@ function render() {
   // Язык страницы — здесь, а не только в refresh: иначе после смены языка
   // атрибут оставался прежним, и переносы со словарём шли по чужому языку.
   document.documentElement.lang = data.settings.language;
+  applyLook(data.settings.look);
   if (page === 'onboarding') renderWizard(main);
   else renderSettings(main, nav);
 }

@@ -47,6 +47,30 @@ function метка(секунд: number): string {
   return ч > 0 ? `${ч}:${мс}` : мс;
 }
 
+/**
+ * Понятия из итога лекции — строками «термин — объяснение».
+ *
+ * Итог бывает списком («- термин — …») и таблицей («| термин | на иврите |
+ * коротко |»): вид конспекта выбирает человек. Строка шапки и строка
+ * «| --- |» таблицы понятиями не считаются.
+ */
+export function conceptLines(блок: string): string[] {
+  const строки = блок.split(/\r?\n/u).map((s) => s.trim());
+  const out: string[] = [];
+  for (const [i, строка] of строки.entries()) {
+    if (!строка) continue;
+    if (строка.startsWith('|')) {
+      if (/^\|[\s|:-]+\|?$/u.test(строка)) continue;
+      if (/^\|[\s|:-]+\|?$/u.test(строки[i + 1] ?? '')) continue;
+      const ячейки = строка.replace(/^\||\|$/gu, '').split('|').map((c) => c.trim()).filter(Boolean);
+      if (ячейки.length > 0) out.push(ячейки.join(' — '));
+      continue;
+    }
+    out.push(строка.replace(/^[-*]\s*/u, '').trim());
+  }
+  return out.filter(Boolean);
+}
+
 /** Заметка и расшифровка лекции → разделы-темы и текст для модели. */
 export async function readLectureSource(notesFile: string, notes: NotesLanguage): Promise<LectureSource | null> {
   const текст = await readFile(notesFile, 'utf8');
@@ -76,10 +100,7 @@ export async function readLectureSource(notesFile: string, notes: NotesLanguage)
   }
 
   const понятия = /^## (Понятия|Concepts)\s*$([\s\S]*?)(?=^## |(?![\s\S]))/mu.exec(текст);
-  const concepts = (понятия?.[2] ?? '')
-    .split(/\r?\n/u)
-    .map((s) => s.replace(/^\s*[-*]\s*/u, '').trim())
-    .filter(Boolean);
+  const concepts = conceptLines(понятия?.[2] ?? '');
 
   const расшифровка = await readFile(`${база} — ${с.transcriptFile}.md`, 'utf8').catch(() => '');
   const куски = parseTranscript(расшифровка);
