@@ -18,7 +18,7 @@ import { tr } from '../jarvis/locale/language';
 import type { JarvisPaths } from '../jarvis/setup/paths';
 import { jarvisOutputDir } from '../jarvis/setup/paths';
 import type { AppSettings } from '../jarvis/setup/settings';
-import { prepareLecture } from '../jarvis/study/prepare';
+import { prepareLecture, prepareMaterial } from '../jarvis/study/prepare';
 import { StudyService, studyRoot } from '../jarvis/study/service';
 import { StudyStore } from '../jarvis/study/store';
 import { lectureState } from './lectureMode';
@@ -32,7 +32,7 @@ interface Настройка {
 let настройка: Настройка | null = null;
 let служба: StudyService | null = null;
 let очередь: Promise<void> = Promise.resolve();
-/** Лекция → её заметка: что в очереди заготовки и к какому курсу относится. */
+/** Лекция или материал → курс: что в очереди заготовки и чей курс сейчас не трогать. */
 const готовятся = new Map<string, string>();
 
 export function configureStudy(options: Настройка): void {
@@ -79,7 +79,7 @@ function курсЗанят(course: string): string | null {
   if (lectureState() !== 'off') {
     return tr('Сейчас идёт конспект — курсы можно менять, когда он закончится.', 'Lecture notes are in progress. Courses can be changed once they finish.');
   }
-  if ([...готовятся.values()].some((заметка) => path.basename(path.dirname(заметка)) === course)) {
+  if ([...готовятся.values()].includes(course)) {
     return tr(`Готовлю вопросы к лекциям курса «${course}» — подождите, пока закончу.`, `Preparing questions for "${course}". Wait until it finishes.`);
   }
   return null;
@@ -90,20 +90,31 @@ export function preparingLectures(): string[] {
   return [...готовятся.keys()];
 }
 
-/** Заготовить учёбу по лекции — в очередь, по одной. */
-export function prepareStudyFor(notesFile: string): void {
+/** Разбор документа из конвейера: его курс, язык документа и язык заметок. */
+export interface MaterialStudy {
+  course: string;
+  /** Язык документа — на нём будут вопросы, как на экзамене. */
+  sourceLanguage?: string;
+  notes: 'ru' | 'en';
+}
+
+/** Заготовить учёбу по лекции или разбору документа — в очередь, по одной. */
+export function prepareStudyFor(notesFile: string, material?: MaterialStudy): void {
   if (!настройка) return;
   const лекция = path.basename(notesFile, '.md');
   if (готовятся.has(лекция)) return;
-  готовятся.set(лекция, notesFile);
+  готовятся.set(лекция, material?.course ?? path.basename(path.dirname(notesFile)));
   sendStudyUpdate();
   const s = настройка.settings();
   очередь = очередь.then(async () => {
     const t0 = Date.now();
     try {
-      // Вопросы — на языке лекции курса, разбор — на языке его конспекта.
-      const языки = lectureLanguagesFor(notesFile, settingsLanguages(s));
-      const итог = await prepareLecture(notesFile, хранилище(), {
+      // Вопросы — на языке лекции курса (у материала — на языке документа),
+      // разбор — на языке конспекта.
+      const языки = material
+        ? { lecture: material.sourceLanguage || settingsLanguages(s).lecture, notes: material.notes }
+        : lectureLanguagesFor(notesFile, settingsLanguages(s));
+      const итог = await (material ? prepareMaterial : prepareLecture)(notesFile, хранилище(), {
         summarize: createAgentSummarizer({ prefer: () => s.agent }),
         lectureLanguage: языки.lecture,
         notes: языки.notes,

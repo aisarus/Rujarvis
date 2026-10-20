@@ -26,7 +26,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -268,6 +268,23 @@ function вЯмл(значение: string): string {
   return `'${значение.replace(/'/gu, "''")}'`;
 }
 
+/**
+ * Папка с графиками — файл за файлом. Не `cpSync`: в CI на Windows (Node из
+ * `.nvmrc`) он молча не скопировал папку с кириллицей в пути назначения, а
+ * локально на Node 24 копировал (20.10.2026). Обычные mkdir и copyFile ведут
+ * себя одинаково везде.
+ */
+function копироватьПапку(откуда: string, куда: string): void {
+  if (!existsSync(откуда) || !statSync(откуда).isDirectory()) return;
+  mkdirSync(куда, { recursive: true });
+  for (const e of readdirSync(откуда, { withFileTypes: true })) {
+    const из = path.join(откуда, e.name);
+    const в = path.join(куда, e.name);
+    if (e.isDirectory()) копироватьПапку(из, в);
+    else if (e.isFile()) copyFileSync(из, в);
+  }
+}
+
 /** Свободное имя папки: «Название», «Название (2)», … */
 function свободная(папка: string): string {
   if (!existsSync(папка)) return папка;
@@ -348,8 +365,7 @@ export function fileDocument(input: FileInput): Filed {
 
   const документ = path.basename(input.original);
   copyFileSync(input.original, path.join(папка, документ));
-  const графики = path.join(input.outDir, 'graphs');
-  if (existsSync(графики) && statSync(графики).isDirectory()) cpSync(графики, path.join(папка, 'graphs'), { recursive: true });
+  копироватьПапку(path.join(input.outDir, 'graphs'), path.join(папка, 'graphs'));
 
   const свойства = [
     '---',
