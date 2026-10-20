@@ -576,6 +576,7 @@ function документы(сообщить: (текст: string) => Promise<vo
     outputDir: () => настройкиЛекции().outputDir,
     notes: () => (settings().language === 'en' ? ('en' as const) : ('ru' as const)),
     say: (текст: string) => void сообщить(текст),
+    agent: () => settings().agent,
   };
 }
 

@@ -47,6 +47,11 @@ export interface GeminiPolicyOptions {
     protectedRoots: readonly string[];
     /** Рабочая папка: относительные пути Gemini отсчитывает от неё. */
     cwd: string;
+    /**
+     * Относительные пути — только внутри этой подпапки рабочей папки
+     * (`out` у разбора документа). Не задано — любой относительный путь.
+     */
+    relativeUnder?: string;
   };
   platform?: NodeJS.Platform;
 }
@@ -154,11 +159,18 @@ export function protectedWritePatterns(options: NonNullable<GeminiPolicyOptions[
  * его от рабочей папки) или путь внутри разрешённой папки. Хватит одного.
  */
 export function allowedWritePatterns(options: NonNullable<GeminiPolicyOptions['writes']>, platform: NodeJS.Platform): string[] {
-  return [
-    // Не диск, не корень, не сетевой путь и не «~».
-    `${НАЧАЛО}(?![A-Za-z]:|${SEP}|~)[^"]*"\\x00`,
-    ...options.roots.filter(Boolean).map((корень) => `${НАЧАЛО}${rootPattern(корень, platform)}${КОНЕЦ}`),
-  ];
+  const безРегистра = platform === 'win32' || platform === 'darwin';
+  const под = options.relativeUnder
+    ?.split(/[\\/]+/u)
+    .filter(Boolean)
+    .map((часть) => кусок(часть, безРегистра))
+    .join(SEPS);
+  const относительные = под
+    ? // Только внутри подпапки: «out/…» и «./out/…».
+      [`${НАЧАЛО}${под}${SEP}`, String.raw`${НАЧАЛО}\.${SEPS}${под}${SEP}`]
+    : // Не диск, не корень, не сетевой путь и не «~».
+      [`${НАЧАЛО}(?![A-Za-z]:|${SEP}|~)[^"]*"\\x00`];
+  return [...относительные, ...options.roots.filter(Boolean).map((корень) => `${НАЧАЛО}${rootPattern(корень, platform)}${КОНЕЦ}`)];
 }
 
 /** Текст политики TOML для одного запуска. */

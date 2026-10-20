@@ -16,7 +16,7 @@ import {
   protectedRootsFor,
   serverEnv,
 } from './gemini';
-import { adminPoliciesPresent, geminiEnv, geminiLoginEnv, geminiSettings, GEMINI_CORE_TOOLS } from './geminiHome';
+import { adminPoliciesPresent, ensureGeminiHome, geminiEnv, geminiLoginEnv, geminiSettings, GEMINI_CORE_TOOLS } from './geminiHome';
 import { allowedWritePatterns, geminiAcceptsPattern, geminiPolicy, protectedWritePatterns, rootPattern } from './geminiPolicy';
 import { BackendManager } from './manager';
 import type { CliHandle, CliProcessOptions, CliProcessOutcome } from './process';
@@ -159,6 +159,18 @@ describe('настройки и окружение Gemini', () => {
     // Сервер описан переменными: настройки одни на работу и разговор.
     expect(s.mcpServers['jarvis-desktop']).toEqual(expect.objectContaining({ command: '$JARVIS_GEMINI_MCP_COMMAND' }));
     expect(s.mcpServers['jarvis-talk']).toEqual(expect.objectContaining({ args: ['$JARVIS_GEMINI_MCP_SCRIPT'] }));
+  });
+
+  it('настройки, пересохранённые самим Gemini, не переписываются; испорченные — переписываются', () => {
+    const home = дом();
+    const файл = ensureGeminiHome(home);
+    // Gemini сохраняет тот же JSON без последнего перевода строки.
+    writeFileSync(файл, JSON.stringify(geminiSettings(), null, 2), 'utf8');
+    ensureGeminiHome(home);
+    expect(readFileSync(файл, 'utf8').endsWith(String.fromCharCode(10))).toBe(false);
+    writeFileSync(файл, '{"tools":{"core":["run_shell_command"]}}', 'utf8');
+    ensureGeminiHome(home);
+    expect(JSON.parse(readFileSync(файл, 'utf8'))).toEqual(geminiSettings());
   });
 
   it('окружение без ключей и обходов входа, свой дом, без браузера', () => {

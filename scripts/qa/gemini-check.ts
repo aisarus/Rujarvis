@@ -39,6 +39,7 @@ import { CliProcess } from '../../jarvis/backends/process';
 import type { BackendRequest } from '../../jarvis/backends/types';
 import { writeDesktopMcpConfig } from '../../jarvis/desktop/mcpConfig';
 import { GeminiTalkLive } from '../../jarvis/dialogue/geminiTalk';
+import { createGeminiDocumentAgent } from '../../jarvis/documents/agents';
 import { withFrontmatter } from '../../jarvis/lecture/courses';
 import { finishFromTranscript } from '../../jarvis/lecture/finishFromTranscript';
 import { createAgentFinalSummarizer, createAgentSummarizer } from '../../jarvis/lecture/summarize';
@@ -115,18 +116,17 @@ interface Исход {
  * Запустить настоящий Gemini с подменённой моделью через `GeminiBackend`.
  * Возвращает исход каждого вызова по сырому потоку CLI.
  */
-async function прогон(
-  b: { home: string; work: string; output: string; desktop: string; gate: string },
-  вызовы: Вызов[],
-): Promise<{ исходы: Исход[]; ok: boolean; error?: string }> {
-  const ответы = path.join(ДОМ, `ответы-${Date.now()}.jsonl`);
+/**
+ * Запуск настоящего CLI с подменённой моделью: в `строки` ложится сырой поток.
+ * Только вход — проверочный: подменённой модели он не нужен, а вход через
+ * Google без человека не пройти. Всё остальное в настройках — как у
+ * настоящего запуска.
+ */
+function подменныйЗапуск(home: string, вызовы: Вызов[], строки: string[]): SpawnCli {
+  const ответы = path.join(ДОМ, `ответы-${Date.now()}-${строки.length}.jsonl`);
   writeFileSync(ответы, подменныеОтветы(вызовы), 'utf8');
-  const строки: string[] = [];
-  const spawnCli: SpawnCli = (options) => {
-    // Только вход — проверочный: подменённой модели он не нужен, а вход
-    // через Google без человека не пройти. Всё остальное в настройках — как
-    // у настоящего запуска.
-    const файл = path.join(b.home, '.gemini', 'settings.json');
+  return (options) => {
+    const файл = path.join(home, '.gemini', 'settings.json');
     const настройки = JSON.parse(readFileSync(файл, 'utf8')) as { security: { auth: unknown } };
     настройки.security.auth = { selectedType: 'compute-default-credentials' };
     writeFileSync(файл, JSON.stringify(настройки), 'utf8');
@@ -139,19 +139,10 @@ async function прогон(
       },
     });
   };
-  const backend = new GeminiBackend({
-    probe: { status: async () => ({ installed: true, loggedIn: true, path: cli ?? 'gemini' }) },
-    home: b.home,
-    desktopMcpConfig: b.desktop,
-    gateConfig: b.gate,
-    outputDir: b.output,
-    homeDir: path.join(ДОМ, 'Rujarvis'),
-    spawnCli,
-  });
-  const итог = await backend
-    .run(request({ utterance: 'проверка красных линий', capabilities: ['computer', 'browser', 'files'], cwd: b.work }))
-    .result();
+}
 
+/** Исход каждого вызова инструмента по сырому потоку CLI. */
+function исходыИз(строки: readonly string[]): Исход[] {
   const имена = new Map<string, string>();
   const исходы: Исход[] = [];
   for (const строка of строки) {
@@ -171,7 +162,67 @@ async function прогон(
       });
     }
   }
-  return { исходы, ok: итог.ok, error: итог.error };
+  return исходы;
+}
+
+async function прогон(
+  b: { home: string; work: string; output: string; desktop: string; gate: string },
+  вызовы: Вызов[],
+): Promise<{ исходы: Исход[]; ok: boolean; error?: string }> {
+  const строки: string[] = [];
+  const spawnCli = подменныйЗапуск(b.home, вызовы, строки);
+  const backend = new GeminiBackend({
+    probe: { status: async () => ({ installed: true, loggedIn: true, path: cli ?? 'gemini' }) },
+    home: b.home,
+    desktopMcpConfig: b.desktop,
+    gateConfig: b.gate,
+    outputDir: b.output,
+    homeDir: path.join(ДОМ, 'Rujarvis'),
+    spawnCli,
+  });
+  const итог = await backend
+    .run(request({ utterance: 'проверка красных линий', capabilities: ['computer', 'browser', 'files'], cwd: b.work }))
+    .result();
+
+  return { исходы: исходыИз(строки), ok: итог.ok, error: итог.error };
+}
+
+/** Разбор документа: Gemini пишет только в out/, ни веба, ни оболочки. */
+async function документом(home: string): Promise<void> {
+  const job = { cwd: path.join(ДОМ, 'документ'), prompt: 'Разбери in/статья.md.' };
+  mkdirSync(path.join(job.cwd, 'in'), { recursive: true });
+  mkdirSync(path.join(job.cwd, 'out'), { recursive: true });
+  writeFileSync(path.join(job.cwd, 'in', 'статья.md'), '# Статья\nТекст.', 'utf8');
+  const строки: string[] = [];
+  const spawnCli = подменныйЗапуск(home, [
+    { name: 'read_file', args: { file_path: 'in/статья.md' } },
+    { name: 'write_file', args: { file_path: 'out/Статья — читаем вместе.md', content: '## Коротко' } },
+    { name: 'write_file', args: { file_path: 'in/подмена.md', content: 'x' } },
+    { name: 'write_file', args: { file_path: 'заметка.md', content: 'x' } },
+    { name: 'web_fetch', args: { prompt: 'https://example.com' } },
+  ], строки);
+  try {
+    await createGeminiDocumentAgent({ command: cli ?? 'gemini', home, spawnCli })(job);
+  } catch (error) {
+    console.log(`  (разбор: ${error instanceof Error ? error.message : String(error)})`);
+  }
+  const исходы = исходыИз(строки);
+  const запись = исходы.filter((и) => и.name === 'write_file');
+  отметить('документ: чтение in/ — можно', исходы.find((и) => и.name === 'read_file')?.status === 'success' ? 'прошло' : 'не прошло');
+  отметить(
+    'документ: запись в out/ — можно',
+    запись[0]?.status === 'success' && existsSync(path.join(job.cwd, 'out', 'Статья — читаем вместе.md')) ? 'прошло' : 'не прошло',
+    запись[0]?.output.slice(0, 90),
+  );
+  отметить(
+    'документ: запись мимо out/ — отказ',
+    запись[1]?.status !== 'success' && запись[2]?.status !== 'success' && !existsSync(path.join(job.cwd, 'in', 'подмена.md')) && !existsSync(path.join(job.cwd, 'заметка.md'))
+      ? 'прошло'
+      : 'не прошло',
+    запись[1]?.output.slice(0, 90),
+  );
+  const веб = исходы.find((и) => и.name === 'web_fetch');
+  отметить('документ: веба нет', веб && веб.status !== 'success' ? 'прошло' : 'не прошло', веб?.output.slice(0, 90));
 }
 
 async function краснымиЛиниями(): Promise<void> {
@@ -242,6 +293,8 @@ async function краснымиЛиниями(): Promise<void> {
     writeFileSync(сломанный, '{ это не json', 'utf8');
     const сбой = await прогон({ home, work, output, desktop: стол.file, gate: сломанный }, [{ name: 'mcp_jarvis-desktop_output_folder', args: {} }]);
     const отказ = сбой.исходы.find((и) => и.name === 'mcp_jarvis-desktop_output_folder');
+    await документом(home);
+
     отметить(
       'сбой проверки (сломанный gate.json) — отказ',
       отказ && отказ.status !== 'success' && /Проверка разрешений не сработала/u.test(отказ.output) ? 'прошло' : 'не прошло',

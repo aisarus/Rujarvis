@@ -11,7 +11,9 @@ import path from 'node:path';
 
 import { Notification, shell } from 'electron';
 
-import { createClaudeDocumentAgent, processDocument, withFallbackAgent } from '../jarvis/documents/pipeline';
+import type { AgentChoice } from '../jarvis/backends/types';
+import { createAgentDocumentAgent } from '../jarvis/documents/agents';
+import { processDocument } from '../jarvis/documents/pipeline';
 import { lectureFolder, obsidianOpenUrl } from '../jarvis/lecture/vault';
 import { tr } from '../jarvis/locale/language';
 
@@ -21,6 +23,8 @@ export interface DocumentsOptions {
   notes(): 'ru' | 'en';
   /** Сообщить человеку итог: строкой на плашке или голосом. */
   say(text: string): void;
+  /** Кто разбирает — выбор во вкладке «Агенты»; нет — первый готовый. */
+  agent?(): AgentChoice;
 }
 
 let очередь: Promise<void> = Promise.resolve();
@@ -51,8 +55,9 @@ async function разобрать(file: string, options: DocumentsOptions, cours
       root,
       notes,
       course,
-      // Opus — разбор документа один, и он должен быть лучшим; лимит — Sonnet.
-      agent: withFallbackAgent(createClaudeDocumentAgent({ model: 'opus', log }), createClaudeDocumentAgent({ model: 'sonnet', log }), log),
+      // Сильнейшая модель выбранного агента — разбор документа один, и он
+      // должен быть лучшим; лимит — быстрая (Opus → Sonnet, Gemini Pro → Flash).
+      agent: createAgentDocumentAgent({ prefer: options.agent, log }),
       log,
     });
     log(`«${имя}» за ${Math.round((Date.now() - t0) / 1000)} с`);

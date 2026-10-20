@@ -330,7 +330,7 @@ function registerHandlers(): void {
       // поэтому Gemini сразу откроет страницу Google, а не меню способов.
       ensureGeminiHome(paths.geminiHome);
       console.log(`[jarvis] вход: gemini — ${status.path} (дом ${paths.geminiHome})`);
-      return openTerminal(status.path, [], папка, 'Gemini', geminiLoginEnv(paths.geminiHome));
+      return openTerminal(status.path, [], папка, 'Gemini', geminiLoginEnv(paths.geminiHome), paths.geminiHome);
     }
     // Подкоманды сверены с самими CLI 26.09.2026: `claude auth login` и
     // `codex login` — обе существуют.
@@ -370,8 +370,15 @@ function registerHandlers(): void {
  * молча: окно не открывалось, ошибка уходила в никуда, а человек оставался на
  * шаге, который обойти нельзя.
  */
-function openTerminal(command: string, args: string[], папка: string, агент: string, окружение: Record<string, string> = {}): boolean {
-  const запуск = терминалДляВхода(command, args, папка, process.platform, агент, окружение);
+function openTerminal(
+  command: string,
+  args: string[],
+  папка: string,
+  агент: string,
+  окружение: Record<string, string> = {},
+  рабочаяПапка?: string,
+): boolean {
+  const запуск = терминалДляВхода(command, args, папка, process.platform, агент, окружение, рабочаяПапка);
   try {
     if (запуск.сценарий) {
       mkdirSync(path.dirname(запуск.сценарий.файл), { recursive: true });

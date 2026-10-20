@@ -192,6 +192,14 @@ describe('окружение окна входа', () => {
     expect(скрипт).toContain("env 'GEMINI_CLI_HOME=/Users/t/Library/Application Support/Rujarvis/data/gemini' '/Users/t/gemini'");
   });
 
+  it('Gemini открывается в своём доме, а не там, где стоит окно (System32 при Win+R)', () => {
+    const текст = сценарийВхода('C:\\x\\gemini.cmd', [], 'Gemini', {}, 'C:\\Rujarvis\\data\\gemini');
+    const строки = текст.split(String.fromCharCode(13) + String.fromCharCode(10));
+    expect(строки).toContain('cd /d "C:\\Rujarvis\\data\\gemini"');
+    expect(строки.indexOf('cd /d "C:\\Rujarvis\\data\\gemini"')).toBeLessThan(строки.findIndex((с) => с.includes('gemini.cmd')));
+    expect(скриптТерминала('/u/gemini', [], 'Gemini', {}, '/u/Rujarvis/data/gemini')).toContain("cd '/u/Rujarvis/data/gemini' && '/u/gemini'");
+  });
+
   it('линукс: env перед командой', () => {
     const запуск = терминалДляВхода('/usr/bin/gemini', [], '/tmp', 'linux', 'Gemini', { GEMINI_CLI_HOME: '/h' });
     expect(запуск.args).toEqual(['-e', 'env', 'GEMINI_CLI_HOME=/h', '/usr/bin/gemini']);

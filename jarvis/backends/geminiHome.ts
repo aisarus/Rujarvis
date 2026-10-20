@@ -114,13 +114,15 @@ export function ensureGeminiHome(home: string): string {
   mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'settings.json');
   const текст = `${JSON.stringify(geminiSettings(), null, 2)}\n`;
-  let было = '';
+  let было: unknown = null;
   try {
-    было = readFileSync(file, 'utf8');
+    было = JSON.parse(readFileSync(file, 'utf8'));
   } catch {
-    // Файла нет — запишем.
+    // Файла нет или он не читается — запишем.
   }
-  if (было !== текст) {
+  // По смыслу, а не по тексту: Gemini сам пересохраняет файл (без последнего
+  // перевода строки), и сравнение строкой переписывало бы его на каждом запуске.
+  if (JSON.stringify(было) !== JSON.stringify(geminiSettings())) {
     const временный = `${file}.${process.pid}.tmp`;
     writeFileSync(временный, текст, 'utf8');
     renameSync(временный, file);
