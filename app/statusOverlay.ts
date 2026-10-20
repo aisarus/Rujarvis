@@ -22,6 +22,16 @@ import { currentLanguage, tr } from '../jarvis/locale/language';
 
 export const STATUS_OVERLAY_CHANNEL = 'jarvis-overlay:status';
 
+/**
+ * Откуда конспект берёт звук: микрофон — лекция в аудитории; звук компьютера —
+ * лекция в Zoom, голос лектора приходит из колонок.
+ */
+export type LectureSource = 'mic' | 'system';
+
+export function isLectureSource(value: unknown): value is LectureSource {
+  return value === 'mic' || value === 'system';
+}
+
 /** Состояние конспекта, как его показывает кнопка. */
 export type LectureButtonState = 'off' | 'starting' | 'on' | 'finishing' | 'importing';
 
@@ -160,6 +170,15 @@ export function buildOverlayHtml(): string {
   #bar button:disabled { opacity: 0.55; cursor: default; }
   #bar button.drop { border-color: #38bdf8; background: #0c4a6e; }
   body.big #bar button { font-size: 20px; padding: 10px 18px; }
+  #sources { display: none; gap: 6px; padding: 0 12px 10px; }
+  #sources.open { display: flex; }
+  #sources button {
+    cursor: pointer; font: 600 12px "Segoe UI", system-ui, sans-serif;
+    color: #e4e4e7; background: #1f2937; border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px; padding: 5px 10px;
+  }
+  #sources button:hover { background: #3f3f46; }
+  body.big #sources button { font-size: 18px; padding: 8px 14px; }
   #courses { display: none; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; }
   #courses.open { display: flex; }
   #courses button {
@@ -191,6 +210,10 @@ export function buildOverlayHtml(): string {
   <button id="file" type="button" title="${tr('Или перетащите файл сюда', 'Or drop a file here')}">${tr('Из файла…', 'From a file…')}</button>
   <button id="study" type="button">${tr('Учёба', 'Study')}</button>
 </div>
+<div id="sources">
+  <button id="source-mic" type="button">${tr('В аудитории (микрофон)', 'In the room (microphone)')}</button>
+  <button id="source-system" type="button">${tr('Zoom (звук компьютера)', 'Zoom (computer sound)')}</button>
+</div>
 <div id="courses"></div>
 <div id="info"></div>
 <script>
@@ -207,9 +230,25 @@ const WORDS = ${JSON.stringify({
     guess: tr('угадаю по лекции', 'guess from the lecture'),
     guessItem: tr('Угадать по лекции', 'Guess from the lecture'),
   })};
+const sourcesBox = document.getElementById('sources');
+let конспектИдёт = false;
+// Начать — сначала выбрать, откуда звук: в аудитории лектора слышит микрофон,
+// в Zoom — он звучит из колонок. Закончить — сразу.
 lectureButton.addEventListener('click', () => {
-  ipcRenderer.send(${JSON.stringify(STATUS_OVERLAY_CHANNEL + ':lecture')});
+  if (конспектИдёт) {
+    ipcRenderer.send(${JSON.stringify(STATUS_OVERLAY_CHANNEL + ':lecture')});
+    return;
+  }
+  sourcesBox.classList.toggle('open');
+  подогнатьВысоту();
 });
+for (const [id, источник] of [['source-mic', 'mic'], ['source-system', 'system']]) {
+  document.getElementById(id).addEventListener('click', () => {
+    sourcesBox.classList.remove('open');
+    подогнатьВысоту();
+    ipcRenderer.send(${JSON.stringify(STATUS_OVERLAY_CHANNEL + ':lecture')}, источник);
+  });
+}
 courseButton.addEventListener('click', () => {
   coursesBox.classList.toggle('open');
   подогнатьВысоту();
@@ -242,6 +281,8 @@ function showLecture(state) {
   courseButton.style.display = now === 'on' ? '' : 'none';
   fileButton.style.display = now === 'off' ? '' : 'none';
   if (now !== 'on') coursesBox.classList.remove('open');
+  конспектИдёт = now !== 'off';
+  if (конспектИдёт) sourcesBox.classList.remove('open');
 }
 let последнийСписок = '';
 function showLectureInfo(li) {
@@ -296,6 +337,7 @@ function подогнатьВысоту() {
     const нужно = Math.ceil(
       pill.getBoundingClientRect().height +
       document.getElementById('bar').getBoundingClientRect().height +
+      sourcesBox.getBoundingClientRect().height +
       coursesBox.getBoundingClientRect().height +
       info.getBoundingClientRect().height,
     ) + 2;
@@ -358,8 +400,8 @@ export interface StatusOverlay {
 }
 
 export interface StatusOverlayOptions {
-  /** Нажата кнопка конспекта: начать или закончить. */
-  onLectureButton?: () => void;
+  /** Нажата кнопка конспекта: начать (с выбранным источником звука) или закончить (без него). */
+  onLectureButton?: (source?: LectureSource) => void;
   /** Выбран курс из списка; пусто — угадать по содержанию. */
   onCourse?: (course: string) => void;
   /** Файл для конспекта: брошен на кнопку (путь) или нажата «Из файла…» (null). */
@@ -491,9 +533,9 @@ export function createStatusOverlay(options: StatusOverlayOptions = {}): StatusO
   };
 
   // Кнопка — только из своего окна: чужая страница не может начать запись.
-  const onLecture = (event: Electron.IpcMainEvent): void => {
+  const onLecture = (event: Electron.IpcMainEvent, source: unknown): void => {
     if (window.isDestroyed() || event.sender !== window.webContents) return;
-    options.onLectureButton?.();
+    options.onLectureButton?.(isLectureSource(source) ? source : undefined);
   };
   ipcMain.on(`${STATUS_OVERLAY_CHANNEL}:lecture`, onLecture);
   // Курс — только из списка, который плашке и показали.

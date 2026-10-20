@@ -57,6 +57,7 @@ import { tr } from '../jarvis/locale/language';
 import { findGpuWhisper, findLectureModel, gpuWhisperDir, startGpuWhisper, type GpuWhisperServer } from '../jarvis/voice/gpuWhisper';
 import { resampleTo16k } from '../jarvis/voice/wav';
 import { createGpuTranscriber, isWhisperServerReady, WHISPER_SERVER_PORT, type ConfidentResult } from './gpuTranscriber';
+import type { LectureSource } from './statusOverlay';
 
 const ПОРТ_ЛЕКЦИИ = WHISPER_SERVER_PORT + 1;
 
@@ -139,6 +140,8 @@ export interface LectureStartOptions {
   notesLanguage: NotesLanguage;
   /** Адрес общего сервера распознавания — запасной, когда модели для лекций нет. */
   mainEndpoint(): string | null;
+  /** Откуда звук: микрофон (аудитория) или звук компьютера (Zoom). По умолчанию — микрофон. */
+  source?: LectureSource;
 }
 
 function занято(): string | null {
@@ -221,6 +224,7 @@ async function начатьЛекцию(subject: string | undefined, options: Le
   const курс = subject ? matchCourse(subject, курсы) : угадатьКурс(root, когда);
 
   const монитор = new HearingMonitor();
+  const zoom = options.source === 'system';
   const лекция: { value: Лекция | null } = { value: null };
   const transcribe = async (samples: Float32Array, sampleRate: number): Promise<string> => {
     const уровень = chunkLevel(samples, sampleRate);
@@ -240,10 +244,15 @@ async function начатьЛекцию(subject: string | undefined, options: Le
     if (!вердикт || !л || идёт !== л) return;
     л.строка =
       вердикт === 'bad'
-        ? tr(
-            'Лектора слышно плохо. Придвиньте ноутбук ближе или включите запись на телефоне — потом отдайте её мне кнопкой «Из файла…».',
-            'The lecturer is hard to hear. Move the laptop closer or record on your phone — then give me the file with "From a file…".',
-          )
+        ? zoom
+          ? tr(
+              'Звук из компьютера плохо разбирается. Проверьте, что Zoom играет через устройство по умолчанию и звук не на нуле.',
+              'The computer sound is hard to make out. Check that Zoom plays through the default device and the volume is up.',
+            )
+          : tr(
+              'Лектора слышно плохо. Придвиньте ноутбук ближе или включите запись на телефоне — потом отдайте её мне кнопкой «Из файла…».',
+              'The lecturer is hard to hear. Move the laptop closer or record on your phone — then give me the file with "From a file…".',
+            )
         : tr('Теперь лектора слышно.', 'The lecturer is audible now.');
     console.log(`[jarvis:lecture] слух: ${вердикт === 'bad' ? 'плохо' : 'наладился'} (${монитор.describe()})`);
     оповестить();
@@ -291,7 +300,7 @@ async function начатьЛекцию(subject: string | undefined, options: Le
   оповестить();
   console.log(
     `[jarvis:lecture] конспект начат${vault ? ' в хранилище Obsidian' : ' в папке результатов (Obsidian не найден)'}; ` +
-      `курс: ${курс ?? 'решит модель'}; язык лекции: ${options.lectureLanguage}, конспекта: ${options.notesLanguage}; ` +
+      `курс: ${курс ?? 'решит модель'}; звук: ${zoom ? 'компьютер (Zoom)' : 'микрофон'}; язык лекции: ${options.lectureLanguage}, конспекта: ${options.notesLanguage}; ` +
       `модель: ${слух.модель ? path.basename(слух.модель) : 'для лекций нет — общий сервер'}`,
   );
   if (vault) await shell.openExternal(obsidianOpenUrl(session.notesFile)).catch(() => undefined);
@@ -305,8 +314,9 @@ async function начатьЛекцию(subject: string | undefined, options: Le
       'Recording the lecture, but there is nothing to transcribe it with: GPU recognition is not installed (pnpm jarvis:gpu-stt). I will make the notes from this recording later.',
     );
   }
+  const откуда = zoom ? tr('Пишу звук компьютера (Zoom). ', 'Recording the computer sound (Zoom). ') : '';
   return слух.модель
-    ? tr(`Конспектирую. ${гдеКурс} Закончить — «Джарвис, закончи конспект».`, `Taking notes. ${гдеКурс} Say "Jarvis, stop lecture notes" to finish.`)
+    ? tr(`Конспектирую. ${откуда}${гдеКурс} Закончить — «Джарвис, закончи конспект».`, `Taking notes. ${откуда}${гдеКурс} Say "Jarvis, stop lecture notes" to finish.`)
     : tr(
         `Конспектирую общим распознаванием. ${гдеКурс} Точнее будет с моделью для лекций: pnpm jarvis:lecture-model.`,
         `Taking notes with the general recognition. ${гдеКурс} The lecture model is more accurate: pnpm jarvis:lecture-model.`,

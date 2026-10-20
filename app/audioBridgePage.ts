@@ -23,6 +23,8 @@ export const AUDIO_BRIDGE_CHANNELS = {
   lecture: 'jarvis-audio:lecture',
   /** Звук лекции — сплошь, по секунде, тишину тоже. */
   lectureAudio: 'jarvis-audio:lecture-audio',
+  /** Звук компьютера для лекции в Zoom: взят или нет (и тогда — с микрофона). */
+  lectureSource: 'jarvis-audio:lecture-source',
   /**
    * Раскрыть звук или видео — это умеет только Chromium. Либо файл целиком
    * (`path`), либо уже вырезанный кусок (`bytes`, см. mediaSlices.ts).
@@ -134,9 +136,96 @@ const commandProcessing = ${JSON.stringify(COMMAND_PROCESSING)};
 let lectureProcessing = commandProcessing;
 let lectureBlock = [];
 let lectureSamples = 0;
+// Откуда звук лекции: 'mic' — аудитория, 'system' — Zoom, голос лектора из
+// колонок. Звук компьютера берётся отдельным конвейером: микрофон при этом
+// остаётся в режиме команд — слушает «стоп» и «закончи конспект», но в запись
+// не попадает.
+let lectureSource = 'mic';
+let systemStream = null;
+let systemContext = null;
+let systemProcessor = null;
+let systemBlock = [];
+let systemSamples = 0;
 
 function speechThreshold() {
   return SPEECH_RMS;
+}
+
+function sendSystemBlock() {
+  if (systemSamples === 0 || !systemContext) return;
+  const out = new Float32Array(systemSamples);
+  let at = 0;
+  for (const part of systemBlock) { out.set(part, at); at += part.length; }
+  systemBlock = [];
+  systemSamples = 0;
+  ipcRenderer.send(CH.lectureAudio, { sampleRate: systemContext.sampleRate, samples: out, source: 'system' });
+}
+
+function stopSystemCapture() {
+  try {
+    if (systemProcessor) { systemProcessor.onaudioprocess = null; systemProcessor.disconnect(); }
+    if (systemStream) systemStream.getTracks().forEach(function (track) { track.onended = null; track.stop(); });
+    if (systemContext) systemContext.close();
+  } catch (error) {
+    // Разобрать сломанный конвейер можно и с ошибкой.
+  }
+  systemStream = null;
+  systemContext = null;
+  systemProcessor = null;
+  systemBlock = [];
+  systemSamples = 0;
+}
+
+// Звук компьютера: getDisplayMedia с петлёй, которую отдаёт главный процесс
+// (setDisplayMediaRequestHandler, audio: 'loopback'). Картинка экрана не нужна —
+// её дорожку гасим сразу.
+async function startSystemCapture() {
+  stopSystemCapture();
+  const got = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });
+  got.getVideoTracks().forEach(function (track) { track.stop(); });
+  const tracks = got.getAudioTracks();
+  if (tracks.length === 0) {
+    got.getTracks().forEach(function (track) { track.stop(); });
+    throw new Error('система не отдала звук компьютера');
+  }
+  systemStream = got;
+  systemContext = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+  const input = systemContext.createMediaStreamSource(new MediaStream(tracks));
+  // Один вход: стерео сводится в моно самим узлом.
+  systemProcessor = systemContext.createScriptProcessor(4096, 1, 1);
+  systemProcessor.onaudioprocess = function (event) {
+    if (!lecture || lectureSource !== 'system') return;
+    const data = event.inputBuffer.getChannelData(0);
+    const copy = new Float32Array(data.length);
+    copy.set(data);
+    systemBlock.push(copy);
+    systemSamples += copy.length;
+    if (systemSamples >= systemContext.sampleRate) sendSystemBlock();
+  };
+  input.connect(systemProcessor);
+  const mute = systemContext.createGain();
+  mute.gain.value = 0;
+  systemProcessor.connect(mute);
+  mute.connect(systemContext.destination);
+  tracks.forEach(function (track) {
+    track.onended = function () { fallBackToMicrophone('звук компьютера оборвался'); };
+  });
+}
+
+// Звук компьютера взять не вышло или он оборвался — лекция не должна
+// пропасть: дальше пишет микрофон (он слышит и колонки), а человеку сказано.
+async function fallBackToMicrophone(reason) {
+  if (!lecture || lectureSource !== 'system') return;
+  sendSystemBlock();
+  stopSystemCapture();
+  lectureSource = 'mic';
+  ipcRenderer.send(CH.lectureSource, { ok: false, error: reason });
+  try {
+    if (audioContext) await restartCapture('лекция с микрофона вместо звука компьютера');
+    else await ensureCapture();
+  } catch (error) {
+    ipcRenderer.send(CH.error, String((error && error.message) || error));
+  }
 }
 
 function sendLectureBlock() {
@@ -256,7 +345,7 @@ function onAudio(event) {
   const copy = new Float32Array(input.length);
   copy.set(input);
 
-  if (lecture) {
+  if (lecture && lectureSource === 'mic') {
     lectureBlock.push(copy);
     lectureSamples += copy.length;
     // По секунде: не гонять через границу процессов каждые 256 мс.
@@ -465,12 +554,27 @@ async function raiseCapture() {
 
 ipcRenderer.on(CH.lecture, async (_event, payload) => {
   const on = Boolean(payload && payload.on);
+  const wanted = payload && payload.source === 'system' ? 'system' : 'mic';
   if (payload && payload.processing) lectureProcessing = payload.processing;
   if (on === lecture) return;
-  if (!on) sendLectureBlock();
+  const wasSystem = lectureSource === 'system';
+  if (!on) { sendLectureBlock(); sendSystemBlock(); stopSystemCapture(); }
   lecture = on;
+  lectureSource = on ? wanted : 'mic';
   lectureBlock = [];
   lectureSamples = 0;
+  if (on && wanted === 'system') {
+    // Микрофон не трогаем: он в режиме команд и в запись не идёт.
+    try {
+      await startSystemCapture();
+      ipcRenderer.send(CH.lectureSource, { ok: true });
+    } catch (error) {
+      await fallBackToMicrophone(String((error && error.message) || error));
+    }
+    return;
+  }
+  // Лекция из Zoom кончилась — микрофон и так в режиме команд.
+  if (!on && wasSystem) return;
   // Обработка задаётся при взятии микрофона — берём его заново с нужной.
   if (audioContext) await restartCapture(on ? 'режим лекции' : 'лекция кончилась');
   else if (on) {

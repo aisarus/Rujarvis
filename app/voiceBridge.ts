@@ -13,7 +13,7 @@
  *   - put a global hotkey in front of the whole thing
  */
 
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, shell } from 'electron';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -133,7 +133,7 @@ import { describeLessons, lessonsFrom } from '../jarvis/memory/lessons';
 import { PlanStore } from '../jarvis/agent/planStore';
 import { planSummary, renderPlan } from '../jarvis/agent/plan';
 import { SpeechQueue } from '../jarvis/voice/speechQueue';
-import { createStatusOverlay, type StatusOverlay } from './statusOverlay';
+import { createStatusOverlay, type LectureSource, type StatusOverlay } from './statusOverlay';
 import { writeShowWork } from '../jarvis/desktop/showWork';
 
 /** Ctrl+Space is what `jarvis:setup` tells the user to press. */
@@ -500,10 +500,10 @@ function setDictation(on: boolean): void {
 }
 
 /** Окно микрофона в режиме лекции пишет сплошь и без шумоподавления. */
-function звукЛекции(on: boolean): void {
+function звукЛекции(on: boolean, source: LectureSource = 'mic'): void {
   try {
     if (окноЗвука && !окноЗвука.isDestroyed()) {
-      окноЗвука.webContents.send(AUDIO_BRIDGE_CHANNELS.lecture, { on, processing: LECTURE_PROCESSING });
+      окноЗвука.webContents.send(AUDIO_BRIDGE_CHANNELS.lecture, { on, source, processing: LECTURE_PROCESSING });
     }
   } catch {
     // Окно микрофона могло упасть — конспект всё равно пишется.
@@ -581,10 +581,11 @@ async function переключитьЛекцию(
   on: boolean,
   subject: string | undefined,
   сообщить: (текст: string) => Promise<void> | void,
+  source: LectureSource = 'mic',
 ): Promise<void> {
   if (on) {
-    const ответ = await startLecture(subject, настройкиЛекции());
-    if (lectureActive()) звукЛекции(true);
+    const ответ = await startLecture(subject, { ...настройкиЛекции(), source });
+    if (lectureActive()) звукЛекции(true, source);
     await сообщить(ответ);
     return;
   }
@@ -1482,12 +1483,12 @@ async function поднятьМост(options: {
 
   // Кнопка конспекта на плашке: в аудитории вслух не покомандуешь.
   const overlay = createStatusOverlay({
-    onLectureButton: () => {
+    onLectureButton: (source) => {
       // Пока поднимается или дописывается — нажатие ничего не делает: иначе
       // двойной щелчок заводил вторую лекцию.
       if (lectureState() === 'finishing' || lectureState() === 'starting') return;
       console.log(`[jarvis:lecture] кнопка на плашке: ${lectureActive() ? 'закончить' : 'начать'}`);
-      void переключитьЛекцию(!lectureActive(), undefined, (текст) => overlay.note(session.status, текст)).catch(
+      void переключитьЛекцию(!lectureActive(), undefined, (текст) => overlay.note(session.status, текст), source ?? 'mic').catch(
         (error: unknown) => {
           console.error(`[jarvis:lecture] кнопка не сработала: ${error instanceof Error ? error.message : String(error)}`);
           overlay.note(session.status, tr('Конспект не запустился — причина в журнале.', 'Lecture notes did not start — see the log.'));
@@ -1704,10 +1705,32 @@ async function поднятьМост(options: {
   // Звук лекции — сплошь, мимо слуха команд. Микрофон выключен — в запись
   // ложится тишина той же длины: выключенное не записывается, а минуты
   // расшифровки не съезжают относительно звука.
-  ipcMain.on(AUDIO_BRIDGE_CHANNELS.lectureAudio, (_event, payload: { samples?: Float32Array; sampleRate?: number } | null) => {
-    if (!payload?.samples || !payload.sampleRate || !lectureActive()) return;
-    const samples = toFloat32(payload.samples);
-    feedLecture(muted ? new Float32Array(samples.length) : samples, payload.sampleRate);
+  ipcMain.on(
+    AUDIO_BRIDGE_CHANNELS.lectureAudio,
+    (_event, payload: { samples?: Float32Array; sampleRate?: number; source?: string } | null) => {
+      if (!payload?.samples || !payload.sampleRate || !lectureActive()) return;
+      const samples = toFloat32(payload.samples);
+      // Выключенный микрофон глушит только микрофон: звук компьютера (Zoom) —
+      // не голос человека у ноутбука.
+      const глушить = muted && payload.source !== 'system';
+      feedLecture(глушить ? new Float32Array(samples.length) : samples, payload.sampleRate);
+    },
+  );
+  // Звук компьютера для лекции в Zoom: взят — тихо; не взят или оборвался —
+  // окно звука уже перешло на микрофон, человеку сказать строкой на плашке.
+  ipcMain.on(AUDIO_BRIDGE_CHANNELS.lectureSource, (_event, payload: { ok?: boolean; error?: string } | null) => {
+    if (payload?.ok) {
+      console.log('[jarvis:lecture] звук компьютера взят — пишу лекцию из Zoom');
+      return;
+    }
+    const причина = String(payload?.error ?? 'неизвестно').slice(0, 160);
+    console.error(`[jarvis:lecture] звук компьютера не взят (${причина}) — пишу с микрофона`);
+    if (lectureActive()) {
+      overlay.note(
+        session.status,
+        tr(`Звук компьютера взять не вышло (${причина}). Пишу с микрофона.`, `Could not capture the computer sound (${причина}). Recording from the microphone.`),
+      );
+    }
   });
 
   ipcMain.on(AUDIO_BRIDGE_CHANNELS.utterance, (_event, payload: RecordedAudio | null) => {
@@ -3067,7 +3090,21 @@ async function createAudioWindow(): Promise<BrowserWindow> {
   // The page is generated by this file and loaded from disk, so the only
   // request that can reach this handler is our own microphone request.
   window.webContents.session.setPermissionRequestHandler((_contents, permission, callback) => {
-    callback(permission === 'media');
+    callback(permission === 'media' || permission === 'display-capture');
+  });
+  // Лекция в Zoom: звук компьютера — петлёй вывода (loopback; на Windows).
+  // Картинку экрана окно звука тут же гасит, ему нужен только звук. Другой
+  // платформы петля нет — отдаём экран без звука, и окно честно скажет, что
+  // звука компьютера не получило, и перейдёт на микрофон.
+  window.webContents.session.setDisplayMediaRequestHandler((_request, callback) => {
+    desktopCapturer
+      .getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } })
+      .then((sources) => {
+        const screen = sources[0];
+        if (!screen) return callback({});
+        callback(process.platform === 'win32' ? { video: screen, audio: 'loopback' } : { video: screen });
+      })
+      .catch(() => callback({}));
   });
 
   // Почему здесь прибор, а не просто попытка ещё раз.
