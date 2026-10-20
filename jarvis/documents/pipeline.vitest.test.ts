@@ -5,7 +5,7 @@ import { deflateRawSync } from 'node:zlib';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { readCourseInfo, writeCourseInfo } from '../lecture/courses';
+import { listCourses, readCourseInfo, writeCourseInfo } from '../lecture/courses';
 import { docxText, pptxText, readZip } from './extract';
 import { courseMaterialsBlock, documentAgentArgs, documentPrompt, fileDocument, isDocument, processDocument, readManifest, type Manifest } from './pipeline';
 
@@ -237,6 +237,18 @@ describe('раскладка в Obsidian', () => {
     const итог = fileDocument({ root, outDir: выход({ 'X.md': 'x' }), original: документ, manifest: manifest({ course: '', main: 'X.md', notes: ['X.md'] }), notes: 'ru', when: new Date() });
     expect(итог.course).toBeNull();
     expect(итог.folder.startsWith(path.join(root, 'Без курса'))).toBe(true);
+  });
+
+  it('«Входящие» — не курс: ни в списке курсов, ни куда разложить документ', () => {
+    const root = временная();
+    mkdirSync(path.join(root, 'Входящие'));
+    mkdirSync(path.join(root, 'Inbox'));
+    writeCourseInfo(root, 'Микроэкономика', {});
+    expect(listCourses(root)).toEqual(['Микроэкономика']);
+    const документ = path.join(временная(), 'x.txt');
+    writeFileSync(документ, 'x');
+    const итог = fileDocument({ root, outDir: выход({ 'X.md': 'x' }), original: документ, manifest: manifest({ course: 'Входящие', main: 'X.md', notes: ['X.md'] }), notes: 'ru', when: new Date() });
+    expect(итог.course).toBeNull();
   });
 
   it('список материалов: повтор не дублируется, текст человека вокруг цел', () => {

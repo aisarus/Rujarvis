@@ -23,6 +23,11 @@ import type { LectureBank, StudyTopic } from './types';
 const НЕ_МАТЕРИАЛ = /^(организационное|course logistics)$/iu;
 
 export interface LectureSource {
+  /**
+   * Лекция — конспект с расшифровкой и метками времени; материал — разбор
+   * документа из конвейера (статья, файл лектора): разделы есть, времени нет.
+   */
+  kind?: 'lecture' | 'material';
   lecture: string;
   notesFile: string;
   audioFile?: string;
@@ -128,6 +133,68 @@ export async function readLectureSource(notesFile: string, notes: NotesLanguage)
   };
 }
 
+/**
+ * Разделы разбора, из которых вопросов не делают: краткое содержание,
+ * самопроверка и шпаргалка повторяют остальное, а «что сделать сейчас» и
+ * сроки — не материал к экзамену.
+ */
+const НЕ_МАТЕРИАЛ_РАЗБОРА =
+  /^(коротко|проверь себя|шпаргалка|что сделать сейчас|срок и сдача|ловушки|summary|in short|check yourself|cheat sheet|what to do now|deadline and submission|traps)$/iu;
+
+/**
+ * Разбор документа из конвейера → разделы-темы для заготовки учёбы.
+ *
+ * Разделы — заголовки «##» главной заметки; у материала нет расшифровки и
+ * времени, ссылка ведёт на саму заметку. Свойства — те, что ставит
+ * конвейер (`курс`, `добавлено`), а не лекционные.
+ */
+export async function readMaterialSource(notesFile: string): Promise<LectureSource | null> {
+  const текст = (await readFile(notesFile, 'utf8')).replace(/\r\n/gu, '\n');
+  const свойства = /^---\n([\s\S]*?)\n---/u.exec(текст)?.[1] ?? '';
+  const поле = (...ключи: string[]): string | undefined => {
+    for (const к of ключи) {
+      const m = new RegExp(`^${к}[ \\t]*:[ \\t]*(.+)$`, 'mu').exec(свойства);
+      const v = m?.[1]?.trim().replace(/^'(.*)'$/u, (_всё, x: string) => x.replace(/''/gu, "'")).replace(/^"(.*)"$/u, '$1');
+      if (v) return v;
+    }
+    return undefined;
+  };
+  const course = поле('курс', 'course');
+  if (!course) return null;
+  const date = поле('добавлено', 'added') ?? new Date().toISOString().slice(0, 10);
+  const lecture = path.basename(notesFile, '.md');
+  const заголовок = /^# (.+)$/mu.exec(текст)?.[1]?.trim();
+
+  const topics: StudyTopic[] = [];
+  const sectionText: string[] = [];
+  let concepts: string[] = [];
+  for (const блок of текст.split(/^##[ \t]+/mu).slice(1)) {
+    const [строкаЗаголовка = '', ...строки] = блок.split('\n');
+    const title = строкаЗаголовка.trim();
+    const тело = строки.join('\n').trim();
+    if (/^(ключевые понятия|key concepts|словарь|glossary)$/iu.test(title)) {
+      concepts = conceptLines(тело);
+      continue;
+    }
+    if (!title || НЕ_МАТЕРИАЛ_РАЗБОРА.test(title) || тело.length < 80) continue;
+    topics.push({ id: `${lecture}#${topics.length + 1}`, lecture, title });
+    // Большой раздел режется: вопросы по его началу лучше, чем пачка, которая не влезла.
+    sectionText.push(тело.length > 9_000 ? `${тело.slice(0, 9_000)}\n…` : тело);
+  }
+  return {
+    kind: 'material',
+    lecture,
+    notesFile,
+    course,
+    date,
+    topic: заголовок,
+    topics,
+    sectionText,
+    concepts,
+    sectionTranscript: topics.map(() => ''),
+  };
+}
+
 const ЯЗЫК: Record<string, { ru: string; en: string }> = {
   ru: { ru: 'русском', en: 'Russian' },
   en: { ru: 'английском', en: 'English' },
@@ -168,26 +235,35 @@ export function studyPrompt(
   sections: readonly number[] = src.topics.map((_, i) => i),
 ): string {
   const перевод = lectureLanguage !== notes;
+  const материал = src.kind === 'material';
   const разделы = sections
     .map((i) => ({ т: src.topics[i] as StudyTopic, i }))
     .map(({ т, i }) =>
-      [
-        `РАЗДЕЛ ${i + 1}: ${т.title}${т.from !== undefined && т.to !== undefined ? ` (${метка(т.from)}–${метка(т.to)})` : ''}`,
-        'Конспект:',
-        src.sectionText[i] || '—',
-        'Расшифровка:',
-        src.sectionTranscript[i] || '—',
-      ].join('\n'),
+      материал
+        ? [`РАЗДЕЛ ${i + 1}: ${т.title}`, src.sectionText[i] || '—'].join('\n')
+        : [
+            `РАЗДЕЛ ${i + 1}: ${т.title}${т.from !== undefined && т.to !== undefined ? ` (${метка(т.from)}–${метка(т.to)})` : ''}`,
+            'Конспект:',
+            src.sectionText[i] || '—',
+            'Расшифровка:',
+            src.sectionTranscript[i] || '—',
+          ].join('\n'),
     )
     .join('\n\n');
   const лекция = язык(lectureLanguage, 'ru');
   const конспект = язык(notes, 'ru');
   return [
-    `Ты готовишь студента к экзамену по курсу «${src.course}». Ниже — одна лекция: разделы конспекта и дословная расшифровка с метками времени (распознавание автоматическое, с ошибками).`,
+    материал
+      ? `Ты готовишь студента к экзамену по курсу «${src.course}». Ниже — учебный материал «${src.topic ?? src.lecture}»: разобранный документ (статья, глава, файл лектора), разделами.`
+      : `Ты готовишь студента к экзамену по курсу «${src.course}». Ниже — одна лекция: разделы конспекта и дословная расшифровка с метками времени (распознавание автоматическое, с ошибками).`,
     '',
     'ПРАВИЛА ДОВЕРИЯ:',
-    '- только то, что есть в этой лекции; чего в лекции нет — не спрашивай и не досочиняй из своих знаний;',
-    '- у каждого вопроса, карточки и задачи — номер раздела (section) и метка времени (at, «мм:сс»), где это прозвучало;',
+    материал
+      ? '- только то, что есть в этом материале; чего в нём нет — не спрашивай и не досочиняй из своих знаний;'
+      : '- только то, что есть в этой лекции; чего в лекции нет — не спрашивай и не досочиняй из своих знаний;',
+    материал
+      ? '- у каждого вопроса, карточки и задачи — номер раздела (section); метку времени (at) не ставь;'
+      : '- у каждого вопроса, карточки и задачи — номер раздела (section) и метка времени (at, «мм:сс»), где это прозвучало;',
     '- организационное (экзамен, часы приёма) — не материал, по нему не спрашивай.',
     '',
     'СДЕЛАЙ:',
@@ -206,7 +282,7 @@ export function studyPrompt(
     ' "tasks":[{"section":2,"at":"20:10","problem":"…","hint":"…","steps":["…"],"answer":"…"}]}',
     '```',
     '',
-    src.concepts.length > 0 ? `Понятия из итога лекции:\n${src.concepts.map((п) => `- ${п}`).join('\n')}\n` : '',
+    src.concepts.length > 0 ? `${материал ? 'Ключевые понятия материала' : 'Понятия из итога лекции'}:\n${src.concepts.map((п) => `- ${п}`).join('\n')}\n` : '',
     разделы,
   ].join('\n');
 }
@@ -230,7 +306,15 @@ export interface GenerateOptions {
 
 /** Лекция → банк учёбы. Разделов с материалом нет — null. */
 export async function generateLectureBank(notesFile: string, options: GenerateOptions): Promise<LectureBank | null> {
-  const src = await readLectureSource(notesFile, options.notes);
+  return generateBank(await readLectureSource(notesFile, options.notes), options);
+}
+
+/** Разбор документа из конвейера → банк учёбы. Разделов с содержанием нет — null. */
+export async function generateMaterialBank(notesFile: string, options: GenerateOptions): Promise<LectureBank | null> {
+  return generateBank(await readMaterialSource(notesFile), options);
+}
+
+async function generateBank(src: LectureSource | null, options: GenerateOptions): Promise<LectureBank | null> {
   if (!src || src.topics.length === 0) return null;
   // Пачка не собралась — остальные идут дальше, а причина — в предупреждения.
   const собрано: Record<'questions' | 'cards' | 'tasks', unknown[]> = { questions: [], cards: [], tasks: [] };

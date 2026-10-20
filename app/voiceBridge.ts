@@ -103,7 +103,7 @@ import {
 } from './lectureMode';
 import { createFileDecoder } from './lectureFileDecode';
 import { prepareStudyFor, setStudyHearing, showStudy } from './study';
-import { enqueueDocument } from './documents';
+import { enqueueDocument, watchInbox } from './documents';
 import { DOCUMENT_EXTENSIONS, isDocument } from '../jarvis/documents/pipeline';
 import { lectureHeardForJarvis } from '../jarvis/lecture/voiceGate';
 import {
@@ -1565,6 +1565,8 @@ async function поднятьМост(options: {
     overlay.setLecture(state);
     overlay.setLectureInfo(info);
   });
+  // «Входящие» в «Лекциях»: положенный туда документ разбирается сам.
+  const перестатьСмотретьВходящие = watchInbox(документы((текст) => overlay.note(session.status, текст)));
   // Крупный режим — из настроек, и сразу: его могли включить голосом в прошлый
   // раз, и при запуске плашка обязана быть такой, какой её оставили.
   overlay.setBig(settings().bigMode);
@@ -2551,6 +2553,7 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
       // бы поднять свой.
       поколениеМоста += 1;
       отписатьЛекцию();
+      перестатьСмотретьВходящие();
       setStudyHearing(null, null);
       учёбаЗаписывает = false;
       abandonLecture();

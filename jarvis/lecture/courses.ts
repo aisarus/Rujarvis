@@ -45,8 +45,8 @@ const СВОЙСТВА = {
 
 /** Слова папок и подписей — на языке конспекта. */
 export const COURSE_WORDS = {
-  ru: { folder: 'Лекции', unsorted: 'Без курса', transcriptSuffix: 'расшифровка', listStart: '%% список лекций ведёт Джарвис %%', listEnd: '%% конец списка %%' },
-  en: { folder: 'Lectures', unsorted: 'Unsorted', transcriptSuffix: 'transcript', listStart: '%% lecture list kept by Jarvis %%', listEnd: '%% end of list %%' },
+  ru: { folder: 'Лекции', unsorted: 'Без курса', inbox: 'Входящие', transcriptSuffix: 'расшифровка', listStart: '%% список лекций ведёт Джарвис %%', listEnd: '%% конец списка %%' },
+  en: { folder: 'Lectures', unsorted: 'Unsorted', inbox: 'Inbox', transcriptSuffix: 'transcript', listStart: '%% lecture list kept by Jarvis %%', listEnd: '%% end of list %%' },
 } as const;
 
 /** Основы слов: регистр, ё и окончания не важны; предлоги и союзы — мимо. */
@@ -222,7 +222,8 @@ function заметкаЛекции(имя: string, папка: string): boolean
  */
 export function listCourses(root: string): string[] {
   if (!existsSync(root)) return [];
-  const неКурсы = new Set<string>([COURSE_WORDS.ru.unsorted, COURSE_WORDS.en.unsorted]);
+  // «Входящие» — папка конвейера документов: туда кладут файлы на разбор.
+  const неКурсы = new Set<string>([COURSE_WORDS.ru.unsorted, COURSE_WORDS.en.unsorted, COURSE_WORDS.ru.inbox, COURSE_WORDS.en.inbox]);
   return readdirSync(root, { withFileTypes: true })
     .filter((e) => e.isDirectory() && !e.name.startsWith('.') && !неКурсы.has(e.name))
     .map((e) => e.name)
@@ -522,7 +523,8 @@ export async function renameCourseFolder(root: string, from: string, to: string)
 /** «Без курса» — не курс: так назвать курс нельзя, он пропал бы из списков. */
 export function isUnsortedName(name: string): boolean {
   const имя = name.trim().toLowerCase();
-  return имя === COURSE_WORDS.ru.unsorted.toLowerCase() || имя === COURSE_WORDS.en.unsorted.toLowerCase();
+  // «Входящие» — тоже не курс: папка конвейера документов.
+  return [COURSE_WORDS.ru.unsorted, COURSE_WORDS.en.unsorted, COURSE_WORDS.ru.inbox, COURSE_WORDS.en.inbox].some((слово) => имя === слово.toLowerCase());
 }
 
 /** Курсы для модели: имя и, если есть, название на иврите — лектор говорит на нём. */
