@@ -172,6 +172,12 @@ export const BACKEND_MENTIONS: Array<{ backend: BackendId; stems: string[] }> = 
     backend: 'codex',
     stems: ['кодекс', 'codex', 'кодексом', 'кодексу', 'кодекса'],
   },
+  {
+    // По-русски его зовут «Джемини», реже «Гемини»; Whisper пишет и так, и
+    // латиницей. Слово не склоняется, поэтому основы — само имя.
+    backend: 'gemini',
+    stems: ['gemini', 'джемини', 'гемини', 'джеминай'],
+  },
 ];
 
 /** Explicit read-only intent: «только посмотри», «ничего не ломай». */

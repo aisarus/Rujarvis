@@ -11,7 +11,8 @@
 
 ```
 лекция легла в курс (finalizeLecture)
-  └─ заготовка в фоне (jarvis/study/prepare.ts): Claude Code по подписке, по
+  └─ заготовка в фоне (jarvis/study/prepare.ts): агент по подписке (выбранный:
+     Claude Code, Codex или Gemini), по
      нескольку разделов за вызов → проверка качества → банк лекции
         data\study\<курс>\<лекция>.json
 

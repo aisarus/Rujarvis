@@ -1,7 +1,9 @@
 /**
- * Найти `claude` и `codex` на машине и понять, можно ли их запускать.
+ * Найти `claude`, `codex` и `gemini` на машине и понять, можно ли их запускать.
  *
  * Поиск: явный путь из окружения, обычные места установки, затем PATH.
+ * Gemini CLI ставит сам установщик Джарвиса — в его же папку (`agents/gemini`),
+ * поэтому этот путь проверяется первым.
  * О входе сначала спрашивается сам CLI (`claude auth status`, `codex login
  * status`) — его ответ главнее. Промолчал — вход проверяется по наличию файла
  * учётных данных, сами токены не читаются (у Codex — только поле-признак в
@@ -18,13 +20,16 @@ import { promisify } from 'node:util';
 import { hasClaudeEnvironmentAuth, hasCodexEnvironmentAuth, resolveAuthState, type AuthState } from './authHints';
 import type { ClaudeCliProbe } from './claudeCode';
 import type { CodexCliProbe } from './codex';
+import type { GeminiCliProbe } from './gemini';
+import { geminiEnv } from './geminiHome';
 import { cliLaunch } from './spawnCli';
+import { jarvisPaths } from '../setup/paths';
 import { localModel } from './localModel';
 import { agentEnv } from './subscriptionEnv';
 
 const run = promisify(execFile);
 
-type Cli = 'claude' | 'codex';
+type Cli = 'claude' | 'codex' | 'gemini';
 
 export interface CliStatus {
   installed: boolean;
@@ -34,12 +39,22 @@ export interface CliStatus {
   error?: string;
 }
 
+/** Куда установщик Джарвиса кладёт Gemini CLI: `npm install --prefix agents/gemini`. */
+export function bundledGeminiCli(agentsDir = jarvisPaths().agents, platform = process.platform): string {
+  const пути = platform === 'win32' ? path.win32 : path.posix;
+  return пути.join(agentsDir, 'gemini', 'node_modules', '.bin', platform === 'win32' ? 'gemini.cmd' : 'gemini');
+}
+
 /** Обычные места установки. Порядок — от самого вероятного. */
 export function commonCliPaths(cli: Cli, home = os.homedir(), platform = process.platform): string[] {
+  // Свой Gemini — первым: человек мог поставить и чужую версию, но вход и
+  // настройки Джарвиса проверены на той, что поставил установщик.
+  const свой = cli === 'gemini' ? [bundledGeminiCli(jarvisPaths().agents, platform)] : [];
   if (platform === 'win32') {
     const local = path.join(home, 'AppData', 'Local');
     const roaming = path.join(home, 'AppData', 'Roaming');
     return [
+      ...свой,
       path.join(home, '.local', 'bin', `${cli}.exe`),
       path.join(local, 'Programs', cli, `${cli}.exe`),
       path.join(roaming, 'npm', `${cli}.cmd`),
@@ -53,6 +68,7 @@ export function commonCliPaths(cli: Cli, home = os.homedir(), platform = process
     ];
   }
   return [
+    ...свой,
     path.join(home, '.claude', 'bin', cli),
     path.join(home, '.local', 'bin', cli),
     '/opt/homebrew/bin/' + cli,
@@ -67,13 +83,19 @@ export function commonCliPaths(cli: Cli, home = os.homedir(), platform = process
   ];
 }
 
+const EXPLICIT_PATH: Record<Cli, string> = {
+  claude: 'JARVIS_CLAUDE_PATH',
+  codex: 'JARVIS_CODEX_PATH',
+  gemini: 'JARVIS_GEMINI_PATH',
+};
+
 export function resolveCli(
   cli: Cli,
   env: NodeJS.ProcessEnv = process.env,
   exists: (file: string) => boolean = existsSync,
   platform = process.platform,
 ): string | null {
-  const explicit = env[cli === 'claude' ? 'JARVIS_CLAUDE_PATH' : 'JARVIS_CODEX_PATH']?.trim();
+  const explicit = env[EXPLICIT_PATH[cli]]?.trim();
   if (explicit && exists(explicit)) return explicit;
 
   for (const candidate of commonCliPaths(cli, os.homedir(), platform)) {
@@ -92,7 +114,7 @@ export function resolveCli(
   return null;
 }
 
-async function version(file: string): Promise<string | null> {
+async function version(file: string, env?: NodeJS.ProcessEnv): Promise<string | null> {
   try {
     // `.cmd` на Windows запускается только через оболочку — И ТОЛЬКО В
     // КАВЫЧКАХ.
@@ -113,6 +135,7 @@ async function version(file: string): Promise<string | null> {
       encoding: 'utf8',
       windowsHide: true,
       shell: запуск.shell,
+      ...(env ? { env } : {}),
     });
     return stdout.trim();
   } catch {
@@ -174,7 +197,9 @@ export function decideLogin(cliAnswer: boolean | null, fileCheck: boolean, envir
 export async function cliStatus(cli: Cli, env: NodeJS.ProcessEnv = process.env): Promise<CliStatus> {
   const file = resolveCli(cli, env);
   if (!file) return { installed: false, loggedIn: false };
-  const found = await version(file);
+  // Gemini даже на `--version` заводит себе папку `.gemini` — пусть в доме
+  // Джарвиса, а не в домашней папке человека.
+  const found = await version(file, cli === 'gemini' ? geminiEnv(jarvisPaths().geminiHome, env) : undefined);
   if (found === null) {
     return { installed: false, loggedIn: false, path: file, error: `${file} не запускается` };
   }
@@ -183,6 +208,7 @@ export async function cliStatus(cli: Cli, env: NodeJS.ProcessEnv = process.env):
 
 function hasCredentials(cli: Cli): boolean {
   const home = os.homedir();
+  if (cli === 'gemini') return hasGeminiLogin(jarvisPaths().geminiHome);
   try {
     if (cli === 'claude') {
       const file = path.join(home, '.claude', '.credentials.json');
@@ -192,6 +218,25 @@ function hasCredentials(cli: Cli): boolean {
     if (!existsSync(file)) return false;
     const data = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
     return Boolean(data.tokens || data.access_token || data.accessToken || data.OPENAI_API_KEY);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Вошёл ли Gemini CLI Джарвиса через Google.
+ *
+ * Вход лежит в его доме (`GEMINI_CLI_HOME`) файлом `.gemini/oauth_creds.json`
+ * — так Gemini хранит его, пока не включено шифрованное хранилище, а его
+ * Джарвис для своего запуска выключает (`geminiEnv`). Сами токены не
+ * читаются: только есть ли поле-признак.
+ */
+export function hasGeminiLogin(geminiHome: string): boolean {
+  try {
+    const file = path.join(geminiHome, '.gemini', 'oauth_creds.json');
+    if (!existsSync(file)) return false;
+    const data = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+    return Boolean(data.refresh_token || data.access_token);
   } catch {
     return false;
   }
@@ -226,6 +271,24 @@ export function createCodexProbe(env: NodeJS.ProcessEnv = process.env): CodexCli
       const какУCli = agentEnv(env);
       const ответ = status.installed && status.path ? await askLogin('codex', status.path, какУCli) : null;
       return { ...status, loggedIn: decideLogin(ответ, status.loggedIn, hasCodexEnvironmentAuth(какУCli)) };
+    },
+  };
+}
+
+/**
+ * Gemini: у него нет команды «статус входа», зато вход — в доме, который
+ * принадлежит Джарвису. Поэтому файл здесь отвечает точно, в обе стороны:
+ * нет файла — значит не вошли, и задача не запускается впустую (без входа
+ * безголовый Gemini отвечает только «войдите в интерактивном режиме»).
+ */
+export function createGeminiProbe(
+  geminiHome = jarvisPaths().geminiHome,
+  env: NodeJS.ProcessEnv = process.env,
+): GeminiCliProbe {
+  return {
+    async status() {
+      const status = await cliStatus('gemini', env);
+      return { ...status, loggedIn: status.installed && hasGeminiLogin(geminiHome) };
     },
   };
 }

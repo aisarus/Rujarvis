@@ -57,6 +57,7 @@ vi.mock('../jarvis/backends/cliProbes', () => ({
   cliStatus: async () => ({ installed: false, loggedIn: false }),
   createClaudeProbe: () => ({ status: async () => ({ installed: false, loggedIn: false }) }),
   createCodexProbe: () => ({ status: async () => ({ installed: false, loggedIn: false }) }),
+  createGeminiProbe: () => ({ status: async () => ({ installed: false, loggedIn: false }) }),
 }));
 
 async function окно() {

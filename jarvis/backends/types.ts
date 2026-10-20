@@ -18,6 +18,7 @@ import type {
 export const BACKEND_IDS = [
   'claude-code',
   'codex',
+  'gemini',
   'openai-compatible',
   'local',
 ] as const;
@@ -25,7 +26,18 @@ export const BACKEND_IDS = [
 export type BackendId = (typeof BACKEND_IDS)[number];
 
 /** Backends that are coding agents driven through their own official CLI. */
-export const CODING_BACKEND_IDS: readonly BackendId[] = ['claude-code', 'codex'];
+export const CODING_BACKEND_IDS: readonly BackendId[] = ['claude-code', 'codex', 'gemini'];
+
+/** Агенты по подписке человека — те, кого можно выбрать в настройках. */
+export const AGENT_IDS = ['claude-code', 'codex', 'gemini'] as const;
+export type AgentId = (typeof AGENT_IDS)[number];
+
+/** Выбор агента в настройках: `auto` — первый готовый по порядку `AGENT_IDS`. */
+export type AgentChoice = 'auto' | AgentId;
+
+export function isAgentId(value: unknown): value is AgentId {
+  return typeof value === 'string' && (AGENT_IDS as readonly string[]).includes(value);
+}
 
 export interface BackendAvailability {
   id: BackendId;

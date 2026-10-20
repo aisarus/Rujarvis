@@ -188,7 +188,7 @@ describe('TalkSession', () => {
     await разговор.hear('привет');
     await разговор.hear('ну привет же');
 
-    expect(сказанное).toEqual(['Разговор недоступен: не нашёл ни Claude Code, ни Codex.']);
+    expect(сказанное).toEqual(['Разговор недоступен: не нашёл ни Claude Code, ни Codex, ни Gemini.']);
   });
 
   it('без агента молчит при запуске, а на фразу называет причину — и повторяет не чаще раза в минуту', async () => {
@@ -217,7 +217,7 @@ describe('TalkSession', () => {
   });
 
   it('причина словами: нет ни одного агента, или конкретная беда установленного', () => {
-    const нет = (id: 'claude-code' | 'codex'): BackendAvailability => ({
+    const нет = (id: 'claude-code' | 'codex' | 'gemini'): BackendAvailability => ({
       id,
       installed: false,
       authenticated: false,
@@ -225,7 +225,7 @@ describe('TalkSession', () => {
       checkedAt: 0,
       reason: `${id} не установлен`,
     });
-    expect(talkUnavailableReason([нет('claude-code'), нет('codex')])).toBe('не нашёл ни Claude Code, ни Codex');
+    expect(talkUnavailableReason([нет('claude-code'), нет('codex'), нет('gemini')])).toBe('не нашёл ни Claude Code, ни Codex, ни Gemini');
     expect(
       talkUnavailableReason([
         нет('claude-code'),

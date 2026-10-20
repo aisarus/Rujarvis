@@ -35,12 +35,15 @@
 
 import { createStreamState } from '../backends/cliRunner';
 import { consumeClaudeStreamLine } from '../backends/claudeCode';
+import { GEMINI_FAST_MODEL } from '../backends/gemini';
 import { LiveSession, type SessionKey } from '../backends/liveSession';
 import { agentEnv } from '../backends/subscriptionEnv';
-import type { BackendAvailability, BackendResult } from '../backends/types';
+import { AGENT_IDS, type AgentChoice, type AgentId, type BackendAvailability, type BackendResult } from '../backends/types';
+import { jarvisPaths } from '../setup/paths';
 import { stripUnspeakable, toSpokenResponse } from '../voice/spokenResponse';
 import { tr } from '../locale/language';
 import { CodexTalkLive } from './codexTalk';
+import { GeminiTalkLive } from './geminiTalk';
 import { buildTalkOpening, buildTalkTurn } from './talkPrompt';
 import { talkToolNames } from './talkTools';
 import { WorkDelta, type WorkDeltaOptions } from './workDelta';
@@ -53,11 +56,15 @@ export { TALK_SERVER, TALK_TOOLS, talkToolNames } from './talkTools';
  * Claude Code — первым: живая сессия помнит нить в одном процессе и
  * прогревается заранее. Codex — когда Claude Code нет: у тестера на маке
  * может быть только он, и без этого разговора у него не было бы вовсе.
+ * Gemini — когда нет ни того, ни другого: у студента может быть только
+ * Google-аккаунт. Выбранный в настройках агент — первым, если готов.
  */
 export interface TalkAgent {
-  id: 'claude-code' | 'codex';
+  id: AgentId;
   path: string;
 }
+
+const ИМЯ_АГЕНТА: Record<AgentId, string> = { 'claude-code': 'Claude Code', codex: 'Codex', gemini: 'Gemini' };
 
 /**
  * Почему вести разговор некому — словами для человека.
@@ -67,17 +74,18 @@ export interface TalkAgent {
  * так и сказать.
  */
 export function talkUnavailableReason(все: readonly BackendAvailability[]): string {
-  const установленные = все.filter((b) => (b.id === 'claude-code' || b.id === 'codex') && b.installed);
+  const установленные = все.filter((b) => (AGENT_IDS as readonly string[]).includes(b.id) && b.installed);
   const причина = установленные.find((b) => b.reason)?.reason?.replace(/\.$/u, '');
   if (причина) return причина;
   return установленные.length === 0
-    ? tr('не нашёл ни Claude Code, ни Codex', 'found neither Claude Code nor Codex')
+    ? tr('не нашёл ни Claude Code, ни Codex, ни Gemini', 'found neither Claude Code, nor Codex, nor Gemini')
     : tr('агент не готов — проверьте вкладку «Агенты» в настройках', 'the agent is not ready — see the Agents tab in settings');
 }
 
-/** Кому вести разговор: первый готовый — Claude Code, потом Codex. */
-export function pickTalkAgent(все: readonly BackendAvailability[]): TalkAgent | null {
-  for (const id of ['claude-code', 'codex'] as const) {
+/** Кому вести разговор: выбранный, если готов, иначе первый готовый — Claude Code, Codex, Gemini. */
+export function pickTalkAgent(все: readonly BackendAvailability[], prefer: AgentChoice = 'auto'): TalkAgent | null {
+  const порядок = prefer === 'auto' ? AGENT_IDS : [prefer, ...AGENT_IDS.filter((id) => id !== prefer)];
+  for (const id of порядок) {
     const агент = все.find((b) => b.id === id);
     if (агент?.ready && агент.path) return { id, path: агент.path };
   }
@@ -115,6 +123,8 @@ export interface TalkSessionOptions {
   mcpConfig?: string;
   /** Модель Claude Code. Codex берёт модель, выбранную человеком в его настройках. */
   model?: string;
+  /** Дом Gemini под Джарвисом; по умолчанию — `data/gemini`. */
+  geminiHome?: string;
   env?: NodeJS.ProcessEnv;
   /** Где журнал и план: по ним считается «что случилось с прошлого раза». */
   delta: WorkDeltaOptions;
@@ -342,7 +352,18 @@ export class TalkSession {
       ? this.options.createSession(key, command, agent.id)
       : agent.id === 'codex'
         ? new CodexTalkLive({ command, cwd: this.options.cwd, mcpConfig: this.options.mcpConfig, silenceMs: SILENCE_MS })
-        : new LiveSession({
+        : agent.id === 'gemini'
+          ? new GeminiTalkLive({
+              command,
+              cwd: this.options.cwd,
+              home: this.options.geminiHome ?? jarvisPaths().geminiHome,
+              mcpConfig: this.options.mcpConfig,
+              // Разговор решает, что делать, а не делает: Flash, как Sonnet у
+              // Claude Code (решение владельца 29.09.2026 — ради скорости хода).
+              model: GEMINI_FAST_MODEL,
+              silenceMs: SILENCE_MS,
+            })
+          : new LiveSession({
           key,
           command,
           consumeLine: (raw, emit) => consumeClaudeStreamLine(raw, createStreamState(), emit),
@@ -360,7 +381,7 @@ export class TalkSession {
     }
 
     this.live = live;
-    this.log(`поднял сессию разговора: ${agent.id === 'codex' ? 'Codex' : 'Claude Code'}`);
+    this.log(`поднял сессию разговора: ${ИМЯ_АГЕНТА[agent.id]}`);
 
     if (this.lostThread) {
       this.lostThread = false;
@@ -384,7 +405,7 @@ export class TalkSession {
     } catch {
       // Причину не узнали — скажем общую, но скажем.
     }
-    почему ||= tr('не нашёл ни Claude Code, ни Codex', 'found neither Claude Code nor Codex');
+    почему ||= tr('не нашёл ни Claude Code, ни Codex, ни Gemini', 'found neither Claude Code, nor Codex, nor Gemini');
     this.log(`разговор недоступен: ${почему}`);
     await this.say(tr(`Разговор недоступен: ${почему}.`, `Conversation is unavailable: ${почему}.`));
   }

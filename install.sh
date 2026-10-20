@@ -15,6 +15,7 @@
 #   --whisper-model <имя>   модель распознавания
 #   --autostart             запускать при входе в систему
 #   --no-launch             не запускать после установки
+#   --no-gemini             не ставить Gemini CLI (агент Google с бесплатным уровнем)
 #
 # Bash на macOS — версии 3.2 (Apple не обновляет его из-за лицензии GPLv3),
 # поэтому здесь нет ассоциативных массивов и прочего из bash 4.
@@ -32,6 +33,7 @@ BRANCH="main"
 WHISPER_MODEL=""
 AUTOSTART=0
 LAUNCH=1
+GEMINI=1
 
 # --- разговор с человеком ----------------------------------------------------
 
@@ -62,6 +64,7 @@ usage() {
   --whisper-model <имя>   модель распознавания
   --autostart             запускать при входе в систему
   --no-launch             не запускать после установки
+  --no-gemini             не ставить Gemini CLI (агент Google с бесплатным уровнем)
 HELP
 }
 
@@ -75,6 +78,7 @@ parse_args() {
       --whisper-model) WHISPER_MODEL="${2:-}"; shift 2 ;;
       --autostart)     AUTOSTART=1; shift ;;
       --no-launch)     LAUNCH=0; shift ;;
+      --no-gemini)     GEMINI=0; shift ;;
       -h|--help)       usage; exit 0 ;;
       *)               die "Неизвестный ключ: $1" ;;
     esac
@@ -383,6 +387,35 @@ else
     || die 'Не удалось выполнить: jarvis:setup'
 fi
 
+# --- Gemini CLI --------------------------------------------------------------
+#
+# Третий агент: вход своим Google-аккаунтом, у которого есть бесплатный
+# уровень, — без ключей API. Ставится в папку Джарвиса, а не глобально: всё
+# на диске под одной крышей, удаление Джарвиса уносит его с собой, свой
+# `gemini` человека не трогается. Не поставился — установка не срывается:
+# Claude Code и Codex работают и без него.
+
+install_gemini() {
+  local prefix="$INSTALL_ROOT/agents/gemini"
+  mkdir -p "$prefix"
+  # Ход установки — в stderr: stdout этой функции — одна только версия.
+  npm install --prefix "$prefix" --no-audit --no-fund '@google/gemini-cli@latest' </dev/null >&2 || return 1
+  [ -x "$prefix/node_modules/.bin/gemini" ] || return 1
+  # Версию — из package.json: даже `gemini --version` заводит ~/.gemini.
+  node -e 'process.stdout.write(require(process.argv[1]).version)' "$prefix/node_modules/@google/gemini-cli/package.json" 2>/dev/null || printf '?'
+}
+
+if [ "$GEMINI" = "1" ]; then
+  step 'Ставлю Gemini CLI'
+  if gemini_version="$(install_gemini)"; then
+    ok "Gemini CLI ${gemini_version}. Войдите своим Google-аккаунтом: настройки Джарвиса, вкладка «Агенты»."
+  else
+    warn 'Gemini не поставился. Повторите установку позже — Claude Code и Codex работают и без него.'
+  fi
+else
+  note 'Gemini CLI не ставлю (--no-gemini).'
+fi
+
 # --- ярлык -------------------------------------------------------------------
 #
 # На macOS ярлык — это папка .app. Внутри скрипт, который зовёт Electron с
@@ -486,7 +519,7 @@ fi
 
 printf '\n  %sГотово.%s\n\n' "$C_OK" "$C_OFF"
 printf '  Rujarvis живёт в строке меню. При первом запуске он проведёт по настройке:\n'
-printf '  вход в Claude Code, проверка микрофона — и можно говорить.\n\n'
+printf '  вход в агента (Claude Code, Codex или Gemini), проверка микрофона — и можно говорить.\n\n'
 printf '  Папка Джарвиса: %s\n' "$INSTALL_ROOT"
 printf '  Лог:            %s\n' "$INSTALL_ROOT/logs/jarvis.log"
 printf '\n'

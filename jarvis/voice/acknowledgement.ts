@@ -63,6 +63,7 @@ const ACKNOWLEDGEMENTS_EN: Record<JarvisIntent, string[]> = {
 const BACKEND_ACKNOWLEDGEMENTS: Record<string, [string, string]> = {
   'claude-code': ['Передаю Клод Коду.', 'Handing it to Claude Code.'],
   codex: ['Передаю Кодексу.', 'Handing it to Codex.'],
+  gemini: ['Передаю Джемини.', 'Handing it to Gemini.'],
 };
 
 export interface AcknowledgementOptions {

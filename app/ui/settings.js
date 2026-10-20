@@ -80,13 +80,14 @@ function agentCard(key, name, optional) {
     : `<span class="pill ${optional ? '' : 'bad'}">${s.agentMissing}</span>`;
   const node = el(`<div class="card">
     <div class="row"><h2>${escapeHtml(name)}</h2><div class="row" style="gap:6px">${pills}</div></div>
-    ${installed ? '' : `<p class="hint" style="margin:8px 0 0">${escapeHtml(key === 'claude' ? s.agentInstallHint : s.codexInstallHint)}</p>`}
+    ${installed ? '' : `<p class="hint" style="margin:8px 0 0">${escapeHtml({ claude: s.agentInstallHint, codex: s.codexInstallHint, gemini: s.geminiInstallHint }[key])}</p>`}
+    ${key === 'gemini' ? `<p class="hint" style="margin:8px 0 0">${escapeHtml(s.geminiNote)}</p>` : ''}
     <div class="row" style="justify-content:flex-start;margin-top:12px">
       ${installed && !signed ? `<button class="btn primary" data-act="signin">${s.agentSignIn}</button>` : ''}
-      ${!installed ? `<button class="btn primary" data-act="page">${s.agentInstallPage}</button>` : ''}
+      ${!installed ? `<button class="btn primary" data-act="page">${key === 'gemini' ? s.geminiInstallPage : s.agentInstallPage}</button>` : ''}
       <button class="btn" data-act="check">${s.check}</button>
     </div>
-    ${installed && !signed ? `<p class="hint" style="margin:8px 0 0">${data.platform === 'darwin' ? s.agentSignInHintMac : s.agentSignInHint}</p>` : ''}
+    ${installed && !signed ? `<p class="hint" style="margin:8px 0 0">${key === 'gemini' ? s.geminiSignInHint : data.platform === 'darwin' ? s.agentSignInHintMac : s.agentSignInHint}</p>` : ''}
   </div>`);
   // Пока идёт проба, кнопка серая: она запускает CLI и думает секунды, а
   // молчащая кнопка неотличима от сломанной.
@@ -110,11 +111,35 @@ function agentCard(key, name, optional) {
   // на npm — не выдумка: именно оттуда его и ставят той самой командой.
   const openPage = node.querySelector('[data-act=page]');
   if (openPage) {
-    const адрес =
-      key === 'claude' ? 'https://claude.ai/code' : 'https://www.npmjs.com/package/@openai/codex';
+    const адрес = {
+      claude: 'https://claude.ai/code',
+      codex: 'https://www.npmjs.com/package/@openai/codex',
+      gemini: 'https://github.com/google-gemini/gemini-cli',
+    }[key];
     openPage.onclick = () => api.openUrl(адрес);
   }
   return node;
+}
+
+// Кто работает. Выбор явный: у студента может быть сразу Gemini и чужой
+// Claude Code на общем компьютере, и решать за него, чью квоту тратить, нельзя.
+function agentChoiceCard() {
+  const s = t();
+  const выбрано = data.settings.agent || 'auto';
+  const варианты = [
+    ['auto', s.agentAuto],
+    ['claude-code', 'Claude Code'],
+    ['codex', s.codexOptional],
+    ['gemini', s.geminiName],
+  ];
+  const card = el(`<div class="card" id="agent-choice"><label class="field">${s.agentChoice}</label>
+    <div class="radio">
+      ${варианты.map(([v, label]) => `<label><input type="radio" name="agent" value="${v}" ${выбрано === v ? 'checked' : ''}> ${escapeHtml(label)}</label>`).join('')}
+    </div>
+    <p class="hint" style="margin:10px 0 0">${s.agentChoiceHint}</p>
+  </div>`);
+  for (const radio of card.querySelectorAll('input')) radio.onchange = () => update({ agent: radio.value });
+  return card;
 }
 
 function modelRow(kind, model, selectedId, onSelect) {
@@ -363,7 +388,7 @@ function folderField(label, hint, key, placeholder) {
  */
 function агентГотов() {
   const agents = data.agents || {};
-  return ['claude', 'codex'].some((key) => agents[key] && agents[key].installed && agents[key].loggedIn !== false);
+  return ['claude', 'codex', 'gemini'].some((key) => agents[key] && agents[key].installed && agents[key].loggedIn !== false);
 }
 
 function noAgentCard() {
@@ -410,6 +435,7 @@ function renderWizard(main) {
   if (name === 'agent') {
     main.append(agentCard('claude', 'Claude Code', false));
     main.append(agentCard('codex', s.codexOptional, true));
+    main.append(agentCard('gemini', s.geminiName, true));
   }
   if (name === 'models') {
     main.append(modelsCard());
@@ -554,8 +580,10 @@ function renderSettings(main, nav) {
     main.append(el(`<h2 style="margin-top:8px">${s.stepMic}</h2>`), micCard());
   }
   if (tab === 'agents') {
+    main.append(agentChoiceCard());
     main.append(agentCard('claude', 'Claude Code', false));
     main.append(agentCard('codex', s.codexOptional, true));
+    main.append(agentCard('gemini', s.geminiName, true));
     const model = el(`<div class="card"><label class="field">${s.claudeModel}</label><p class="hint" style="margin:0 0 8px">${s.claudeModelHint}</p>
       <div class="row"><input type="text" value="${escapeHtml(data.settings.claudeModel)}" placeholder="opus"></div></div>`);
     const input = model.querySelector('input');

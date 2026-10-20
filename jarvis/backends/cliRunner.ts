@@ -98,6 +98,19 @@ export interface CliRunSpec {
   /** Сколько можно молчать. Обрывает застрявшую работу, но не долгую. */
   idleTimeoutMs?: number;
   stdin: string;
+  /**
+   * Окружение процесса. По умолчанию — подписка без ключей (`agentEnv`);
+   * своё задаёт тот, кому нужно больше, — и строит его тоже от `agentEnv`.
+   */
+  env?: NodeJS.ProcessEnv;
+  /**
+   * Смотреть на stderr по ходу работы. Нужно тому CLI, который о беде пишет
+   * только туда и при этом продолжает работать: заметил — ставит
+   * `state.fatalMessage`, и запуск останавливается сразу.
+   */
+  watchStderr?: (chunk: string, state: StreamState) => void;
+  /** Причина сбоя словами для человека — когда сырой stderr ему ничего не скажет. */
+  describeFailure?: (stderr: string, exitCode: number | null) => string | undefined;
   /** Translates one parsed NDJSON object into events. */
   consumeLine: (
     raw: Record<string, unknown>,
@@ -181,7 +194,7 @@ export function createCliRun(spec: CliRunSpec): BackendRun {
       command: availability.path,
       args: spec.buildArgs(availability.path),
       cwd: spec.cwd,
-      env: agentEnv(),
+      env: spec.env ?? agentEnv(),
       timeoutMs: spec.timeoutMs,
       idleTimeoutMs: spec.idleTimeoutMs,
       stdin: spec.stdin,
@@ -194,6 +207,17 @@ export function createCliRun(spec: CliRunSpec): BackendRun {
           child?.cancel();
         }
       },
+      ...(spec.watchStderr
+        ? {
+            onStderrChunk: (chunk: string) => {
+              spec.watchStderr?.(chunk, state);
+              if (state.fatalMessage && !stoppedEarly) {
+                stoppedEarly = true;
+                child?.cancel();
+              }
+            },
+          }
+        : {}),
     });
 
     const outcome = await child.wait();
@@ -227,9 +251,10 @@ export function createCliRun(spec: CliRunSpec): BackendRun {
     } else if (outcome.timedOut) {
       error = spec.messages.timedOut;
     } else if (state.errorMessage !== undefined) {
-      error = state.errorMessage;
+      error = spec.describeFailure?.(`${state.errorMessage} ${outcome.stderr}`, outcome.exitCode) ?? state.errorMessage;
     } else if (failed) {
-      error = outcome.stderr.trim().slice(-2000) || spec.messages.failed;
+      error =
+        spec.describeFailure?.(outcome.stderr, outcome.exitCode) ?? (outcome.stderr.trim().slice(-2000) || spec.messages.failed);
     }
 
     // stderr — в журнал всегда, когда что-то пошло не так, даже если причина

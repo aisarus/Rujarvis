@@ -521,6 +521,7 @@ function настройкиЛекции(): LectureStartOptions {
       settings().outputDir ||
       jarvisOutputDir(process.env, app.getPath('desktop'), settings().language === 'en' ? 'Jarvis' : 'Джарвис'),
     mainEndpoint: () => серверРаспознавания?.endpoint ?? (process.env.JARVIS_GPU_STT?.trim() || null),
+    agent: () => settings().agent,
   };
 }
 
@@ -1414,6 +1415,9 @@ async function поднятьМост(options: {
 
   const jarvis = createJarvis({
     workspace,
+    // Кто работает — вкладка «Агенты»; читается на каждую фразу.
+    agent: () => settings().agent,
+    geminiHome: PATHS.geminiHome,
     // Со своей моделью имя задаёт её сервер (ANTHROPIC_MODEL), а «opus» из
     // настроек подписки там ничего не значит.
     claudeModel: own ? undefined : settings().claudeModel || undefined,
@@ -1590,13 +1594,15 @@ async function поднятьМост(options: {
    */
   const talkBridgeDir = path.join(path.dirname(journalFile()), 'talk-bridge');
   const talk = new TalkSession({
-    // Claude Code первым: у него живая сессия и прогрев. Codex — когда
-    // Claude Code нет, иначе у человека с одним Codex разговора нет вовсе.
-    agent: async () => pickTalkAgent(await jarvis.backends.availability()),
+    // Выбранный в настройках — первым. Иначе Claude Code: у него живая
+    // сессия и прогрев. Codex — когда Claude Code нет, Gemini — когда нет ни
+    // того, ни другого: иначе у человека с одним из них разговора нет вовсе.
+    agent: async () => pickTalkAgent(await jarvis.backends.availability(), settings().agent),
     // Чего не хватает — на фразу человека, а не одним словом при запуске.
     unavailable: async () => talkUnavailableReason(await jarvis.backends.availability()),
     // Дом Джарвиса, а не рабочая папка: разговору нечего делать в коде.
     cwd: jarvisHome(),
+    geminiHome: PATHS.geminiHome,
     // Разговор — на Sonnet (решение владельца 29.09.2026): ход на модели по
     // умолчанию шёл 5–10 секунд, а разговор решает, что делать, а не делает.
     // Своя модель на домашнем сервере имени «sonnet» не знает — там её имя.

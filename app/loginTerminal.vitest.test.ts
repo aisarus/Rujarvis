@@ -165,3 +165,35 @@ describe('окно входа называет агента', () => {
     expect(сценарийВхода('C:/x.cmd', ['login'])).not.toContain('title');
   });
 });
+
+/**
+ * Вход в Gemini — первый запуск в терминале, и он должен лечь в дом
+ * Джарвиса (`GEMINI_CLI_HOME`), а не в `~/.gemini`: иначе Джарвис его не увидит.
+ */
+describe('окружение окна входа', () => {
+  const окружение = { GEMINI_CLI_HOME: 'C:\\Users\\John Smith\\AppData\\Local\\Rujarvis\\data\\gemini', GEMINI_API_KEY: '' };
+
+  it('Windows: переменные — строками set в кавычках, до команды; пустое значение убирает ключ', () => {
+    const текст = сценарийВхода('C:\\x\\gemini.cmd', [], 'Gemini', окружение);
+    const строки = текст.split(String.fromCharCode(13) + String.fromCharCode(10));
+    const команда = строки.findIndex((с) => с.includes('gemini.cmd'));
+    expect(строки).toContain('set "GEMINI_CLI_HOME=C:\\Users\\John Smith\\AppData\\Local\\Rujarvis\\data\\gemini"');
+    expect(строки).toContain('set "GEMINI_API_KEY="');
+    expect(строки.findIndex((с) => с.startsWith('set "GEMINI_CLI_HOME'))).toBeLessThan(команда);
+  });
+
+  it('Windows: .cmd зовётся через call — иначе сценарий кончается вместе с CLI и pause не доходит', () => {
+    expect(сценарийВхода('C:\\x\\gemini.cmd', [])).toContain('call "C:\\x\\gemini.cmd"');
+    expect(сценарийВхода('C:\\x\\claude.exe', ['auth', 'login'])).not.toContain('call ');
+  });
+
+  it('мак: env с присваиваниями в кавычках оболочки перед командой', () => {
+    const скрипт = скриптТерминала('/Users/t/gemini', [], 'Gemini', { GEMINI_CLI_HOME: '/Users/t/Library/Application Support/Rujarvis/data/gemini' });
+    expect(скрипт).toContain("env 'GEMINI_CLI_HOME=/Users/t/Library/Application Support/Rujarvis/data/gemini' '/Users/t/gemini'");
+  });
+
+  it('линукс: env перед командой', () => {
+    const запуск = терминалДляВхода('/usr/bin/gemini', [], '/tmp', 'linux', 'Gemini', { GEMINI_CLI_HOME: '/h' });
+    expect(запуск.args).toEqual(['-e', 'env', 'GEMINI_CLI_HOME=/h', '/usr/bin/gemini']);
+  });
+});

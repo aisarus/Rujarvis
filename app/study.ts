@@ -3,8 +3,8 @@
  *
  * Окно учёбы открывается из трея, кнопкой «Учёба» на плашке и голосом
  * («Джарвис, учёба»). Заготовки — по одной лекции за раз, в фоне: каждая —
- * несколько вызовов Claude Code по подписке, и две разом только делили бы
- * лимит.
+ * несколько вызовов агента по подписке (выбранного в настройках: Claude
+ * Code, Codex или Gemini), и две разом только делили бы лимит.
  */
 
 import path from 'node:path';
@@ -13,7 +13,7 @@ import { app, shell } from 'electron';
 
 import { lectureLanguagesFor, settingsLanguages } from '../jarvis/lecture/courses';
 import { lectureFolder } from '../jarvis/lecture/vault';
-import { createClaudeSummarizer } from '../jarvis/lecture/summarize';
+import { createAgentSummarizer } from '../jarvis/lecture/summarize';
 import { tr } from '../jarvis/locale/language';
 import type { JarvisPaths } from '../jarvis/setup/paths';
 import { jarvisOutputDir } from '../jarvis/setup/paths';
@@ -60,7 +60,7 @@ export function studyService(): StudyService {
     служба = new StudyService({
       store: хранилище(),
       vaultRoot: папкаЛекций,
-      summarize: createClaudeSummarizer(),
+      summarize: createAgentSummarizer({ prefer: () => settings().agent }),
       notes: settings().language,
       languages: () => settingsLanguages(settings()),
       trash: (file) => shell.trashItem(file),
@@ -104,7 +104,7 @@ export function prepareStudyFor(notesFile: string): void {
       // Вопросы — на языке лекции курса, разбор — на языке его конспекта.
       const языки = lectureLanguagesFor(notesFile, settingsLanguages(s));
       const итог = await prepareLecture(notesFile, хранилище(), {
-        summarize: createClaudeSummarizer(),
+        summarize: createAgentSummarizer({ prefer: () => s.agent }),
         lectureLanguage: языки.lecture,
         notes: языки.notes,
         log: (строка) => console.log(`[jarvis:study] ${строка}`),

@@ -12,11 +12,14 @@ import { BackendManager } from './backends/manager';
 import { ClaudeCodeBackend } from './backends/claudeCode';
 import { SessionPool } from './backends/sessionPool';
 import { CodexBackend } from './backends/codex';
+import { GeminiBackend } from './backends/gemini';
 import {
   OpenAiCompatibleBackend,
   createHttpChatClient,
 } from './backends/openAiCompatible';
-import { createClaudeProbe, createCodexProbe } from './backends/cliProbes';
+import { createClaudeProbe, createCodexProbe, createGeminiProbe } from './backends/cliProbes';
+import type { AgentChoice } from './backends/types';
+import { jarvisPaths } from './setup/paths';
 import { WorldStateStore, type DesktopObserver } from './context/worldState';
 import {
   DEFAULT_JARVIS_SETTINGS,
@@ -58,6 +61,14 @@ export interface CreateJarvisOptions {
   /** Model override for the coding backends. */
   claudeModel?: string;
   codexModel?: string;
+  geminiModel?: string;
+  /**
+   * Кто работает — выбор в настройках («Агенты»). `auto` — первый готовый:
+   * Claude Code, потом Codex, потом Gemini. Читается на каждую фразу.
+   */
+  agent?: () => AgentChoice;
+  /** Дом Gemini под Джарвисом (`GEMINI_CLI_HOME`); по умолчанию — `data/gemini`. */
+  geminiHome?: string;
   /**
    * Permits the CLIs' unrestricted modes. Off unless the user turned it on,
    * and never inferred from anything a model said.
@@ -172,6 +183,20 @@ export function createJarvis(options: CreateJarvisOptions = {}): Jarvis {
     }),
   );
 
+  backends.register(
+    new GeminiBackend({
+      probe: createGeminiProbe(options.geminiHome ?? jarvisPaths().geminiHome),
+      home: options.geminiHome ?? jarvisPaths().geminiHome,
+      model: options.geminiModel,
+      // Рабочий стол — тот же сервер с проверкой красных линий внутри (путь
+      // «Б»): надёжного хука у Gemini нет.
+      desktopMcpConfig: options.desktopMcpConfig,
+      gateConfig: options.gateConfig,
+      outputDir: options.outputDir,
+      homeDir: options.homeDir,
+    }),
+  );
+
   if (options.fallbackModel) {
     backends.register(
       new OpenAiCompatibleBackend({
@@ -212,7 +237,13 @@ export function createJarvis(options: CreateJarvisOptions = {}): Jarvis {
     memory,
     world,
     localRouter,
-    settings: options.settings ?? (() => DEFAULT_JARVIS_SETTINGS),
+    settings:
+      options.settings ??
+      (() => {
+        // Выбор агента в настройках ведёт и задачи по коду, и все остальные.
+        const agent = options.agent?.() ?? 'auto';
+        return { ...DEFAULT_JARVIS_SETTINGS, codingPreference: agent, mainPreference: agent };
+      }),
     speak: options.speak,
     stopSpeaking: options.stopSpeaking,
     showIndicator: options.showIndicator,

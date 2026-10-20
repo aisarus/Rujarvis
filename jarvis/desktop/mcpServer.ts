@@ -291,8 +291,8 @@ function deliverNotesWithEveryTool(server: McpServer): void {
 export function createDesktopMcpServer(): McpServer {
   const server = new McpServer({ name: 'jarvis-desktop', version: '1.0.0' });
   deliverNotesWithEveryTool(server);
-  // Красные линии внутри сервера — для агента без своего хука (Codex).
-  // Последней обёрткой: отказ раньше любой работы инструмента.
+  // Красные линии внутри сервера — для агента без надёжного хука (Codex,
+  // Gemini). Последней обёрткой: отказ раньше любой работы инструмента.
   const сторож = serverGateFromEnv();
   if (сторож) guardEveryTool(server, сторож);
 

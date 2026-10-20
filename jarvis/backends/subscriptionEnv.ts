@@ -38,6 +38,12 @@ const KEY_VARS = [
   'ANTHROPIC_BASE_URL',
   'OPENAI_API_KEY',
   'OPENAI_BASE_URL',
+  // Gemini CLI с ключом в окружении идёт мимо входа через Google — то есть
+  // в платный API, а не в бесплатный уровень аккаунта человека.
+  'GEMINI_API_KEY',
+  'GOOGLE_API_KEY',
+  'GOOGLE_GEMINI_BASE_URL',
+  'GOOGLE_VERTEX_BASE_URL',
 ];
 
 /**

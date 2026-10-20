@@ -6,7 +6,8 @@
  * для лекций на свободном порту (работающему Джарвису не мешает), режет
  * запись на куски по паузам, до 28 секунд — как
  * их режет живая лекция — и гонит через `LectureSession` с
- * настоящим Claude Code по подписке. Пишет в папку данных Джарвиса, а не в
+ * настоящим агентом по подписке (`JARVIS_AGENT=gemini` — только Gemini, иначе
+ * первый готовый: Claude Code, Codex, Gemini). Пишет в папку данных Джарвиса, а не в
  * хранилище Obsidian: проверка не должна оставлять заметок среди лекций.
  *
  * Отвечает тремя способами:
@@ -31,7 +32,7 @@ import { coursesForModel, parseFrontmatter } from '../../jarvis/lecture/courses'
 import { finalizeLecture } from '../../jarvis/lecture/finalize';
 import { BAD_CONFIDENCE } from '../../jarvis/lecture/hearing';
 import { LectureSession } from '../../jarvis/lecture/session';
-import { createClaudeSummarizer, createFinalSummarizer } from '../../jarvis/lecture/summarize';
+import { createAgentFinalSummarizer, createAgentSummarizer } from '../../jarvis/lecture/summarize';
 import { jarvisPaths } from '../../jarvis/setup/paths';
 import { SettingsStore } from '../../jarvis/setup/settings';
 import { findGpuWhisper, findLectureModel, gpuWhisperDir, startGpuWhisper } from '../../jarvis/voice/gpuWhisper';
@@ -70,7 +71,7 @@ async function main(): Promise<void> {
   const язык = (process.argv.find((a) => a.startsWith('--language='))?.slice('--language='.length) || settings.lectureLanguage || settings.language).toLowerCase();
   const конспект = settings.language;
   console.log('');
-  console.log(`Конспект лекции: язык лекции «${язык}», конспект — «${конспект}»; куски по паузам, разделы — Claude Code по подписке`);
+  console.log(`Конспект лекции: язык лекции «${язык}», конспект — «${конспект}»; куски по паузам, разделы — агент по подписке (${process.env.JARVIS_AGENT || 'первый готовый'})`);
   const dir = gpuWhisperDir(paths.home);
   const files = await findGpuWhisper(dir);
   if (!files) {
@@ -164,8 +165,8 @@ async function main(): Promise<void> {
         времена.push((performance.now() - t0) / 1000 / (samples.length / 16_000));
         return текст;
       },
-      summarize: createClaudeSummarizer(),
-      summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`  ${строка}`) }),
+      summarize: createAgentSummarizer(),
+      summarizeFinal: createAgentFinalSummarizer({ log: (строка) => console.log(`  ${строка}`) }),
       log: (строка) => console.log(`  ${строка}`),
     });
     await сессия.start();

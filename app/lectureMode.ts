@@ -54,7 +54,8 @@ import { HearingMonitor, isSilentChunk } from '../jarvis/lecture/hearing';
 import { mediaSeconds } from '../jarvis/lecture/mediaSlices';
 import { LectureRecorder } from '../jarvis/lecture/recorder';
 import { LectureSession, NOTES_WORDS, type NotesLanguage } from '../jarvis/lecture/session';
-import { createClaudeSummarizer, createFinalSummarizer } from '../jarvis/lecture/summarize';
+import { createAgentFinalSummarizer, createAgentSummarizer } from '../jarvis/lecture/summarize';
+import type { AgentChoice } from '../jarvis/backends/types';
 import { lectureFolder, obsidianOpenUrl } from '../jarvis/lecture/vault';
 import { tr } from '../jarvis/locale/language';
 import { findGpuWhisper, findLectureModel, gpuWhisperDir, otherLectureModels, startGpuWhisper, type GpuWhisperServer } from '../jarvis/voice/gpuWhisper';
@@ -149,6 +150,8 @@ export interface LectureStartOptions {
   mainEndpoint(): string | null;
   /** Откуда звук: микрофон (аудитория) или звук компьютера (Zoom). По умолчанию — микрофон. */
   source?: LectureSource;
+  /** Кто пишет конспект — выбор в настройках; нет — первый готовый агент. */
+  agent?: () => AgentChoice;
 }
 
 function занято(): string | null {
@@ -292,8 +295,8 @@ async function начатьЛекцию(subject: string | undefined, options: Le
     subject ?? '',
     {
       transcribe,
-      summarize: createClaudeSummarizer(),
-      summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
+      summarize: createAgentSummarizer({ prefer: options.agent }),
+      summarizeFinal: createAgentFinalSummarizer({ prefer: options.agent, log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
       lectureLanguage: языки.lecture,
       notesLanguage: языки.notes,
       // Только счёт и события: сама лекция в журнал Джарвиса не пишется.
@@ -546,8 +549,8 @@ export async function lectureFromFile(file: string, options: LectureFileOptions)
           показать();
           return текст;
         },
-        summarize: createClaudeSummarizer(),
-        summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`[jarvis:lecture] файл: ${строка}`) }),
+        summarize: createAgentSummarizer({ prefer: options.agent }),
+        summarizeFinal: createAgentFinalSummarizer({ prefer: options.agent, log: (строка) => console.log(`[jarvis:lecture] файл: ${строка}`) }),
         lectureLanguage: языки.lecture,
         notesLanguage: языки.notes,
         log: (строка) => console.log(`[jarvis:lecture] файл: ${строка}`),

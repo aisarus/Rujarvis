@@ -10,6 +10,7 @@
  *       logs\      jarvis.log
  *       models\    whisper\ — распознавание, voices\ — голоса
  *       cua-driver\ драйвер окон (ставит install.ps1)
+ *       agents\    агенты, которые ставит сам установщик (Gemini CLI)
  *       profile\   служебный профиль Electron
  *
  * Результаты работы для человека — отдельно, на рабочем столе, чтобы их не
@@ -46,6 +47,13 @@ export interface JarvisPaths {
   voiceModels: string;
   cuaDriver: string;
   profile: string;
+  /** Агенты, поставленные установщиком: `agents/gemini` — Gemini CLI. */
+  agents: string;
+  /**
+   * Дом Gemini CLI под Джарвисом (`GEMINI_CLI_HOME`): его вход через Google,
+   * настройки и история живут здесь, а не в `~/.gemini` человека.
+   */
+  geminiHome: string;
 }
 
 export function jarvisPaths(env: Env = process.env, platform: NodeJS.Platform = process.platform): JarvisPaths {
@@ -61,6 +69,8 @@ export function jarvisPaths(env: Env = process.env, platform: NodeJS.Platform = 
     voiceModels: path.join(home, 'models', 'voices'),
     cuaDriver: path.join(home, 'cua-driver', 'unpacked'),
     profile: path.join(home, 'profile'),
+    agents: path.join(home, 'agents'),
+    geminiHome: path.join(home, 'data', 'gemini'),
   };
 }
 

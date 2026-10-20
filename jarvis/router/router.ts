@@ -548,7 +548,7 @@ export function route(utterance: string, options: RouteOptions = {}): RoutingDec
 
   // A coding backend was named out loud, so this is coding work even if the
   // words did not say so: «сделай это через Клод Код».
-  if (requested === 'claude-code' || requested === 'codex') {
+  if (requested === 'claude-code' || requested === 'codex' || requested === 'gemini') {
     capabilities.add('coding');
   }
 
@@ -604,6 +604,7 @@ function pickTarget(input: {
     }
     if (!input.excluded.includes('claude-code')) return 'claude-code';
     if (!input.excluded.includes('codex')) return 'codex';
+    if (!input.excluded.includes('gemini')) return 'gemini';
   }
 
   // Экран, окна, файлы, браузер, 3D, переписка — к Claude Code: инструменты
@@ -621,7 +622,8 @@ function pickTarget(input: {
   const main = input.mainPreference;
   if (main && main !== 'auto' && !input.excluded.includes(main)) return main;
   if (!input.excluded.includes('claude-code')) return 'claude-code';
-  return 'codex';
+  if (!input.excluded.includes('codex')) return 'codex';
+  return 'gemini';
 }
 
 /**

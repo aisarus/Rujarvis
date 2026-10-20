@@ -54,6 +54,10 @@ check 'по умолчанию русский' "$([ "$LANGUAGE" = 'ru' ] && prin
 check 'по умолчанию ветка main' "$([ "$BRANCH" = 'main' ] && printf 'да')"
 check 'по умолчанию без автозапуска' "$([ "$AUTOSTART" = '0' ] && printf 'да')"
 check 'по умолчанию запускает после установки' "$([ "$LAUNCH" = '1' ] && printf 'да')"
+check 'по умолчанию ставит Gemini' "$([ "$GEMINI" = '1' ] && printf 'да')"
+
+( parse_args --no-gemini; [ "$GEMINI" = '0' ] ) >/dev/null 2>&1
+check '--no-gemini выключает Gemini' "$([ $? -eq 0 ] && printf 'да')"
 
 (
   parse_args --language en --branch проба --whisper-model whisper-base --autostart --no-launch
@@ -90,6 +94,11 @@ check 'есть запасная установка pnpm в свою папку'
 # sudo зовёт только установщик Homebrew — свой и в своём разговоре с человеком.
 check 'установщик сам не зовёт sudo' \
   "$(! grep -qE '^[^#]*\bsudo\b' "$SCRIPT" && printf 'да')"
+
+check 'Gemini — в папку Джарвиса, официальным пакетом Google, не глобально' \
+  "$(grep -q 'npm install --prefix "$prefix" --no-audit --no-fund '"'"'@google/gemini-cli@latest'"'"'' "$SCRIPT" \
+    && grep -q 'local prefix="$INSTALL_ROOT/agents/gemini"' "$SCRIPT" \
+    && ! grep -qE '^[^#]*npm install -g[^\n]*gemini' "$SCRIPT" && printf 'да')"
 
 check 'ставит в папку macOS, а не в домашнюю россыпь' \
   "$(grep -q 'Library/Application Support/Rujarvis' "$SCRIPT" && printf 'да')"

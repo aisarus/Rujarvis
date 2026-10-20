@@ -6,11 +6,12 @@
  * job. A backend that is missing, unauthenticated or out of quota costs the
  * user a sentence of explanation, never a dead end.
  *
- *      Jarvis Core → BackendManager → { ClaudeCode | Codex | Interpreter | … }
+ *      Jarvis Core → BackendManager → { ClaudeCode | Codex | Gemini | … }
  */
 
 import { randomUUID } from 'node:crypto';
 import type { JarvisCapability } from '../types';
+import { tr } from '../locale/language';
 import { EventChannel } from './process';
 import {
   CODING_BACKEND_IDS,
@@ -154,27 +155,42 @@ export class BackendManager {
     return this.backends.get(id)?.capabilities.has('computer') === true;
   }
 
-  /** Установлен ли Claude Code и выполнен ли вход — то есть пользователь ли это Claude. */
-  private async claudeГотов(): Promise<boolean> {
-    const claude = this.backends.get('claude-code');
-    if (!claude) return false;
+  /** Установлен ли агент и выполнен ли вход — то есть пользователь ли это его. */
+  private async готов(id: BackendId): Promise<boolean> {
+    const агент = this.backends.get(id);
+    if (!агент) return false;
     try {
-      return (await claude.checkAvailability()).ready;
+      return (await агент.checkAvailability()).ready;
     } catch {
       return false;
     }
   }
 
+  /**
+   * Чью подписку этот агент не подменяет.
+   *
+   * Codex не запасной для того, у кого есть Claude Code (решение владельца
+   * 29.09.2026), а Gemini — ни для того, ни для другого: исчерпанный лимит
+   * одной подписки не повод жечь чужую. Названный голосом или в настройках
+   * агент работает как раньше — он во главе очереди, а не подмена.
+   */
+  private static readonly НЕ_ПОДМЕНЯЕТ: Partial<Record<BackendId, readonly BackendId[]>> = {
+    codex: ['claude-code'],
+    gemini: ['claude-code', 'codex'],
+  };
+
   private почемуНекому(request: BackendRequest): string {
     const экран = needsScreen(request.capabilities) || needsCommunication(request.capabilities);
     if (экран && !this.backends.has('claude-code')) {
-      // Кодекс с рабочим столом сюда не попадёт: его бы уже взяли выше.
-      return this.backends.has('codex')
-        ? 'Это умеет только Claude Code: инструменты рабочего стола есть у него одного. ' +
-            'Кодекс работает в своей песочнице и окна нажимать не может. Войдите в Claude Code.'
-        : 'Нет доступных backend. Проверьте настройки AI-аккаунтов.';
+      // Codex и Gemini с рабочим столом сюда не попадут: их бы уже взяли выше.
+      return this.backends.has('codex') || this.backends.has('gemini')
+        ? tr(
+            'С окнами работает Claude Code, а Codex и Gemini — только через сервер Джарвиса с проверкой красных линий, и сейчас его у них нет. Войдите в Claude Code или перезапустите Джарвиса.',
+            'Claude Code works with windows; Codex and Gemini only through the Jarvis server with the red-line check, which they do not have right now. Sign in to Claude Code or restart Jarvis.',
+          )
+        : tr('Нет доступных агентов. Проверьте вкладку «Агенты» в настройках.', 'No agents available. Check the Agents tab in settings.');
     }
-    return 'Нет доступных backend. Проверьте настройки AI-аккаунтов.';
+    return tr('Нет доступных агентов. Проверьте вкладку «Агенты» в настройках.', 'No agents available. Check the Agents tab in settings.');
   }
 
   plan(request: BackendRequest, preference: BackendPreference = {}): BackendPlan {
@@ -219,13 +235,20 @@ export class BackendManager {
       // помощник, который не может сделать работу, обязан это сказать, а не
       // изображать её другим способом. Работу без мыши (файлы, браузер без
       // окна человека) может подхватить Codex.
+      // Выбранный в настройках — первым, если ему есть чем это сделать.
+      const preferred = preference.mainPreference;
+      if (preferred && preferred !== 'auto' && (!request.capabilities.includes('computer') || this.умеетЭкран(preferred))) {
+        push(preferred);
+      }
       push('claude-code');
-      // Кодексу — если ему есть чем. Раньше он исключался из задач про экран
-      // навсегда, и это было верно, пока рук у него не было вовсе. Теперь
-      // рабочий стол даётся ему тем же MCP-сервером, что и Клоду (`-c
-      // mcp_servers…` на один запуск), и спрашивать надо не платформу, а
-      // самого агента: есть у него «computer» — берём, нет — не обещаем.
-      if (!request.capabilities.includes('computer') || this.умеетЭкран('codex')) push('codex');
+      // Кодексу и Gemini — если им есть чем. Раньше Кодекс исключался из
+      // задач про экран навсегда, и это было верно, пока рук у него не было
+      // вовсе. Теперь рабочий стол даётся им тем же MCP-сервером, что и Клоду,
+      // и спрашивать надо не платформу, а самого агента: есть у него
+      // «computer» — берём, нет — не обещаем.
+      for (const id of ['codex', 'gemini'] as const) {
+        if (!request.capabilities.includes('computer') || this.умеетЭкран(id)) push(id);
+      }
       rationale = 'Задача про экран, файлы, программы или переписку — там, где инструменты';
     } else {
       const preferred = preference.mainPreference;
@@ -235,8 +258,7 @@ export class BackendManager {
       } else {
         rationale = 'Обычная задача';
       }
-      push('claude-code');
-      push('codex');
+      for (const id of CODING_BACKEND_IDS) push(id);
     }
 
     // Без подписки — локальная модель, чтобы Джарвис хоть отвечал. Кроме
@@ -305,18 +327,23 @@ export class BackendManager {
         const backend = this.backends.get(id);
         if (!backend) continue;
 
-        // Codex — не запасной для того, у кого есть Claude Code (решение
-        // владельца 29.09.2026): у пользователя Codex он заменяет Claude Code
-        // целиком, у пользователя Claude — только Claude, и исчерпанный лимит
-        // не повод жечь чужой. Названный голосом или в настройках — работает
-        // как раньше: он во главе очереди, а не подмена.
-        if (id === 'codex' && номер > 0 && failures.length > 0) {
-          const есть = await this.claudeГотов();
+        // Запасной — только тому, у кого нет своей подписки (см. НЕ_ПОДМЕНЯЕТ):
+        // у пользователя Codex он заменяет Claude Code целиком, у пользователя
+        // Claude — только Claude.
+        const чьиНеПодменяет = BackendManager.НЕ_ПОДМЕНЯЕТ[id] ?? [];
+        if (чьиНеПодменяет.length > 0 && номер > 0 && failures.length > 0) {
+          let хозяин: BackendId | undefined;
+          for (const другой of чьиНеПодменяет) {
+            if (await this.готов(другой)) {
+              хозяин = другой;
+              break;
+            }
+          }
           // Проба доступности — до десяти секунд, и «стоп» за это время не
           // должен пропустить запуск следующего (ревью 29.09.2026).
           if (cancelled) break;
-          if (есть) {
-            failures.push('Codex не подменяет Claude Code, когда тот есть');
+          if (хозяин) {
+            failures.push(`${backend.name} не подменяет ${this.backends.get(хозяин)?.name ?? хозяин}, когда тот есть`);
             continue;
           }
         }

@@ -15,7 +15,8 @@ import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
 import { cloudSpeechKey } from './cloudTranscriber';
 import { терминалДляВхода } from './loginTerminal';
 import { APP_ROOT } from './root';
-import { cliStatus, createClaudeProbe, createCodexProbe } from '../jarvis/backends/cliProbes';
+import { cliStatus, createClaudeProbe, createCodexProbe, createGeminiProbe } from '../jarvis/backends/cliProbes';
+import { ensureGeminiHome, geminiLoginEnv } from '../jarvis/backends/geminiHome';
 import { checkLocalModel, normaliseEndpoint } from '../jarvis/backends/localModel';
 import type { JarvisPaths } from '../jarvis/setup/paths';
 import { jarvisOutputDir } from '../jarvis/setup/paths';
@@ -167,16 +168,18 @@ async function зависитОтНастроек() {
 }
 
 async function state() {
-  const [живое, claude, codex] = await Promise.all([
+  const { paths } = current as SettingsWindowOptions;
+  const [живое, claude, codex, gemini] = await Promise.all([
     зависитОтНастроек(),
     createClaudeProbe().status(),
     createCodexProbe().status(),
+    createGeminiProbe(paths.geminiHome).status(),
   ]);
   return {
     ...живое,
     strings: UI_STRINGS,
     platform: process.platform,
-    agents: { claude, codex },
+    agents: { claude, codex, gemini },
     // Только «есть ли ключ облака», сам ключ окну не нужен.
     cloudKey: Boolean(cloudSpeechKey(true)),
     update: updateState(),
@@ -303,7 +306,8 @@ function registerHandlers(): void {
     return result;
   });
 
-  ipcMain.handle(`${SETTINGS_CHANNEL}:signIn`, async (_event, cli: 'claude' | 'codex') => {
+  ipcMain.handle(`${SETTINGS_CHANNEL}:signIn`, async (_event, cli: 'claude' | 'codex' | 'gemini') => {
+    if (cli !== 'claude' && cli !== 'codex' && cli !== 'gemini') return false;
     const status = await cliStatus(cli);
     // В журнал — какая кнопка, какой CLI и какой командой. Со слов владельца
     // после живого теста на маке 27.09.2026 обе кнопки увели во вход Claude
@@ -313,13 +317,22 @@ function registerHandlers(): void {
       return false;
     }
     const { paths } = current as SettingsWindowOptions;
+    // Сценарий входа лежит в папке Джарвиса: всё на диске живёт под одной
+    // крышей, и мусор в чужих местах не остаётся.
+    const папка = path.join(paths.home, 'data');
+    if (cli === 'gemini') {
+      // Команды входа у Gemini нет: вход — первый запуск в терминале. Дом
+      // Джарвиса с настройками уже на месте, и там выбран вход через Google,
+      // поэтому Gemini сразу откроет страницу Google, а не меню способов.
+      ensureGeminiHome(paths.geminiHome);
+      console.log(`[jarvis] вход: gemini — ${status.path} (дом ${paths.geminiHome})`);
+      return openTerminal(status.path, [], папка, 'Gemini', geminiLoginEnv(paths.geminiHome));
+    }
     // Подкоманды сверены с самими CLI 26.09.2026: `claude auth login` и
     // `codex login` — обе существуют.
     const args = cli === 'claude' ? ['auth', 'login'] : ['login'];
     console.log(`[jarvis] вход: ${cli} — ${status.path} ${args.join(' ')}`);
-    // Сценарий входа лежит в папке Джарвиса: всё на диске живёт под одной
-    // крышей, и мусор в чужих местах не остаётся.
-    return openTerminal(status.path, args, path.join(paths.home, 'data'), cli === 'claude' ? 'Claude Code' : 'Codex');
+    return openTerminal(status.path, args, папка, cli === 'claude' ? 'Claude Code' : 'Codex');
   });
 
   ipcMain.handle(`${SETTINGS_CHANNEL}:openUrl`, (_event, url: string) => {
@@ -353,8 +366,8 @@ function registerHandlers(): void {
  * молча: окно не открывалось, ошибка уходила в никуда, а человек оставался на
  * шаге, который обойти нельзя.
  */
-function openTerminal(command: string, args: string[], папка: string, агент: string): boolean {
-  const запуск = терминалДляВхода(command, args, папка, process.platform, агент);
+function openTerminal(command: string, args: string[], папка: string, агент: string, окружение: Record<string, string> = {}): boolean {
+  const запуск = терминалДляВхода(command, args, папка, process.platform, агент, окружение);
   try {
     if (запуск.сценарий) {
       mkdirSync(path.dirname(запуск.сценарий.файл), { recursive: true });

@@ -447,6 +447,38 @@ else {
     $skipped += 5
 }
 
+# --- Gemini CLI -----------------------------------------------------------
+# Gemini ставится в папку Джарвиса, а не глобально, и только из npm Google.
+# npm здесь заглушка: настоящий скачал бы сто мегабайт, а тест, который
+# меняет машину, — не тест.
+
+$geminiRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("rujarvis-gemini-" + [guid]::NewGuid())
+try {
+    $global:npmArgs = @()
+    function global:npm {
+        $global:npmArgs = $args
+        $prefix = $args[([array]::IndexOf($args, '--prefix')) + 1]
+        New-Item -ItemType Directory -Force -Path (Join-Path $prefix 'node_modules\.bin'), (Join-Path $prefix 'node_modules\@google\gemini-cli') | Out-Null
+        Set-Content -Path (Join-Path $prefix 'node_modules\.bin\gemini.cmd') -Value '@echo off'
+        Set-Content -Path (Join-Path $prefix 'node_modules\@google\gemini-cli\package.json') -Value '{"version":"0.64.0"}'
+        $global:LASTEXITCODE = 0
+    }
+    $geminiVersion = Install-GeminiCli -InstallRoot $geminiRoot
+    Assert-That 'Gemini ставится в папку Джарвиса, agents\gemini' (($global:npmArgs -join ' ') -match [regex]::Escape((Join-Path $geminiRoot 'agents\gemini')))
+    Assert-That 'Gemini — официальный пакет Google, свежий' ($global:npmArgs -contains '@google/gemini-cli@latest')
+    Assert-That 'Gemini не глобально' ($global:npmArgs -notcontains '-g')
+    Assert-That 'версия Gemini — из его package.json' ($geminiVersion -eq '0.64.0')
+
+    function global:npm { $global:LASTEXITCODE = 1 }
+    $geminiFailed = $false
+    try { Install-GeminiCli -InstallRoot (Join-Path $geminiRoot 'второй') *>&1 | Out-Null } catch { $geminiFailed = $true }
+    Assert-That 'неудача npm — исключение, которое установщик превращает в подсказку' $geminiFailed
+}
+finally {
+    Remove-Item -Recurse -Force $geminiRoot -ErrorAction SilentlyContinue
+    Remove-Item Function:\npm -ErrorAction SilentlyContinue
+}
+
 if ($failures -gt 0) {
     Write-Host "Провалено проверок: $failures" -ForegroundColor Red
     exit 1

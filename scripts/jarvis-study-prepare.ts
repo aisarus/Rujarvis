@@ -3,14 +3,14 @@
  *
  * Без аргумента — все лекции в папке лекций, у которых банка ещё нет
  * (`--again` — заново и те, у которых есть). Вопросы, карточки и задачи
- * пишет Claude Code по подписке; банк ложится в папку данных Джарвиса
+ * пишет агент по подписке (выбранный в `JARVIS_AGENT`, иначе первый готовый); банк ложится в папку данных Джарвиса
  * (`data\study\<курс>\`), в хранилище Obsidian ничего не пишется.
  */
 
 import path from 'node:path';
 
 import { lectureLanguagesFor, listCourses, listLectures, settingsLanguages } from '../jarvis/lecture/courses';
-import { createClaudeSummarizer } from '../jarvis/lecture/summarize';
+import { createAgentSummarizer } from '../jarvis/lecture/summarize';
 import { lectureFolder } from '../jarvis/lecture/vault';
 import { jarvisOutputDir, jarvisPaths } from '../jarvis/setup/paths';
 import { SettingsStore } from '../jarvis/setup/settings';
@@ -47,7 +47,7 @@ async function main(): Promise<void> {
       // Вопросы — на языке лекции курса, разбор — на языке его конспекта.
       const языки = lectureLanguagesFor(заметка, settingsLanguages(settings));
       const итог = await prepareLecture(заметка, store, {
-        summarize: createClaudeSummarizer(),
+        summarize: createAgentSummarizer(),
         lectureLanguage: языки.lecture,
         notes: языки.notes,
         log: (строка) => console.log(`  ${строка}`),

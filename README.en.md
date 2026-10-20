@@ -71,12 +71,18 @@ it **silently does nothing** — so Jarvis asks for the permission up front
 rather than discovering it from a no-op.
 
 On first start a short setup walks you through the language, signing in to
-Claude Code, the speech models and a microphone check. Everything can be
+an agent (Claude Code, Codex or Gemini), the speech models and a microphone
+check. Everything can be
 changed later from the tray icon → **Settings**.
 
-You need [Claude Code](https://claude.ai/code) signed in with your own
-subscription for anything beyond direct commands. Codex works as a fallback if
-you have it.
+Anything beyond direct commands needs an agent: [Claude Code](https://claude.ai/code)
+or Codex on your own subscription — or [Gemini CLI](https://github.com/google-gemini/gemini-cli)
+with an ordinary Google account, which has a free tier (up to 1,000 requests a
+day) and is installed by the installer itself. You sign in with your Google
+account in a terminal window; no API key is needed or taken. Choose who does the
+work in **Settings → Agents**; "first ready" means Claude Code, then Codex, then
+Gemini. One never stands in for another: an exhausted Claude limit does not
+spend your Codex subscription or your Google quota.
 
 **Your own model instead of a subscription** — for powerful computers. If you
 already run Ollama (0.14+), LM Studio or llama.cpp (`llama-server --jinja`),
@@ -101,8 +107,8 @@ Direct commands — scroll, keys, tabs, windows, clicking a button by its name, 
 numbered grid over the screen, dictation, opening and closing apps — are
 answered instantly, without a model. Anything else goes to the conversation, which
 remembers the thread and can start, correct, pause or stop the running work. A
-live Claude Code session runs it, or Codex when Claude Code is not there (a
-slower turn: one process per reply).
+live Claude Code session runs it, or Codex or Gemini when Claude Code is not
+there (a slower turn: one process per reply).
 
 The stop and silence words, and yes/no answers, work in both languages
 whichever language is selected.
@@ -123,9 +129,18 @@ it into things you never asked for.
 
 What the hook cannot see: a click by screen coordinates or by element number
 does not say what is being pressed. Codex runs in its own sandbox
-(`workspace-write`: writes only inside the working folder) and gets no desktop
-tools; whether that sandbox has network access is set by Codex's own
-configuration, not by Jarvis — check it if that matters to you. Details:
+(`workspace-write`: writes only inside the working folder) and gets the screen
+only through the Jarvis server, which runs the same check itself; whether that
+sandbox has network access is set by Codex's own configuration, not by Jarvis —
+check it if that matters to you.
+
+Gemini has no reliable hook: when its hook itself fails, it lets the action
+through (measured on Gemini CLI 0.64.0). So in Jarvis Gemini gets no command
+line, may write only inside the task folder and the results folder (never agent
+settings or the Jarvis folder), and reaches the screen and the browser through
+the same Jarvis server with the check inside. Gemini's own policy engine enforces
+this at the administrator level, which neither your settings nor a project
+folder can override. Details:
 [docs/jarvis/architecture.md](docs/jarvis/architecture.md).
 
 ## Where things are
@@ -165,13 +180,16 @@ bash "$HOME/Library/Application Support/Rujarvis/src/uninstall.sh"
 
 Uninstalling closes Jarvis and removes its shortcuts, autostart and its whole
 folder. It leaves your results folder on the desktop and your Claude Code and
-Codex sign-ins alone.
+Codex sign-ins alone. The Gemini CLI the installer put there, and its sign-in,
+live inside the Jarvis folder and go with it.
 
 ## Privacy
 
 Speech is recognised and synthesised locally. The only things that leave your
-machine are what you send to the Claude Code or Codex CLI you signed in to —
-the same as using them directly — and your audio, only if you opt into
+machine are what you send to the Claude Code, Codex or Gemini CLI you signed
+in to — the same as using them directly (Jarvis turns off Gemini's usage
+statistics; what Google does with free-tier requests is set by your account's
+terms) — and your audio, only if you opt into
 recognition off this machine: the cloud (the "Where speech is recognised"
 switch in settings, Speech tab, plus an `ELEVENLABS_API_KEY`; the key alone turns
 nothing on) or your own whisper.cpp server over the network (`JARVIS_GPU_STT`
@@ -212,7 +230,7 @@ pnpm jarvis:roundtrip -- --en   # voice round-trip with real models
 | Directory | What it does |
 | --- | --- |
 | `app/` | The Electron app: tray, settings and onboarding, voice bridge, overlays |
-| `jarvis/backends` | Claude Code / Codex adapters, warm live sessions, fallback chain |
+| `jarvis/backends` | Claude Code / Codex / Gemini adapters, warm live sessions, fallback chain |
 | `jarvis/router` | Works out what a request needs and which backend takes it |
 | `jarvis/risk` | Risk classes, the red-line policy and the tool-call hook |
 | `jarvis/voice` | Wake word, stop words, recognition and synthesis, noise filtering |

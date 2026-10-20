@@ -43,6 +43,7 @@ import {
   readCodexUserConfig,
   readDesktopMcpServers,
 } from '../backends/codex';
+import { CODEX_TEXT_DISABLED } from '../backends/textAnswer';
 import type { BackendResult } from '../backends/types';
 import type { TalkLive } from './talkSession';
 import { TALK_SERVER, TALK_TOOLS } from './talkTools';
@@ -54,17 +55,7 @@ import { TALK_SERVER, TALK_TOOLS } from './talkTools';
  * руки в мир мимо сервера Джарвиса. Незнакомое имя Codex пропускает молча,
  * поэтому список не ломается от новой версии CLI.
  */
-export const TALK_DISABLED_FEATURES = [
-  'shell_tool',
-  'unified_exec',
-  'computer_use',
-  'browser_use',
-  'browser_use_external',
-  'in_app_browser',
-  'apps',
-  'plugins',
-  'image_generation',
-] as const;
+export const TALK_DISABLED_FEATURES = CODEX_TEXT_DISABLED;
 
 export interface CodexTalkOptions {
   /** Путь к `codex`. */

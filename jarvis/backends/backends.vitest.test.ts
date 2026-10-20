@@ -1440,7 +1440,7 @@ describe('BackendManager', () => {
   it('reports no backends at all as a result, not an exception', async () => {
     const final = await new BackendManager().run(request()).result();
     expect(final.ok).toBe(false);
-    expect(final.error).toContain('Нет доступных backend');
+    expect(final.error).toContain('Нет доступных агентов');
   });
 
   it('Кодексу с рабочим столом задачу про экран отдают, а без него — нет', async () => {
@@ -1461,13 +1461,14 @@ describe('BackendManager', () => {
     // работает. Экран ему недоступен потому, что инструменты рабочего стола
     // есть только у Claude Code. «Проверьте настройки AI-аккаунтов» на это
     // отправляло чинить не туда — человек открывал настройки, видел зелёный
-    // Кодекс и не понимал ничего.
+    // Кодекс и не понимал ничего. Руки Кодекс и Gemini получают только от
+    // сервера Джарвиса с проверкой красных линий — это и сказано.
     const менеджер = managerWith(stubBackend('codex', result({ ok: true, backend: 'codex', text: 'ок' })));
     const итог = await менеджер.run(request({ capabilities: ['computer'] })).result();
     expect(итог.ok).toBe(false);
-    expect(итог.error).toContain('только Claude Code');
-    expect(итог.error).toContain('песочнице');
-    expect(итог.error).not.toContain('Проверьте настройки');
+    expect(итог.error).toContain('С окнами работает Claude Code');
+    expect(итог.error).toContain('сервер Джарвиса');
+    expect(итог.error).not.toContain('Проверьте');
   });
 
   it('без единого бэкенда причина прежняя: чинить правда настройки', () => {
@@ -1477,7 +1478,7 @@ describe('BackendManager', () => {
       .run(request({ capabilities: ['computer'] }))
       .result()
       .then((итог) => {
-        expect(итог.error).toContain('Проверьте настройки');
+        expect(итог.error).toContain('Проверьте вкладку «Агенты» в настройках');
       });
   });
 });

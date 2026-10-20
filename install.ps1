@@ -12,7 +12,9 @@
       2. скачивает исходники в %LOCALAPPDATA%\Rujarvis\src и собирает приложение;
       3. скачивает модель распознавания речи и голос для выбранного языка,
          а также драйвер окон cua-driver (trycua/cua, MIT; сумма проверяется);
-      4. кладёт ярлык «Rujarvis» в меню «Пуск» и запускает приложение.
+      4. ставит Gemini CLI — агента Google с бесплатным уровнем — в папку
+         Джарвиса (agents\gemini), без ключей: вход — своим Google-аккаунтом;
+      5. кладёт ярлык «Rujarvis» в меню «Пуск» и запускает приложение.
 
     Компилятор C++, Rust и прочие инструменты сборки не нужны: распознавание и
     синтез речи работают на WebAssembly, Electron ставится готовым.
@@ -44,6 +46,9 @@
 
 .PARAMETER NoLaunch
     Не запускать приложение в конце.
+
+.PARAMETER NoGemini
+    Не ставить Gemini CLI. Без него работают Claude Code и Codex, если они есть.
 #>
 
 [CmdletBinding()]
@@ -57,7 +62,8 @@ param(
     [ValidatePattern('^[a-z]{2,3}$')]
     [string] $LectureLanguage,
     [switch] $Autostart,
-    [switch] $NoLaunch
+    [switch] $NoLaunch,
+    [switch] $NoGemini
 )
 
 $ErrorActionPreference = 'Stop'
@@ -536,6 +542,32 @@ function Install-CuaDriver {
     }
 }
 
+<#
+    Gemini CLI — третий агент Джарвиса: вход своим Google-аккаунтом, у
+    которого есть бесплатный уровень, — студенту не нужна подписка, чтобы
+    начать. Ключ API не нужен и не берётся.
+
+    Ставится в папку Джарвиса (agents\gemini), а не глобально: всё на диске
+    живёт под одной крышей, удаление Джарвиса уносит его с собой, а свой
+    `gemini` человека, если он есть, не трогается. Версия — свежая: повторный
+    запуск установщика (и обновление кнопкой) её обновляет.
+
+    Версию читаем из package.json, а не `gemini --version`: даже на этот
+    вопрос Gemini заводит папку .gemini в домашней папке человека.
+#>
+function Install-GeminiCli {
+    param([Parameter(Mandatory)] [string] $InstallRoot)
+    $prefix = Join-Path $InstallRoot 'agents\gemini'
+    New-Item -ItemType Directory -Path $prefix -Force | Out-Null
+    Invoke-Checked -FilePath 'npm' -Arguments @(
+        'install', '--prefix', $prefix, '--no-audit', '--no-fund', '@google/gemini-cli@latest') -What 'npm install @google/gemini-cli'
+    $bin = Join-Path $prefix 'node_modules\.bin\gemini.cmd'
+    if (-not (Test-Path $bin)) { throw "после установки нет $bin" }
+    $manifest = Join-Path $prefix 'node_modules\@google\gemini-cli\package.json'
+    if (-not (Test-Path $manifest)) { return '?' }
+    return (Get-Content -Raw -Path $manifest | ConvertFrom-Json).version
+}
+
 function New-Shortcut {
     param(
         [Parameter(Mandatory)] [string] $Path,
@@ -722,6 +754,22 @@ finally {
 Write-Step 'Ставлю драйвер окон'
 Install-CuaDriver -InstallRoot $InstallRoot
 
+# Gemini — по желанию в том смысле, что без него Джарвис работает: не
+# поставился — установка не срывается, а говорит, как повторить.
+if ($NoGemini) {
+    Write-Note 'Gemini CLI не ставлю (-NoGemini).'
+}
+else {
+    Write-Step 'Ставлю Gemini CLI'
+    try {
+        $geminiVersion = Install-GeminiCli -InstallRoot $InstallRoot
+        Write-Ok "Gemini CLI $geminiVersion. Войдите своим Google-аккаунтом: настройки Джарвиса, вкладка «Агенты»."
+    }
+    catch {
+        Write-Note "Gemini не поставился: $($_.Exception.Message). Повторите установку позже — Claude Code и Codex работают и без него."
+    }
+}
+
 Write-Step 'Создаю ярлык'
 $electron = Join-Path $SourceDir 'node_modules\electron\dist\electron.exe'
 $entry = Join-Path $SourceDir 'dist\app\main.cjs'
@@ -762,7 +810,7 @@ Write-Host ''
 Write-Host '  Готово.' -ForegroundColor Green
 Write-Host ''
 Write-Host '  Rujarvis живёт в трее. При первом запуске он проведёт по настройке:' -ForegroundColor White
-Write-Host '  вход в Claude Code, проверка микрофона — и можно говорить.' -ForegroundColor White
+Write-Host '  вход в агента (Claude Code, Codex или Gemini), проверка микрофона — и можно говорить.' -ForegroundColor White
 Write-Host ''
 Write-Host "  Папка Джарвиса: $InstallRoot" -ForegroundColor DarkGray
 Write-Host "  Лог:            $(Join-Path $InstallRoot 'logs\jarvis.log')" -ForegroundColor DarkGray

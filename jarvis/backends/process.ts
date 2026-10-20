@@ -362,6 +362,10 @@ const USAGE_LIMIT_PATTERNS = [
   /\b429\b[^0-9]{0,3}(?:too many|rate)/i,
   /insufficient[_ ]quota/i,
   /upgrade to (?:pro|max|plus)/i,
+  // Gemini CLI 0.64.0: «You have exhausted your daily quota on this model.»,
+  // «exhausted your capacity», а от самого API — статус RESOURCE_EXHAUSTED.
+  /exhausted your (?:daily )?(?:quota|capacity)/i,
+  /\bRESOURCE_EXHAUSTED\b/,
 ];
 
 /** Heuristic: did the vendor refuse because a subscription quota ran out? */

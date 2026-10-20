@@ -30,7 +30,7 @@ const ru = {
   windowTitle: 'Rujarvis — настройки',
   onboardingTitle: 'Добро пожаловать',
   onboardingIntro:
-    'Джарвис — голосовой помощник для компьютера. Он слушает, понимает обычную речь и работает руками Claude Code или Codex по вашей подписке. Настройка займёт пару минут.',
+    'Джарвис — голосовой помощник для компьютера. Он слушает, понимает обычную речь и работает руками Claude Code или Codex по вашей подписке — или Gemini через ваш Google-аккаунт, у которого есть бесплатный уровень. Настройка займёт пару минут.',
   next: 'Далее',
   back: 'Назад',
   finish: 'Начать',
@@ -44,9 +44,9 @@ const ru = {
 
   stepLanguage: 'Язык',
   stepLanguageHint: 'На каком языке вы будете говорить с Джарвисом. Сменить можно в любой момент.',
-  stepAgent: 'Claude Code или Codex',
+  stepAgent: 'Агент: Claude Code, Codex или Gemini',
   stepAgentHint:
-    'Работу — код, файлы, экран, браузер — делает агент по вашей подписке: Claude Code или Codex, на выбор. Хватит одного, можно оба: тогда второй подхватит, если у первого кончится квота. Джарвис не хранит ключей и не читает токены — вход выполняется в самом агенте.',
+    'Работу — конспекты, файлы, экран, браузер, код — делает агент: Claude Code или Codex по вашей подписке, или Gemini через Google-аккаунт — у него есть бесплатный уровень. Хватит одного. Если подключено несколько, работает выбранный во вкладке «Агенты», а лимит одного не тратит подписку другого. Джарвис не хранит ключей и не читает токены — вход выполняется в самом агенте.',
   stepModels: 'Слух и голос',
   stepModelsHint: 'Распознавание и синтез речи работают на вашем компьютере. Модели скачиваются один раз.',
   stepModelsNeeded:
@@ -56,7 +56,7 @@ const ru = {
   stepReady: 'Всё готово',
   noAgentTitle: 'Агент не подключён',
   noAgentHint:
-    'Без Claude Code или Codex Джарвис выполняет только прямые команды: открыть и закрыть программу, клавиши, вкладки, прокрутку. На остальное он ответит, чего не хватает. Вернитесь к агентам и войдите — или начните так и подключите позже в настройках.',
+    'Без агента — Claude Code, Codex или Gemini — Джарвис выполняет только прямые команды: открыть и закрыть программу, клавиши, вкладки, прокрутку. На остальное он ответит, чего не хватает. Вернитесь к агентам и войдите — или начните так и подключите позже в настройках.',
   noAgentBack: 'Вернуться к агентам',
   stepReadyHint: 'Нажмите Ctrl + Space, скажите, нажмите ещё раз — или просто скажите «Джарвис». «Стоп» останавливает работу, «тишина» — речь.',
 
@@ -87,6 +87,18 @@ const ru = {
    * оставался с командой в подсказке и без объяснения, что это и куда идти.
    */
   codexInstallHint: 'Установите Codex: npm i -g @openai/codex — затем нажмите «Проверить».',
+  geminiName: 'Gemini',
+  geminiInstallHint:
+    'Gemini ставит установщик Джарвиса. Не нашёлся — запустите установщик ещё раз (или в терминале: npm i -g @google/gemini-cli) и нажмите «Проверить».',
+  geminiInstallPage: 'Открыть страницу Gemini CLI',
+  geminiNote:
+    'Вход — своим Google-аккаунтом, бесплатно: до 1000 запросов в день. Ключ API Джарвис не берёт. Командной строки у Gemini в Джарвисе нет — так красные линии держатся надёжно.',
+  geminiSignInHint:
+    'Откроется окно терминала, а в браузере — страница Google. Войдите своим аккаунтом. Когда в терминале появится строка ввода Gemini, закройте окно и нажмите «Проверить».',
+  agentChoice: 'Кто работает',
+  agentChoiceHint:
+    'Задачи, разговор, конспект лекций и учёба идут к выбранному агенту. «Первый готовый» — Claude Code, если вошли в него, потом Codex, потом Gemini.',
+  agentAuto: 'Первый готовый',
 
   whisperModel: 'Модель распознавания',
   voice: 'Голос',
@@ -207,7 +219,7 @@ const en: UiStrings = {
   windowTitle: 'Rujarvis — settings',
   onboardingTitle: 'Welcome',
   onboardingIntro:
-    'Jarvis is a voice assistant for your computer. It listens, understands plain speech and gets work done with Claude Code or Codex on your own subscription. Setup takes a couple of minutes.',
+    'Jarvis is a voice assistant for your computer. It listens, understands plain speech and gets work done with Claude Code or Codex on your own subscription — or with Gemini through your Google account, which has a free tier. Setup takes a couple of minutes.',
   next: 'Next',
   back: 'Back',
   finish: 'Start',
@@ -221,9 +233,9 @@ const en: UiStrings = {
 
   stepLanguage: 'Language',
   stepLanguageHint: 'The language you will speak to Jarvis in. You can change it any time.',
-  stepAgent: 'Claude Code or Codex',
+  stepAgent: 'Agent: Claude Code, Codex or Gemini',
   stepAgentHint:
-    'The work — code, files, screen, browser — is done by an agent on your subscription: Claude Code or Codex, your choice. One is enough, both is fine: then the second takes over when the first runs out of quota. Jarvis stores no keys and reads no tokens — you sign in inside the agent itself.',
+    'The work — notes, files, screen, browser, code — is done by an agent: Claude Code or Codex on your subscription, or Gemini through your Google account, which has a free tier. One is enough. With several connected, the one chosen in the Agents tab works, and one running out does not spend the other subscription. Jarvis stores no keys and reads no tokens — you sign in inside the agent itself.',
   stepModels: 'Hearing and voice',
   stepModelsHint: 'Speech recognition and synthesis run on your computer. Models are downloaded once.',
   stepModelsNeeded:
@@ -233,7 +245,7 @@ const en: UiStrings = {
   stepReady: 'All set',
   noAgentTitle: 'No agent connected',
   noAgentHint:
-    'Without Claude Code or Codex, Jarvis handles only direct commands: opening and closing apps, keys, tabs, scrolling. For anything else it will say what is missing. Go back to the agents and sign in — or start now and connect one later in settings.',
+    'Without an agent — Claude Code, Codex or Gemini — Jarvis handles only direct commands: opening and closing apps, keys, tabs, scrolling. For anything else it will say what is missing. Go back to the agents and sign in — or start now and connect one later in settings.',
   noAgentBack: 'Back to agents',
   stepReadyHint: 'Press Ctrl + Space, speak, press it again — or just say "Jarvis". "Stop" stops the work, "silence" stops the talking.',
 
@@ -251,6 +263,18 @@ const en: UiStrings = {
     'No window? Open Terminal yourself (Cmd+Space → "Terminal") and type claude auth login — for Codex: codex login. Then press "Check".',
   codexOptional: 'Codex',
   codexInstallHint: 'Install Codex: npm i -g @openai/codex — then press "Check".',
+  geminiName: 'Gemini',
+  geminiInstallHint:
+    'The Jarvis installer installs Gemini. Not found — run the installer again (or in a terminal: npm i -g @google/gemini-cli) and press "Check".',
+  geminiInstallPage: 'Open the Gemini CLI page',
+  geminiNote:
+    'Sign in with your Google account, free: up to 1,000 requests a day. Jarvis takes no API key. Gemini gets no command line in Jarvis — that is how the red lines hold reliably.',
+  geminiSignInHint:
+    'A terminal window opens, and a Google page opens in the browser. Sign in with your account. When the Gemini prompt appears in the terminal, close the window and press "Check".',
+  agentChoice: 'Who does the work',
+  agentChoiceHint:
+    'Tasks, conversation, lecture notes and study go to the chosen agent. "First ready" — Claude Code if you are signed in, then Codex, then Gemini.',
+  agentAuto: 'First ready',
 
   whisperModel: 'Recognition model',
   voice: 'Voice',

@@ -30,9 +30,11 @@ subscription. These rules say what must stay true.
 - **Red lines are enforced in code, twice.** The spoken phrase is classified
   before an agent starts (`jarvis/router`, `jarvis/risk/policy.ts`), and every
   agent tool call goes through the PreToolUse hook (`jarvis/risk/gateHook.ts`,
-  `jarvis/risk/toolGate.ts`) — for Codex, which has no reliable hook of its
-  own, the same check runs inside the desktop MCP server
-  (`jarvis/risk/serverGate.ts`). Silence, an unreadable call and any failure mean
+  `jarvis/risk/toolGate.ts`) — for Codex and Gemini, which have no reliable
+  hook of their own, the same check runs inside the desktop MCP server
+  (`jarvis/risk/serverGate.ts`), and Gemini's own tools are cut down by a
+  per-run admin policy (`jarvis/backends/geminiPolicy.ts`): no shell, writes
+  only inside the task folders. Silence, an unreadable call and any failure mean
   *deny*. Without the hook the agent gets no shell, no skill writing and no
   write access to Jarvis's own folder. Do not pre-approve a new tool that can
   spend money, contact people, run commands or write outside the task without

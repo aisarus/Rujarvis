@@ -3,7 +3,8 @@
  *
  * Без аргумента — последняя недописанная лекция в папке лекций (хранилище
  * Obsidian или папка результатов) — в самой папке или в папке курса. Разделы
- * и итог — Claude Code по подписке по сохранённой расшифровке; заголовок
+ * и итог — агент по подписке (выбранный в `JARVIS_AGENT`, иначе первый готовый:
+ * Claude Code, Codex, Gemini) по сохранённой расшифровке; заголовок
  * звука — по настоящему размеру файла. Дальше — как у законченной лекции:
  * курс, тема в имени, свойства, страница курса (`finalizeLecture`).
  */
@@ -14,7 +15,7 @@ import { coursesForModel, lectureLanguagesFor, listCourses, settingsLanguages } 
 import { finalizeLecture } from '../jarvis/lecture/finalize';
 import { finishFromTranscript } from '../jarvis/lecture/finishFromTranscript';
 import { NOTES_WORDS, notesLanguageOf } from '../jarvis/lecture/session';
-import { createClaudeSummarizer, createFinalSummarizer } from '../jarvis/lecture/summarize';
+import { createAgentFinalSummarizer, createAgentSummarizer } from '../jarvis/lecture/summarize';
 import { lectureFolder } from '../jarvis/lecture/vault';
 import { jarvisOutputDir, jarvisPaths } from '../jarvis/setup/paths';
 import { SettingsStore } from '../jarvis/setup/settings';
@@ -103,8 +104,8 @@ async function main(): Promise<void> {
   const секунд = починитьЗвук(заметка.replace(/\.md$/u, '.wav'));
   const итог = await finishFromTranscript({
     notesFile: заметка,
-    summarize: createClaudeSummarizer(),
-    summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`  ${строка}`) }),
+    summarize: createAgentSummarizer(),
+    summarizeFinal: createAgentFinalSummarizer({ log: (строка) => console.log(`  ${строка}`) }),
     lectureLanguage,
     notesLanguage,
     courses: coursesForModel(root),

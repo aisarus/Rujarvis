@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import path from 'node:path';
 
 import { isPrivateEndpoint, normaliseEndpoint } from '../backends/localModel';
+import { isAgentId, type AgentChoice } from '../backends/types';
 import { DEFAULT_WHISPER_MODEL, WHISPER_MODEL_IDS, type WhisperModelId } from '../voice/sttModels';
 import { DEFAULT_VOICE, VOICES } from '../voice/tts';
 
@@ -45,6 +46,11 @@ export interface AppSettings {
    * настройки и журнал показывали «whisper-small».
    */
   cloudSpeech: boolean;
+  /**
+   * Кто работает: Claude Code, Codex или Gemini. `auto` — первый готовый в
+   * этом порядке. Ведёт задачи, разговор, конспект лекций и учёбу.
+   */
+  agent: AgentChoice;
   /** Модель Claude Code: пусто — выбор самого CLI. */
   claudeModel: string;
   /**
@@ -94,6 +100,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   outputDir: '',
   speechLogging: 'commands',
   cloudSpeech: false,
+  agent: 'auto',
   claudeModel: '',
   localModelUrl: '',
   localModelName: '',
@@ -147,6 +154,7 @@ export function normaliseSettings(raw: unknown): AppSettings {
     speechLogging: logging,
     // Только явное «да»: что угодно другое — звук остаётся на этом компьютере.
     cloudSpeech: input.cloudSpeech === true,
+    agent: isAgentId(input.agent) ? input.agent : 'auto',
     claudeModel: text('claudeModel', ''),
     // Публичный адрес сюда не пройдёт даже руками в settings.json: это был бы
     // чужой шлюз, а Джарвис не ходит в платные API.

@@ -22,7 +22,7 @@ import path from 'node:path';
 import { app, session } from 'electron';
 
 import { openStudyWindow, studyWindowForCheck } from '../../app/studyWindow';
-import { createClaudeSummarizer } from '../../jarvis/lecture/summarize';
+import { createAgentSummarizer } from '../../jarvis/lecture/summarize';
 import { lectureFolder } from '../../jarvis/lecture/vault';
 import { jarvisOutputDir, jarvisPaths } from '../../jarvis/setup/paths';
 import { SettingsStore } from '../../jarvis/setup/settings';
@@ -50,7 +50,7 @@ void app.whenReady().then(async () => {
   const копия = mkdtempSync(path.join(os.tmpdir(), 'jarvis-study-copy-'));
   cpSync(настоящие, копия, { recursive: true });
   const vault = lectureFolder(settings.outputDir || jarvisOutputDir(process.env, app.getPath('desktop'), settings.language === 'en' ? 'Jarvis' : 'Джарвис'), settings.language).folder;
-  const service = new StudyService({ store: new StudyStore(копия), vaultRoot: () => vault, notes: settings.language, summarize: createClaudeSummarizer() });
+  const service = new StudyService({ store: new StudyStore(копия), vaultRoot: () => vault, notes: settings.language, summarize: createAgentSummarizer() });
 
   const ошибки: string[] = [];
   const запись: boolean[] = [];

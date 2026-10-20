@@ -20,7 +20,7 @@ vi.mock('../jarvis/lecture/vault', async (importOriginal) => ({
 vi.mock('../jarvis/lecture/summarize', () => {
   const модель = () => async (prompt: string) =>
     prompt.includes('## Кратко') ? 'Предмет: История\nТема: Аграрная революция\n\n## Кратко\nО земледелии.' : '### Земледелие\n- пункт';
-  return { createClaudeSummarizer: модель, createFinalSummarizer: модель };
+  return { createAgentSummarizer: модель, createAgentFinalSummarizer: модель };
 });
 
 const { feedLecture, finishLecture, lectureActive, lectureFromFile, lectureInfo, lectureState, onLectureState, startLecture } = await import('./lectureMode');

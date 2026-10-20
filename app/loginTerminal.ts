@@ -74,6 +74,12 @@ export function терминалДляВхода(
   platform: NodeJS.Platform = process.platform,
   /** Имя агента для подписи окна: «Codex», «Claude Code». */
   агент?: string,
+  /**
+   * Переменные окружения входа. Нужны Gemini: его вход должен лечь в дом
+   * Джарвиса (`GEMINI_CLI_HOME`), а не в `~/.gemini`, — иначе Джарвис его не
+   * увидит. Пустое значение — убрать переменную (ключ API, например).
+   */
+  окружение: Record<string, string> = {},
 ): ЗапускТерминала {
   if (platform === 'win32') {
     const файл = path.win32.join(папка, 'vhod.cmd');
@@ -82,15 +88,19 @@ export function терминалДляВхода(
       // Пустая строка — это заголовок окна для `start`. Не `'""'`: Node
       // превратил бы его в `"\"\""`.
       args: ['/c', 'start', '', файл],
-      сценарий: { файл, текст: сценарийВхода(command, args, агент) },
+      сценарий: { файл, текст: сценарийВхода(command, args, агент, окружение) },
     };
   }
 
   if (platform === 'darwin') {
-    return { file: 'osascript', args: ['-e', скриптТерминала(command, args, агент)] };
+    return { file: 'osascript', args: ['-e', скриптТерминала(command, args, агент, окружение)] };
   }
 
-  return { file: 'x-terminal-emulator', args: ['-e', command, ...args] };
+  const переменные = Object.entries(окружение).map(([ключ, значение]) => `${ключ}=${значение}`);
+  return {
+    file: 'x-terminal-emulator',
+    args: ['-e', ...(переменные.length > 0 ? ['env', ...переменные] : []), command, ...args],
+  };
 }
 
 /**
@@ -100,9 +110,21 @@ export function терминалДляВхода(
  * отказ входа человек не прочитает. Весь день до этого чинились ровно такие
  * места, где причина была и пропадала.
  */
-export function сценарийВхода(command: string, args: readonly string[], агент?: string): string {
+export function сценарийВхода(
+  command: string,
+  args: readonly string[],
+  агент?: string,
+  окружение: Record<string, string> = {},
+): string {
   const nl = String.fromCharCode(13) + String.fromCharCode(10);
-  const строка = [`"${command}"`, ...args.map((д) => `"${д}"`)].join(' ');
+  // `.cmd` из `.cmd` без `call` не возвращается: сценарий кончался вместе с
+  // CLI, и до `pause` дело не доходило — окно закрывалось, и отказ входа
+  // было не прочитать. Gemini и Codex, поставленные через npm, — это `.cmd`.
+  const вызов = /\.(cmd|bat)$/iu.test(command) ? 'call ' : '';
+  const строка = вызов + [`"${command}"`, ...args.map((д) => `"${д}"`)].join(' ');
+  // `set "ИМЯ=значение"` — кавычки вокруг всего присваивания: так пробел и
+  // скобки в пути не ломают строку, а пустое значение убирает переменную.
+  const переменные = Object.entries(окружение).map(([ключ, значение]) => `set "${ключ}=${значение}"`);
   // Подпись окна — только латиницей: cmd читает строки файла кодовой
   // страницей, и кириллица в своих строках — лотерея.
   const имя = (агент ?? '').replace(/[^A-Za-z0-9 .-]/gu, '').trim();
@@ -111,6 +133,7 @@ export function сценарийВхода(command: string, args: readonly strin
     // Кодовая страница UTF-8: иначе русский текст самого CLI приедет мусором.
     'chcp 65001>nul',
     ...(имя ? [`title Rujarvis - ${имя}`, `echo === ${имя}: sign in ===`, 'echo.'] : []),
+    ...переменные,
     строка,
     'echo.',
     'pause',
@@ -141,8 +164,16 @@ function дляAppleScript(строка: string): string {
  * надо смотреть и вводить код. Для единственного шага, который нельзя обойти,
  * окно за спиной равносильно отказу.
  */
-export function скриптТерминала(command: string, args: readonly string[], агент?: string): string {
-  const вызов = [command, ...args].map(дляОболочки).join(' ');
+export function скриптТерминала(
+  command: string,
+  args: readonly string[],
+  агент?: string,
+  окружение: Record<string, string> = {},
+): string {
+  // `env ИМЯ=значение команда` — одинаково в zsh и bash, и значение в
+  // кавычках оболочки целиком, с пробелами в «Application Support».
+  const переменные = Object.entries(окружение).map(([ключ, значение]) => дляОболочки(`${ключ}=${значение}`));
+  const вызов = [...(переменные.length > 0 ? ['env', ...переменные] : []), [command, ...args].map(дляОболочки).join(' ')].join(' ');
   // Подпись и строка-пояснение: со слов владельца после живого теста на маке
   // 27.09.2026 обе кнопки «Войти» увели во вход Claude Code, «в странное
   // место». По коду маршрут раздельный, и чьё окно открылось, было не понять
