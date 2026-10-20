@@ -17,7 +17,7 @@ import { applyAppearance, currentLook, windowBackground } from './look';
 import { терминалДляВхода } from './loginTerminal';
 import { APP_ROOT } from './root';
 import { cliStatus, createClaudeProbe, createCodexProbe, createGeminiProbe } from '../jarvis/backends/cliProbes';
-import { ensureGeminiHome, geminiLoginEnv } from '../jarvis/backends/geminiHome';
+import { ensureGeminiHome, geminiLoginEnv, GEMINI_SIGN_IN_ARGS } from '../jarvis/backends/geminiHome';
 import { checkLocalModel, normaliseEndpoint } from '../jarvis/backends/localModel';
 import type { JarvisPaths } from '../jarvis/setup/paths';
 import { jarvisOutputDir } from '../jarvis/setup/paths';
@@ -325,12 +325,14 @@ function registerHandlers(): void {
     // крышей, и мусор в чужих местах не остаётся.
     const папка = path.join(paths.home, 'data');
     if (cli === 'gemini') {
-      // Команды входа у Gemini нет: вход — первый запуск в терминале. Дом
+      // Команды входа у Gemini нет: вход — первый запрос в терминале. Дом
       // Джарвиса с настройками уже на месте, и там выбран вход через Google,
-      // поэтому Gemini сразу откроет страницу Google, а не меню способов.
+      // поэтому Gemini спросит [Y/n] и откроет страницу Google, а не меню
+      // способов. Почему безголовый запрос, а не окно Gemini, — у
+      // GEMINI_SIGN_IN_ARGS.
       ensureGeminiHome(paths.geminiHome);
-      console.log(`[jarvis] вход: gemini — ${status.path} (дом ${paths.geminiHome})`);
-      return openTerminal(status.path, [], папка, 'Gemini', geminiLoginEnv(paths.geminiHome), paths.geminiHome);
+      console.log(`[jarvis] вход: gemini — ${status.path} ${GEMINI_SIGN_IN_ARGS.join(' ')} (дом ${paths.geminiHome})`);
+      return openTerminal(status.path, [...GEMINI_SIGN_IN_ARGS], папка, 'Gemini', geminiLoginEnv(paths.geminiHome), paths.geminiHome);
     }
     // Подкоманды сверены с самими CLI 26.09.2026: `claude auth login` и
     // `codex login` — обе существуют.

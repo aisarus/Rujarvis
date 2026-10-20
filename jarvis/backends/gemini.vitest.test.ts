@@ -16,7 +16,7 @@ import {
   protectedRootsFor,
   serverEnv,
 } from './gemini';
-import { adminPoliciesPresent, ensureGeminiHome, geminiEnv, geminiLoginEnv, geminiSettings, GEMINI_CORE_TOOLS } from './geminiHome';
+import { adminPoliciesPresent, ensureGeminiHome, geminiEnv, geminiLoginEnv, geminiSettings, GEMINI_CORE_TOOLS, GEMINI_SIGN_IN_ARGS } from './geminiHome';
 import { allowedWritePatterns, geminiAcceptsPattern, geminiPolicy, protectedWritePatterns, rootPattern } from './geminiPolicy';
 import { BackendManager } from './manager';
 import type { CliHandle, CliProcessOptions, CliProcessOutcome } from './process';
@@ -189,6 +189,14 @@ describe('настройки и окружение Gemini', () => {
     expect(env.GEMINI_CLI_HOME).toBe('/jarvis/data/gemini');
     expect(env.NO_BROWSER).toBe('true');
     expect(env.PATH).toBe('/bin');
+  });
+
+  it('вход — безголовым вопросом [Y/n], а не интерактивным окном Gemini', () => {
+    // Интерактивный Gemini с выбранным входом через Google падал у владельца:
+    // «Authentication consent could not be obtained».
+    expect(GEMINI_SIGN_IN_ARGS).toContain('-p');
+    expect(GEMINI_SIGN_IN_ARGS).toContain('--skip-trust');
+    expect(GEMINI_SIGN_IN_ARGS.join(' ')).not.toMatch(/key|yolo/iu);
   });
 
   it('окно входа: тот же дом, ключи убраны, браузер разрешён', () => {

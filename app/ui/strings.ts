@@ -94,7 +94,7 @@ const ru = {
   geminiNote:
     'Вход — своим Google-аккаунтом, бесплатно: до 1000 запросов в день. Ключ API Джарвис не берёт. Командной строки у Gemini в Джарвисе нет — так красные линии держатся надёжно.',
   geminiSignInHint:
-    'Откроется окно терминала, а в браузере — страница Google. Войдите своим аккаунтом. Когда в терминале появится строка ввода Gemini, закройте окно и нажмите «Проверить».',
+    'Откроется окно терминала. На вопрос «Do you want to continue? [Y/n]» нажмите Enter — в браузере откроется страница Google, войдите своим аккаунтом. Когда в окне появится ответ «ready», нажмите любую клавишу и здесь — «Проверить».',
   agentChoice: 'Кто работает',
   agentChoiceHint:
     'Задачи, разговор, конспект лекций и учёба идут к выбранному агенту. «Первый готовый» — Claude Code, если вошли в него, потом Codex, потом Gemini.',
@@ -295,7 +295,7 @@ const en: UiStrings = {
   geminiNote:
     'Sign in with your Google account, free: up to 1,000 requests a day. Jarvis takes no API key. Gemini gets no command line in Jarvis — that is how the red lines hold reliably.',
   geminiSignInHint:
-    'A terminal window opens, and a Google page opens in the browser. Sign in with your account. When the Gemini prompt appears in the terminal, close the window and press "Check".',
+    'A terminal window opens. At "Do you want to continue? [Y/n]" press Enter — a Google page opens in the browser; sign in with your account. When the window answers "ready", press any key and then "Check" here.',
   agentChoice: 'Who does the work',
   agentChoiceHint:
     'Tasks, conversation, lecture notes and study go to the chosen agent. "First ready" — Claude Code if you are signed in, then Codex, then Gemini.',
