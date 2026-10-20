@@ -452,6 +452,83 @@ function renderWizard(main) {
 
 // ---------- настройки ----------
 
+// ---------- версия, обновление, отчёт ----------
+
+// Обновление — кнопкой, а не командами в PowerShell: первый тестер получал
+// исправление, вводя `git pull` и `pnpm build` по инструкции.
+function updateCard() {
+  const s = t();
+  const u = data.update || {};
+  const v = u.version;
+  const r = u.result;
+  let status = s.versionNotChecked;
+  if (u.checking) status = s.versionChecking;
+  else if (r && r.state === 'current') status = s.versionCurrent;
+  else if (r && r.state === 'available') status = s.versionAvailable;
+  else if (r && r.state === 'unknown') status = `${s.versionUnknown}: ${escapeHtml(r.reason)}`;
+  const changes = r && r.state === 'available'
+    ? `<ul class="changes">${r.changes.slice(0, 12).map((c) => `<li>${escapeHtml(c)}</li>`).join('')}</ul>${r.more || r.changes.length > 12 ? `<p class="hint" style="margin:4px 0 0">${s.versionMore}</p>` : ''}`
+    : '';
+  const node = el(`<div class="card">
+    <div class="row"><h2>${s.versionTitle}</h2>${v ? `<span class="pill">${escapeHtml(v.short)} · ${s.versionOf} ${escapeHtml(v.date)}</span>` : ''}</div>
+    ${v ? `<p class="hint" style="margin:6px 0 0">${escapeHtml(v.subject)}</p>` : ''}
+    ${u.installed ? `<p style="margin:10px 0 0">${status}</p>${changes}` : `<p class="hint" style="margin:10px 0 0">${s.versionDev}</p>`}
+    ${u.installed ? `<div class="row" style="justify-content:flex-start;margin-top:12px">
+      ${r && r.state === 'available' ? `<button class="btn primary" data-act="run">${s.updateRun}</button>` : ''}
+      <button class="btn" data-act="check" ${u.checking ? 'disabled' : ''}>${s.updateCheck}</button>
+    </div>` : ''}
+    ${u.installed && r && r.state === 'available' ? `<p class="hint" style="margin:8px 0 0">${s.updateHint}</p>` : ''}
+    <p class="hint error" data-role="error" style="margin:8px 0 0" hidden></p>
+  </div>`);
+  const error = node.querySelector('[data-role=error]');
+  const check = node.querySelector('[data-act=check]');
+  if (check) check.onclick = async () => {
+    check.disabled = true;
+    data.update = { ...u, checking: true };
+    render();
+    data.update = await api.checkUpdate();
+    render();
+  };
+  const run = node.querySelector('[data-act=run]');
+  if (run) run.onclick = async () => {
+    run.disabled = true;
+    run.textContent = s.updateStarting;
+    const outcome = await api.runUpdate();
+    // Удачный запуск закрывает Джарвиса вместе с окном; сюда доходит отказ.
+    if (!outcome.ok) {
+      run.disabled = false;
+      run.textContent = s.updateRun;
+      error.textContent = outcome.message;
+      error.hidden = false;
+    }
+  };
+  return node;
+}
+
+function reportCard() {
+  const s = t();
+  const node = el(`<div class="card">
+    <h2>${s.reportTitle}</h2>
+    <p class="hint" style="margin:8px 0 0">${s.reportHint}</p>
+    <div class="row" style="justify-content:flex-start;margin-top:12px"><button class="btn" data-act="save">${s.reportSave}</button></div>
+    <div class="path" data-role="file" hidden></div>
+  </div>`);
+  const save = node.querySelector('[data-act=save]');
+  const file = node.querySelector('[data-role=file]');
+  save.onclick = async () => {
+    save.disabled = true;
+    try {
+      const outcome = await api.saveReport();
+      file.textContent = outcome.ok ? outcome.file : outcome.message;
+      file.hidden = false;
+      if (outcome.ok) toast(s.reportSaved);
+    } finally {
+      save.disabled = false;
+    }
+  };
+  return node;
+}
+
 const TABS = ['general', 'voice', 'agents', 'folders', 'keys'];
 
 function renderSettings(main, nav) {
@@ -467,6 +544,8 @@ function renderSettings(main, nav) {
   if (tab === 'general') {
     main.append(el(`<p class="hint">${s.stepLanguageHint}</p>`), languageChoice());
     main.append(el('<div style="height:14px"></div>'), redLinesCard());
+    main.append(updateCard());
+    main.append(reportCard());
   }
   if (tab === 'voice') {
     main.append(speechPlaceCard());
@@ -531,5 +610,7 @@ api.onProgress((p) => {
 // человек, свернувший окно на середине настройки и открывший его снова из
 // трея, каждый раз начинал бы мастер сначала.
 api.onPage((next) => { if (next !== page) { page = next; step = 0; } render(); });
+// Проверка обновлений идёт и в фоне: закончилась — показать итог, если окно открыто.
+api.onUpdateState((next) => { if (data) { data.update = next; if (page === 'settings' && tab === 'general') render(); } });
 
 void refresh();

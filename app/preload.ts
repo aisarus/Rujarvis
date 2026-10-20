@@ -17,8 +17,14 @@ contextBridge.exposeInMainWorld('jarvis', {
   checkLocal: (url: string, model: string) => ipcRenderer.invoke(`${CHANNEL}:checkLocal`, url, model),
   signIn: (cli: 'claude' | 'codex') => ipcRenderer.invoke(`${CHANNEL}:signIn`, cli),
   openUrl: (url: string) => ipcRenderer.invoke(`${CHANNEL}:openUrl`, url),
+  checkUpdate: () => ipcRenderer.invoke(`${CHANNEL}:checkUpdate`),
+  runUpdate: () => ipcRenderer.invoke(`${CHANNEL}:runUpdate`),
+  saveReport: () => ipcRenderer.invoke(`${CHANNEL}:saveReport`),
   onProgress: (listener: (progress: unknown) => void) => {
     ipcRenderer.on(`${CHANNEL}:progress`, (_event, progress) => listener(progress));
+  },
+  onUpdateState: (listener: (state: unknown) => void) => {
+    ipcRenderer.on(`${CHANNEL}:updateState`, (_event, state) => listener(state));
   },
   onPage: (listener: (page: string) => void) => {
     ipcRenderer.on(`${CHANNEL}:page`, (_event, page) => listener(page));

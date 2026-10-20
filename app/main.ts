@@ -17,9 +17,10 @@ import { setLanguage } from '../jarvis/locale/language';
 import { jarvisPaths } from '../jarvis/setup/paths';
 import { SettingsStore } from '../jarvis/setup/settings';
 import { запроситьРазрешения, чегоНеХватает, type Система } from './macPermissions';
-import { openSettingsWindow } from './settingsWindow';
+import { openSettingsWindow, sendUpdateState } from './settingsWindow';
 import { configureStudy, showStudy } from './study';
 import { uiStrings } from './ui/strings';
+import { startUpdateChecks, updateState } from './updater';
 import { startJarvisVoiceBridge, type JarvisVoiceBridge } from './voiceBridge';
 
 const PATHS = jarvisPaths();
@@ -196,10 +197,14 @@ function refreshTray(): void {
   if (!tray) return;
   const t = uiStrings(settings.get().language);
   const status = bridge ? t.trayListening : voiceError ? `${t.trayVoiceFailed}: ${voiceError}` : t.trayNotListening;
-  tray.setToolTip(трейПодсказка(status));
+  // Новая версия — заметно, но молча: строкой в меню и в подсказке значка.
+  const обновление = updateState().result;
+  const есть = обновление?.state === 'available';
+  tray.setToolTip(трейПодсказка(есть ? `${status} · ${t.trayUpdateShort}` : status));
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: status, enabled: false },
+      ...(есть ? [{ label: t.trayUpdateAvailable, click: () => showSettings() }] : []),
       { type: 'separator' },
       { label: t.trayEvents, enabled: Boolean(bridge), click: () => bridge?.showEvents() },
       { label: t.trayStudy, click: () => showStudy() },
@@ -227,6 +232,7 @@ function refreshTray(): void {
       // середине, рабочее состояние остаётся прежним.
       { label: t.trayRunSetup, click: () => showSettings('onboarding') },
       { type: 'separator' },
+      { label: t.trayUpdates, click: () => showSettings() },
       { label: t.trayOpenLog, click: () => void shell.openPath(PATHS.log) },
       { label: t.trayOpenData, click: () => void shell.openPath(PATHS.home) },
       { type: 'separator' },
@@ -281,6 +287,16 @@ void app.whenReady().then(async () => {
   tray = new Tray(image);
   tray.on('click', () => showSettings());
   refreshTray();
+  // Обновления проверяются и до конца настройки: тестер с поломкой на первом
+  // шаге должен получить исправление, не проходя мастер.
+  startUpdateChecks({
+    paths: PATHS,
+    settings: () => settings.get(),
+    onChange: () => {
+      refreshTray();
+      sendUpdateState();
+    },
+  });
 
   if (!settings.get().onboarded) {
     showSettings('onboarding');

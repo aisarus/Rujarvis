@@ -14,6 +14,7 @@
  *     pnpm jarvis:setup -- --dry-run
  */
 
+import { existsSync } from 'node:fs';
 import process from 'node:process';
 
 import { cliStatus } from '../jarvis/backends/cliProbes';
@@ -58,7 +59,11 @@ async function main(): Promise<void> {
 
   const language: Language = (flag('--language') ?? settings.get().language) === 'en' ? 'en' : 'ru';
   const machine = readMachineFacts();
-  const askedModel = flag('--model') ?? process.env.JARVIS_WHISPER_MODEL;
+  // Повторный запуск установщика — это и есть обновление. Раньше без `--model`
+  // здесь всегда стояла рекомендованная модель, и каждое обновление молча
+  // меняло распознавание, выбранное человеком в настройках. Теперь выбор из
+  // настроек сохраняется; рекомендация — только для новой установки.
+  const askedModel = flag('--model') ?? process.env.JARVIS_WHISPER_MODEL ?? (existsSync(paths.settings) ? settings.get().whisperModel : undefined);
   const model: WhisperModelId = (WHISPER_MODEL_IDS as readonly string[]).includes(askedModel ?? '')
     ? (askedModel as WhisperModelId)
     : recommendWhisperModel({ totalRamMb: machine.totalRamMb, hasGpu: machine.hasGpu });

@@ -23,6 +23,9 @@ const ru = {
   trayOpenData: 'Открыть папку Джарвиса',
   trayRestartVoice: 'Перезапустить голос',
   trayQuit: 'Выйти',
+  trayUpdates: 'Обновления и отчёт…',
+  trayUpdateAvailable: '★ Вышло обновление — посмотреть…',
+  trayUpdateShort: 'есть обновление',
 
   windowTitle: 'Rujarvis — настройки',
   onboardingTitle: 'Добро пожаловать',
@@ -155,6 +158,26 @@ const ru = {
   redLines:
     'Трата денег, сообщения другим людям, изменение системных файлов и опасные команды — перед каждым таким действием агента Джарвис спрашивает вас голосом. Без ответа — не делает.',
 
+  versionTitle: 'Версия и обновления',
+  versionOf: 'от',
+  versionChecking: 'Проверяю, нет ли новой версии…',
+  versionNotChecked: 'Новую версию ещё не проверяли.',
+  versionCurrent: 'Это последняя версия.',
+  versionAvailable: 'Вышла новая версия. Что изменилось:',
+  versionMore: '…и ещё изменения.',
+  versionUnknown: 'Проверить не вышло',
+  versionDev: 'Это копия разработчика: она обновляется через git, кнопки обновления здесь нет.',
+  updateCheck: 'Проверить',
+  updateRun: 'Обновить',
+  updateHint:
+    'Джарвис закроется, в отдельном окне скачается и соберётся новая версия — несколько минут, — и он запустится сам. Настройки, модели и заметки остаются.',
+  updateStarting: 'Запускаю обновление…',
+  reportTitle: 'Отчёт для разработчика',
+  reportHint:
+    'Если что-то не работает: кнопка сохранит в папку Джарвиса один файл — версию, систему, настройки и конец журнала — и покажет его. Джарвис ничего никуда не отправляет: файл пересылаете вы сами. Посмотрите его перед отправкой — в журнале бывают ваши команды.',
+  reportSave: 'Сохранить отчёт',
+  reportSaved: 'Отчёт сохранён',
+
   saved: 'Сохранено',
   restartNote: 'Голос перезапустится с новыми настройками.',
 } as const;
@@ -177,6 +200,9 @@ const en: UiStrings = {
   trayOpenData: 'Open Jarvis folder',
   trayRestartVoice: 'Restart voice',
   trayQuit: 'Quit',
+  trayUpdates: 'Updates and report…',
+  trayUpdateAvailable: '★ An update is out — see it…',
+  trayUpdateShort: 'update available',
 
   windowTitle: 'Rujarvis — settings',
   onboardingTitle: 'Welcome',
@@ -294,6 +320,26 @@ const en: UiStrings = {
   redLinesTitle: 'What Jarvis always asks about',
   redLines:
     'Spending money, messaging other people, changing system files and dangerous commands — before every such agent action Jarvis asks you by voice. No answer means no.',
+
+  versionTitle: 'Version and updates',
+  versionOf: 'of',
+  versionChecking: 'Checking for a new version…',
+  versionNotChecked: 'Not checked for a new version yet.',
+  versionCurrent: 'This is the latest version.',
+  versionAvailable: 'A new version is out. What changed:',
+  versionMore: '…and more changes.',
+  versionUnknown: 'Could not check',
+  versionDev: 'This is a developer copy: it updates through git, so there is no update button here.',
+  updateCheck: 'Check',
+  updateRun: 'Update',
+  updateHint:
+    'Jarvis will close, the new version will download and build in a separate window — a few minutes — and it will start by itself. Settings, models and notes stay.',
+  updateStarting: 'Starting the update…',
+  reportTitle: 'Report for the developer',
+  reportHint:
+    'If something does not work: the button saves one file to the Jarvis folder — version, system, settings and the end of the log — and shows it. Jarvis sends nothing anywhere: you forward the file yourself. Look it over first — the log can contain your commands.',
+  reportSave: 'Save report',
+  reportSaved: 'Report saved',
 
   saved: 'Saved',
   restartNote: 'Voice will restart with the new settings.',

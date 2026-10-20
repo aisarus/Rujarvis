@@ -25,6 +25,7 @@ import { installVoice, isVoiceInstalled, Speaker, voiceForLanguage, VOICES } fro
 import { installWhisperModel } from '../jarvis/voice/whisperInstall';
 import { isWhisperModelInstalled } from '../jarvis/voice/whisperRecognizer';
 import { UI_STRINGS } from './ui/strings';
+import { checkUpdateNow, runUpdateNow, saveReport, updateState } from './updater';
 
 export interface SettingsWindowOptions {
   settings: SettingsStore;
@@ -110,6 +111,11 @@ function send(channel: string, payload: unknown): void {
   if (window && !window.isDestroyed()) window.webContents.send(`${SETTINGS_CHANNEL}:${channel}`, payload);
 }
 
+/** Проверка обновлений закончилась, пока окно открыто, — показать итог. */
+export function sendUpdateState(): void {
+  send('updateState', updateState());
+}
+
 /**
  * Всё, что зависит от настроек, а значит меняется прямо во время работы окна.
  *
@@ -173,6 +179,7 @@ async function state() {
     agents: { claude, codex },
     // Только «есть ли ключ облака», сам ключ окну не нужен.
     cloudKey: Boolean(cloudSpeechKey(true)),
+    update: updateState(),
   };
 }
 
@@ -317,6 +324,19 @@ function registerHandlers(): void {
 
   ipcMain.handle(`${SETTINGS_CHANNEL}:openUrl`, (_event, url: string) => {
     if (/^https:\/\//u.test(url)) void shell.openExternal(url);
+  });
+
+  ipcMain.handle(`${SETTINGS_CHANNEL}:checkUpdate`, async () => {
+    await checkUpdateNow();
+    return updateState();
+  });
+  ipcMain.handle(`${SETTINGS_CHANNEL}:runUpdate`, () => runUpdateNow());
+  ipcMain.handle(`${SETTINGS_CHANNEL}:saveReport`, async () => {
+    try {
+      return { ok: true as const, file: await saveReport() };
+    } catch (error) {
+      return { ok: false as const, message: error instanceof Error ? error.message : String(error) };
+    }
   });
 }
 
