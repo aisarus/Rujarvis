@@ -18,8 +18,10 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { rename } from 'node:fs/promises';
 import path from 'node:path';
 
+import { tr } from '../locale/language';
 import type { NotesLanguage } from './session';
 
 export interface LectureMeta {
@@ -255,21 +257,24 @@ export function listLectures(root: string, course?: string): LectureFile[] {
  * написал на странице сам, остаётся как было.
  */
 export function coursePage(existing: string | null, course: string, lectures: readonly LectureFile[], notes: NotesLanguage): string {
-  const с = COURSE_WORDS[notes];
   const пункты = lectures.map((л) => {
     const база = path.basename(л.file, '.md');
     const [г, м, д] = л.meta.date.split('-');
     const номер = л.meta.number ? `${л.meta.number}. ` : '- ';
     return `${номер}[[${база}]] — ${д}.${м}.${г}`;
   });
-  const блок = [с.listStart, ...пункты, с.listEnd].join('\n');
+  const блок = (с: (typeof COURSE_WORDS)[NotesLanguage]): string => [с.listStart, ...пункты, с.listEnd].join('\n');
   if (existing) {
-    const от = existing.indexOf(с.listStart);
-    const до = existing.indexOf(с.listEnd);
-    if (от >= 0 && до > от) return `${existing.slice(0, от)}${блок}${existing.slice(до + с.listEnd.length)}`;
-    return `${existing.trimEnd()}\n\n${блок}\n`;
+    // Список ищется с пометками на обоих языках: у курса бывает свой язык
+    // конспекта, а страницу окно учёбы заводит с русскими пометками.
+    for (const с of [COURSE_WORDS[notes], COURSE_WORDS[notes === 'ru' ? 'en' : 'ru']]) {
+      const от = existing.indexOf(с.listStart);
+      const до = existing.indexOf(с.listEnd);
+      if (от >= 0 && до > от) return `${existing.slice(0, от)}${блок(с)}${existing.slice(до + с.listEnd.length)}`;
+    }
+    return `${existing.trimEnd()}\n\n${блок(COURSE_WORDS[notes])}\n`;
   }
-  return `# ${course}\n\n${блок}\n`;
+  return `# ${course}\n\n${блок(COURSE_WORDS[notes])}\n`;
 }
 
 // ——— Страница курса: код, иврит, расписание, экзамен ———
@@ -290,7 +295,35 @@ export interface CourseInfo {
   slots: CourseSlot[];
   /** Дата экзамена, YYYY-MM-DD. */
   exam?: string;
+  /** На каком языке говорит лектор — код Whisper; нет — как в настройках. */
+  language?: string;
+  /** На каком языке конспект; нет — как в настройках. */
+  notesLanguage?: NotesLanguage;
 }
+
+/** Языки лекции: что слушать и на чём писать конспект. */
+export interface LectureLanguages {
+  lecture: string;
+  notes: NotesLanguage;
+}
+
+/** Языки из настроек: язык лекций не задан — лекция на языке интерфейса, конспект — на нём всегда. */
+export function settingsLanguages(settings: { lectureLanguage: string; language: NotesLanguage }): LectureLanguages {
+  return { lecture: settings.lectureLanguage || settings.language, notes: settings.language };
+}
+
+/** Свои языки курса, а чего у курса нет — из настроек. Курс не известен — настройки целиком. */
+export function courseLanguages(info: Pick<CourseInfo, 'language' | 'notesLanguage'> | null | undefined, defaults: LectureLanguages): LectureLanguages {
+  return { lecture: info?.language || defaults.lecture, notes: info?.notesLanguage ?? defaults.notes };
+}
+
+/** Языки уже записанной лекции: её курс — папка, в которой лежит заметка. */
+export function lectureLanguagesFor(notesFile: string, defaults: LectureLanguages): LectureLanguages {
+  const папка = path.dirname(notesFile);
+  return courseLanguages(readCourseInfo(path.dirname(папка), path.basename(папка)), defaults);
+}
+
+const ЯЗЫК_ЛЕКЦИИ = /^[a-z]{2,3}$/u;
 
 const ДНИ: Record<string, number> = {
   вс: 0, пн: 1, вт: 2, ср: 3, чт: 4, пт: 5, сб: 6,
@@ -326,6 +359,8 @@ export function readCourseInfo(root: string, course: string): CourseInfo {
   };
   const кредиты = Number(взять('кредиты', 'credits'));
   const экзамен = взять('экзамен', 'exam');
+  const язык = взять('язык', 'language')?.toLowerCase();
+  const конспект = взять('конспект', 'notes')?.toLowerCase();
   return {
     name: course,
     code: взять('код', 'code'),
@@ -334,6 +369,8 @@ export function readCourseInfo(root: string, course: string): CourseInfo {
     lecturer: взять('лектор', 'lecturer'),
     slots: parseSchedule(взять('расписание', 'schedule') ?? ''),
     exam: экзамен && /^\d{4}-\d{2}-\d{2}$/u.test(экзамен) ? экзамен : undefined,
+    language: язык && ЯЗЫК_ЛЕКЦИИ.test(язык) ? язык : undefined,
+    notesLanguage: конспект === 'ru' || конспект === 'en' ? конспект : undefined,
   };
 }
 
@@ -376,6 +413,10 @@ export interface CoursePatch {
   slots?: CourseSlot[];
   /** YYYY-MM-DD; null — убрать. */
   exam?: string | null;
+  /** Язык лекций курса, код Whisper; пусто — как в настройках. */
+  language?: string;
+  /** Язык конспекта курса: ru, en; пусто — как в настройках. */
+  notesLanguage?: string;
 }
 
 /**
@@ -404,7 +445,79 @@ export function writeCourseInfo(root: string, course: string, patch: CoursePatch
     if (patch.exam !== null && !/^\d{4}-\d{2}-\d{2}$/u.test(patch.exam)) throw new Error('дата экзамена — ГГГГ-ММ-ДД');
     поставить(['экзамен', 'exam'], patch.exam);
   }
+  if (patch.language !== undefined) {
+    const язык = patch.language.trim().toLowerCase();
+    if (язык && !ЯЗЫК_ЛЕКЦИИ.test(язык)) throw new Error(tr(`непонятный язык лекций: «${patch.language}»`, `unknown lecture language: "${patch.language}"`));
+    поставить(['язык', 'language'], язык || null);
+  }
+  if (patch.notesLanguage !== undefined) {
+    const язык = patch.notesLanguage.trim().toLowerCase();
+    if (язык && язык !== 'ru' && язык !== 'en') throw new Error(tr(`конспект пишется по-русски или по-английски, а не «${patch.notesLanguage}»`, `notes are written in Russian or English, not "${patch.notesLanguage}"`));
+    поставить(['конспект', 'notes'], язык || null);
+  }
   writeFileSync(файл, текст, 'utf8');
+}
+
+function безСпецЗнаков(текст: string): string {
+  return текст.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
+/** Переименовать, а Windows иногда держит папку секунду (проводник, антивирус). */
+async function переименовать(от: string, куда: string): Promise<void> {
+  for (let попытка = 0; ; попытка += 1) {
+    try {
+      await rename(от, куда);
+      return;
+    } catch (error) {
+      const код = (error as NodeJS.ErrnoException).code;
+      if (попытка >= 4 || (код !== 'EPERM' && код !== 'EBUSY' && код !== 'EACCES')) throw error;
+      await new Promise((r) => setTimeout(r, 300 * (попытка + 1)));
+    }
+  }
+}
+
+function заметкиВПапке(папка: string): string[] {
+  const out: string[] = [];
+  for (const e of readdirSync(папка, { withFileTypes: true })) {
+    const полный = path.join(папка, e.name);
+    if (e.isDirectory() && !e.name.startsWith('.')) out.push(...заметкиВПапке(полный));
+    else if (e.isFile() && e.name.endsWith('.md')) out.push(полный);
+  }
+  return out;
+}
+
+/**
+ * Курс получает новое имя: папка, страница курса и всё, что внутри называет
+ * курс по имени, — свойство «курс» у лекций, ссылки `[[курс]]`, заголовок
+ * страницы и заметки без темы. Папка переименовывается первой: это шаг,
+ * который может не выйти (папку держит проводник), и тогда не тронуто ничего.
+ */
+export async function renameCourseFolder(root: string, from: string, to: string): Promise<void> {
+  const старая = path.join(root, from);
+  const новая = path.join(root, to);
+  if (!existsSync(старая)) return;
+  await переименовать(старая, новая);
+  const страница = path.join(новая, `${from}.md`);
+  if (existsSync(страница)) await переименовать(страница, path.join(новая, `${to}.md`));
+  const было = безСпецЗнаков(from);
+  const ссылка = new RegExp(`\\[\\[${было}(?=[\\]|#])`, 'gu');
+  const заголовок = new RegExp(`^# ((?:Расшифровка|Transcript) — )?${было}[ \\t]*$`, 'gmu');
+  const свойство = new RegExp(`^(курс|course)[ \\t]*:.*$`, 'mu');
+  for (const файл of заметкиВПапке(новая)) {
+    const текст = readFileSync(файл, 'utf8');
+    let новый = текст.replace(ссылка, `[[${to}`).replace(заголовок, (_всё, перед: string | undefined) => `# ${перед ?? ''}${to}`);
+    const свойства = /^---\r?\n[\s\S]*?\r?\n---/u.exec(новый);
+    if (свойства && свойство.test(свойства[0])) {
+      новый = новый.replace(свойства[0], свойства[0].replace(свойство, (_всё, ключ: string) => `${ключ}: ${вЯмл(to)}`));
+    }
+    if (новый !== текст) writeFileSync(файл, новый, 'utf8');
+  }
+}
+
+/** «Без курса» — не курс: так назвать курс нельзя, он пропал бы из списков. */
+export function isUnsortedName(name: string): boolean {
+  const имя = name.trim().toLowerCase();
+  return имя === COURSE_WORDS.ru.unsorted.toLowerCase() || имя === COURSE_WORDS.en.unsorted.toLowerCase();
 }
 
 /** Курсы для модели: имя и, если есть, название на иврите — лектор говорит на нём. */

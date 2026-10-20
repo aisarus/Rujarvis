@@ -108,9 +108,19 @@ function зарегистрировать(): void {
       }),
     );
   });
-  обработать('createCourse', (name, hebrew, code) =>
-    служба().createCourse(строка(name), { hebrew: typeof hebrew === 'string' ? hebrew : '', code: typeof code === 'string' ? code : '' }),
+  обработать('createCourse', (name, hebrew, code, language, notes) =>
+    служба().createCourse(строка(name), {
+      hebrew: typeof hebrew === 'string' ? hebrew : '',
+      code: typeof code === 'string' ? code : '',
+      language: typeof language === 'string' ? language : '',
+      notesLanguage: typeof notes === 'string' ? notes : '',
+    }),
   );
+  обработать('editCourse', (course, name, hebrew, code) =>
+    служба().editCourse(строка(course), { name: строка(name), hebrew: typeof hebrew === 'string' ? hebrew : '', code: typeof code === 'string' ? code : '' }),
+  );
+  обработать('setCourseLanguages', (course, language, notes) => служба().setCourseLanguages(строка(course), строка(language), строка(notes)));
+  обработать('deleteCourse', (course) => служба().deleteCourse(строка(course)));
   обработать('addCard', (id, index) => служба().addCardFromQuestion(строка(id), число(index)));
   обработать('recording', (on) => deps?.recording?.(Boolean(on)));
   обработать('transcribe', async (samples, sampleRate) => {

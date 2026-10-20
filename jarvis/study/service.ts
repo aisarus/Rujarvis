@@ -9,11 +9,23 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { listCourses, listLectures, readCourseInfo, writeCourseInfo, type CourseInfo, type CourseSlot } from '../lecture/courses';
+import {
+  isUnsortedName,
+  listCourses,
+  listLectures,
+  readCourseInfo,
+  renameCourseFolder,
+  safeName,
+  writeCourseInfo,
+  type CourseInfo,
+  type CourseSlot,
+  type LectureLanguages,
+} from '../lecture/courses';
 import { sectionTitle, type NotesLanguage } from '../lecture/session';
+import { tr } from '../locale/language';
 import { readLectureSource } from './generate';
 import { STATE_PRIORITY, topicKnowledge, type ForgettingRisk, type KnowledgeState } from './knowledge';
 import { openAnswerPrompt, parseOpenVerdict, type OpenVerdict } from './openAnswer';
@@ -32,6 +44,15 @@ export interface StudyServiceOptions {
   summarize?: (prompt: string) => Promise<string>;
   /** Язык конспектов — по нему ищется раздел «Конспект» в заметке. */
   notes: NotesLanguage;
+  /** Языки из настроек — у курса без своих; окно показывает их у «как в настройках». */
+  languages?: () => LectureLanguages;
+  /** В Корзину, а не насовсем: папка удалённого курса и его учёба. */
+  trash?: (file: string) => Promise<void>;
+  /**
+   * Почему курс сейчас нельзя переименовать или удалить: пишется конспект,
+   * готовятся вопросы к его лекциям. Можно — null.
+   */
+  busy?: (course: string) => string | null;
   now?: () => number;
 }
 
@@ -67,6 +88,13 @@ export interface CourseView {
   slots: CourseSlot[];
   exam?: string;
   daysToExam?: number;
+  /** Свой язык лекций курса; нет — как в настройках (`defaults`). */
+  language?: string;
+  /** Свой язык конспекта курса; нет — как в настройках. */
+  notesLanguage?: NotesLanguage;
+  defaults: LectureLanguages;
+  /** Сколько лекций в папке курса — для подтверждения удаления. */
+  lectureCount: number;
   dueCards: number;
   counts: Record<KnowledgeState, number>;
   lectures: LectureView[];
@@ -207,6 +235,10 @@ export class StudyService {
     return readCourseInfo(this.o.vaultRoot(), course);
   }
 
+  private языки(): LectureLanguages {
+    return this.o.languages?.() ?? { lecture: this.o.notes, notes: this.o.notes };
+  }
+
   private все(course: string): { banks: LectureBank[]; progress: CourseProgress; cards: StudyCard[] } {
     const banks = this.o.store.banks(course);
     const progress = this.o.store.progress(course);
@@ -253,6 +285,7 @@ export class StudyService {
     for (const t of темы.values()) counts[t.state] += 1;
     const спрошено = new Set(progress.events.map((e) => e.itemId));
     const daysToExam = инфо.exam ? Math.ceil((new Date(`${инфо.exam}T09:00:00`).getTime() - this.now()) / ДЕНЬ) : undefined;
+    const вХранилище = listLectures(this.o.vaultRoot(), name);
     return {
       name,
       code: инфо.code,
@@ -263,6 +296,10 @@ export class StudyService {
       slots: инфо.slots,
       exam: инфо.exam,
       daysToExam,
+      language: инфо.language,
+      notesLanguage: инфо.notesLanguage,
+      defaults: this.языки(),
+      lectureCount: вХранилище.length,
       dueCards: [...темы.values()].reduce((n, t) => n + t.dueCards, 0),
       counts,
       lectures: banks.map((b) => ({
@@ -274,7 +311,7 @@ export class StudyService {
         quizzed: b.questions.some((q) => спрошено.has(q.id)),
         topics: b.topics.map((t) => темы.get(t.id)).filter((t): t is TopicView => Boolean(t)),
       })),
-      unprepared: listLectures(this.o.vaultRoot(), name)
+      unprepared: вХранилище
         .map((л) => ({ lecture: path.basename(л.file, '.md'), notesFile: л.file, date: л.meta.date, number: л.meta.number, topic: л.meta.topic, empty: !естьМатериал(л.file) }))
         .filter((л) => !banks.some((b) => b.lecture === л.lecture)),
     };
@@ -521,13 +558,99 @@ export class StudyService {
     writeCourseInfo(this.o.vaultRoot(), course, { slots: [...slots].sort((a, b) => a.day - b.day || a.from - b.from) });
   }
 
-  /** Новый курс — папка и страница в хранилище. Такой уже есть — ошибка, а не второй. */
-  createCourse(name: string, extra: { hebrew?: string; code?: string } = {}): string {
-    const имя = name.trim();
-    if (!имя) throw new Error('пустое название курса');
-    if (this.курсы().some((к) => к.toLowerCase() === имя.toLowerCase())) throw new Error(`курс «${имя}» уже есть`);
-    writeCourseInfo(this.o.vaultRoot(), имя, { hebrew: extra.hebrew ?? '', code: extra.code ?? '' });
+  /**
+   * Имя для курса — как его примет папка Windows. Пустое, «Без курса» или
+   * занятое другим курсом — понятная ошибка: два курса не сливаются в один.
+   */
+  private новоеИмя(name: string, кроме?: string): string {
+    const имя = safeName(name, 80);
+    if (!имя) throw new Error(tr('пустое название курса', 'the course name is empty'));
+    if (isUnsortedName(имя)) throw new Error(tr(`«${имя}» — папка для лекций без курса, так курс назвать нельзя`, `"${имя}" is the folder for lectures without a course; a course cannot have that name`));
+    const занят = this.курсы().some((к) => к !== кроме && к.toLowerCase() === имя.toLowerCase());
+    // На диске может лежать и не курс с этим именем (папка с точкой, файл).
+    const наДиске = existsSync(path.join(this.o.vaultRoot(), имя)) && имя.toLowerCase() !== кроме?.toLowerCase();
+    if (занят || наДиске) throw new Error(tr(`курс «${имя}» уже есть`, `the course "${имя}" already exists`));
     return имя;
+  }
+
+  /** Новый курс — папка и страница в хранилище. Такой уже есть — ошибка, а не второй. */
+  createCourse(name: string, extra: { hebrew?: string; code?: string; language?: string; notesLanguage?: string } = {}): string {
+    const имя = this.новоеИмя(name);
+    writeCourseInfo(this.o.vaultRoot(), имя, {
+      hebrew: extra.hebrew ?? '',
+      code: extra.code ?? '',
+      language: extra.language ?? '',
+      notesLanguage: extra.notesLanguage ?? '',
+    });
+    return имя;
+  }
+
+  private есть(course: string): boolean {
+    return existsSync(path.join(this.o.vaultRoot(), course)) || existsSync(this.o.store.courseDir(course));
+  }
+
+  private можноМенять(course: string): void {
+    if (!this.есть(course)) throw new Error(tr(`курса «${course}» нет`, `there is no course "${course}"`));
+    const нельзя = this.o.busy?.(course);
+    if (нельзя) throw new Error(нельзя);
+  }
+
+  /**
+   * «Изменить» на странице курса: название, как на иврите, код. Новое
+   * название — переименование: папка и страница курса в хранилище, ссылки на
+   * страницу в лекциях, вопросы, карточки и прогресс учёбы. Возвращает имя
+   * курса после правки.
+   */
+  async editCourse(course: string, patch: { name?: string; hebrew?: string; code?: string }): Promise<string> {
+    let имя = course;
+    if (patch.name !== undefined && safeName(patch.name, 80) !== course) имя = await this.renameCourse(course, patch.name);
+    if (patch.hebrew !== undefined || patch.code !== undefined) writeCourseInfo(this.o.vaultRoot(), имя, { hebrew: patch.hebrew, code: patch.code });
+    return имя;
+  }
+
+  /** Переименовать курс целиком — хранилище и учёбу. Ничего не теряется, с чужим курсом не сливается. */
+  async renameCourse(from: string, to: string): Promise<string> {
+    this.можноМенять(from);
+    const имя = this.новоеИмя(to, from);
+    if (имя === from) return from;
+    // Сначала хранилище: папку может держать проводник, и тогда не тронуто ничего.
+    await renameCourseFolder(this.o.vaultRoot(), from, имя);
+    try {
+      this.o.store.renameCourse(from, имя);
+    } catch (error) {
+      // Учёба не переехала — хранилище назад, чтобы курс и его вопросы не разошлись.
+      await renameCourseFolder(this.o.vaultRoot(), имя, from).catch(() => undefined);
+      throw error;
+    }
+    this.забытьСессии(from);
+    return имя;
+  }
+
+  /** Квизы и экзамены курса, которого под этим именем больше нет: ответ записал бы прогресс в старое имя. */
+  private забытьСессии(course: string): void {
+    for (const [id, s] of this.сессии) if (s.course === course) this.сессии.delete(id);
+  }
+
+  /** Языки курса: лекции (код Whisper) и конспекта; пусто — как в настройках. */
+  setCourseLanguages(course: string, language: string, notesLanguage: string): void {
+    writeCourseInfo(this.o.vaultRoot(), course, { language, notesLanguage });
+  }
+
+  /**
+   * Удалить курс: папка в хранилище — в Корзину вместе с лекциями, учёба курса
+   * (вопросы, карточки, прогресс) — тоже в Корзину. Насовсем — ничего: ошибся
+   * кнопкой — достаётся из Корзины. Возвращает, сколько лекций ушло.
+   */
+  async deleteCourse(course: string): Promise<{ lectures: number }> {
+    this.можноМенять(course);
+    if (!this.o.trash) throw new Error(tr('удалять некуда: нет Корзины', 'nowhere to delete to: no Recycle Bin'));
+    const папка = path.join(this.o.vaultRoot(), course);
+    const лекций = listLectures(this.o.vaultRoot(), course).length;
+    if (existsSync(папка)) await this.o.trash(папка);
+    const учёба = this.o.store.courseDir(course);
+    if (existsSync(учёба)) await this.o.trash(учёба);
+    this.забытьСессии(course);
+    return { lectures: лекций };
   }
 
   /** «В карточки» у вопроса квиза — вопрос на лицевой стороне, ответ с разбором на обороте. */

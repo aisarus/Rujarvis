@@ -37,8 +37,33 @@ function прочитать<T>(файл: string): T | null {
 export class StudyStore {
   constructor(readonly root: string) {}
 
-  private папка(course: string): string {
+  /** Папка учёбы курса: банки и прогресс. */
+  courseDir(course: string): string {
     return path.join(this.root, safeName(course, 80));
+  }
+
+  /**
+   * Курс переименован: папка учёбы переезжает, а банки получают новое имя
+   * курса и новые пути к заметке и звуку — папка курса в хранилище тоже
+   * переехала. Прогресс курса имени не хранит: темы и карточки названы по
+   * лекции, а лекции не переименовываются.
+   */
+  renameCourse(from: string, to: string): void {
+    const было = this.courseDir(from);
+    const стало = this.courseDir(to);
+    if (!existsSync(было)) return;
+    renameSync(было, стало);
+    const папкаБыла = safeName(from, 80);
+    const вНовую = (файл: string | undefined): string | undefined => {
+      if (!файл || path.basename(path.dirname(файл)) !== папкаБыла) return файл;
+      return path.join(path.dirname(path.dirname(файл)), safeName(to, 80), path.basename(файл));
+    };
+    for (const имя of readdirSync(стало)) {
+      if (!имя.endsWith('.json') || имя === ПРОГРЕСС) continue;
+      const bank = прочитать<LectureBank>(path.join(стало, имя));
+      if (!bank || bank.version !== 1) continue;
+      записать(path.join(стало, имя), { ...bank, course: to, notesFile: вНовую(bank.notesFile) ?? bank.notesFile, audioFile: вНовую(bank.audioFile) });
+    }
   }
 
   /** Курсы, у которых есть хоть что-то заготовленное. */
@@ -51,16 +76,16 @@ export class StudyStore {
   }
 
   saveBank(bank: LectureBank): void {
-    записать(path.join(this.папка(bank.course), `${safeName(bank.lecture, 120)}.json`), bank);
+    записать(path.join(this.courseDir(bank.course), `${safeName(bank.lecture, 120)}.json`), bank);
   }
 
   hasBank(course: string, lecture: string): boolean {
-    return existsSync(path.join(this.папка(course), `${safeName(lecture, 120)}.json`));
+    return existsSync(path.join(this.courseDir(course), `${safeName(lecture, 120)}.json`));
   }
 
   /** Банки курса по порядку лекций. Испорченный файл пропускается, а не роняет окно. */
   banks(course: string): LectureBank[] {
-    const папка = this.папка(course);
+    const папка = this.courseDir(course);
     if (!existsSync(папка)) return [];
     return readdirSync(папка)
       .filter((f) => f.endsWith('.json') && f !== ПРОГРЕСС)
@@ -70,13 +95,13 @@ export class StudyStore {
   }
 
   progress(course: string): CourseProgress {
-    const p = прочитать<CourseProgress>(path.join(this.папка(course), ПРОГРЕСС));
+    const p = прочитать<CourseProgress>(path.join(this.courseDir(course), ПРОГРЕСС));
     if (!p || p.version !== 1) return emptyProgress();
     return { ...emptyProgress(), ...p };
   }
 
   saveProgress(course: string, progress: CourseProgress): void {
-    записать(path.join(this.папка(course), ПРОГРЕСС), progress);
+    записать(path.join(this.courseDir(course), ПРОГРЕСС), progress);
   }
 
   /** Прочитать, поменять и сохранить прогресс курса одним шагом. */

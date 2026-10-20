@@ -15,7 +15,7 @@ import path from 'node:path';
 
 import { parseFrontmatter } from '../lecture/courses';
 import { parseTranscript } from '../lecture/finishFromTranscript';
-import { NOTES_WORDS, sectionTitle, type NotesLanguage } from '../lecture/session';
+import { NOTES_WORDS, notesLanguageOf, sectionTitle, type NotesLanguage } from '../lecture/session';
 import { checkGenerated, parseStamp } from './quality';
 import type { LectureBank, StudyTopic } from './types';
 
@@ -52,7 +52,7 @@ export async function readLectureSource(notesFile: string, notes: NotesLanguage)
   const текст = await readFile(notesFile, 'utf8');
   const meta = parseFrontmatter(текст);
   if (!meta) return null;
-  const с = NOTES_WORDS[notes];
+  const с = NOTES_WORDS[notesLanguageOf(текст) ?? notes];
   const lecture = path.basename(notesFile, '.md');
   const база = notesFile.replace(/\.md$/u, '');
 

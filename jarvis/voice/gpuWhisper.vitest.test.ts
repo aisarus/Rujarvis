@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { findGpuWhisper, findLectureModel, installLectureModel, LECTURE_MODELS, lectureModelFor, serverArgs, sha256, startGpuWhisper } from './gpuWhisper';
+import { findGpuWhisper, findLectureModel, installLectureModel, LECTURE_MODELS, lectureModelFor, otherLectureModels, serverArgs, sha256, startGpuWhisper } from './gpuWhisper';
 
 const папки: string[] = [];
 afterEach(async () => {
@@ -167,6 +167,19 @@ describe('модель для лекций', () => {
     expect(await findLectureModel(dir, 'he')).toBe(path.join(dir, иврит.file));
     // Своя модель иврита русскому не достаётся.
     expect(await findLectureModel(dir, 'ru')).toBe(path.join(dir, общая));
+  });
+
+  it('курс на английском при одной ивритской модели: чужую не берёт — общего сервера ждёт, а журнал знает почему', async () => {
+    // Так у владельца: установщик с -LectureLanguage he ставит только ivrit.ai.
+    const dir = await временная();
+    await writeFile(path.join(dir, иврит.file), 'x');
+    expect(await findLectureModel(dir, 'he')).toBe(path.join(dir, иврит.file));
+    expect(await findLectureModel(dir, 'en')).toBeNull();
+    expect(await otherLectureModels(dir, 'en')).toEqual(['he']);
+    expect(await otherLectureModels(dir, 'he')).toEqual([]);
+    // Поставили общую — английский курс слушает её, а не ивритскую.
+    await writeFile(path.join(dir, общая), 'x');
+    expect(await findLectureModel(dir, 'en')).toBe(path.join(dir, общая));
   });
 
   it('поставленную не качает заново; без распознавания на видеокарте — говорит, что поставить', async () => {

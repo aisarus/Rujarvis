@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { aacConfigFromEsds, adtsHeader, mediaSlices, nextFrameStart, readWavParts } from './mediaSlices';
+import { aacConfigFromEsds, adtsHeader, mediaSeconds, mediaSlices, nextFrameStart, readWavParts } from './mediaSlices';
 
 const папки: string[] = [];
 afterEach(async () => {
@@ -73,6 +73,9 @@ describe('куски длинного файла', () => {
     expect(секунд).toBe(25);
     expect(части).toEqual([80_000, 80_000, 40_000]);
     expect(первый).toBeCloseTo(0.125, 3);
+    // Длина — по заголовку, не раскрывая: по ней «Из файла…» узнаёт курс до расшифровки.
+    expect(await mediaSeconds(файл)).toBe(25);
+    expect(await mediaSeconds(path.join(папка, 'x.ogg'))).toBeNull();
   });
 
   it('формат, который не режется, раскрывается целиком (null); чужой контейнер без AAC — тоже', async () => {

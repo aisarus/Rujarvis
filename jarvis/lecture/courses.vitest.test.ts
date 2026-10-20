@@ -8,16 +8,19 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { segmentConfidence } from '../../app/gpuTranscriber';
 import { chunkLevel, cutAtPause, splitAtPauses } from './audioCut';
 import {
+  courseLanguages,
   coursePage,
   guessByDeclared,
   guessBySchedule,
   lectureBase,
+  lectureLanguagesFor,
   listCourses,
   matchCourse,
   parseFrontmatter,
   parseSchedule,
   readCourseInfo,
   renderFrontmatter,
+  settingsLanguages,
   splitCourseAndTopic,
   stripCourseGloss,
   withFrontmatter,
@@ -182,6 +185,35 @@ describe('курсы', () => {
     expect(обновлена).toContain('Ещё строка.');
     expect(обновлена).toContain('2. [[2026-10-06 — Бронза]]');
     expect(обновлена.match(/1\. \[\[/gu)).toHaveLength(1);
+    // Окно учёбы заводит страницу с русскими пометками, а конспект курса —
+    // английский: список встаёт между теми, что есть, а не вторым списком.
+    const английская = coursePage(новая, 'История', лекции, 'en');
+    expect(английская.match(/\[\[2026-09-29 — Неолит\]\]/gu)).toHaveLength(1);
+    expect(английская).not.toContain('%% lecture list');
+  });
+
+  it('языки курса: свои со страницы курса, чего нет — из настроек; мусор в свойствах не берётся', async () => {
+    const root = await временная();
+    await mkdir(path.join(root, 'English Literature'));
+    await writeFile(path.join(root, 'English Literature', 'English Literature.md'), "---\nкурс: 'English Literature'\nязык: EN\nконспект: en\n---\n", 'utf8');
+    await mkdir(path.join(root, 'Социология'));
+    await writeFile(path.join(root, 'Социология', 'Социология.md'), '---\nlanguage: english\nnotes: he\n---\n', 'utf8');
+    await mkdir(path.join(root, 'Философия'));
+    await writeFile(path.join(root, 'Философия', 'Философия.md'), '---\nlanguage: fr\n---\n', 'utf8');
+    const настройки = settingsLanguages({ lectureLanguage: 'he', language: 'ru' });
+    expect(настройки).toEqual({ lecture: 'he', notes: 'ru' });
+    expect(settingsLanguages({ lectureLanguage: '', language: 'en' })).toEqual({ lecture: 'en', notes: 'en' });
+
+    expect(readCourseInfo(root, 'English Literature')).toMatchObject({ language: 'en', notesLanguage: 'en' });
+    expect(courseLanguages(readCourseInfo(root, 'English Literature'), настройки)).toEqual({ lecture: 'en', notes: 'en' });
+    expect(readCourseInfo(root, 'Социология')).toMatchObject({ language: undefined, notesLanguage: undefined });
+    expect(courseLanguages(readCourseInfo(root, 'Социология'), настройки)).toEqual(настройки);
+    // Свой только язык лекций — конспект как в настройках.
+    expect(courseLanguages(readCourseInfo(root, 'Философия'), настройки)).toEqual({ lecture: 'fr', notes: 'ru' });
+    expect(courseLanguages(null, настройки)).toEqual(настройки);
+    // Записанная лекция — по папке, в которой лежит.
+    expect(lectureLanguagesFor(path.join(root, 'English Literature', '2026-10-20 — Hamlet.md'), настройки)).toEqual({ lecture: 'en', notes: 'en' });
+    expect(lectureLanguagesFor(path.join(root, '2026-10-20 1005 Лекция.md'), настройки)).toEqual(настройки);
   });
 
   it('время раздела — в заголовке и снимается обратно', () => {

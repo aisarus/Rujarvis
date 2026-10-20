@@ -38,6 +38,7 @@ import { shell } from 'electron';
 
 import { chunkLevel } from '../jarvis/lecture/audioCut';
 import {
+  courseLanguages,
   coursesForModel,
   guessByDeclared,
   guessBySchedule,
@@ -46,15 +47,17 @@ import {
   matchCourse,
   parseFrontmatter,
   readCourseInfo,
+  type LectureLanguages,
 } from '../jarvis/lecture/courses';
 import { finalizeLecture, moveLecture } from '../jarvis/lecture/finalize';
 import { HearingMonitor, isSilentChunk } from '../jarvis/lecture/hearing';
+import { mediaSeconds } from '../jarvis/lecture/mediaSlices';
 import { LectureRecorder } from '../jarvis/lecture/recorder';
 import { LectureSession, NOTES_WORDS, type NotesLanguage } from '../jarvis/lecture/session';
 import { createClaudeSummarizer, createFinalSummarizer } from '../jarvis/lecture/summarize';
 import { lectureFolder, obsidianOpenUrl } from '../jarvis/lecture/vault';
 import { tr } from '../jarvis/locale/language';
-import { findGpuWhisper, findLectureModel, gpuWhisperDir, startGpuWhisper, type GpuWhisperServer } from '../jarvis/voice/gpuWhisper';
+import { findGpuWhisper, findLectureModel, gpuWhisperDir, otherLectureModels, startGpuWhisper, type GpuWhisperServer } from '../jarvis/voice/gpuWhisper';
 import { resampleTo16k } from '../jarvis/voice/wav';
 import { createGpuTranscriber, isWhisperServerReady, WHISPER_SERVER_PORT, type ConfidentResult } from './gpuTranscriber';
 import type { LectureSource } from './statusOverlay';
@@ -135,8 +138,12 @@ function оповестить(): void {
 export interface LectureStartOptions {
   home: string;
   outputDir: string;
-  /** Язык лекции — код Whisper; конспект пишется на `notesLanguage`. */
+  /**
+   * Язык лекции из настроек — код Whisper. У курса со своим языком (страница
+   * курса, окно «Учёба») слушается его язык.
+   */
   lectureLanguage: string;
+  /** Язык интерфейса: папка «Лекции» и конспект, если у курса свой не задан. */
   notesLanguage: NotesLanguage;
   /** Адрес общего сервера распознавания — запасной, когда модели для лекций нет. */
   mainEndpoint(): string | null;
@@ -170,11 +177,21 @@ interface Слух {
   распознать(samples: Float32Array, sampleRate: number): Promise<ConfidentResult>;
 }
 
-/** Сервер модели для лекций — поднимается в фоне; куски ждут его в очереди. */
-async function поднятьСлух(options: LectureStartOptions): Promise<Слух> {
+/**
+ * Сервер модели для лекций на этом языке — поднимается в фоне; куски ждут его
+ * в очереди. Своей модели языка нет — общая, нет и её — общий сервер с
+ * языком лекции: модель другого языка не берётся никогда.
+ */
+async function поднятьСлух(options: LectureStartOptions, язык: string): Promise<Слух> {
   const dir = gpuWhisperDir(options.home);
   const files = await findGpuWhisper(dir).catch(() => null);
-  const модель = files ? await findLectureModel(dir, options.lectureLanguage).catch(() => null) : null;
+  const модель = files ? await findLectureModel(dir, язык).catch(() => null) : null;
+  if (files && !модель) {
+    const чужие = await otherLectureModels(dir, язык).catch(() => []);
+    if (чужие.length > 0) {
+      console.log(`[jarvis:lecture] для языка «${язык}» модели для лекций нет, а модель для «${чужие.join('», «')}» чужому языку не годится — слушает общий сервер`);
+    }
+  }
   const сервер: Promise<GpuWhisperServer | null> =
     files && модель
       ? startGpuWhisper(
@@ -197,7 +214,7 @@ async function поднятьСлух(options: LectureStartOptions): Promise<С�
       const свой = await сервер;
       const endpoint = свой?.endpoint ?? options.mainEndpoint();
       if (!endpoint) throw new Error('распознавать нечем: нет сервера на видеокарте (pnpm jarvis:gpu-stt)');
-      return createGpuTranscriber({ endpoint, language: options.lectureLanguage, timeoutMs: 120_000, withConfidence: true }).transcribe(samples, sampleRate);
+      return createGpuTranscriber({ endpoint, language: язык, timeoutMs: 120_000, withConfidence: true }).transcribe(samples, sampleRate);
     },
   };
 }
@@ -213,8 +230,17 @@ function угадатьКурс(root: string, когда: Date): string | null {
   );
 }
 
+/**
+ * На каком языке слушать и писать: курс известен с начала — его языки со
+ * страницы курса, нет — настройки. Курс, названный моделью в конце, языка уже
+ * не меняет: лекция расшифрована.
+ */
+function языкиКурса(root: string, курс: string | null, options: LectureStartOptions): LectureLanguages {
+  const настройки = { lecture: options.lectureLanguage, notes: options.notesLanguage };
+  return курс ? courseLanguages(readCourseInfo(root, курс), настройки) : настройки;
+}
+
 async function начатьЛекцию(subject: string | undefined, options: LectureStartOptions): Promise<string> {
-  const слух = await поднятьСлух(options);
   const { folder: root, vault } = lectureFolder(options.outputDir, options.notesLanguage);
   const курсы = listCourses(root);
   const когда = new Date();
@@ -222,6 +248,8 @@ async function начатьЛекцию(subject: string | undefined, options: Le
   // по расписанию. Названный, но новый курс называет в конце модель: «по
   // социологии» — это ещё не имя папки.
   const курс = subject ? matchCourse(subject, курсы) : угадатьКурс(root, когда);
+  const языки = языкиКурса(root, курс, options);
+  const слух = await поднятьСлух(options, языки.lecture);
 
   const монитор = new HearingMonitor();
   const zoom = options.source === 'system';
@@ -266,8 +294,8 @@ async function начатьЛекцию(subject: string | undefined, options: Le
       transcribe,
       summarize: createClaudeSummarizer(),
       summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
-      lectureLanguage: options.lectureLanguage,
-      notesLanguage: options.notesLanguage,
+      lectureLanguage: языки.lecture,
+      notesLanguage: языки.notes,
       // Только счёт и события: сама лекция в журнал Джарвиса не пишется.
       log: (строка) => console.log(`[jarvis:lecture] ${строка}`),
     },
@@ -284,7 +312,7 @@ async function начатьЛекцию(subject: string | undefined, options: Le
     сервер: слух.сервер,
     recorder,
     root,
-    notes: options.notesLanguage,
+    notes: языки.notes,
     курс,
     слух: монитор,
     ...(нечем
@@ -300,7 +328,7 @@ async function начатьЛекцию(subject: string | undefined, options: Le
   оповестить();
   console.log(
     `[jarvis:lecture] конспект начат${vault ? ' в хранилище Obsidian' : ' в папке результатов (Obsidian не найден)'}; ` +
-      `курс: ${курс ?? 'решит модель'}; звук: ${zoom ? 'компьютер (Zoom)' : 'микрофон'}; язык лекции: ${options.lectureLanguage}, конспекта: ${options.notesLanguage}; ` +
+      `курс: ${курс ?? 'решит модель'}; звук: ${zoom ? 'компьютер (Zoom)' : 'микрофон'}; язык лекции: ${языки.lecture}, конспекта: ${языки.notes}${курс && (языки.lecture !== options.lectureLanguage || языки.notes !== options.notesLanguage) ? ' (свои у курса)' : ''}; ` +
       `модель: ${слух.модель ? path.basename(слух.модель) : 'для лекций нет — общий сервер'}`,
   );
   if (vault) await shell.openExternal(obsidianOpenUrl(session.notesFile)).catch(() => undefined);
@@ -476,7 +504,6 @@ export async function lectureFromFile(file: string, options: LectureFileOptions)
   let слух: Слух | null = null;
   try {
     const { folder: root } = lectureFolder(options.outputDir, options.notesLanguage);
-    const с = NOTES_WORDS[options.notesLanguage];
     // Звук своей же лекции — перерасшифровать её: тот же курс, прежние файлы
     // — в Корзину, когда новые готовы.
     const база = path.join(path.dirname(file), path.basename(file, path.extname(file)));
@@ -488,8 +515,15 @@ export async function lectureFromFile(file: string, options: LectureFileOptions)
         : null;
     const метаСвоей = своя ? parseFrontmatter(await readFile(своя, 'utf8')) : null;
     const времяФайла = statSync(file).mtimeMs;
+    // Курс, известный до расшифровки, задаёт её язык: своя лекция лежит в
+    // папке курса, а чужую запись видно по расписанию, если длина файла
+    // известна без раскрытия (WAV, MP4, M4A, MOV; телефон пишет время конца).
+    const заранее = курсСвоей ? null : await mediaSeconds(file).catch(() => null);
+    const курсСразу = курсСвоей ?? (заранее ? угадатьКурс(root, new Date(времяФайла - заранее * 1000)) : null);
+    const языки = языкиКурса(root, курсСразу, options);
+    console.log(`[jarvis:lecture] файл: курс ${курсСразу ? `«${курсСразу}»` : 'решится в конце'}; язык лекции: ${языки.lecture}, конспекта: ${языки.notes}`);
 
-    слух = await поднятьСлух(options);
+    слух = await поднятьСлух(options, языки.lecture);
     const распознать = слух.распознать;
     let раскрыто = 0;
     let распознано = 0;
@@ -514,8 +548,8 @@ export async function lectureFromFile(file: string, options: LectureFileOptions)
         },
         summarize: createClaudeSummarizer(),
         summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`[jarvis:lecture] файл: ${строка}`) }),
-        lectureLanguage: options.lectureLanguage,
-        notesLanguage: options.notesLanguage,
+        lectureLanguage: языки.lecture,
+        notesLanguage: языки.notes,
         log: (строка) => console.log(`[jarvis:lecture] файл: ${строка}`),
       },
       new Date(времяФайла),
@@ -554,19 +588,21 @@ export async function lectureFromFile(file: string, options: LectureFileOptions)
     // Когда шла лекция: у своей — из свойств, у чужого файла — время файла
     // минус длительность (телефон пишет время конца записи).
     const когда = метаСвоей?.start ? new Date(`${метаСвоей.date}T${метаСвоей.start}:00`) : new Date(времяФайла - раскрыто * 1000);
-    const курс = курсСвоей ?? угадатьКурс(root, когда);
+    const курс = курсСразу ?? угадатьКурс(root, когда);
     const итог = await session.finish(coursesForModel(root));
     if (файлом) {
       файлом.строка = tr('Раскладываю по курсу…', 'Filing into the course…');
       оповестить();
     }
     if (своя) {
-      for (const старый of [своя, `${база} — ${с.transcriptFile}.md`, file]) {
+      // Расшифровка — на языке прежнего конспекта, а он мог быть и другим.
+      const расшифровки = (['ru', 'en'] as const).map((я) => `${база} — ${NOTES_WORDS[я].transcriptFile}.md`);
+      for (const старый of [своя, ...расшифровки, file]) {
         if (existsSync(старый)) await options.trash(старый);
       }
     }
     const ответ = await разложить(
-      { root, notes: options.notesLanguage, курс, when: когда },
+      { root, notes: языки.notes, курс, when: когда },
       итог,
       своя ? { number: метаСвоей?.number } : { replaceSameDay: true, trash: options.trash },
     );

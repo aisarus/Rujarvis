@@ -397,6 +397,19 @@ export async function findLectureModel(dir: string, language: string): Promise<s
   return (своя ? await готоваяМодель(dir, своя) : null) ?? (await готоваяМодель(dir, LECTURE_MODELS.general));
 }
 
+/**
+ * Для каких ещё языков поставлена своя модель для лекций. Лекции на этом
+ * языке она не достаётся (ивритская на английской лекции пишет мусор), но
+ * журналу стоит сказать, почему слушает не она.
+ */
+export async function otherLectureModels(dir: string, language: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const [язык, source] of Object.entries(LECTURE_MODELS.byLanguage)) {
+    if (язык !== language && (await готоваяМодель(dir, source))) out.push(язык);
+  }
+  return out;
+}
+
 /** Где взять whisper-quantize: рядом с сервером на Windows, от Homebrew на маке. */
 async function найтиQuantize(files: GpuWhisperFiles): Promise<string | null> {
   const имя = process.platform === 'win32' ? 'whisper-quantize.exe' : 'whisper-quantize';

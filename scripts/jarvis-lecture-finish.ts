@@ -10,9 +10,10 @@
 import { closeSync, openSync, readdirSync, readFileSync, statSync, writeSync } from 'node:fs';
 import path from 'node:path';
 
-import { coursesForModel, listCourses } from '../jarvis/lecture/courses';
+import { coursesForModel, lectureLanguagesFor, listCourses, settingsLanguages } from '../jarvis/lecture/courses';
 import { finalizeLecture } from '../jarvis/lecture/finalize';
 import { finishFromTranscript } from '../jarvis/lecture/finishFromTranscript';
+import { NOTES_WORDS, notesLanguageOf } from '../jarvis/lecture/session';
 import { createClaudeSummarizer, createFinalSummarizer } from '../jarvis/lecture/summarize';
 import { lectureFolder } from '../jarvis/lecture/vault';
 import { jarvisOutputDir, jarvisPaths } from '../jarvis/setup/paths';
@@ -61,8 +62,6 @@ async function main(): Promise<void> {
   const paths = jarvisPaths();
   const settings = new SettingsStore(paths.settings).get();
   const notes = settings.language;
-  const lectureLanguage = settings.lectureLanguage || settings.language;
-  const итогЗаголовок = notes === 'en' ? '## Summary' : '## Кратко';
 
   let заметка = process.argv.slice(2).find((a) => !a.startsWith('-'));
   if (!заметка) {
@@ -80,7 +79,8 @@ async function main(): Promise<void> {
           .filter((f) => f.endsWith('.md') && !/ — (расшифровка|transcript)\.md$/u.test(f) && f !== `${path.basename(папка)}.md`)
           .map((f) => path.join(папка, f)),
       )
-      .filter((f) => !readFileSync(f, 'utf8').includes(итогЗаголовок))
+      // Итог дописан — на языке своего конспекта: у курса он бывает свой.
+      .filter((f) => !/^## (Кратко|Summary)[ \t]*$/mu.test(readFileSync(f, 'utf8')))
       .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
     заметка = кандидаты[0];
     if (!заметка) {
@@ -89,16 +89,24 @@ async function main(): Promise<void> {
     }
   }
 
-  console.log(`Дописываю: ${заметка} (лекция на «${lectureLanguage}», конспект на «${notes}»)`);
-  const секунд = починитьЗвук(заметка.replace(/\.md$/u, '.wav'));
   const результаты = settings.outputDir || jarvisOutputDir(process.env, undefined, notes === 'en' ? 'Jarvis' : 'Джарвис');
   const { folder: root } = lectureFolder(результаты, notes);
+  // Лежит в папке курса — этот курс и есть выбранный; в самой папке лекций — решает модель.
+  const папка = path.relative(root, path.dirname(заметка));
+  const курс = папка && !папка.startsWith('..') && !path.isAbsolute(папка) ? папка : null;
+  // Языки — курса, если он известен, а конспект дописывается на языке, на
+  // котором его начали: заголовки в заметке уже стоят.
+  const языки = курс ? lectureLanguagesFor(заметка, settingsLanguages(settings)) : settingsLanguages(settings);
+  const lectureLanguage = языки.lecture;
+  const notesLanguage = notesLanguageOf(readFileSync(заметка, 'utf8')) ?? языки.notes;
+  console.log(`Дописываю: ${заметка} (лекция на «${lectureLanguage}», конспект на «${notesLanguage}»)`);
+  const секунд = починитьЗвук(заметка.replace(/\.md$/u, '.wav'));
   const итог = await finishFromTranscript({
     notesFile: заметка,
     summarize: createClaudeSummarizer(),
     summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`  ${строка}`) }),
     lectureLanguage,
-    notesLanguage: notes,
+    notesLanguage,
     courses: coursesForModel(root),
     log: (строка) => console.log(`  ${строка}`),
   });
@@ -107,16 +115,13 @@ async function main(): Promise<void> {
     return;
   }
   console.log(`Дописано: разделов — ${итог.sections}, итог — ${итог.summary ? 'есть' : 'нет'}.`);
-  // Лежит в папке курса — этот курс и есть выбранный; в самой папке лекций — решает модель.
-  const папка = path.relative(root, path.dirname(заметка));
-  const курс = папка && !папка.startsWith('..') && !path.isAbsolute(папка) ? папка : null;
   const база = заметка.replace(/\.md$/u, '');
   const место = await finalizeLecture({
     root,
     notesFile: заметка,
-    transcriptFile: `${база} — ${notes === 'en' ? 'transcript' : 'расшифровка'}.md`,
+    transcriptFile: `${база} — ${NOTES_WORDS[notesLanguage].transcriptFile}.md`,
     audioFile: `${база}.wav`,
-    notes,
+    notes: notesLanguage,
     when: когдаБыла(заметка),
     durationSec: секунд,
     course: курс,

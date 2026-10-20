@@ -411,6 +411,49 @@ export async function readWavParts(
   }
 }
 
+/** Секунды звука WAV — по заголовку, без чтения данных. */
+async function wavSeconds(file: string): Promise<number | null> {
+  const fh = await open(file, 'r');
+  try {
+    const размерФайла = (await fh.stat()).size;
+    const голова = await читать(fh, 0, 12);
+    if (голова.toString('ascii', 0, 4) !== 'RIFF' || голова.toString('ascii', 8, 12) !== 'WAVE') return null;
+    let байтВСекунду = 0;
+    let at = 12;
+    while (at + 8 <= размерФайла) {
+      const заголовок = await читать(fh, at, 8);
+      const id = заголовок.toString('ascii', 0, 4);
+      let размер = заголовок.readUInt32LE(4);
+      if (id === 'fmt ') байтВСекунду = (await читать(fh, at + 8, 12)).readUInt32LE(8);
+      else if (id === 'data') {
+        // Недописанная запись: размер нулём — до конца файла.
+        if (размер === 0 || at + 8 + размер > размерФайла) размер = размерФайла - at - 8;
+        return байтВСекунду > 0 ? размер / байтВСекунду : null;
+      }
+      at += 8 + размер + (размер % 2);
+    }
+    return null;
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
+ * Сколько секунд в файле, если это видно без раскрытия: WAV — по заголовку,
+ * MP4, M4A, MOV — по дорожке. Остальное — null: узнать можно, только раскрыв.
+ */
+export async function mediaSeconds(file: string): Promise<number | null> {
+  const расширение = file.toLowerCase().split('.').pop() ?? '';
+  if (расширение === 'wav') return wavSeconds(file);
+  if (!['mp4', 'm4a', 'mov', 'm4v'].includes(расширение)) return null;
+  const куски = await mp4Slices(file, SLICE_SECONDS);
+  try {
+    return куски?.seconds ?? null;
+  } finally {
+    await куски?.close();
+  }
+}
+
 /**
  * Файл → куски для раскрытия. Формат не режется — null: раскрывать целиком.
  */

@@ -1,14 +1,16 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { parseFrontmatter } from '../lecture/courses';
 import { generateLectureBank, jsonFromReply, readLectureSource, sectionBatches } from './generate';
 import { topicKnowledge } from './knowledge';
 import { parseOpenVerdict } from './openAnswer';
 import { checkGenerated, parseStamp } from './quality';
-import { StudyService } from './service';
+import { StudyService, type StudyServiceOptions } from './service';
 import { isDue, reviewCard } from './srs';
 import { StudyStore } from './store';
 import type { EvidenceEvent, StudyTopic } from './types';
@@ -231,7 +233,7 @@ describe('заготовка по лекции', () => {
 });
 
 describe('служба учёбы: сегодня, квиз, карточки, экзамен, задачи', () => {
-  async function служба() {
+  async function служба(extra: Partial<StudyServiceOptions> = {}) {
     const vault = await временная();
     const data = await временная();
     const заметка = await лекция(vault);
@@ -255,9 +257,131 @@ describe('служба учёбы: сегодня, квиз, карточки, �
       notes: 'ru',
       now: () => now,
       summarize: async (prompt) => (prompt.includes('Ответ студента: количество') ? '{"verdict":"correct","feedback":"верно"}' : '{"verdict":"wrong","feedback":"нет"}'),
+      ...extra,
     });
     return { s, store, заметка, vault, tick: (ms: number) => { now += ms; } };
   }
+
+  it('«Изменить» с новым названием: папка, страница, ссылки в лекциях и вся учёба переезжают', async () => {
+    const { s, store, vault, заметка } = await служба();
+    // Ссылка на страницу курса — как её ставит конспект.
+    const было = await readFile(заметка, 'utf8');
+    await writeFile(заметка, было.replace('# Спрос\n', '# Спрос\nРасшифровка: [[2026-10-20 — Спрос — расшифровка]] · [[Микро]]\n'), 'utf8');
+    const квиз = s.startQuiz({ course: 'Микро', topic: '2026-10-20 — Спрос#1' });
+    s.answerQuiz(квиз.id, 0, квиз.questions[0]!.options.findIndex((o) => o.text !== 'כמות מבוקשת במחיר'));
+    const прогресс = store.progress('Микро');
+    expect(прогресс.events).toHaveLength(1);
+    const курсДо = s.course('Микро');
+
+    expect(await s.editCourse('Микро', { name: 'Микроэкономика', hebrew: 'מיקרו כלכלה', code: '' })).toBe('Микроэкономика');
+
+    // Хранилище: папка и страница под новым именем, всё прежнее на странице цело.
+    expect(existsSync(path.join(vault, 'Микро'))).toBe(false);
+    const страница = await readFile(path.join(vault, 'Микроэкономика', 'Микроэкономика.md'), 'utf8');
+    expect(страница).toContain("курс: 'Микроэкономика'");
+    expect(страница).toContain("иврит: 'מיקרו כלכלה'");
+    expect(страница).toContain("расписание: 'вт 10:00-13:00'");
+    expect(страница).toMatch(/^# Микроэкономика$/mu);
+    const новаяЗаметка = path.join(vault, 'Микроэкономика', '2026-10-20 — Спрос.md');
+    const текст = await readFile(новаяЗаметка, 'utf8');
+    expect(parseFrontmatter(текст)?.course).toBe('Микроэкономика');
+    expect(текст).toContain('· [[Микроэкономика]]');
+    expect(текст).not.toContain('[[Микро]]');
+    expect(existsSync(path.join(vault, 'Микроэкономика', '2026-10-20 — Спрос — расшифровка.md'))).toBe(true);
+
+    // Учёба: банк, прогресс и карточка ошибки — под новым именем, старого нет.
+    expect(store.courses()).toEqual(['Микроэкономика']);
+    expect(store.progress('Микроэкономика')).toEqual(прогресс);
+    expect(store.banks('Микроэкономика')[0]).toMatchObject({
+      course: 'Микроэкономика',
+      notesFile: новаяЗаметка,
+      audioFile: path.join(vault, 'Микроэкономика', '2026-10-20 — Спрос.wav'),
+    });
+    const курсПосле = s.course('Микроэкономика');
+    expect(курсПосле).toMatchObject({ counts: курсДо.counts, dueCards: курсДо.dueCards, lectureCount: 1, unprepared: [] });
+    expect(курсПосле.lectures[0]?.topics.map((t) => t.state)).toEqual(курсДо.lectures[0]?.topics.map((t) => t.state));
+    expect(s.today().courses.map((c) => c.name)).toEqual(['Микроэкономика']);
+    expect(s.startQuiz({ course: 'Микроэкономика' }).questions).toHaveLength(2);
+    // Квиз, начатый до переименования, закрыт: ответ не заведёт курс-призрак под старым именем.
+    expect(() => s.answerQuiz(квиз.id, 0, 0)).toThrow(/нет/u);
+    expect(store.courses()).toEqual(['Микроэкономика']);
+
+    // Без нового названия — только свойства, имя то же.
+    expect(await s.editCourse('Микроэкономика', { name: 'Микроэкономика', hebrew: '', code: '66-1' })).toBe('Микроэкономика');
+    expect(s.course('Микроэкономика')).toMatchObject({ hebrew: undefined, code: '66-1' });
+  });
+
+  it('новое название занято, пустое или «Без курса» — понятная ошибка, и ничего не тронуто', async () => {
+    const { s, store, vault } = await служба();
+    s.createCourse('Статистика');
+    await expect(s.renameCourse('Микро', 'статистика')).rejects.toThrow(/уже есть/u);
+    await expect(s.renameCourse('Микро', 'Без курса')).rejects.toThrow(/без курса/u);
+    await expect(s.renameCourse('Микро', ' / ')).rejects.toThrow(/пустое/u);
+    await expect(s.renameCourse('Физика', 'Химия')).rejects.toThrow(/нет/u);
+    expect(existsSync(path.join(vault, 'Микро', 'Микро.md'))).toBe(true);
+    expect(existsSync(path.join(vault, 'Статистика', 'Статистика.md'))).toBe(true);
+    expect(store.courses()).toEqual(['Микро']);
+    // Имя, которое Windows не пускает в папку, приводится, а не роняет правку.
+    expect(await s.renameCourse('Микро', 'Микро: введение')).toBe('Микро введение');
+    expect(store.courses()).toEqual(['Микро введение']);
+  });
+
+  it('курс, в который пишется конспект, не переименовать и не удалить', async () => {
+    const { s, vault } = await служба({
+      busy: () => 'Сейчас идёт конспект',
+      trash: async () => {
+        throw new Error('в Корзину не должен');
+      },
+    });
+    await expect(s.renameCourse('Микро', 'Макро')).rejects.toThrow(/идёт конспект/u);
+    await expect(s.deleteCourse('Микро')).rejects.toThrow(/идёт конспект/u);
+    expect(existsSync(path.join(vault, 'Микро', 'Микро.md'))).toBe(true);
+  });
+
+  it('удаление: папка курса с лекциями и учёба курса — в Корзину, а не насовсем; пустой курс — так же', async () => {
+    const корзина = await временная();
+    const ушло: string[] = [];
+    const { s, store, vault } = await служба({
+      trash: async (file) => {
+        ушло.push(file);
+        await rename(file, path.join(корзина, `${ушло.length} ${path.basename(file)}`));
+      },
+    });
+    expect(s.course('Микро').lectureCount).toBe(1);
+    expect(await s.deleteCourse('Микро')).toEqual({ lectures: 1 });
+    expect(ушло).toEqual([path.join(vault, 'Микро'), store.courseDir('Микро')]);
+    expect(existsSync(path.join(vault, 'Микро'))).toBe(false);
+    expect(store.courses()).toEqual([]);
+    expect(s.today().courses).toEqual([]);
+    // Лекция цела — в Корзине с расшифровкой рядом; банк вопросов — тоже там.
+    expect(existsSync(path.join(корзина, '1 Микро', '2026-10-20 — Спрос.md'))).toBe(true);
+    expect(existsSync(path.join(корзина, '1 Микро', '2026-10-20 — Спрос — расшифровка.md'))).toBe(true);
+    expect(await readdir(path.join(корзина, '2 Микро'))).toEqual(['2026-10-20 — Спрос.json']);
+
+    s.createCourse('Пустой');
+    expect(s.course('Пустой').lectureCount).toBe(0);
+    expect(await s.deleteCourse('Пустой')).toEqual({ lectures: 0 });
+    expect(existsSync(path.join(vault, 'Пустой'))).toBe(false);
+    await expect(s.deleteCourse('Пустой')).rejects.toThrow(/нет/u);
+  });
+
+  it('языки курса: свои на странице курса, пусто — как в настройках; непонятный язык — ошибка', async () => {
+    const { s, vault } = await служба({ languages: () => ({ lecture: 'he', notes: 'ru' }) });
+    expect(s.course('Микро')).toMatchObject({ language: undefined, notesLanguage: undefined, defaults: { lecture: 'he', notes: 'ru' } });
+    s.setCourseLanguages('Микро', 'en', 'en');
+    const страница = await readFile(path.join(vault, 'Микро', 'Микро.md'), 'utf8');
+    expect(страница).toContain('язык: en');
+    expect(страница).toContain('конспект: en');
+    expect(страница).toContain("иврит: 'מיקרו'");
+    expect(s.course('Микро')).toMatchObject({ language: 'en', notesLanguage: 'en' });
+    s.setCourseLanguages('Микро', '', '');
+    expect(s.course('Микро')).toMatchObject({ language: undefined, notesLanguage: undefined });
+    expect(await readFile(path.join(vault, 'Микро', 'Микро.md'), 'utf8')).not.toMatch(/язык|конспект/u);
+    expect(() => s.setCourseLanguages('Микро', 'english', '')).toThrow(/язык лекций/u);
+    expect(() => s.setCourseLanguages('Микро', '', 'he')).toThrow(/по-русски или по-английски/u);
+    expect(s.createCourse('English Literature', { language: 'en', notesLanguage: 'en' })).toBe('English Literature');
+    expect(s.course('English Literature')).toMatchObject({ language: 'en', notesLanguage: 'en' });
+  });
 
   it('сегодня: пары по расписанию, новый квиз, карточки, экзамен через 21 день, задачи', async () => {
     const { s } = await служба();

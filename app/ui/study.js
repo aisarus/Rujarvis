@@ -40,6 +40,14 @@ const STRINGS = {
     prepareAll: 'Заготовить вопросы ко всем лекциям', prepareAllDone: 'В очереди лекций: {0}. Готово будет в фоне.', nothingToPrepare: 'Все лекции уже заготовлены.',
     mic: '🎤 Голосом', stopRec: '■ Готово', recognizing: 'Распознаю…', micDenied: 'Микрофон недоступен: {0}',
     toCardsDone: 'В карточках',
+    edit: 'Изменить', deleteCourse: 'Удалить курс', deleteYes: 'Удалить',
+    deleteConfirm: 'Удалить курс «{0}»? Его папка в Obsidian уйдёт в Корзину Windows.',
+    deleteLectures: 'В ней лекций: {0} — они уйдут в Корзину вместе с папкой (заметки, расшифровки, звук).',
+    deleteStudy: 'Вопросы, карточки и прогресс по курсу тоже уберутся. Ошиблись — всё достаётся из Корзины.',
+    deleted: 'Курс «{0}» удалён — папка в Корзине.',
+    lectureLang: 'Язык лекций:', notesLang: 'Язык конспекта:', asSettings: 'как в настройках — {0}', asSettingsPlain: 'как в настройках',
+    langHint: 'Лекции этого курса Джарвис расшифровывает на языке лекций, а конспект пишет на языке конспекта.',
+    langs: { he: 'иврит', ru: 'русский', en: 'английский', ar: 'арабский', fr: 'французский', de: 'немецкий', es: 'испанский' },
   },
   en: {
     title: 'Study', today: 'Today', courses: 'Courses', cards: 'Cards', back: '← Back',
@@ -72,6 +80,14 @@ const STRINGS = {
     prepareAll: 'Prepare questions for all lectures', prepareAllDone: 'Lectures queued: {0}. They will be ready in the background.', nothingToPrepare: 'All lectures are already prepared.',
     mic: '🎤 By voice', stopRec: '■ Done', recognizing: 'Recognising…', micDenied: 'Microphone unavailable: {0}',
     toCardsDone: 'In cards',
+    edit: 'Edit', deleteCourse: 'Delete course', deleteYes: 'Delete',
+    deleteConfirm: 'Delete the course "{0}"? Its Obsidian folder goes to the Windows Recycle Bin.',
+    deleteLectures: 'Lectures in it: {0}. They go to the Recycle Bin with the folder (notes, transcripts, audio).',
+    deleteStudy: 'The course questions, cards and progress are removed too. Made a mistake? Everything can be restored from the Recycle Bin.',
+    deleted: 'The course "{0}" is deleted. Its folder is in the Recycle Bin.',
+    lectureLang: 'Lecture language:', notesLang: 'Notes language:', asSettings: 'as in settings — {0}', asSettingsPlain: 'as in settings',
+    langHint: 'Jarvis transcribes this course\'s lectures in the lecture language and writes the notes in the notes language.',
+    langs: { he: 'Hebrew', ru: 'Russian', en: 'English', ar: 'Arabic', fr: 'French', de: 'German', es: 'Spanish' },
   },
 }[LANG];
 
@@ -247,9 +263,11 @@ function prepareAllRow() {
   return el('div', { class: 'row', style: 'margin-top:16px;flex-wrap:wrap' }, btn, note);
 }
 
-async function renderCourses() {
+/** `message` — строка сверху: что сейчас сделано (курс удалён). */
+async function renderCourses(message) {
   const { today } = await call('today');
   view.append(el('div', { class: 'row spread' }, el('h1', {}, t('courses')), el('button', { class: 'btn', onclick: () => newCourseForm(form) }, t('newCourse'))));
+  if (typeof message === 'string' && message) view.append(el('p', { class: 'hint' }, message));
   const form = el('div');
   view.append(form);
   const grid = el('div', { class: 'grid' });
@@ -258,17 +276,34 @@ async function renderCourses() {
 }
 renderCourses.refreshable = false;
 
-/** Новый курс: название, на иврите, код — папка и страница в Obsidian появятся сами. */
+const LECTURE_LANGS = ['he', 'ru', 'en', 'ar', 'fr', 'de', 'es'];
+const NOTES_LANGS = ['ru', 'en'];
+
+function langName(code) {
+  return (STRINGS.langs && STRINGS.langs[code]) || code;
+}
+
+/** Список языков: первым — «как в настройках» (пусто), с тем, что там стоит. */
+function langSelect(codes, current, fallback) {
+  return el('select', {},
+    el('option', { value: '', selected: !current }, fallback ? t('asSettings', langName(fallback)) : t('asSettingsPlain')),
+    ...codes.map((c) => el('option', { value: c, selected: c === current }, langName(c))),
+  );
+}
+
+/** Новый курс: название, на иврите, код, языки — папка и страница в Obsidian появятся сами. */
 function newCourseForm(box) {
   box.textContent = '';
   const name = el('input', { type: 'text', placeholder: t('courseName') });
   const hebrew = el('input', { type: 'text', placeholder: t('hebrewName'), dir: 'auto' });
   const code = el('input', { type: 'text', placeholder: t('courseCode') });
+  const lang = langSelect(LECTURE_LANGS, '', null);
+  const notes = langSelect(NOTES_LANGS, '', null);
   const note = el('div', { class: 'small error' });
   const create = async () => {
     if (!name.value.trim()) { name.focus(); return; }
     try {
-      const created = await call('createCourse', name.value, hebrew.value, code.value);
+      const created = await call('createCourse', name.value, hebrew.value, code.value, lang.value, notes.value);
       tab = 'courses';
       show(courseRender(created));
     } catch (error) {
@@ -277,6 +312,7 @@ function newCourseForm(box) {
   };
   box.append(el('div', { class: 'card stack', style: 'margin-bottom:12px' },
     el('div', { class: 'row', style: 'flex-wrap:wrap' }, name, hebrew, code),
+    el('div', { class: 'row', style: 'flex-wrap:wrap' }, el('b', {}, t('lectureLang')), lang, el('b', {}, t('notesLang')), notes),
     el('div', { class: 'row' },
       el('button', { class: 'btn primary', onclick: create }, t('create')),
       el('button', { class: 'btn', onclick: () => { box.textContent = ''; } }, t('cancel')),
@@ -321,7 +357,68 @@ function courseSettings(c) {
       el('button', { class: 'btn small', onclick: () => call('setSchedule', c.name, slots).then(saved, fail) }, t('save'))),
     list,
   );
-  return el('div', { class: 'card stack', style: 'margin:10px 0 14px' }, examRow, scheduleRow, note);
+
+  // Языки курса сохраняются сразу при выборе: тут нечего набирать.
+  const lang = langSelect(LECTURE_LANGS, c.language || '', c.defaults && c.defaults.lecture);
+  const notes = langSelect(NOTES_LANGS, c.notesLanguage || '', c.defaults && c.defaults.notes);
+  const saveLangs = () => call('setCourseLanguages', c.name, lang.value, notes.value).then(saved, fail);
+  lang.addEventListener('change', saveLangs);
+  notes.addEventListener('change', saveLangs);
+  const langRow = el('div', { class: 'stack', style: 'gap:4px' },
+    el('div', { class: 'row', style: 'flex-wrap:wrap' }, el('b', {}, t('lectureLang')), lang, el('b', {}, t('notesLang')), notes),
+    el('div', { class: 'small muted' }, t('langHint')),
+  );
+  return el('div', { class: 'card stack', style: 'margin:10px 0 14px' }, langRow, examRow, scheduleRow, note);
+}
+
+/** «Изменить»: название, на иврите, код. Новое название — переименование курса целиком. */
+function editCourseForm(box, c) {
+  box.textContent = '';
+  const name = el('input', { type: 'text', value: c.name, placeholder: t('courseName') });
+  const hebrew = el('input', { type: 'text', value: c.hebrew || '', placeholder: t('hebrewName'), dir: 'auto' });
+  const code = el('input', { type: 'text', value: c.code || '', placeholder: t('courseCode') });
+  const note = el('div', { class: 'small error' });
+  const save = el('button', { class: 'btn primary', onclick: async () => {
+    if (!name.value.trim()) { name.focus(); return; }
+    save.disabled = true;
+    try {
+      const now = await call('editCourse', c.name, name.value, hebrew.value, code.value);
+      show(courseRender(now));
+    } catch (error) {
+      note.textContent = t('error', error.message);
+      save.disabled = false;
+    }
+  } }, t('save'));
+  box.append(el('div', { class: 'card stack', style: 'margin:10px 0' },
+    el('div', { class: 'row', style: 'flex-wrap:wrap' }, name, hebrew, code),
+    el('div', { class: 'row' }, save, el('button', { class: 'btn', onclick: () => { box.textContent = ''; } }, t('cancel'))),
+    note,
+  ));
+  name.focus();
+}
+
+/** «Удалить курс»: подтверждение прямо в окне — что уйдёт в Корзину и сколько лекций. */
+function deleteCourseBox(box, c) {
+  box.textContent = '';
+  const note = el('div', { class: 'small error' });
+  const yes = el('button', { class: 'btn danger', onclick: async () => {
+    yes.disabled = true;
+    try {
+      await call('deleteCourse', c.name);
+      tab = 'courses';
+      show(() => renderCourses(t('deleted', c.name)));
+    } catch (error) {
+      note.textContent = t('error', error.message);
+      yes.disabled = false;
+    }
+  } }, t('deleteYes'));
+  box.append(el('div', { class: 'card stack danger', style: 'margin:10px 0' },
+    el('b', {}, t('deleteConfirm', c.name)),
+    c.lectureCount ? el('div', {}, t('deleteLectures', c.lectureCount)) : null,
+    el('div', { class: 'small muted' }, t('deleteStudy')),
+    el('div', { class: 'row' }, yes, el('button', { class: 'btn', onclick: () => { box.textContent = ''; } }, t('cancel'))),
+    note,
+  ));
 }
 
 // ——— Курс ———
@@ -335,10 +432,18 @@ function courseRender(name) {
 async function renderCourse(name) {
   const c = await call('course', name);
   const sub = [c.hebrew, c.code, c.schedule, c.credits ? `${c.credits} נ״ז` : '', c.lecturer].filter(Boolean).join(' · ');
+  const box = el('div');
   view.append(
     el('button', { class: 'link', onclick: () => show(tab === 'courses' ? renderCourses : renderToday) }, t('back')),
-    el('h1', {}, c.name),
+    el('div', { class: 'row spread', style: 'flex-wrap:wrap' },
+      el('h1', {}, c.name),
+      el('div', { class: 'row' },
+        el('button', { class: 'btn small', onclick: () => editCourseForm(box, c) }, t('edit')),
+        el('button', { class: 'btn small', onclick: () => deleteCourseBox(box, c) }, t('deleteCourse')),
+      ),
+    ),
     el('div', { class: 'muted', dir: 'auto' }, sub),
+    box,
     courseSettings(c),
     el('div', { class: 'row', style: 'margin-bottom:14px;flex-wrap:wrap' },
       el('button', { class: 'btn primary', onclick: () => show(() => renderQuiz({ course: name })) }, t('courseQuiz')),

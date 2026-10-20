@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, utimes, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -23,7 +23,7 @@ vi.mock('../jarvis/lecture/summarize', () => {
   return { createClaudeSummarizer: модель, createFinalSummarizer: модель };
 });
 
-const { finishLecture, lectureActive, lectureFromFile, lectureInfo, lectureState, onLectureState, startLecture } = await import('./lectureMode');
+const { feedLecture, finishLecture, lectureActive, lectureFromFile, lectureInfo, lectureState, onLectureState, startLecture } = await import('./lectureMode');
 const { parseFrontmatter } = await import('../jarvis/lecture/courses');
 const { encodeWav16 } = await import('../jarvis/voice/wav');
 const { readWavParts } = await import('../jarvis/lecture/mediaSlices');
@@ -163,5 +163,99 @@ describe('конспект по файлу', () => {
     });
     expect(ответ).toMatch(/не звук и не видео/u);
     expect(раскрыто).toBe(false);
+  });
+});
+
+/** Сервер распознавания понарошку, который запоминает, на каком языке его просили слушать. */
+async function слухСЯзыком(): Promise<{ адрес: string; языки: string[]; закрыть(): Promise<void> }> {
+  const языки: string[] = [];
+  const сервер = createServer((req, res) => {
+    if (req.method !== 'POST') {
+      res.end('ok');
+      return;
+    }
+    const части: Buffer[] = [];
+    req.on('data', (c: Buffer) => части.push(c));
+    req.on('end', () => {
+      const язык = /name="language"\r\n\r\n([a-z]+)/u.exec(Buffer.concat(части).toString('latin1'))?.[1];
+      языки.push(язык ?? '—');
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ text: ' today we talk about Hamlet', segments: [{ start: 0, end: 5, avg_logprob: -0.05 }] }));
+    });
+  });
+  await new Promise<void>((r) => сервер.listen(0, '127.0.0.1', () => r()));
+  const { port } = сервер.address() as AddressInfo;
+  return { адрес: `http://127.0.0.1:${port}`, языки, закрыть: () => new Promise((r) => сервер.close(() => r())) };
+}
+
+describe('язык курса', () => {
+  /** Курс со своими языками на странице — как его сохраняет окно «Учёба». */
+  async function курсНаАнглийском(root: string, ещё = ''): Promise<string> {
+    const папкаКурса = path.join(root, 'English Literature');
+    await mkdir(папкаКурса, { recursive: true });
+    await writeFile(path.join(папкаКурса, 'English Literature.md'), `---\nкурс: 'English Literature'\nязык: en\nконспект: en\n${ещё}---\n\n# English Literature\n`, 'utf8');
+    return папкаКурса;
+  }
+
+  it('курс назван — слушает и пишет на языке курса; не известен — на языках настроек', async () => {
+    папка.путь = await mkdtemp(path.join(tmpdir(), 'jarvis-lecture-lang-'));
+    const слух = await слухСЯзыком();
+    // Настройки владельца: лекции на иврите, конспект по-русски.
+    const options = { home: папка.путь, outputDir: папка.путь, lectureLanguage: 'he', notesLanguage: 'ru' as const, mainEndpoint: () => слух.адрес };
+    try {
+      const курс = await курсНаАнглийском(папка.путь);
+      expect(await startLecture('English Literature', options)).toMatch(/English Literature/u);
+      feedLecture(речь(6), 16_000);
+      await finishLecture();
+      expect(слух.языки).toEqual(['en']);
+      const файлы = await readdir(курс);
+      const заметка = файлы.find((f) => f.endsWith('.md') && !f.startsWith('English') && !f.includes(' — transcript'));
+      expect(заметка).toBeDefined();
+      const текст = await readFile(path.join(курс, заметка as string), 'utf8');
+      // Конспект — на языке конспекта курса: английские заголовки и свойства.
+      expect(текст).toMatch(/^## Notes$/mu);
+      expect(текст).toMatch(/^course: /mu);
+      expect(файлы.some((f) => f.endsWith(' — transcript.md'))).toBe(true);
+      // Страница курса — одним списком, хоть и с английскими пометками.
+      expect(await readFile(path.join(курс, 'English Literature.md'), 'utf8')).toContain('%% lecture list kept by Jarvis %%');
+
+      // Курс не назван и расписания нет — иврит и русский конспект из настроек.
+      слух.языки.length = 0;
+      await startLecture(undefined, options);
+      feedLecture(речь(6), 16_000);
+      await finishLecture();
+      expect(слух.языки).toEqual(['he']);
+    } finally {
+      await слух.закрыть();
+    }
+  });
+
+  it('«Из файла…»: курс по расписанию на время записи — расшифровка на его языке', async () => {
+    папка.путь = await mkdtemp(path.join(tmpdir(), 'jarvis-lecture-lang-file-'));
+    const слух = await слухСЯзыком();
+    const options = {
+      home: папка.путь,
+      outputDir: папка.путь,
+      lectureLanguage: 'he',
+      notesLanguage: 'ru' as const,
+      mainEndpoint: () => слух.адрес,
+      decode: (file: string, onPart: (samples: Float32Array, rate: number) => void) => readWavParts(file, onPart, 10).then(() => undefined),
+      trash: async () => undefined,
+    };
+    try {
+      const курс = await курсНаАнглийском(папка.путь, "расписание: 'пн 10:00-13:00'\n");
+      const запись = path.join(папка.путь, 'Запись.wav');
+      await writeFile(запись, encodeWav16(речь(40), 16_000));
+      // Телефон кончил писать в понедельник 19.10.2026 в 11:00 — пара курса.
+      const конец = new Date(2026, 9, 19, 11, 0);
+      await utimes(запись, конец, конец);
+      expect(await lectureFromFile(запись, options)).toMatch(/English Literature/u);
+      expect(new Set(слух.языки)).toEqual(new Set(['en']));
+      const заметки = (await readdir(курс)).filter((f) => f.endsWith('.md') && !f.startsWith('English') && !f.includes(' — transcript'));
+      expect(заметки).toHaveLength(1);
+      expect(await readFile(path.join(курс, заметки[0] as string), 'utf8')).toMatch(/^## Notes$/mu);
+    } finally {
+      await слух.закрыть();
+    }
   });
 });

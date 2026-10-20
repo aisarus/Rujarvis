@@ -9,16 +9,19 @@
 
 import path from 'node:path';
 
-import { app } from 'electron';
+import { app, shell } from 'electron';
 
+import { lectureLanguagesFor, settingsLanguages } from '../jarvis/lecture/courses';
 import { lectureFolder } from '../jarvis/lecture/vault';
 import { createClaudeSummarizer } from '../jarvis/lecture/summarize';
+import { tr } from '../jarvis/locale/language';
 import type { JarvisPaths } from '../jarvis/setup/paths';
 import { jarvisOutputDir } from '../jarvis/setup/paths';
 import type { AppSettings } from '../jarvis/setup/settings';
 import { prepareLecture } from '../jarvis/study/prepare';
 import { StudyService, studyRoot } from '../jarvis/study/service';
 import { StudyStore } from '../jarvis/study/store';
+import { lectureState } from './lectureMode';
 import { openStudyWindow, sendStudyUpdate } from './studyWindow';
 
 interface Настройка {
@@ -29,7 +32,8 @@ interface Настройка {
 let настройка: Настройка | null = null;
 let служба: StudyService | null = null;
 let очередь: Promise<void> = Promise.resolve();
-const готовятся = new Set<string>();
+/** Лекция → её заметка: что в очереди заготовки и к какому курсу относится. */
+const готовятся = new Map<string, string>();
 
 export function configureStudy(options: Настройка): void {
   настройка = options;
@@ -52,19 +56,38 @@ function хранилище(): StudyStore {
 export function studyService(): StudyService {
   if (!настройка) throw new Error('учёба не настроена');
   if (!служба) {
+    const { settings } = настройка;
     служба = new StudyService({
       store: хранилище(),
       vaultRoot: папкаЛекций,
       summarize: createClaudeSummarizer(),
-      notes: настройка.settings().language,
+      notes: settings().language,
+      languages: () => settingsLanguages(settings()),
+      trash: (file) => shell.trashItem(file),
+      busy: курсЗанят,
     });
   }
   return служба;
 }
 
+/**
+ * Курс сейчас не переименовать и не удалить: конспект пишет в папку курса
+ * (или решит курс только в конце), заготовка читает его лекции и кладёт банк
+ * под его именем.
+ */
+function курсЗанят(course: string): string | null {
+  if (lectureState() !== 'off') {
+    return tr('Сейчас идёт конспект — курсы можно менять, когда он закончится.', 'Lecture notes are in progress. Courses can be changed once they finish.');
+  }
+  if ([...готовятся.values()].some((заметка) => path.basename(path.dirname(заметка)) === course)) {
+    return tr(`Готовлю вопросы к лекциям курса «${course}» — подождите, пока закончу.`, `Preparing questions for "${course}". Wait until it finishes.`);
+  }
+  return null;
+}
+
 /** Что сейчас заготавливается — окно показывает «готовлю вопросы…». */
 export function preparingLectures(): string[] {
-  return [...готовятся];
+  return [...готовятся.keys()];
 }
 
 /** Заготовить учёбу по лекции — в очередь, по одной. */
@@ -72,16 +95,18 @@ export function prepareStudyFor(notesFile: string): void {
   if (!настройка) return;
   const лекция = path.basename(notesFile, '.md');
   if (готовятся.has(лекция)) return;
-  готовятся.add(лекция);
+  готовятся.set(лекция, notesFile);
   sendStudyUpdate();
   const s = настройка.settings();
   очередь = очередь.then(async () => {
     const t0 = Date.now();
     try {
+      // Вопросы — на языке лекции курса, разбор — на языке его конспекта.
+      const языки = lectureLanguagesFor(notesFile, settingsLanguages(s));
       const итог = await prepareLecture(notesFile, хранилище(), {
         summarize: createClaudeSummarizer(),
-        lectureLanguage: s.lectureLanguage || s.language,
-        notes: s.language,
+        lectureLanguage: языки.lecture,
+        notes: языки.notes,
         log: (строка) => console.log(`[jarvis:study] ${строка}`),
       });
       console.log(
