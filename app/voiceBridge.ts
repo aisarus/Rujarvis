@@ -103,6 +103,8 @@ import {
 } from './lectureMode';
 import { createFileDecoder } from './lectureFileDecode';
 import { prepareStudyFor, setStudyHearing, showStudy } from './study';
+import { enqueueDocument } from './documents';
+import { DOCUMENT_EXTENSIONS, isDocument } from '../jarvis/documents/pipeline';
 import { lectureHeardForJarvis } from '../jarvis/lecture/voiceGate';
 import {
   createGpuTranscriber,
@@ -531,17 +533,31 @@ function настройкиЛекции(): LectureStartOptions {
  */
 const раскрытьФайл = createFileDecoder(() => окноЗвука);
 
-/** Конспект по файлу; сообщает, как вышло. Файл не назван — окно выбора. */
+/**
+ * Конспект или разбор по файлу; сообщает, как вышло. Файл не назван — окно
+ * выбора. Звук и видео — конспект лекции, документ (PDF, Word, PowerPoint,
+ * картинка, текст) — конвейер документов: «Из файла…» на плашке берёт и то,
+ * и другое.
+ */
 async function конспектПоФайлу(file: string | null, сообщить: (текст: string) => Promise<void> | void): Promise<void> {
   let путь = file;
   if (!путь) {
     const выбор = await dialog.showOpenDialog({
-      title: tr('Запись лекции', 'Lecture recording'),
+      title: tr('Запись лекции или учебный документ', 'Lecture recording or study document'),
       properties: ['openFile'],
-      filters: [{ name: tr('Звук и видео', 'Audio and video'), extensions: LECTURE_FILE_EXTENSIONS }],
+      filters: [
+        { name: tr('Записи и документы', 'Recordings and documents'), extensions: [...LECTURE_FILE_EXTENSIONS, ...DOCUMENT_EXTENSIONS] },
+        { name: tr('Документы', 'Documents'), extensions: DOCUMENT_EXTENSIONS },
+        { name: tr('Звук и видео', 'Audio and video'), extensions: LECTURE_FILE_EXTENSIONS },
+      ],
     });
     путь = выбор.canceled ? null : (выбор.filePaths[0] ?? null);
     if (!путь) return;
+  }
+  if (isDocument(путь)) {
+    console.log(`[jarvis:docs] документ: ${path.basename(путь)}`);
+    await сообщить(enqueueDocument(путь, документы(сообщить)));
+    return;
   }
   console.log(`[jarvis:lecture] конспект по файлу: ${path.basename(путь)}`);
   await сообщить(tr(`Беру ${path.basename(путь)}. Когда будет готово — скажу.`, `Taking ${path.basename(путь)}. I will tell you when it is ready.`));
@@ -553,14 +569,26 @@ async function конспектПоФайлу(file: string | null, сообщи�
   await сообщить(итог);
 }
 
-/** Самая свежая запись в «Загрузках» за сутки — для «конспект по последней записи». */
-function последняяЗапись(): string | null {
+/** Куда конвейер документов кладёт итог и как о нём сообщает. */
+function документы(сообщить: (текст: string) => Promise<void> | void) {
+  return {
+    outputDir: () => настройкиЛекции().outputDir,
+    notes: () => (settings().language === 'en' ? ('en' as const) : ('ru' as const)),
+    say: (текст: string) => void сообщить(текст),
+  };
+}
+
+/**
+ * Самый свежий файл нужного вида в «Загрузках» за сутки — для «конспект по
+ * последней записи» и «разбери последний документ».
+ */
+function последняяЗапись(расширения: readonly string[] = LECTURE_FILE_EXTENSIONS): string | null {
   const папка = app.getPath('downloads');
   const сутки = Date.now() - 24 * 60 * 60 * 1000;
   let лучший: { путь: string; когда: number } | null = null;
   try {
     for (const имя of readdirSync(папка)) {
-      if (!LECTURE_FILE_EXTENSIONS.includes(path.extname(имя).slice(1).toLowerCase())) continue;
+      if (!расширения.includes(path.extname(имя).slice(1).toLowerCase())) continue;
       const путь = path.join(папка, имя);
       const когда = statSync(путь).mtimeMs;
       if (когда >= сутки && (!лучший || когда > лучший.когда)) лучший = { путь, когда };
@@ -725,6 +753,15 @@ export async function runDirectCommand(
           console.error(`[jarvis:lecture] конспект по файлу не вышел: ${error instanceof Error ? error.message : String(error)}`);
           return session.speak(tr('Конспект по файлу не вышел — причина в журнале.', 'Notes from the file failed — see the log.'));
         });
+        break;
+      }
+      case 'documentFile': {
+        const файл = последняяЗапись(DOCUMENT_EXTENSIONS);
+        if (!файл) {
+          await session.speak(tr('В «Загрузках» нет документов за сутки.', 'No documents in Downloads from the last day.'));
+          break;
+        }
+        await session.speak(enqueueDocument(файл, документы((текст) => session.speak(текст))));
         break;
       }
       case 'volume': {
@@ -1090,6 +1127,8 @@ function describeDirect(command: DirectCommand): string {
       return command.mode === 'code' ? 'Claude: Code' : 'Claude: Chat';
     case 'lectureFile':
       return 'конспект по последней записи';
+    case 'documentFile':
+      return 'разбор последнего документа';
     case 'volume':
       return `громкость ${command.level}%`;
     case 'openSite':

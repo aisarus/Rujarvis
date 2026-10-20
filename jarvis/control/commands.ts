@@ -43,6 +43,8 @@ export type DirectCommand =
   | { kind: 'lectureCourse'; course: string }
   /** Конспект по самой свежей записи из «Загрузок». */
   | { kind: 'lectureFile' }
+  /** Разобрать самый свежий учебный документ из «Загрузок» — конвейер документов. */
+  | { kind: 'documentFile' }
   /** Окно учёбы: квизы, карточки, экзамен. */
   | { kind: 'study' }
   /** Приложение Claude: написать в открытую сессию и отправить. */
@@ -742,6 +744,13 @@ const ПРАВИЛА: Array<Rule<DirectCommand>> = [
   { pattern: 'file [the] (notes|lecture) under {course}', make: (s) => ({ kind: 'lectureCourse', course: s.course as string }) },
   { pattern: '[сделай] конспект (по|из) (последней|свежей|последнего|свежего) (записи|файла)', make: () => ({ kind: 'lectureFile' }) },
   { pattern: '[take] [lecture] notes from [the] (last|latest) (recording|file)', make: () => ({ kind: 'lectureFile' }) },
+  // РАЗБОР ДОКУМЕНТА (конвейер, 20.10.2026): задание, силлабус, статья,
+  // слайды — самый свежий из «Загрузок». Глагол свой, «разбери»: «конспект по
+  // последнему файлу» остаётся за записью лекции.
+  { pattern: '(разбери|разбирай) (последний|свежий|новый) (документ|файл)', make: () => ({ kind: 'documentFile' }) },
+  { pattern: '(разбери|разбирай) документ', make: () => ({ kind: 'documentFile' }) },
+  { pattern: 'go through [the] (last|latest|new) (document|file)', make: () => ({ kind: 'documentFile' }) },
+  { pattern: 'break down [the] (last|latest|new) (document|file)', make: () => ({ kind: 'documentFile' }) },
   // ОКНО УЧЁБЫ.
   // Многословных вариантов в скобках грамматика не знает — каждый своей строкой.
   { pattern: '(открой|покажи) (учёбу|учебу)', make: () => ({ kind: 'study' }) },
