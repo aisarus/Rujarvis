@@ -107,6 +107,7 @@ async function main(): Promise<void> {
     summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`  ${строка}`) }),
     lectureLanguage,
     notesLanguage,
+    notesStyle: settings.notesStyle,
     courses: coursesForModel(root),
     log: (строка) => console.log(`  ${строка}`),
   });

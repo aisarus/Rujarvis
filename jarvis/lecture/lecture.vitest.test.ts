@@ -72,7 +72,7 @@ describe('конспект лекции на ходу', () => {
         transcribe: async (samples) => `מילה `.repeat(samples.length / 8000).trim(),
         summarize: async (prompt) => {
           просьбы.push(prompt);
-          return prompt.includes('## Кратко')
+          return prompt.includes('[!abstract]')
             ? 'Предмет: Математический анализ\nТема: Пределы функций\n\n## Кратко\nЛекция о пределах.'
             : '### Пределы\n- предел (גבול) — к чему стремится функция';
         },
@@ -109,7 +109,7 @@ describe('конспект лекции на ходу', () => {
     expect(разделы).toHaveLength(2);
     // Названия прошлых разделов — без времени: модели оно ни к чему.
     expect(разделы[1]).toContain('Уже написанные разделы: Пределы.');
-    expect(просьбы.find((p) => p.includes('## Кратко'))).toContain('Курсы студента: Математический анализ; Физика.');
+    expect(просьбы.find((p) => p.includes('[!abstract]'))).toContain('Курсы студента: Математический анализ; Физика.');
 
     const wav = await readFile(итог.audioFile);
     expect(wav.toString('ascii', 0, 4)).toBe('RIFF');
@@ -208,7 +208,7 @@ describe('итог лекции — сильнейшей моделью', () => 
     const итог = await сессия.finish(['Математический анализ']);
     expect(итогом).toHaveLength(1);
     expect(разделами.length).toBeGreaterThan(0);
-    expect(разделами.some((p) => p.includes('## Кратко'))).toBe(false);
+    expect(разделами.some((p) => p.includes('[!abstract]'))).toBe(false);
     expect(итог.topic).toBe('Пределы');
   });
 
@@ -261,7 +261,7 @@ describe('языки лекции и конспекта', () => {
     const чужой = sectionPrompt('кусок', 'Физика', [], { lecture: 'he', notes: 'ru' });
     expect(чужой).toMatch(/лекцию на иврите/u);
     expect(чужой).toMatch(/в скобках на иврите/u);
-    expect(finalPrompt('текст', '', { lecture: 'he', notes: 'ru' })).toMatch(/термин лектора на иврите/u);
+    expect(finalPrompt('текст', '', { lecture: 'he', notes: 'ru' })).toMatch(/На иврите/u);
 
     // Языка нет в списке названий — код как есть, а не пустое место.
     expect(sectionPrompt('кусок', '', [], { lecture: 'pt', notes: 'ru' })).toMatch(/на языке «pt»/u);
@@ -272,7 +272,7 @@ describe('языки лекции и конспекта', () => {
     expect(свой).toMatch(/Write ONE section of notes in English/u);
     expect(свой).not.toMatch(/parentheses/u);
     expect(sectionPrompt('chunk', '', [], { lecture: 'ru', notes: 'en' })).toMatch(/lecture in Russian[\s\S]*in Russian in parentheses/u);
-    expect(finalPrompt('text', '', { lecture: 'en', notes: 'en' })).toMatch(/## Summary[\s\S]*## Concepts[\s\S]*## Exam questions/u);
+    expect(finalPrompt('text', '', { lecture: 'en', notes: 'en' })).toMatch(/\[!abstract\] Summary[\s\S]*## Concepts[\s\S]*## Exam questions/u);
     expect(sectionFromReply('SKIP', 1, 'en')).toBeNull();
     expect(sectionFromReply('- point', 2, 'en')).toBe('### Section 2\n- point');
   });
@@ -284,7 +284,7 @@ describe('языки лекции и конспекта', () => {
       '',
       {
         transcribe: async () => 'today we talk about limits of functions',
-        summarize: async (prompt) => (prompt.includes('## Summary') ? '## Summary\nLimits.' : '### Limits\n- a limit is where a function tends'),
+        summarize: async (prompt) => (prompt.includes('[!abstract]') ? '## Summary\nLimits.' : '### Limits\n- a limit is where a function tends'),
         lectureLanguage: 'en',
         notesLanguage: 'en',
         sectionEveryMs: 0,
@@ -339,7 +339,7 @@ describe('Джарвиса закрыли посреди лекции', () => {
       notesFile: заметка,
       summarize: async (prompt) => {
         просьбы.push(prompt);
-        return prompt.includes('## Кратко') ? '## Кратко\nО лекции.' : `### Тема ${просьбы.length}\n- пункт`;
+        return prompt.includes('[!abstract]') ? '## Кратко\nО лекции.' : `### Тема ${просьбы.length}\n- пункт`;
       },
       lectureLanguage: 'he',
       notesLanguage: 'ru',
@@ -368,7 +368,7 @@ describe('Джарвиса закрыли посреди лекции', () => {
       notesFile: заметка,
       summarize: async (prompt) => {
         просьбы.push(prompt);
-        return prompt.includes('## Кратко') ? '## Кратко\nО лекции.' : '### Остаток\n- пункт';
+        return prompt.includes('[!abstract]') ? '## Кратко\nО лекции.' : '### Остаток\n- пункт';
       },
       lectureLanguage: 'he',
       notesLanguage: 'ru',

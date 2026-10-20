@@ -20,6 +20,8 @@ import path from 'node:path';
 
 import { commandCatalogue, type CatalogueGroup } from '../jarvis/control/catalogue';
 import { currentLanguage, tr } from '../jarvis/locale/language';
+import type { Look } from '../jarvis/setup/settings';
+import { currentLook, looksCssUrl, windowBackground } from './look';
 
 export interface HelpOverlay {
   show(): void;
@@ -31,7 +33,9 @@ export interface HelpOverlay {
 export function createHelpOverlay(): HelpOverlay {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'jarvis-help-'));
   const page = path.join(dir, 'help.html');
-  writeFileSync(page, buildHelpHtml(commandCatalogue()), 'utf8');
+  // Вид страницы — тот, что выбран сейчас; сменили — страница пересобирается при показе.
+  let вид = currentLook();
+  writeFileSync(page, buildHelpHtml(commandCatalogue(), вид), 'utf8');
 
   let window: BrowserWindow | null = null;
   let shown = false;
@@ -62,7 +66,7 @@ export function createHelpOverlay(): HelpOverlay {
       x: work.x + Math.round((work.width - width) / 2),
       y: work.y + Math.round((work.height - height) / 2),
       frame: false,
-      backgroundColor: '#12141a',
+      backgroundColor: windowBackground(),
       resizable: false,
       skipTaskbar: true,
       // Не забирает фокус: человек говорит, а не печатает, и отобранный
@@ -79,6 +83,11 @@ export function createHelpOverlay(): HelpOverlay {
 
   return {
     show() {
+      if (вид !== currentLook()) {
+        вид = currentLook();
+        writeFileSync(page, buildHelpHtml(commandCatalogue(), вид), 'utf8');
+        if (window && !window.isDestroyed()) void window.loadFile(page);
+      }
       if (!window || window.isDestroyed()) window = open();
       window.showInactive();
       shown = true;
@@ -134,7 +143,7 @@ export function выбратьКолонки(проба: (n: number) => Проб
   return выбрано;
 }
 
-export function buildHelpHtml(groups: readonly CatalogueGroup[]): string {
+export function buildHelpHtml(groups: readonly CatalogueGroup[], look: Look = currentLook()): string {
   const sections = groups
     .map((group) => {
       const rows = group.items
@@ -143,43 +152,41 @@ export function buildHelpHtml(groups: readonly CatalogueGroup[]): string {
             `<tr><td class="say">«${escapeHtml(item.say)}»</td><td class="does">${escapeHtml(item.does)}</td></tr>`,
         )
         .join('');
-      return `<section><h2>${escapeHtml(group.title)}</h2><table>${rows}</table></section>`;
+      return `<section><h2><span>${escapeHtml(group.title)}</span></h2><table>${rows}</table></section>`;
     })
     .join('');
 
   return `<!doctype html>
-<html lang="${currentLanguage()}">
+<html lang="${currentLanguage()}" data-look="${look}">
 <head>
 <meta charset="utf-8" />
 <title>${tr('Что умеет Джарвис', 'What Jarvis can do')}</title>
+<link rel="stylesheet" href="${looksCssUrl()}">
 <style>
-  :root { color-scheme: dark; }
+  /* Цвета и шрифты — вида, выбранного в настройках (looks.css). */
   html, body {
     margin: 0;
     padding: 0;
     height: 100%;
-    background: #12141a;
-    color: #e8eaf0;
-    font-family: "Segoe UI", system-ui, sans-serif;
+    background: var(--bg, #0f1530);
+    color: var(--text, #eef1ff);
+    font-family: var(--font-ui, "Segoe UI", system-ui, sans-serif);
     user-select: none;
   }
   body { overflow-y: auto; padding: 22px 26px 30px; box-sizing: border-box; }
-  h1 { margin: 0 0 4px; font-size: 21px; font-weight: 700; }
-  .hint { margin: 0 0 18px; font-size: 13px; color: #8b93a7; }
+  h1 { margin: 0 0 4px; font-size: 22px; font-weight: 700; }
+  .hint { margin: 0 0 18px; font-size: 13px; color: var(--muted, #8f99c7); }
   .columns { column-count: 3; column-gap: 26px; }
   section { break-inside: avoid; margin-bottom: 18px; }
-  h2 {
-    margin: 0 0 6px;
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: #6f9df2;
-  }
+  h2 { margin: 0 0 6px; font-size: 14px; font-weight: 600; color: var(--accent, #8e9cff); }
   table { width: 100%; border-collapse: collapse; }
   td { padding: 2px 0; vertical-align: top; font-size: 13px; line-height: 1.45; }
-  .say { color: #ffffff; white-space: nowrap; padding-right: 10px; }
-  .does { color: #9aa3b8; }
+  .say { color: var(--text, #eef1ff); font-weight: 500; white-space: nowrap; padding-right: 10px; }
+  .does { color: var(--muted, #8f99c7); }
+  [data-look="tetrad"] h1 { font: 700 34px/1.05 var(--font-hand); }
+  [data-look="tetrad"] h2 { font: 700 21px/1.1 var(--font-hand); }
+  [data-look="marker"] h2 { color: var(--text); }
+  [data-look="marker"] h2 span { background: color-mix(in srgb, var(--m-yellow) var(--mk), transparent); border-radius: 3px 8px 4px 9px / 8px 4px 9px 4px; padding: 0 .22em; color: var(--mk-ink); }
 </style>
 </head>
 <body>

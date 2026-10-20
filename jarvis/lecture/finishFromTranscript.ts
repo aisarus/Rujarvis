@@ -13,8 +13,9 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { fromSummary, hasSummary, tidyNoteMarkdown, type NotesStyle } from '../notes/style';
 import { splitCourseAndTopic } from './courses';
-import { finalPrompt, NOTES_WORDS, sectionFromReply, sectionPrompt, sectionTitle, withRange, type NotesLanguage } from './session';
+import { finalPrompt, NOTES_WORDS, sectionFromReply, sectionPrompt, sectionTitle, withRange, метка, type NotesLanguage } from './session';
 
 export interface TranscriptChunk {
   /** Секунды от начала лекции. */
@@ -43,29 +44,44 @@ function слов(текст: string): number {
 
 export interface TranscriptSection {
   text: string;
+  /** Тот же текст по кускам, с минутой каждого — для модели: по ней она подписывает слова лектора. */
+  stamped: string;
   /** Секунды от начала лекции: первый кусок раздела и начало следующего. */
   from: number;
   to: number;
 }
 
-/** Разделы: не чаще раза в `everySec` и не меньше `minWords` слов; остаток — последним. */
+/** Кусок с его минутой: «[12:40] текст». */
+function сМеткой(кусок: TranscriptChunk): string {
+  return `[${метка(кусок.at * 1000)}] ${кусок.text}`;
+}
+
+/**
+ * Разделы: не чаще раза в `everySec` и не меньше `minWords` слов; остаток — последним.
+ * Слова считаются без меток: режется ровно так же, как в живой сессии.
+ */
 export function groupSections(куски: readonly TranscriptChunk[], everySec = 300, minWords = 120): TranscriptSection[] {
   const разделы: TranscriptSection[] = [];
-  let копится: string[] = [];
+  let копится: TranscriptChunk[] = [];
   let начало = куски[0]?.at ?? 0;
   let от = начало;
+  const раздел = (до: number): TranscriptSection => ({
+    text: копится.map((к) => к.text).join(' '),
+    stamped: копится.map(сМеткой).join('\n'),
+    from: от,
+    to: до,
+  });
   for (const [i, кусок] of куски.entries()) {
-    копится.push(кусок.text);
-    const текст = копится.join(' ');
-    if (кусок.at - начало >= everySec && слов(текст) >= minWords) {
+    копится.push(кусок);
+    if (кусок.at - начало >= everySec && слов(копится.map((к) => к.text).join(' ')) >= minWords) {
       const до = куски[i + 1]?.at ?? кусок.at;
-      разделы.push({ text: текст, from: от, to: до });
+      разделы.push(раздел(до));
       копится = [];
       начало = кусок.at;
       от = до;
     }
   }
-  if (копится.join(' ').trim()) разделы.push({ text: копится.join(' '), from: от, to: куски[куски.length - 1]?.at ?? от });
+  if (копится.map((к) => к.text).join(' ').trim()) разделы.push(раздел(куски[куски.length - 1]?.at ?? от));
   return разделы;
 }
 
@@ -76,6 +92,8 @@ export interface FinishFromTranscriptOptions {
   summarizeFinal?(prompt: string): Promise<string>;
   lectureLanguage: string;
   notesLanguage: NotesLanguage;
+  /** Вид конспекта в Obsidian; нет — «Разбор». */
+  notesStyle?: NotesStyle;
   /** Курсы человека: модель выбирает из них, к какому относится лекция. */
   courses?: readonly string[];
   log?(line: string): void;
@@ -94,8 +112,7 @@ export interface FinishFromTranscriptResult {
 export async function finishFromTranscript(options: FinishFromTranscriptOptions): Promise<FinishFromTranscriptResult> {
   const с = NOTES_WORDS[options.notesLanguage];
   const заметка = await readFile(options.notesFile, 'utf8');
-  const заголовокИтога = options.notesLanguage === 'en' ? '## Summary' : '## Кратко';
-  if (заметка.includes(заголовокИтога)) return { sections: 0, summary: false, skipped: 'конспект уже дописан' };
+  if (hasSummary(заметка)) return { sections: 0, summary: false, skipped: 'конспект уже дописан' };
 
   const база = path.basename(options.notesFile, '.md');
   const расшифровкаФайл = path.join(path.dirname(options.notesFile), `${база} — ${с.transcriptFile}.md`);
@@ -105,7 +122,7 @@ export async function finishFromTranscript(options: FinishFromTranscriptOptions)
 
   const предмет = /^#\s+(.+)$/mu.exec(заметка)?.[1]?.trim() ?? '';
   const subject = предмет === с.lecture ? '' : предмет;
-  const языки = { lecture: options.lectureLanguage, notes: options.notesLanguage };
+  const языки = { lecture: options.lectureLanguage, notes: options.notesLanguage, style: options.notesStyle };
 
   // Разделы, написанные вживую, не повторяются: живая сессия режет по тому
   // же правилу, так что первые из них уже в заметке (ревью 29.09.2026 —
@@ -116,7 +133,7 @@ export async function finishFromTranscript(options: FinishFromTranscriptOptions)
     : [];
   const заголовки: string[] = [...живые];
   const разделы: string[] = [];
-  for (const [номер, { text: текст, from, to }] of groupSections(куски).entries()) {
+  for (const [номер, { stamped: текст, from, to }] of groupSections(куски).entries()) {
     if (номер < живые.length) continue;
     let раздел: string | null;
     try {
@@ -136,10 +153,10 @@ export async function finishFromTranscript(options: FinishFromTranscriptOptions)
   let topic: string | undefined;
   try {
     const ответ = splitCourseAndTopic(
-      await (options.summarizeFinal ?? options.summarize)(finalPrompt(куски.map((к) => к.text).join('\n'), subject, языки, options.courses ?? [])),
+      await (options.summarizeFinal ?? options.summarize)(finalPrompt(куски.map((к) => `[${метка(к.at * 1000)}] ${к.text}`).join('\n'), subject, языки, options.courses ?? [])),
     );
     ({ course, topic } = ответ);
-    итог = ответ.rest;
+    итог = ответ.rest ? tidyNoteMarkdown(fromSummary(ответ.rest)) : '';
   } catch (error) {
     options.log?.(`итог не собрался: ${error instanceof Error ? error.message : String(error)}`);
   }

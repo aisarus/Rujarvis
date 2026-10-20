@@ -1,0 +1,153 @@
+/*
+ * Оформление Rujarvis: три вида, у каждого светлая и тёмная тема.
+ *
+ * Вид — атрибут `data-look` на <html>: «tetrad» (тетрадь в клетку и синяя
+ * ручка), «marker» (белый лист и маркеры-выделители), «ring» (кольцо из
+ * значка, ночное синее). Тема — системная `prefers-color-scheme`: главный
+ * процесс ставит её через nativeTheme (как в системе, светлая, тёмная), и
+ * переключение доходит до всех окон сразу.
+ *
+ * Окна пишут свои правила только через эти переменные: так один экран не
+ * может разойтись с другим, а новый вид — это ещё один набор значений.
+ *
+ * Шрифты видов (Golos, Caveat, IBM Plex, Rubik) названы первыми в каждом
+ * наборе, но в проект ещё не положены: пока их нет, работает системный шрифт
+ * из того же набора. Положить — файлы в `fonts/` и `@import url("fonts/fonts.css")`
+ * первой строкой: приложение работает без интернета, ссылок на CDN здесь нет.
+ */
+
+:root { color-scheme: light dark; }
+
+/* ---------- Тетрадь ---------- */
+[data-look="tetrad"] {
+  --font-ui: "Golos Text", "Noto Sans Hebrew", "Segoe UI", system-ui, sans-serif;
+  --font-hand: "Caveat", "Segoe Print", "Comic Sans MS", cursive;
+  --radius: 4px; --radius-btn: 6px; --radius-input: 4px; --radius-pill: 6px;
+  --bg: #fbfcff; --grid: #e2e9f5; --margin: #f0a3a9;
+  --surface: #ffffff; --surface-2: #f1f4fa; --line: #d3dbea; --line-2: #b9c4da;
+  --text: #1b2756; --text-2: #47537f; --muted: #6f79a0;
+  --accent: #2b44c8; --accent-ink: #ffffff; --accent-soft: #e6eafb;
+  --ok: #17855a; --bad: #cf2f3d; --warn: #9a6210; --ok-soft: #e3f4ec; --bad-soft: #fbe6e8; --warn-soft: #fbf0dc;
+  --hue-1: #2b44c8; --hue-2: #17855a; --hue-3: #8a3fd1; --hue-4: #cf2f3d; --hue-5: #c27a12; --hue-6: #2f86a8;
+  --st-idle: #8c95b8; --st-listen: #1f9b65; --st-trans: #2a86d1; --st-think: #7a52d1; --st-chat: #b88a00; --st-work: #d06d17; --st-speak: #cd3a74;
+}
+@media (prefers-color-scheme: dark) {
+  [data-look="tetrad"] {
+    --bg: #121935; --grid: #1a2346; --margin: #6b2f44;
+    --surface: #18213f; --surface-2: #1f2a50; --line: #2a3560; --line-2: #3a4775;
+    --text: #e8ecf9; --text-2: #b9c1de; --muted: #8790b5;
+    --accent: #93a5ff; --accent-ink: #0e1430; --accent-soft: #232f5e;
+    --ok: #63d6a0; --bad: #ff7d88; --warn: #f2c063; --ok-soft: #173a36; --bad-soft: #3d2035; --warn-soft: #3a3220;
+    --hue-1: #93a5ff; --hue-2: #63d6a0; --hue-3: #c09bff; --hue-4: #ff7d88; --hue-5: #f2c063; --hue-6: #6cc4e6;
+    --st-idle: #6d7699; --st-listen: #63d6a0; --st-trans: #6cc4ff; --st-think: #b59bff; --st-chat: #f2d063; --st-work: #f2a35a; --st-speak: #ff8fb8;
+  }
+}
+
+/* ---------- Маркер ---------- */
+[data-look="marker"] {
+  --font-ui: "IBM Plex Sans", "IBM Plex Sans Hebrew", "Segoe UI", system-ui, sans-serif;
+  --font-hand: var(--font-ui);
+  --radius: 8px; --radius-btn: 6px; --radius-input: 6px; --radius-pill: 8px;
+  --m-yellow: #ffe45c; --m-green: #9feb98; --m-pink: #ffaecb; --m-blue: #9ed6ff; --m-orange: #ffc47e; --m-lilac: #d6c4ff;
+  --mk: 100%; --mk-ink: #1c1e22;
+  --bg: #ffffff; --surface: #ffffff; --surface-2: #f4f5f7; --line: #e3e5e9; --line-2: #cdd0d6;
+  --text: #1c1e22; --text-2: #40444c; --muted: #6a6f78;
+  --accent: #1c1e22; --accent-ink: #ffffff; --accent-soft: #f4f5f7;
+  --ok: #1d7a3a; --bad: #b8285b; --warn: #8a5a00; --ok-soft: #dff8dc; --bad-soft: #ffe6ef; --warn-soft: #fff6c7;
+  --hue-1: var(--m-yellow); --hue-2: var(--m-green); --hue-3: var(--m-blue); --hue-4: var(--m-orange); --hue-5: var(--m-lilac); --hue-6: var(--m-pink);
+  --st-idle: #9a9fa8; --st-listen: var(--m-green); --st-trans: var(--m-blue); --st-think: var(--m-lilac); --st-chat: var(--m-orange); --st-work: var(--m-yellow); --st-speak: var(--m-pink);
+}
+@media (prefers-color-scheme: dark) {
+  [data-look="marker"] {
+    --mk: 34%; --mk-ink: #eceef1;
+    --bg: #18191c; --surface: #18191c; --surface-2: #222429; --line: #2d3036; --line-2: #3b3f47;
+    --text: #eceef1; --text-2: #c9ccd2; --muted: #969ba4;
+    --accent: #ffe45c; --accent-ink: #18191c; --accent-soft: #2a2b22;
+    --ok: #9feb98; --bad: #ffaecb; --warn: #ffd76a; --ok-soft: #233a25; --bad-soft: #3e2731; --warn-soft: #3a3622;
+  }
+}
+
+/* ---------- Кольцо ---------- */
+[data-look="ring"] {
+  --font-ui: "Rubik", "Segoe UI", system-ui, sans-serif;
+  --font-hand: var(--font-ui);
+  --radius: 16px; --radius-btn: 99px; --radius-input: 10px; --radius-pill: 12px;
+  --bg: #f1f3fb; --surface: #ffffff; --surface-2: #e7eaf7; --line: #dadff0; --line-2: #c5cbe4;
+  --text: #151c3b; --text-2: #39426e; --muted: #646d96;
+  --accent: #4b5ce8; --accent-ink: #ffffff; --accent-soft: #e4e7fd;
+  --ok: #0c8f67; --bad: #d1325f; --warn: #a8650a; --ok-soft: #dcf5ec; --bad-soft: #fde4ec; --warn-soft: #fbefd9;
+  --hue-1: #4b5ce8; --hue-2: #0c8f67; --hue-3: #8a4fe0; --hue-4: #d1325f; --hue-5: #c77a12; --hue-6: #1e8fc4;
+  --st-idle: #9aa1c2; --st-listen: #12b886; --st-trans: #1c9ad6; --st-think: #6c7bf0; --st-chat: #d4a300; --st-work: #ee8a2a; --st-speak: #e8578a;
+}
+@media (prefers-color-scheme: dark) {
+  [data-look="ring"] {
+    --bg: #0f1530; --surface: #172042; --surface-2: #202b57; --line: #2b376b; --line-2: #3a4782;
+    --text: #eef1ff; --text-2: #c3caee; --muted: #8f99c7;
+    --accent: #8e9cff; --accent-ink: #0f1530; --accent-soft: #252f62;
+    --ok: #4fe0b0; --bad: #ff7a9c; --warn: #ffb454; --ok-soft: #173d45; --bad-soft: #3e2148; --warn-soft: #3b2f37;
+    --hue-1: #8e9cff; --hue-2: #4fe0b0; --hue-3: #c3a4ff; --hue-4: #ff7a9c; --hue-5: #ffb454; --hue-6: #5ec8ff;
+    --st-idle: #6f79a8; --st-listen: #4fe0b0; --st-trans: #5ec8ff; --st-think: #a8b2ff; --st-chat: #ffd966; --st-work: #ffa24c; --st-speak: #ff7fa8;
+  }
+}
+
+/* ---------- Общие детали ---------- */
+html, body { background: var(--bg); color: var(--text); font-family: var(--font-ui); }
+button, select, input, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.btn {
+  background: var(--surface); border: 1.5px solid var(--line-2); border-radius: var(--radius-btn);
+  padding: 6px 14px; cursor: pointer; white-space: nowrap; font-weight: 500;
+}
+.btn:hover { border-color: var(--text-2); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.small { padding: 3px 10px; font-size: 13px; }
+.btn.danger { background: var(--bad); color: var(--bg); border-color: var(--bad); font-weight: 600; }
+.btn:disabled { opacity: .45; cursor: default; filter: none; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.card.danger { border-color: var(--bad); }
+.pill { font-size: 12px; padding: 1px 9px; border-radius: 99px; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
+.pill.ok { color: var(--ok); background: var(--ok-soft); }
+.pill.warn { color: var(--warn); background: var(--warn-soft); }
+.pill.bad { color: var(--bad); background: var(--bad-soft); }
+.hint, .muted { color: var(--muted); }
+.error { color: var(--bad); }
+.link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font-weight: 500; }
+select, input[type=text], input[type=date], input[type=time], textarea {
+  background: var(--surface); border: 1.5px solid var(--line); border-radius: var(--radius-input); padding: 5px 9px;
+}
+select:focus, input:focus, textarea:focus { border-color: var(--accent); outline: none; }
+input[type=radio], input[type=checkbox] { accent-color: var(--accent); }
+::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+
+/* Знак Джарвиса: кольцо с точкой — в каждом виде своё. */
+.logo { display: inline-block; width: 20px; height: 20px; border-radius: 50%; flex: none; position: relative; border: 2.5px solid var(--accent); }
+.logo::after { content: ""; position: absolute; inset: 3.5px; border-radius: 50%; background: var(--bad); }
+[data-look="marker"] .logo { border-color: var(--text); }
+[data-look="marker"] .logo::after { background: var(--m-yellow); }
+[data-look="ring"] .logo { border: 0; background: conic-gradient(from 200deg, var(--st-listen), var(--st-think), var(--st-speak), var(--st-listen));
+  -webkit-mask: radial-gradient(circle, transparent 5.5px, #000 6px); mask: radial-gradient(circle, transparent 5.5px, #000 6px); }
+[data-look="ring"] .logo::after { display: none; }
+
+/* Тетрадь: лист в клетку с красными полями. */
+[data-look="tetrad"] .paper {
+  background:
+    linear-gradient(90deg, transparent var(--margin-at, 52px), var(--margin) var(--margin-at, 52px), var(--margin) calc(var(--margin-at, 52px) + 2px), transparent calc(var(--margin-at, 52px) + 2px)) no-repeat,
+    linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 20px 20px,
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 20px 20px,
+    var(--bg);
+  background-attachment: local;
+}
+[data-look="tetrad"] .hand { font-family: var(--font-hand); font-weight: 700; letter-spacing: 0; }
+
+/* Маркер: мазок выделителя — неровные концы, переносится по строкам. */
+[data-look="marker"] .swipe {
+  background: color-mix(in srgb, var(--m, var(--m-yellow)) var(--mk), transparent);
+  border-radius: 3px 8px 4px 9px / 8px 4px 9px 4px; padding: 0 .22em; margin: 0 -.1em;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone; color: var(--mk-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

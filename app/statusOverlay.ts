@@ -17,8 +17,10 @@ import path from 'node:path';
 
 import { app } from 'electron';
 
+import type { Look } from '../jarvis/setup/settings';
 import type { VoiceStatus } from '../jarvis/voice/session';
 import { currentLanguage, tr } from '../jarvis/locale/language';
+import { currentLook, LOOK_CHANNEL, looksCssUrl, windowBackground } from './look';
 
 export const STATUS_OVERLAY_CHANNEL = 'jarvis-overlay:status';
 
@@ -93,43 +95,63 @@ const размер = (крупно: boolean): Размер =>
   крупно ? { width: BIG_WIDTH, height: BIG_HEIGHT } : { width: WIDTH, height: HEIGHT };
 const MARGIN = 24;
 
-export function buildOverlayHtml(): string {
+export function buildOverlayHtml(look: Look = currentLook()): string {
   return `<!doctype html>
-<html lang="${currentLanguage()}">
+<html lang="${currentLanguage()}" data-look="${look}">
 <head><meta charset="utf-8"><title>Jarvis</title>
+<link rel="stylesheet" href="${looksCssUrl()}">
 <style>
-  /* Без height: 100% — ни у страницы, ни у плашки.
+  /* Цвета и шрифты — из looks.css, вид — атрибут data-look: его меняют в
+     настройках, и плашка перекрашивается сразу.
+
+     Без height: 100% — ни у страницы, ни у плашки.
      Растянутая на окно плашка меряется в собственную высоту окна, и подгонка
      высоты превращается в круг: окно выросло — плашка «стала выше» — окно
      выросло ещё. См. подогнатьВысоту ниже. */
   html, body {
-    margin: 0; padding: 0; background: #121216; overflow: hidden;
-    font-family: "Segoe UI", system-ui, sans-serif; user-select: none;
+    margin: 0; padding: 0; overflow: hidden; user-select: none;
+    /* Запасные значения — на случай, если таблица видов не прочиталась:
+       плашка — единственный признак «я слышу», и без стиля она обязана
+       остаться читаемой. */
+    background: var(--surface, #172042); color: var(--text, #eef1ff);
+    font-family: var(--font-ui, "Segoe UI", system-ui, sans-serif);
   }
+  /* Клетка тетради — и на плашке, но без красных полей. */
+  [data-look="tetrad"] body.paper { --margin-at: -10px; background-size: auto, 16px 16px, 16px 16px, auto; }
   #pill {
     display: flex; align-items: center; gap: 12px; min-height: 52px;
-    box-sizing: border-box; padding: 14px 18px;
+    box-sizing: border-box; padding: 13px 16px 12px;
     /* The whole pill is the drag handle — there is nothing to click inside
        it, so every pixel may as well move it. */
     -webkit-app-region: drag; cursor: move;
-    border: 1px solid rgba(255, 255, 255, 0.10);
-    color: #f4f4f5;
     transition: opacity 220ms ease;
   }
-  #pill.asleep { opacity: 0.45; }
-  #dot {
-    width: 12px; height: 12px; border-radius: 50%;
-    background: #52525b; flex: none;
-  }
-  #dot.listening { background: #22c55e; animation: pulse 1.2s ease-in-out infinite; }
-  #dot.transcribing { background: #38bdf8; animation: pulse 0.9s ease-in-out infinite; }
-  #dot.thinking { background: #a78bfa; animation: pulse 0.9s ease-in-out infinite; }
-  /* Разговор — жёлтый, как попросил человек. Работа — оранжевая: рядом, но
-     различимо, и по подписи тем более. */
-  #dot.chatting { background: #facc15; animation: pulse 1.4s ease-in-out infinite; }
-  #dot.working { background: #f97316; animation: pulse 1.6s ease-in-out infinite; }
-  #dot.speaking { background: #ec4899; animation: pulse 0.7s ease-in-out infinite; }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  #pill.asleep { opacity: 0.55; }
+  /* Знак состояния. Цвет — у вида свой, смысл один: зелёный слушает,
+     голубой распознаёт, сиреневый думает, жёлтый разговаривает, оранжевый
+     работает, розовый говорит. Разговор и работа рядом по цвету — различимы
+     ещё и подписью. */
+  /* Цвет состояния — у всей плашки (data-state): им же в виде «Маркер»
+     подчёркнута подпись. */
+  #pill { --c: var(--st-idle); }
+  #pill[data-state="listening"] { --c: var(--st-listen); }
+  #pill[data-state="transcribing"] { --c: var(--st-trans); }
+  #pill[data-state="thinking"] { --c: var(--st-think); }
+  #pill[data-state="chatting"] { --c: var(--st-chat); }
+  #pill[data-state="working"] { --c: var(--st-work); }
+  #pill[data-state="speaking"] { --c: var(--st-speak); }
+  #dot { width: 12px; height: 12px; border-radius: 50%; background: var(--c); flex: none;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--c) 22%, transparent); display: flex; align-items: center; justify-content: center; gap: 2px; }
+  #dot b { display: none; }
+  #dot.idle { box-shadow: none; }
+  #dot.listening { animation: pulse 1.2s ease-in-out infinite; }
+  #dot.transcribing { animation: pulse 0.9s ease-in-out infinite; }
+  #dot.thinking { animation: pulse 0.9s ease-in-out infinite; }
+  #dot.chatting { animation: pulse 1.4s ease-in-out infinite; }
+  #dot.working { animation: pulse 1.6s ease-in-out infinite; }
+  #dot.speaking { animation: pulse 0.7s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  @keyframes spin { to { transform: rotate(360deg); } }
   #text { min-width: 0; }
   /* Переносим, а не обрезаем.
      Человек сказал прямо: «вкладка что делаешь должна показывать полный, а не
@@ -138,69 +160,94 @@ export function buildOverlayHtml(): string {
      нельзя. Плашка теперь растёт под текст, а высоту окна подгоняет главный
      процесс. */
   #label {
-    font-size: 15px; font-weight: 600; line-height: 1.25;
+    font-size: 15px; font-weight: 600; line-height: 1.3;
     white-space: pre-wrap; overflow-wrap: anywhere;
   }
   #hint {
-    font-size: 12px; color: #a1a1aa; margin-top: 3px;
+    font-size: 12.5px; color: var(--muted); margin-top: 2px;
     white-space: pre-wrap; overflow-wrap: anywhere;
   }
   /* Крупный режим. Контраст тоже выше: серый по тёмному читается плохо. */
   body.big #pill { min-height: 88px; padding: 20px 26px; }
   body.big #label { font-size: 26px; line-height: 1.3; }
-  body.big #hint { font-size: 18px; color: #e4e4e7; margin-top: 6px; }
+  body.big #hint { font-size: 18px; color: var(--text-2); margin-top: 6px; }
   body.big #dot { width: 18px; height: 18px; }
   /* Кнопки под плашкой. В аудитории вслух не покомандуешь — живой прогон
      29.09.2026: «нужны физические кнопки под плашкой». Окно по-прежнему не
      берёт фокус, так что нажатие не сбивает то, что человек печатает;
-     кнопки вынуты из области перетаскивания, иначе нажатие тащило бы окно. */
+     кнопки вынуты из области перетаскивания, иначе нажатие тащило бы окно.
+     Ряд переносится, а не сжимает кнопку: «Закончить конспект» рядом с
+     длинным курсом разваливался на три строки (снимок 20.10.2026). */
   #bar {
-    display: flex; gap: 8px; padding: 0 12px 10px;
+    display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 11px;
     -webkit-app-region: drag;
   }
   #bar button {
     -webkit-app-region: no-drag; cursor: pointer;
-    font: 600 13px "Segoe UI", system-ui, sans-serif;
-    color: #f4f4f5; background: #27272a;
-    border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 8px;
-    padding: 6px 12px;
+    font: 500 12.5px var(--font-ui);
+    color: var(--text); background: var(--surface-2);
+    border: 1.5px solid var(--line); border-radius: var(--radius-btn);
+    padding: 4px 11px; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
   }
-  #bar button:hover { background: #3f3f46; }
-  #bar button.on { background: #7f1d1d; border-color: #ef4444; }
+  #bar button:hover { border-color: var(--line-2); }
+  #bar button.on { background: var(--bad); border-color: var(--bad); color: var(--surface); font-weight: 600; }
   #bar button:disabled { opacity: 0.55; cursor: default; }
-  #bar button.drop { border-color: #38bdf8; background: #0c4a6e; }
+  #bar button.drop { border-color: var(--accent); background: var(--accent-soft); }
   body.big #bar button { font-size: 20px; padding: 10px 18px; }
-  #sources { display: none; gap: 6px; padding: 0 12px 10px; }
+  #sources { display: none; flex-wrap: wrap; gap: 6px; padding: 0 12px 11px; }
   #sources.open { display: flex; }
-  #sources button {
-    cursor: pointer; font: 600 12px "Segoe UI", system-ui, sans-serif;
-    color: #e4e4e7; background: #1f2937; border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 8px; padding: 5px 10px;
+  #sources button, #courses button {
+    cursor: pointer; font: 500 12px var(--font-ui);
+    color: var(--text); background: var(--surface); border: 1.5px solid var(--line);
+    border-radius: var(--radius-btn); padding: 4px 10px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  #sources button:hover { background: #3f3f46; }
+  #sources button:hover, #courses button:hover { border-color: var(--line-2); }
   body.big #sources button { font-size: 18px; padding: 8px 14px; }
-  #courses { display: none; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; }
+  #courses { display: none; flex-wrap: wrap; gap: 6px; padding: 0 12px 11px; }
   #courses.open { display: flex; }
-  #courses button {
-    cursor: pointer; font: 600 12px "Segoe UI", system-ui, sans-serif;
-    color: #e4e4e7; background: #1f2937; border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 8px; padding: 5px 10px;
-  }
-  #courses button.chosen { border-color: #22c55e; }
+  #courses button.chosen { border-color: var(--accent); color: var(--accent); }
   body.big #courses button { font-size: 18px; padding: 8px 14px; }
   #info {
-    display: none; padding: 0 12px 10px; font-size: 12px; color: #fbbf24;
+    display: none; padding: 0 16px 11px; font-size: 12.5px; color: var(--warn);
     white-space: pre-wrap; overflow-wrap: anywhere;
   }
   #info.on { display: block; }
   body.big #info { font-size: 18px; }
+
+  /* ——— Тетрадь: подсказки от руки ——— */
+  [data-look="tetrad"] #hint { font: 600 17px/1.1 var(--font-hand); color: var(--text-2); margin-top: 3px; }
+  [data-look="tetrad"] #info { font: 600 17px/1.15 var(--font-hand); }
+  [data-look="tetrad"] body.big #hint { font-size: 26px; }
+
+  /* ——— Маркер: состояние — мазком маркера под подписью ——— */
+  [data-look="marker"] #dot { width: 10px; height: 10px; border-radius: 3px; box-shadow: none; }
+  [data-look="marker"] #pill:not([data-state="idle"]) #label span {
+    background: var(--c); color: #1c1e22; border-radius: 3px 8px 4px 9px / 8px 4px 9px 4px;
+    padding: 0 .22em; margin: 0 -.1em; -webkit-box-decoration-break: clone; box-decoration-break: clone;
+  }
+  [data-look="marker"] #label { line-height: 1.5; }
+  [data-look="marker"] #bar button.on { background: var(--m-pink); border-color: var(--m-pink); color: #1c1e22; }
+
+  /* ——— Кольцо: знак — кольцо из значка ——— */
+  [data-look="ring"] #dot { width: 18px; height: 18px; background: none; border: 3px solid var(--c); box-shadow: none; }
+  [data-look="ring"] #dot.idle { border-width: 2px; opacity: 0.8; }
+  [data-look="ring"] #dot.listening { box-shadow: 0 0 0 4px color-mix(in srgb, var(--c) 22%, transparent); }
+  [data-look="ring"] #dot.working, [data-look="ring"] #dot.thinking, [data-look="ring"] #dot.transcribing {
+    border-color: color-mix(in srgb, var(--c) 25%, transparent); border-top-color: var(--c); border-right-color: var(--c);
+    animation: spin 1.1s linear infinite;
+  }
+  [data-look="ring"] #dot.speaking b { display: block; width: 2.5px; height: 7px; border-radius: 2px; background: var(--c); }
+  [data-look="ring"] #dot.speaking b:nth-child(2) { height: 11px; }
+  [data-look="ring"] #label { font-weight: 500; }
+  [data-look="ring"] #bar button, [data-look="ring"] #sources button, [data-look="ring"] #courses button { border-color: transparent; }
+  [data-look="ring"] body.big #dot { width: 26px; height: 26px; }
 </style>
 </head>
-<body>
-<div id="pill" class="asleep">
-  <div id="dot"></div>
+<body class="paper">
+<div id="pill" class="asleep" data-state="idle">
+  <div id="dot" class="idle"><b></b><b></b><b></b></div>
   <div id="text">
-    <div id="label">${tr('Сплю', 'Asleep')}</div>
+    <div id="label"><span id="labelText">${tr('Сплю', 'Asleep')}</span></div>
     <div id="hint">${tr('Скажите «Джарвис»', 'Say "Jarvis"')}</div>
   </div>
 </div>
@@ -311,7 +358,7 @@ function showLectureInfo(li) {
   info.classList.toggle('on', Boolean(строка));
 }
 const dot = document.getElementById('dot');
-const label = document.getElementById('label');
+const label = document.getElementById('labelText');
 const hint = document.getElementById('hint');
 
 // Последняя услышанная фраза держится на виду несколько секунд.
@@ -350,12 +397,23 @@ function подогнатьВысоту() {
 // Кнопки под плашкой видны сразу, а не с первой услышанной фразы.
 подогнатьВысоту();
 
+// Вид меняют в настройках — плашка перекрашивается сразу, не дожидаясь фразы.
+function видПлашки(look) {
+  if (['tetrad', 'marker', 'ring'].includes(look) && document.documentElement.dataset.look !== look) {
+    document.documentElement.dataset.look = look;
+    подогнатьВысоту();
+  }
+}
+ipcRenderer.on(${JSON.stringify(LOOK_CHANNEL)}, (_event, look) => видПлашки(look));
+
 ipcRenderer.on(${JSON.stringify(STATUS_OVERLAY_CHANNEL)}, (_event, status) => {
   // Крупный режим переключается на ходу: его меняют голосом.
   document.body.classList.toggle('big', Boolean(status.big));
+  видПлашки(status.look);
   showLecture(status.lecture);
   showLectureInfo(status.lectureInfo);
   dot.className = status.indicator;
+  pill.dataset.state = status.indicator;
   label.textContent = status.label;
   pill.classList.toggle('asleep', !status.awake && status.indicator === 'idle');
 
@@ -526,7 +584,7 @@ export function createStatusOverlay(options: StatusOverlayOptions = {}): StatusO
     последнее = payload;
     try {
       if (window.isDestroyed() || window.webContents.isDestroyed()) return;
-      window.webContents.send(STATUS_OVERLAY_CHANNEL, { ...payload, lecture: лекция, lectureInfo: сведения });
+      window.webContents.send(STATUS_OVERLAY_CHANNEL, { ...payload, lecture: лекция, lectureInfo: сведения, look: currentLook() });
     } catch {
       // Кадр исчез между проверкой и отправкой. Индикатор поднимется сам.
     }
@@ -623,7 +681,7 @@ function openWindow(pagePath: string, размерРежима: () => Разме
     // paints no pixels. A solid pill that is actually on screen beats a
     // prettier one that is not.
     transparent: false,
-    backgroundColor: '#121216',
+    backgroundColor: windowBackground(),
     // Изменяемое — вынужденно.
     //
     // При `resizable: false` Windows отдаёт странице меньше, чем просили:

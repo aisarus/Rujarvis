@@ -517,6 +517,7 @@ function настройкиЛекции(): LectureStartOptions {
     // Пусто в настройках — лекция на языке интерфейса.
     lectureLanguage: settings().lectureLanguage || settings().language,
     notesLanguage: settings().language,
+    notesStyle: settings().notesStyle,
     outputDir:
       settings().outputDir ||
       jarvisOutputDir(process.env, app.getPath('desktop'), settings().language === 'en' ? 'Jarvis' : 'Джарвис'),

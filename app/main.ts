@@ -12,6 +12,7 @@ import path from 'node:path';
 
 import { app, desktopCapturer, Menu, nativeImage, shell, systemPreferences, Tray } from 'electron';
 
+import { applyAppearance } from './look';
 import { APP_ROOT } from './root';
 import { setLanguage } from '../jarvis/locale/language';
 import { jarvisPaths } from '../jarvis/setup/paths';
@@ -282,6 +283,9 @@ app.on('will-quit', () => {
 void app.whenReady().then(async () => {
   // Второй экземпляр сюда доходить не должен: ни значка, ни микрофона.
   if (!единственный) return;
+
+  // Вид и тема — до первого окна: плашка и настройки открываются уже в них.
+  applyAppearance(settings.get());
 
   const image = nativeImage.createFromPath(iconPath(process.platform === 'win32' ? 'tray.ico' : 'tray.png'));
   tray = new Tray(image);
