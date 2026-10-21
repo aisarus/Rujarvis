@@ -459,10 +459,12 @@ async function разложить(
     );
   } catch (error) {
     последняя = null;
-    console.error(`[jarvis:lecture] не разложил по курсу: ${error instanceof Error ? error.message : String(error)}`);
+    const причина = error instanceof Error ? error.message : String(error);
+    console.error(`[jarvis:lecture] не разложил по курсу: ${причина}`);
+    // Причину — сразу: журнала из окон не видно (аудит интерфейса 21.10.2026).
     return tr(
-      `Конспект готов, разделов — ${итог.sections}, но в папку курса не разложен — причина в журнале.`,
-      `Notes are ready (${итог.sections} sections), but not filed into the course folder — see the log.`,
+      `Конспект готов, разделов — ${итог.sections}, но в папку курса не разложен: ${причина}.`,
+      `Notes are ready (${итог.sections} sections), but not filed into the course folder: ${причина}.`,
     );
   }
 }

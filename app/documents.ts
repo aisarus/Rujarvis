@@ -10,12 +10,13 @@
 import { mkdirSync, readdirSync, statSync, watch, type FSWatcher } from 'node:fs';
 import path from 'node:path';
 
-import { Notification, shell } from 'electron';
+import { shell } from 'electron';
 
 import { createClaudeDocumentAgent, isDocument, processDocument, withFallbackAgent } from '../jarvis/documents/pipeline';
 import { COURSE_WORDS } from '../jarvis/lecture/courses';
 import { lectureFolder, obsidianOpenUrl } from '../jarvis/lecture/vault';
 import { tr } from '../jarvis/locale/language';
+import { notify } from './notify';
 import { prepareStudyFor } from './study';
 
 export interface DocumentsOptions {
@@ -74,7 +75,7 @@ async function разобрать(file: string, options: DocumentsOptions, cours
       `Done: "${имя}" → ${куда}, ${filed.notes.length} notes. ${manifest.summary}`,
     ).trim();
     options.say(итог);
-    показать(tr('Документ разобран', 'Document ready'), итог, () => {
+    notify(tr('Документ разобран', 'Document ready'), итог, () => {
       void (vault ? shell.openExternal(obsidianOpenUrl(filed.main)) : shell.openPath(filed.main));
     });
     return true;
@@ -83,7 +84,7 @@ async function разобрать(file: string, options: DocumentsOptions, cours
     console.error(`[jarvis:docs] «${имя}» не разобран: ${причина}`);
     const текст = tr(`Не разобрал «${имя}»: ${причина}`, `Could not read "${имя}": ${причина}`);
     options.say(текст);
-    показать(tr('Документ не разобран', 'Document failed'), текст);
+    notify(tr('Документ не разобран', 'Document failed'), текст);
     return false;
   }
 }
@@ -179,11 +180,4 @@ export function watchInbox(options: DocumentsOptions): () => void {
     смотритель?.close();
     if (таймер) clearTimeout(таймер);
   };
-}
-
-function показать(title: string, body: string, onClick?: () => void): void {
-  if (!Notification.isSupported()) return;
-  const n = new Notification({ title, body: body.slice(0, 250), silent: true });
-  if (onClick) n.on('click', onClick);
-  n.show();
 }

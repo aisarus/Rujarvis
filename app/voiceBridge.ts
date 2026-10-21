@@ -138,6 +138,7 @@ import { describeLessons, lessonsFrom } from '../jarvis/memory/lessons';
 import { PlanStore } from '../jarvis/agent/planStore';
 import { planSummary, renderPlan } from '../jarvis/agent/plan';
 import { SpeechQueue } from '../jarvis/voice/speechQueue';
+import { notify } from './notify';
 import { createStatusOverlay, type LectureSource, type StatusOverlay } from './statusOverlay';
 import { writeShowWork } from '../jarvis/desktop/showWork';
 
@@ -515,6 +516,22 @@ function звукЛекции(on: boolean, source: LectureSource = 'mic'): void 
   }
 }
 
+/**
+ * Итог конспекта — ещё и уведомлением: строка на плашке живёт шесть секунд,
+ * а итог приходит через минуту-другую, когда человек уже ушёл с пары.
+ * Щелчок открывает конспект.
+ */
+function конспектГотов(текст: string): void {
+  notify(tr('Конспект готов', 'Lecture notes ready'), текст, () => {
+    const файл = latestNotesFile(настройкиЛекции());
+    if (файл) void openNotes(файл, настройкиЛекции()).catch(() => undefined);
+  });
+}
+
+function конспектНеВышел(текст: string): void {
+  notify(tr('Конспект не собрался', 'Lecture notes failed'), текст);
+}
+
 /** Где лекции и на каком языке — одно для голоса, кнопки и файла. */
 function настройкиЛекции(): LectureStartOptions {
   return {
@@ -568,6 +585,11 @@ async function конспектПоФайлу(file: string | null, сообщи�
     ...настройкиЛекции(),
     decode: раскрытьФайл,
     trash: (старый) => shell.trashItem(старый),
+  });
+  // Заголовок нейтральный: итог по файлу — и «готово», и «расшифровать нечем».
+  notify(tr('Конспект по файлу', 'Notes from a file'), итог, () => {
+    const файл = latestNotesFile(настройкиЛекции());
+    if (файл) void openNotes(файл, настройкиЛекции()).catch(() => undefined);
   });
   await сообщить(итог);
 }
@@ -628,10 +650,20 @@ async function переключитьЛекцию(
   }
   звукЛекции(false);
   void итог
-    .then((ответ) => сообщить(ответ))
+    .then((ответ) => {
+      конспектГотов(ответ);
+      return сообщить(ответ);
+    })
     .catch((error: unknown) => {
-      console.error(`[jarvis:lecture] итог не дописан: ${error instanceof Error ? error.message : String(error)}`);
-      return сообщить(tr('Итог не собрался. Записанное — на диске.', 'The summary failed. What was recorded is on disk.'));
+      const причина = error instanceof Error ? error.message : String(error);
+      console.error(`[jarvis:lecture] итог не дописан: ${причина}`);
+      // Заметка без свойств лекции — значит, брошенная: её допишет запуск.
+      const текст = tr(
+        `Итог не собрался: ${причина}. Записанное на диске — попробую дописать при следующем запуске.`,
+        `The summary failed: ${причина}. The recording is on disk; I will try to finish it on the next start.`,
+      );
+      конспектНеВышел(текст);
+      return сообщить(текст);
     })
     .catch(() => undefined);
   await сообщить(tr('Дописываю итог. Когда будет готов — сообщу.', 'Writing the summary. I will let you know when it is ready.'));
@@ -753,8 +785,11 @@ export async function runDirectCommand(
         }
         // Не ждём: расшифровка — минуты, а реплики разбираются по одной.
         void конспектПоФайлу(файл, (текст) => session.speak(текст)).catch((error: unknown) => {
-          console.error(`[jarvis:lecture] конспект по файлу не вышел: ${error instanceof Error ? error.message : String(error)}`);
-          return session.speak(tr('Конспект по файлу не вышел — причина в журнале.', 'Notes from the file failed — see the log.'));
+          const причина = error instanceof Error ? error.message : String(error);
+          console.error(`[jarvis:lecture] конспект по файлу не вышел: ${причина}`);
+          const текст = tr(`Конспект по файлу не вышел: ${причина}`, `Notes from the file failed: ${причина}`);
+          конспектНеВышел(текст);
+          return session.speak(текст);
         });
         break;
       }
@@ -1533,8 +1568,9 @@ async function поднятьМост(options: {
       console.log(`[jarvis:lecture] кнопка на плашке: ${lectureActive() ? 'закончить' : 'начать'}`);
       void переключитьЛекцию(!lectureActive(), undefined, (текст) => overlay.note(session.status, текст), source ?? 'mic').catch(
         (error: unknown) => {
-          console.error(`[jarvis:lecture] кнопка не сработала: ${error instanceof Error ? error.message : String(error)}`);
-          overlay.note(session.status, tr('Конспект не запустился — причина в журнале.', 'Lecture notes did not start — see the log.'));
+          const причина = error instanceof Error ? error.message : String(error);
+          console.error(`[jarvis:lecture] кнопка не сработала: ${причина}`);
+          overlay.note(session.status, tr(`Конспект не запустился: ${причина}`, `Lecture notes did not start: ${причина}`));
         },
       );
     },
@@ -1556,8 +1592,11 @@ async function поднятьМост(options: {
     onFile: (file) => {
       if (lectureState() !== 'off') return;
       void конспектПоФайлу(file, (текст) => overlay.note(session.status, текст)).catch((error: unknown) => {
-        console.error(`[jarvis:lecture] конспект по файлу не вышел: ${error instanceof Error ? error.message : String(error)}`);
-        overlay.note(session.status, tr('Конспект по файлу не вышел — причина в журнале.', 'Notes from the file failed — see the log.'));
+        const причина = error instanceof Error ? error.message : String(error);
+        console.error(`[jarvis:lecture] конспект по файлу не вышел: ${причина}`);
+        const текст = tr(`Конспект по файлу не вышел: ${причина}`, `Notes from the file failed: ${причина}`);
+        конспектНеВышел(текст);
+        overlay.note(session.status, текст);
       });
     },
   });
@@ -1581,7 +1620,11 @@ async function поднятьМост(options: {
   // Лекция, оборванная обновлением, перезапуском или выходом, дописывается
   // сама — через минуту, когда запуск уже не делит с ней машину.
   const дописатьБрошенные = setTimeout(
-    () => void recoverAbandonedLectures(настройкиЛекции(), (текст) => overlay.note(session.status, текст)),
+    () =>
+      void recoverAbandonedLectures(настройкиЛекции(), (текст) => {
+        конспектГотов(текст);
+        overlay.note(session.status, текст);
+      }),
     60_000,
   );
   дописатьБрошенные.unref?.();
