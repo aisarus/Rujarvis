@@ -99,6 +99,7 @@ import {
   onLectureFiled,
   onLectureState,
   openNotes,
+  recoverAbandonedLectures,
   setLectureCourse,
   startLecture,
   type LectureStartOptions,
@@ -1577,6 +1578,13 @@ async function поднятьМост(options: {
   });
   // «Входящие» в «Лекциях»: положенный туда документ разбирается сам.
   const перестатьСмотретьВходящие = watchInbox(документы((текст) => overlay.note(session.status, текст)));
+  // Лекция, оборванная обновлением, перезапуском или выходом, дописывается
+  // сама — через минуту, когда запуск уже не делит с ней машину.
+  const дописатьБрошенные = setTimeout(
+    () => void recoverAbandonedLectures(настройкиЛекции(), (текст) => overlay.note(session.status, текст)),
+    60_000,
+  );
+  дописатьБрошенные.unref?.();
   // Крупный режим — из настроек, и сразу: его могли включить голосом в прошлый
   // раз, и при запуске плашка обязана быть такой, какой её оставили.
   overlay.setBig(settings().bigMode);
@@ -2564,6 +2572,7 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
       поколениеМоста += 1;
       отписатьЛекцию();
       перестатьСмотретьВходящие();
+      clearTimeout(дописатьБрошенные);
       setStudyHearing(null, null);
       учёбаЗаписывает = false;
       abandonLecture();

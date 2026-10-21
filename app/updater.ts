@@ -15,6 +15,7 @@ import path from 'node:path';
 
 import { app, Notification, shell } from 'electron';
 
+import { lectureState } from './lectureMode';
 import { APP_ROOT } from './root';
 import { cliStatus } from '../jarvis/backends/cliProbes';
 import { tr } from '../jarvis/locale/language';
@@ -124,6 +125,21 @@ function уведомить(сколько: number, больше: boolean): void
 export async function runUpdateNow(): Promise<{ ok: true } | { ok: false; message: string }> {
   if (!настройка || !установлена()) {
     return { ok: false, message: tr('обновлять кнопкой можно только установленную копию', 'only an installed copy can be updated with the button') };
+  }
+  // Обновление закрывает Джарвиса — посреди лекции это оборвало бы запись
+  // (тестер 21.10.2026 обновился посреди пары, и итог не дописался).
+  const лекция = lectureState();
+  if (лекция !== 'off') {
+    return {
+      ok: false,
+      message:
+        лекция === 'finishing'
+          ? tr('Дописываю итог лекции — через минуту можно обновляться.', 'Writing the lecture summary. You can update in a minute.')
+          : tr(
+              'Идёт конспект лекции — обновление оборвало бы запись. Закончите конспект и нажмите «Обновить» снова.',
+              'Lecture notes are in progress; updating would cut the recording. Finish the notes and press Update again.',
+            ),
+    };
   }
   const итог = await checkUpdateNow();
   if (итог.state === 'unknown') return { ok: false, message: итог.reason };

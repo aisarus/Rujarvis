@@ -51,6 +51,7 @@ import {
   type LectureLanguages,
 } from '../jarvis/lecture/courses';
 import { finalizeLecture, moveLecture } from '../jarvis/lecture/finalize';
+import { findAbandonedLectures, recoverLecture } from '../jarvis/lecture/recover';
 import { HearingMonitor, isSilentChunk } from '../jarvis/lecture/hearing';
 import { mediaSeconds } from '../jarvis/lecture/mediaSlices';
 import { LectureRecorder } from '../jarvis/lecture/recorder';
@@ -95,6 +96,11 @@ let последняя: { notesFile: string; root: string; notes: NotesLanguage 
 
 export function lectureActive(): boolean {
   return идёт !== null;
+}
+
+/** Итог законченной лекции ещё пишется — его и ждать перед выходом; нет — null. */
+export function lectureFinishing(): Promise<string> | null {
+  return дописывается;
 }
 
 /**
@@ -482,10 +488,65 @@ export function finishLecture(): Promise<string> | null {
   return работа;
 }
 
+let восстанавливаю = false;
+
+/**
+ * Брошенные лекции — дописать и разложить по курсу (`jarvis/lecture/recover.ts`).
+ * Мост зовёт это через минуту после запуска: лекцию, оборванную обновлением,
+ * перезапуском или выходом, человек находит готовой, без команды в терминале
+ * (тестер 21.10.2026 обновился посреди лекции, и она осталась без итога).
+ *
+ * Пока лекция поднимается, дописывается или делается по файлу, её заметка
+ * тоже без свойств — ждём, пока закончится.
+ */
+export async function recoverAbandonedLectures(options: LectureStartOptions, сообщить: (текст: string) => void): Promise<void> {
+  if (восстанавливаю) return;
+  восстанавливаю = true;
+  try {
+    for (let попытка = 0; lectureState() !== 'off' && lectureState() !== 'on'; попытка += 1) {
+      if (попытка >= 15) return;
+      await new Promise((r) => setTimeout(r, 120_000).unref?.());
+    }
+    const { folder: root } = lectureFolder(options.outputDir, options.notesLanguage);
+    const брошенные = findAbandonedLectures(root, new Set(идёт ? [идёт.session.notesFile] : []));
+    if (!брошенные.length) return;
+    console.log(`[jarvis:lecture] брошенных лекций: ${брошенные.length} — дописываю`);
+    for (const заметка of брошенные) {
+      try {
+        const место = await recoverLecture(заметка, {
+          root,
+          languages: { lecture: options.lectureLanguage, notes: options.notesLanguage },
+          notesStyle: options.notesStyle,
+          summarize: createClaudeSummarizer(),
+          summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
+          log: (строка) => console.log(`[jarvis:lecture] ${строка}`),
+        });
+        последняя = { notesFile: место.notesFile, root, notes: options.notesLanguage };
+        try {
+          приРазложенной?.(место.notesFile);
+        } catch (error) {
+          console.error(`[jarvis:lecture] заготовка учёбы не запустилась: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        console.log(`[jarvis:lecture] брошенная лекция дописана: курс «${место.course}», лекция ${место.number}, разделов ${место.sections}`);
+        сообщить(
+          tr(
+            `Дописал лекцию, которую прервали: ${место.course}, лекция ${место.number}.`,
+            `Finished a lecture that was interrupted: ${место.course}, lecture ${место.number}.`,
+          ),
+        );
+      } catch (error) {
+        console.error(`[jarvis:lecture] брошенная лекция не дописалась (${path.basename(заметка)}): ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  } finally {
+    восстанавливаю = false;
+  }
+}
+
 /**
  * Мост закрывается посреди лекции: сервер — погасить (свой pid), записанное
  * остаётся на диске как есть. Итога нет — на него нужна минута модели, а
- * закрытие ждать не может.
+ * закрытие ждать не может; допишет `recoverAbandonedLectures` при запуске.
  */
 export function abandonLecture(): void {
   const была = идёт;

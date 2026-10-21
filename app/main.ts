@@ -10,7 +10,7 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 
-import { app, desktopCapturer, Menu, nativeImage, shell, systemPreferences, Tray } from 'electron';
+import { app, desktopCapturer, dialog, Menu, nativeImage, shell, systemPreferences, Tray } from 'electron';
 
 import { applyAppearance } from './look';
 import { APP_ROOT } from './root';
@@ -19,6 +19,7 @@ import { jarvisPaths } from '../jarvis/setup/paths';
 import { SettingsStore } from '../jarvis/setup/settings';
 import { запроситьРазрешения, чегоНеХватает, type Система } from './macPermissions';
 import { openSettingsWindow, sendUpdateState } from './settingsWindow';
+import { finishLecture, lectureFinishing, lectureState, onLectureState } from './lectureMode';
 import { configureStudy, showStudy, startRecordingsCleanup } from './study';
 import { uiStrings } from './ui/strings';
 import { startUpdateChecks, updateState } from './updater';
@@ -145,6 +146,68 @@ async function restartVoice(): Promise<void> {
   await startVoice();
 }
 
+// Посреди лекции перезапуск и выход обрывали запись, а итог не дописывался
+// вовсе (тестер 21.10.2026 обновился посреди пары). Брошенную лекцию теперь
+// дописывает `recoverAbandonedLectures`, но оборвать запись случайно, щелчком в
+// трее или сменой настройки, всё равно нельзя.
+
+let перезапускПослеЛекции = false;
+
+/** Настройки, которые читаются при запуске моста: посреди лекции — когда она кончится. */
+function перезапуститьКогдаМожно(): void {
+  if (lectureState() === 'off') {
+    void restartVoice();
+    return;
+  }
+  if (перезапускПослеЛекции) return;
+  перезапускПослеЛекции = true;
+  console.log('[main] настройки изменились посреди лекции — голос перезапущу, когда конспект закончится');
+  const отписаться = onLectureState((state) => {
+    if (state !== 'off') return;
+    отписаться();
+    перезапускПослеЛекции = false;
+    void restartVoice();
+  });
+}
+
+async function спроситьПроЛекцию(detail: string, buttons: string[], cancelId: number): Promise<number> {
+  const t = uiStrings(settings.get().language);
+  const { response } = await dialog.showMessageBox({ type: 'question', title: 'Rujarvis', message: t.lectureBusyTitle, detail, buttons, defaultId: 0, cancelId, noLink: true });
+  return response;
+}
+
+async function перезапуститьИзТрея(): Promise<void> {
+  if (lectureState() === 'on') {
+    const t = uiStrings(settings.get().language);
+    if ((await спроситьПроЛекцию(t.restartDuringLecture, [t.restartAnyway, t.dialogCancel], 1)) !== 0) return;
+  }
+  await restartVoice();
+}
+
+async function выйтиИзТрея(): Promise<void> {
+  const состояние = lectureState();
+  if (состояние !== 'on' && состояние !== 'finishing') {
+    app.quit();
+    return;
+  }
+  const t = uiStrings(settings.get().language);
+  const идёт = состояние === 'on';
+  const ответ = await спроситьПроЛекцию(
+    идёт ? t.quitDuringLecture : t.quitWhileFinishing,
+    [идёт ? t.quitFinishFirst : t.quitWaitFirst, t.quitNow, t.dialogCancel],
+    2,
+  );
+  if (ответ === 2) return;
+  if (ответ === 0) {
+    const итог = (идёт ? finishLecture() : null) ?? lectureFinishing();
+    console.log('[main] выход: дописываю итог лекции, потом выхожу');
+    tray?.setToolTip(трейПодсказка(t.quitting));
+    // Не дольше десяти минут: зависшая модель не должна держать выход вечно.
+    await Promise.race([итог?.catch(() => undefined), new Promise((r) => setTimeout(r, 10 * 60_000))]);
+  }
+  app.quit();
+}
+
 function showSettings(page?: 'onboarding'): void {
   openSettingsWindow({
     settings,
@@ -170,7 +233,7 @@ function showSettings(page?: 'onboarding'): void {
       // Облако — тоже: выключили его, а мост продолжал бы слать звук до
       // следующего перезапуска.
       if (changed.some((key) => ['language', 'whisperModel', 'cloudSpeech', 'workspace', 'outputDir', 'claudeModel', 'localModelUrl', 'localModelName'].includes(key))) {
-        void restartVoice();
+        перезапуститьКогдаМожно();
       }
       refreshTray();
     },
@@ -239,8 +302,8 @@ function refreshTray(): void {
       { label: t.trayOpenLog, click: () => void shell.openPath(PATHS.log) },
       { label: t.trayOpenData, click: () => void shell.openPath(PATHS.home) },
       { type: 'separator' },
-      { label: t.trayRestartVoice, click: () => void restartVoice() },
-      { label: t.trayQuit, click: () => app.quit() },
+      { label: t.trayRestartVoice, click: () => void перезапуститьИзТрея() },
+      { label: t.trayQuit, click: () => void выйтиИзТрея() },
     ]),
   );
 }

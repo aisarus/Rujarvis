@@ -23,7 +23,8 @@ vi.mock('../jarvis/lecture/summarize', () => {
   return { createClaudeSummarizer: модель, createFinalSummarizer: модель };
 });
 
-const { feedLecture, finishLecture, latestNotesFile, lectureActive, lectureFromFile, lectureInfo, lectureState, onLectureState, startLecture } = await import('./lectureMode');
+const { feedLecture, finishLecture, latestNotesFile, lectureActive, lectureFromFile, lectureInfo, lectureState, onLectureState, recoverAbandonedLectures, startLecture } = await import('./lectureMode');
+const { LectureSession } = await import('../jarvis/lecture/session');
 const { parseFrontmatter, renderFrontmatter } = await import('../jarvis/lecture/courses');
 const { encodeWav16 } = await import('../jarvis/voice/wav');
 const { readWavParts } = await import('../jarvis/lecture/mediaSlices');
@@ -90,6 +91,28 @@ describe('режим лекции в мосте', () => {
 
   it('«закончи», когда конспекта нет, — не ошибка и не ожидание', () => {
     expect(finishLecture()).toBeNull();
+  });
+
+  it('лекция, брошенная обновлением или выходом, дописывается при запуске и встаёт в курс', async () => {
+    папка.путь = await mkdtemp(path.join(tmpdir(), 'jarvis-lecture-recover-'));
+    const options = { home: папка.путь, outputDir: папка.путь, lectureLanguage: 'he', notesLanguage: 'ru' as const, mainEndpoint: () => null };
+    const курс = path.join(папка.путь, 'История');
+    await mkdir(курс, { recursive: true });
+    const сессия = new LectureSession(курс, '', { transcribe: async () => 'החקלאות שינתה הכול', summarize: async () => '' }, new Date(2026, 9, 20, 10, 5));
+    await сессия.start();
+    сессия.addAudio(new Float32Array(16_000), 16_000);
+    await new Promise((r) => setTimeout(r, 50));
+    сессия.abandon();
+
+    const сказано: string[] = [];
+    await recoverAbandonedLectures(options, (текст) => сказано.push(текст));
+    expect(сказано).toEqual(['Дописал лекцию, которую прервали: История, лекция 1.']);
+    const заметка = latestNotesFile(options)!;
+    expect(path.dirname(заметка)).toBe(курс);
+    expect(parseFrontmatter(await readFile(заметка, 'utf8'))).toMatchObject({ course: 'История', number: 1, topic: 'Аграрная революция' });
+    // Второй запуск — дописывать нечего.
+    await recoverAbandonedLectures(options, (текст) => сказано.push(текст));
+    expect(сказано).toHaveLength(1);
   });
 });
 
