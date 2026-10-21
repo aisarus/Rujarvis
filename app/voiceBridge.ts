@@ -95,8 +95,10 @@ import {
   lectureActive,
   lectureFromFile,
   lectureState,
+  latestNotesFile,
   onLectureFiled,
   onLectureState,
+  openNotes,
   setLectureCourse,
   startLecture,
   type LectureStartOptions,
@@ -1542,6 +1544,14 @@ async function поднятьМост(options: {
         .catch((error: unknown) => console.error(`[jarvis:lecture] курс не сменился: ${error instanceof Error ? error.message : String(error)}`));
     },
     onStudy: () => showStudy(),
+    onOpenNotes: () => {
+      const файл = latestNotesFile(настройкиЛекции());
+      if (!файл) return false;
+      void openNotes(файл, настройкиЛекции()).catch((error: unknown) =>
+        console.error(`[jarvis:lecture] конспект не открылся: ${error instanceof Error ? error.message : String(error)}`),
+      );
+      return true;
+    },
     onFile: (file) => {
       if (lectureState() !== 'off') return;
       void конспектПоФайлу(file, (текст) => overlay.note(session.status, текст)).catch((error: unknown) => {

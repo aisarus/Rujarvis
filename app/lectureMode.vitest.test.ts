@@ -23,8 +23,8 @@ vi.mock('../jarvis/lecture/summarize', () => {
   return { createClaudeSummarizer: модель, createFinalSummarizer: модель };
 });
 
-const { feedLecture, finishLecture, lectureActive, lectureFromFile, lectureInfo, lectureState, onLectureState, startLecture } = await import('./lectureMode');
-const { parseFrontmatter } = await import('../jarvis/lecture/courses');
+const { feedLecture, finishLecture, latestNotesFile, lectureActive, lectureFromFile, lectureInfo, lectureState, onLectureState, startLecture } = await import('./lectureMode');
+const { parseFrontmatter, renderFrontmatter } = await import('../jarvis/lecture/courses');
 const { encodeWav16 } = await import('../jarvis/voice/wav');
 const { readWavParts } = await import('../jarvis/lecture/mediaSlices');
 
@@ -34,6 +34,25 @@ afterEach(async () => {
 });
 
 describe('режим лекции в мосте', () => {
+  it('«Конспект ↗» без лекции в памяти — самый свежий конспект на диске, «без курса» тоже', async () => {
+    // Идёт первым: после перезапуска Джарвис последнюю лекцию не помнит.
+    папка.путь = await mkdtemp(path.join(tmpdir(), 'jarvis-latest-notes-'));
+    const options = { outputDir: папка.путь, notesLanguage: 'ru' as const };
+    expect(latestNotesFile(options)).toBeNull();
+    const положить = async (курс: string, имя: string, date: string, start?: string): Promise<string> => {
+      await mkdir(path.join(папка.путь, курс), { recursive: true });
+      const файл = path.join(папка.путь, курс, `${имя}.md`);
+      await writeFile(файл, `${renderFrontmatter({ course: курс, date, start }, 'ru')}текст`, 'utf8');
+      return файл;
+    };
+    await положить('История', '2026-10-14 — Неолит', '2026-10-14', '10:00');
+    const свежая = await положить('Без курса', '2026-10-20', '2026-10-20', '18:30');
+    await положить('Физика', '2026-10-20 — Оптика', '2026-10-20', '09:00');
+    // Расшифровка — не конспект, хоть и новее.
+    await положить('Физика', '2026-10-21 — Свет — расшифровка', '2026-10-21');
+    expect(latestNotesFile(options)).toBe(свежая);
+  });
+
   it('«закончи» не держит мост: лекция кончается сразу, итог приходит потом', async () => {
     папка.путь = await mkdtemp(path.join(tmpdir(), 'jarvis-lecture-mode-'));
     const options = { home: папка.путь, outputDir: папка.путь, lectureLanguage: 'ru', notesLanguage: 'ru' as const, mainEndpoint: () => null };
@@ -45,6 +64,8 @@ describe('режим лекции в мосте', () => {
     expect(await startLecture('Физика', options)).toMatch(/нечем|nothing to transcribe/u);
     expect(lectureInfo()?.line).toMatch(/Только запись|Recording only/u);
     expect(lectureActive()).toBe(true);
+    // Пока лекция идёт, «Конспект ↗» открывает её живую заметку.
+    expect(latestNotesFile(options)?.startsWith(папка.путь)).toBe(true);
     expect(await startLecture('Физика', options)).toMatch(/уже пишется|Already/u);
 
     const итог = finishLecture();
@@ -61,6 +82,8 @@ describe('режим лекции в мосте', () => {
     const безКурса = path.join(папка.путь, 'Без курса');
     expect((await readdir(безКурса)).filter((f) => f.endsWith('.md')).sort()).toHaveLength(3);
     expect((await readdir(папка.путь)).filter((f) => f.endsWith('.md'))).toHaveLength(0);
+    // Закончили — та же лекция, уже разложенная.
+    expect(path.dirname(latestNotesFile(options) ?? '')).toBe(безКурса);
     expect(await startLecture('Химия', options)).not.toMatch(/дописываю|Still finishing/u);
     expect(lectureActive()).toBe(true);
   });

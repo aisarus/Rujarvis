@@ -38,6 +38,7 @@ import { shell } from 'electron';
 
 import { chunkLevel } from '../jarvis/lecture/audioCut';
 import {
+  COURSE_WORDS,
   courseLanguages,
   coursesForModel,
   guessByDeclared,
@@ -94,6 +95,28 @@ let последняя: { notesFile: string; root: string; notes: NotesLanguage 
 
 export function lectureActive(): boolean {
   return идёт !== null;
+}
+
+/**
+ * Какой конспект открыть кнопкой на уменьшенной плашке: идущей лекции, только
+ * что законченной или самый свежий в «Лекциях» — после перезапуска Джарвис
+ * последнюю не помнит, а конспект на диске есть.
+ */
+export function latestNotesFile(options: Pick<LectureStartOptions, 'outputDir' | 'notesLanguage'>): string | null {
+  if (идёт) return идёт.session.notesFile;
+  if (последняя && existsSync(последняя.notesFile)) return последняя.notesFile;
+  const { folder: root } = lectureFolder(options.outputDir, options.notesLanguage);
+  // «Без курса» — тоже лекции: курс им не нашёлся, а конспект есть.
+  const лекции = [...listLectures(root), ...listLectures(root, COURSE_WORDS.ru.unsorted), ...listLectures(root, COURSE_WORDS.en.unsorted)];
+  const свежая = лекции.sort((a, b) => a.meta.date.localeCompare(b.meta.date) || (a.meta.start ?? '').localeCompare(b.meta.start ?? '')).at(-1);
+  return свежая?.file ?? null;
+}
+
+/** Открыть конспект — в Obsidian, если «Лекции» в его хранилище, иначе программой по умолчанию. */
+export async function openNotes(file: string, options: Pick<LectureStartOptions, 'outputDir' | 'notesLanguage'>): Promise<void> {
+  const { vault } = lectureFolder(options.outputDir, options.notesLanguage);
+  if (vault) await shell.openExternal(obsidianOpenUrl(file));
+  else await shell.openPath(file);
 }
 
 /** Что с конспектом сейчас — для кнопки на плашке. */

@@ -60,6 +60,30 @@ function lectureButtonLabels(): Record<LectureButtonState, string> {
   };
 }
 
+/** Те же состояния короче — для уменьшенной плашки в одну строку. */
+function compactButtonLabels(): Record<LectureButtonState, string> {
+  return {
+    off: tr('● Запись', '● Record'),
+    starting: tr('Начинаю…', 'Starting…'),
+    on: tr('■ Стоп', '■ Stop'),
+    finishing: tr('Дописываю…', 'Finishing…'),
+    importing: tr('Файл…', 'File…'),
+  };
+}
+
+/** Галочки кнопки размера — рисунком: «▾» в шрифте плашки выходил точкой (снимок 21.10.2026). */
+const CHEVRON = {
+  down: '<svg viewBox="0 0 12 12" width="1em" height="1em"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  up: '<svg viewBox="0 0 12 12" width="1em" height="1em"><path d="M2.5 7.5 6 4l3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+};
+
+/** Размер плашки: обычная, уменьшенная (запись и конспект) или значок в углу. */
+export type OverlaySize = 'full' | 'compact' | 'icon';
+
+export function isOverlaySize(value: unknown): value is OverlaySize {
+  return value === 'full' || value === 'compact' || value === 'icon';
+}
+
 const WIDTH = 320;
 const HEIGHT = 84;
 
@@ -91,9 +115,62 @@ interface Размер {
   height: number;
 }
 
-const размер = (крупно: boolean): Размер =>
-  крупно ? { width: BIG_WIDTH, height: BIG_HEIGHT } : { width: WIDTH, height: HEIGHT };
+/**
+ * Уменьшенная — одна строка: знак, запись, конспект и кнопки размера. Ширина
+ * — по самым длинным подписям рядом («Дописываю…» и «Конспект ↗»), замер
+ * 21.10.2026: 304 и 454 точки; уже — и кнопка обрезается многоточием.
+ */
+const COMPACT_WIDTH = 310;
+const COMPACT_HEIGHT = 44;
+const BIG_COMPACT_WIDTH = 460;
+const BIG_COMPACT_HEIGHT = 70;
+
+const размер = (крупно: boolean, вид: OverlaySize = 'full'): Размер =>
+  вид === 'compact'
+    ? крупно
+      ? { width: BIG_COMPACT_WIDTH, height: BIG_COMPACT_HEIGHT }
+      : { width: COMPACT_WIDTH, height: COMPACT_HEIGHT }
+    : крупно
+      ? { width: BIG_WIDTH, height: BIG_HEIGHT }
+      : { width: WIDTH, height: HEIGHT };
 const MARGIN = 24;
+
+/** Свёрнутая плашка — квадратик со знаком состояния. */
+const MINI = 46;
+
+/**
+ * Где стоит свёрнутая плашка: в правом нижнем углу рабочей области экрана,
+ * над панелью задач, — «иконкой внизу», как просил тестер. Развернувшись,
+ * плашка возвращается туда, где её оставили.
+ */
+export function miniBounds(area: { x: number; y: number; width: number; height: number }): Electron.Rectangle {
+  return { x: area.x + area.width - MINI - 12, y: area.y + area.height - MINI - 12, width: MINI, height: MINI };
+}
+
+/**
+ * Где встать обычной или уменьшенной плашке: там, где её оставили, но целиком
+ * на экране. Уменьшенную могли поставить у правого края — обычная шире и
+ * ушла бы за него. Не двигали — в правый нижний угол.
+ */
+export function fitOnScreen(
+  saved: { x: number; y: number } | null,
+  size: { width: number; height: number },
+  area: { x: number; y: number; width: number; height: number },
+): Electron.Rectangle {
+  const x = saved?.x ?? area.x + area.width - size.width - MARGIN;
+  const y = saved?.y ?? area.y + area.height - size.height - MARGIN;
+  return {
+    x: Math.max(area.x, Math.min(x, area.x + area.width - size.width)),
+    y: Math.max(area.y, Math.min(y, area.y + area.height - size.height)),
+    width: size.width,
+    height: size.height,
+  };
+}
+
+function placeOverlay(saved: { x: number; y: number } | null, size: Размер): Electron.Rectangle {
+  const area = saved ? screen.getDisplayMatching({ ...saved, ...size }).workArea : screen.getPrimaryDisplay().workArea;
+  return fitOnScreen(saved, size, area);
+}
 
 export function buildOverlayHtml(look: Look = currentLook()): string {
   return `<!doctype html>
@@ -119,6 +196,7 @@ export function buildOverlayHtml(look: Look = currentLook()): string {
   /* Клетка тетради — и на плашке, но без красных полей. */
   [data-look="tetrad"] body.paper { --margin-at: -10px; background-size: auto, 16px 16px, 16px 16px, auto; }
   #pill {
+    position: relative;
     display: flex; align-items: center; gap: 12px; min-height: 52px;
     box-sizing: border-box; padding: 13px 16px 12px;
     /* The whole pill is the drag handle — there is nothing to click inside
@@ -182,18 +260,18 @@ export function buildOverlayHtml(look: Look = currentLook()): string {
     display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 11px;
     -webkit-app-region: drag;
   }
-  #bar button {
+  #bar button, #row button {
     -webkit-app-region: no-drag; cursor: pointer;
     font: 500 12.5px var(--font-ui);
     color: var(--text); background: var(--surface-2);
     border: 1.5px solid var(--line); border-radius: var(--radius-btn);
     padding: 4px 11px; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
   }
-  #bar button:hover { border-color: var(--line-2); }
-  #bar button.on { background: var(--bad); border-color: var(--bad); color: var(--surface); font-weight: 600; }
-  #bar button:disabled { opacity: 0.55; cursor: default; }
+  #bar button:hover, #row button:hover { border-color: var(--line-2); }
+  #bar button.on, #row button.on { background: var(--bad); border-color: var(--bad); color: var(--surface); font-weight: 600; }
+  #bar button:disabled, #row button:disabled { opacity: 0.55; cursor: default; }
   #bar button.drop { border-color: var(--accent); background: var(--accent-soft); }
-  body.big #bar button { font-size: 20px; padding: 10px 18px; }
+  body.big #bar button, body.big #row button { font-size: 20px; padding: 10px 18px; }
   #sources { display: none; flex-wrap: wrap; gap: 6px; padding: 0 12px 11px; }
   #sources.open { display: flex; }
   #sources button, #courses button {
@@ -214,6 +292,41 @@ export function buildOverlayHtml(look: Look = currentLook()): string {
   #info.on { display: block; }
   body.big #info { font-size: 18px; }
 
+  /* Три размера: обычная, уменьшенная и значок. Плашка стоит поверх всего,
+     и в лекции с кнопками она закрывала чужие окна — убрать её было нечем
+     (тестер 21.10.2026: «нажать "свернуть", и чтобы он превратился в иконку
+     внизу»; владелец — размеры на выбор). Кнопки размера — в углу и вне
+     области перетаскивания, иначе нажатие тащило бы окно. */
+  #text { padding-right: 44px; }
+  #corner { position: absolute; top: 5px; right: 6px; display: flex; gap: 2px; -webkit-app-region: no-drag; }
+  #corner button {
+    display: flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; padding: 0; cursor: pointer;
+    border: 0; border-radius: 6px; background: transparent; color: var(--muted);
+    font: 700 14px/1 var(--font-ui);
+  }
+  #corner button:hover { background: var(--surface-2); color: var(--text); }
+  body.big #text { padding-right: 70px; }
+  body.big #corner button { width: 32px; height: 32px; font-size: 22px; }
+  /* Уменьшенная: знак состояния, запись и готовый конспект — одной строкой.
+     Что услышано, не показывается: строка прыгала бы по высоте от каждой
+     фразы. Подпись состояния — во всплывающей подсказке. */
+  #row { display: none; gap: 6px; align-items: center; min-width: 0; }
+  body.compact #text, body.compact #bar, body.compact #courses { display: none !important; }
+  body.compact #row { display: flex; }
+  body.compact #pill { gap: 8px; padding: 8px 6px 8px 12px; min-height: 0; }
+  body.compact #row button { padding: 4px 9px; }
+  body.compact #corner { position: static; margin-left: auto; }
+  body.big.compact #pill { padding: 12px 10px 12px 18px; }
+  body.big.compact #row button { padding: 9px 14px; }
+  /* Значок: только знак состояния — кружком в углу экрана. Щелчок
+     разворачивает в тот размер, из которого свернули. Идёт запись лекции —
+     красная обводка: что микрофон пишет, видно и в свёрнутом виде. */
+  body.mini #text, body.mini #row, body.mini #corner, body.mini #bar, body.mini #sources, body.mini #courses, body.mini #info { display: none !important; }
+  body.mini #pill { justify-content: center; padding: 0; min-height: 0; height: 100vh; -webkit-app-region: no-drag; cursor: pointer; }
+  body.mini #pill.asleep { opacity: 1; }
+  body.mini.recording #pill { box-shadow: inset 0 0 0 3px var(--bad); }
+
   /* ——— Тетрадь: подсказки от руки ——— */
   [data-look="tetrad"] #hint { font: 600 17px/1.1 var(--font-hand); color: var(--text-2); margin-top: 3px; }
   [data-look="tetrad"] #info { font: 600 17px/1.15 var(--font-hand); }
@@ -226,7 +339,7 @@ export function buildOverlayHtml(look: Look = currentLook()): string {
     padding: 0 .22em; margin: 0 -.1em; -webkit-box-decoration-break: clone; box-decoration-break: clone;
   }
   [data-look="marker"] #label { line-height: 1.5; }
-  [data-look="marker"] #bar button.on { background: var(--m-pink); border-color: var(--m-pink); color: #1c1e22; }
+  [data-look="marker"] #bar button.on, [data-look="marker"] #row button.on { background: var(--m-pink); border-color: var(--m-pink); color: #1c1e22; }
 
   /* ——— Кольцо: знак — кольцо из значка ——— */
   [data-look="ring"] #dot { width: 18px; height: 18px; background: none; border: 3px solid var(--c); box-shadow: none; }
@@ -239,7 +352,7 @@ export function buildOverlayHtml(look: Look = currentLook()): string {
   [data-look="ring"] #dot.speaking b { display: block; width: 2.5px; height: 7px; border-radius: 2px; background: var(--c); }
   [data-look="ring"] #dot.speaking b:nth-child(2) { height: 11px; }
   [data-look="ring"] #label { font-weight: 500; }
-  [data-look="ring"] #bar button, [data-look="ring"] #sources button, [data-look="ring"] #courses button { border-color: transparent; }
+  [data-look="ring"] #bar button, [data-look="ring"] #row button, [data-look="ring"] #sources button, [data-look="ring"] #courses button { border-color: transparent; }
   [data-look="ring"] body.big #dot { width: 26px; height: 26px; }
 </style>
 </head>
@@ -249,6 +362,14 @@ export function buildOverlayHtml(look: Look = currentLook()): string {
   <div id="text">
     <div id="label"><span id="labelText">${tr('Сплю', 'Asleep')}</span></div>
     <div id="hint">${tr('Скажите «Джарвис»', 'Say "Jarvis"')}</div>
+  </div>
+  <div id="row">
+    <button id="rec" type="button">${compactButtonLabels().off}</button>
+    <button id="open" type="button" title="${tr('Открыть конспект — идущей лекции или последний готовый', 'Open the notes — of the lecture in progress or the latest finished one')}">${tr('Конспект ↗', 'Notes ↗')}</button>
+  </div>
+  <div id="corner">
+    <button id="smaller" type="button" title="${tr('Уменьшить: только запись и конспект', 'Smaller: only recording and notes')}">${CHEVRON.down}</button>
+    <button id="mini" type="button" title="${tr('Свернуть в значок', 'Collapse to an icon')}">–</button>
   </div>
 </div>
 <div id="bar">
@@ -271,23 +392,42 @@ const courseButton = document.getElementById('course');
 const fileButton = document.getElementById('file');
 const coursesBox = document.getElementById('courses');
 const info = document.getElementById('info');
+const recButton = document.getElementById('rec');
+const openButton = document.getElementById('open');
+const smallerButton = document.getElementById('smaller');
 const lectureLabels = ${JSON.stringify(lectureButtonLabels())};
+const CHEVRON = ${JSON.stringify(CHEVRON)};
+const compactLabels = ${JSON.stringify(compactButtonLabels())};
 const WORDS = ${JSON.stringify({
     course: tr('Курс: ', 'Course: '),
     guess: tr('угадаю по лекции', 'guess from the lecture'),
     guessItem: tr('Угадать по лекции', 'Guess from the lecture'),
+    open: tr('Конспект ↗', 'Notes ↗'),
+    noNotes: tr('Конспектов нет', 'No notes yet'),
+    smaller: tr('Уменьшить: только запись и конспект', 'Smaller: only recording and notes'),
+    bigger: tr('Развернуть', 'Expand'),
   })};
 const sourcesBox = document.getElementById('sources');
 let конспектИдёт = false;
 // Начать — сначала выбрать, откуда звук: в аудитории лектора слышит микрофон,
-// в Zoom — он звучит из колонок. Закончить — сразу.
-lectureButton.addEventListener('click', () => {
+// в Zoom — он звучит из колонок. Закончить — сразу. Так и на уменьшенной.
+function нажатьКонспект() {
   if (конспектИдёт) {
     ipcRenderer.send(${JSON.stringify(STATUS_OVERLAY_CHANNEL + ':lecture')});
     return;
   }
   sourcesBox.classList.toggle('open');
   подогнатьВысоту();
+}
+lectureButton.addEventListener('click', нажатьКонспект);
+recButton.addEventListener('click', нажатьКонспект);
+// Нечего открыть — говорит сама кнопка: строка «услышал…» на уменьшенной
+// не видна.
+openButton.addEventListener('click', async () => {
+  const открыт = await ipcRenderer.invoke(${JSON.stringify(STATUS_OVERLAY_CHANNEL + ':open')});
+  if (открыт) return;
+  openButton.textContent = WORDS.noNotes;
+  setTimeout(() => { openButton.textContent = WORDS.open; }, 3000);
 });
 for (const [id, источник] of [['source-mic', 'mic'], ['source-system', 'system']]) {
   document.getElementById(id).addEventListener('click', () => {
@@ -306,6 +446,23 @@ fileButton.addEventListener('click', () => {
 document.getElementById('study').addEventListener('click', () => {
   ipcRenderer.send(${JSON.stringify(STATUS_OVERLAY_CHANNEL + ':study')});
 });
+// Размер: «▾» уменьшает, «▴» возвращает обычную, «–» сворачивает в значок,
+// щелчок по значку разворачивает в тот размер, из которого свернули.
+let вид = 'full';
+let развёрнутый = 'full';
+const SIZE = ${JSON.stringify(STATUS_OVERLAY_CHANNEL + ':size')};
+smallerButton.addEventListener('click', (e) => {
+  e.stopPropagation();
+  ipcRenderer.send(SIZE, вид === 'compact' ? 'full' : 'compact');
+});
+document.getElementById('mini').addEventListener('click', (e) => {
+  e.stopPropagation();
+  ipcRenderer.send(SIZE, 'icon');
+});
+pill.addEventListener('click', () => {
+  if (вид === 'icon') ipcRenderer.send(SIZE, развёрнутый);
+});
+const MINI_TIP = ${JSON.stringify(tr('нажмите, чтобы развернуть', 'click to expand'))};
 // Файл можно бросить на кнопку: плашка — ручка перетаскивания окна, и файл,
 // брошенный на неё, до страницы не доходит, а кнопки из неё вынуты.
 for (const цель of [fileButton, lectureButton]) {
@@ -322,9 +479,11 @@ for (const цель of [fileButton, lectureButton]) {
 }
 function showLecture(state) {
   const now = state === 'on' || state === 'finishing' || state === 'starting' || state === 'importing' ? state : 'off';
-  lectureButton.textContent = lectureLabels[now];
-  lectureButton.classList.toggle('on', now === 'on');
-  lectureButton.disabled = now === 'finishing' || now === 'starting' || now === 'importing';
+  for (const [кнопка, подписи] of [[lectureButton, lectureLabels], [recButton, compactLabels]]) {
+    кнопка.textContent = подписи[now];
+    кнопка.classList.toggle('on', now === 'on');
+    кнопка.disabled = now === 'finishing' || now === 'starting' || now === 'importing';
+  }
   courseButton.style.display = now === 'on' ? '' : 'none';
   fileButton.style.display = now === 'off' ? '' : 'none';
   if (now !== 'on') coursesBox.classList.remove('open');
@@ -380,6 +539,8 @@ let noteUntil = 0;
 // 280 пикселей, и плашка стояла высокой при любом тексте (замер 23.09.2026).
 let последняяВысота = 0;
 function подогнатьВысоту() {
+  // Значку размер задаёт главный процесс: квадратик в углу.
+  if (вид === 'icon') return;
   requestAnimationFrame(() => {
     const нужно = Math.ceil(
       pill.getBoundingClientRect().height +
@@ -409,6 +570,18 @@ ipcRenderer.on(${JSON.stringify(LOOK_CHANNEL)}, (_event, look) => видПлаш
 ipcRenderer.on(${JSON.stringify(STATUS_OVERLAY_CHANNEL)}, (_event, status) => {
   // Крупный режим переключается на ходу: его меняют голосом.
   document.body.classList.toggle('big', Boolean(status.big));
+  const былВид = вид;
+  вид = ['compact', 'icon'].includes(status.size) ? status.size : 'full';
+  развёрнутый = status.unfold === 'compact' ? 'compact' : 'full';
+  document.body.classList.toggle('mini', вид === 'icon');
+  document.body.classList.toggle('compact', вид === 'compact');
+  document.body.classList.toggle('recording', status.lecture === 'on');
+  smallerButton.innerHTML = вид === 'compact' ? CHEVRON.up : CHEVRON.down;
+  smallerButton.title = вид === 'compact' ? WORDS.bigger : WORDS.smaller;
+  // Подписи состояния на уменьшенной и значке нет — она в подсказке.
+  pill.title = вид === 'icon' ? status.label + ' — ' + MINI_TIP : вид === 'compact' ? status.label : '';
+  // Размер сменили — высоту меряем заново: прошлый замер был в другом виде.
+  if (былВид !== вид) последняяВысота = 0;
   видПлашки(status.look);
   showLecture(status.lecture);
   showLectureInfo(status.lectureInfo);
@@ -466,6 +639,8 @@ export interface StatusOverlayOptions {
   onFile?: (file: string | null) => void;
   /** Кнопка «Учёба». */
   onStudy?: () => void;
+  /** «Конспект ↗» на уменьшенной плашке; false — открывать нечего. */
+  onOpenNotes?: () => boolean;
 }
 
 interface SavedPosition {
@@ -475,6 +650,35 @@ interface SavedPosition {
 
 function positionFile(): string {
   return path.join(app.getPath('userData'), 'jarvis-overlay-position.json');
+}
+
+function readSaved(): Record<string, unknown> {
+  try {
+    const file = positionFile();
+    return existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+interface SavedSize {
+  size: OverlaySize;
+  /** Во что развернуть значок: в размер, из которого его свернули. */
+  unfold: 'full' | 'compact';
+}
+
+/** Размер плашки помнится между запусками: уменьшили — значит, мешала. */
+function readSavedSize(): SavedSize {
+  const saved = readSaved();
+  return { size: isOverlaySize(saved.size) ? saved.size : 'full', unfold: saved.unfold === 'compact' ? 'compact' : 'full' };
+}
+
+function saveSize(size: SavedSize): void {
+  try {
+    writeFileSync(positionFile(), JSON.stringify({ ...readSaved(), ...size }), 'utf8');
+  } catch {
+    // Не запомнилось — при следующем запуске плашка будет обычной, и только.
+  }
 }
 
 /** Where the user last dragged it, if that place still exists. */
@@ -504,7 +708,7 @@ function readSavedPosition(): SavedPosition | null {
 
 function savePosition(position: SavedPosition): void {
   try {
-    writeFileSync(positionFile(), JSON.stringify(position), 'utf8');
+    writeFileSync(positionFile(), JSON.stringify({ ...readSaved(), ...position }), 'utf8');
   } catch {
     // Losing the position is not worth reporting to someone working by voice.
   }
@@ -512,6 +716,7 @@ function savePosition(position: SavedPosition): void {
 
 export function createStatusOverlay(options: StatusOverlayOptions = {}): StatusOverlay {
   let крупно = false;
+  let { size: вид, unfold: развёрнутый } = readSavedSize();
   let лекция: LectureButtonState = 'off';
   let сведения: LectureInfo | null = null;
   // Последнее состояние, чтобы перерисовать кнопку, не дожидаясь новой фразы.
@@ -520,7 +725,7 @@ export function createStatusOverlay(options: StatusOverlayOptions = {}): StatusO
   const pagePath = path.join(dir, 'overlay.html');
   writeFileSync(pagePath, buildOverlayHtml(), 'utf8');
 
-  let window = openWindow(pagePath, () => размер(крупно));
+  let window = openWindow(pagePath, () => размер(крупно, вид), () => вид === 'icon');
 
   /**
    * Пересоздание после падения.
@@ -544,7 +749,7 @@ export function createStatusOverlay(options: StatusOverlayOptions = {}): StatusO
 
   const поднять = (): void => {
     ожидание = null;
-    window = openWindow(pagePath, () => размер(крупно));
+    window = openWindow(pagePath, () => размер(крупно, вид), () => вид === 'icon');
     window.webContents.once('render-process-gone', revive);
   };
 
@@ -584,7 +789,14 @@ export function createStatusOverlay(options: StatusOverlayOptions = {}): StatusO
     последнее = payload;
     try {
       if (window.isDestroyed() || window.webContents.isDestroyed()) return;
-      window.webContents.send(STATUS_OVERLAY_CHANNEL, { ...payload, lecture: лекция, lectureInfo: сведения, look: currentLook() });
+      window.webContents.send(STATUS_OVERLAY_CHANNEL, {
+        ...payload,
+        lecture: лекция,
+        lectureInfo: сведения,
+        look: currentLook(),
+        size: вид,
+        unfold: развёрнутый,
+      });
     } catch {
       // Кадр исчез между проверкой и отправкой. Индикатор поднимется сам.
     }
@@ -614,6 +826,32 @@ export function createStatusOverlay(options: StatusOverlayOptions = {}): StatusO
   };
   ipcMain.on(`${STATUS_OVERLAY_CHANNEL}:study`, onStudy);
 
+  // Значок — в угол экрана; обычная и уменьшенная — туда, где плашку оставили.
+  // Размер — числом, как и везде здесь: getBounds при масштабе 125% течёт
+  // (см. onHeight).
+  const сменитьВид = (новый: OverlaySize): void => {
+    if (вид === новый || window.isDestroyed()) return;
+    вид = новый;
+    if (новый !== 'icon') развёрнутый = новый;
+    saveSize({ size: вид, unfold: развёрнутый });
+    window.setBounds(
+      новый === 'icon'
+        ? miniBounds(screen.getDisplayMatching(window.getBounds()).workArea)
+        : placeOverlay(readSavedPosition(), размер(крупно, новый)),
+    );
+    if (последнее) send({ ...последнее, note: undefined });
+  };
+  const onSize = (event: Electron.IpcMainEvent, size: unknown): void => {
+    if (window.isDestroyed() || event.sender !== window.webContents) return;
+    if (isOverlaySize(size)) сменитьВид(size);
+  };
+  ipcMain.on(`${STATUS_OVERLAY_CHANNEL}:size`, onSize);
+  const onOpen = (event: Electron.IpcMainInvokeEvent): boolean => {
+    if (window.isDestroyed() || event.sender !== window.webContents) return false;
+    return options.onOpenNotes?.() ?? false;
+  };
+  ipcMain.handle(`${STATUS_OVERLAY_CHANNEL}:open`, onOpen);
+
   return {
     note(status, text) {
       send({ ...status, note: text, big: крупно });
@@ -635,6 +873,11 @@ export function createStatusOverlay(options: StatusOverlayOptions = {}): StatusO
     setBig(big) {
       if (крупно === big) return;
       крупно = big;
+      // Значку размер не меняем: крупный вид проявится, когда развернут.
+      if (вид === 'icon') {
+        if (последнее) send({ ...последнее, note: undefined });
+        return;
+      }
       // Ширину задаём числом, а не из `getBounds`.
       //
       // При масштабе 125% `setBounds` из `getBounds` терял проценты за вызов:
@@ -642,12 +885,7 @@ export function createStatusOverlay(options: StatusOverlayOptions = {}): StatusO
       // полоску. Здесь та же ловушка, и обходится она так же.
       if (!window.isDestroyed()) {
         const было = window.getBounds();
-        window.setBounds({
-          x: было.x,
-          y: было.y,
-          width: big ? BIG_WIDTH : WIDTH,
-          height: big ? BIG_HEIGHT : HEIGHT,
-        });
+        window.setBounds({ x: было.x, y: было.y, ...размер(big, вид) });
       }
     },
     dispose() {
@@ -658,6 +896,8 @@ export function createStatusOverlay(options: StatusOverlayOptions = {}): StatusO
       ipcMain.removeListener(`${STATUS_OVERLAY_CHANNEL}:course`, onCourse);
       ipcMain.removeListener(`${STATUS_OVERLAY_CHANNEL}:file`, onFile);
       ipcMain.removeListener(`${STATUS_OVERLAY_CHANNEL}:study`, onStudy);
+      ipcMain.removeListener(`${STATUS_OVERLAY_CHANNEL}:size`, onSize);
+      ipcMain.removeHandler(`${STATUS_OVERLAY_CHANNEL}:open`);
       if (ожидание) {
         clearTimeout(ожидание);
         ожидание = null;
@@ -667,14 +907,15 @@ export function createStatusOverlay(options: StatusOverlayOptions = {}): StatusO
   };
 }
 
-function openWindow(pagePath: string, размерРежима: () => Размер): BrowserWindow {
-  const work = screen.getPrimaryDisplay().workArea;
-  const saved = readSavedPosition();
+function openWindow(pagePath: string, размерРежима: () => Размер, свёрнуто: () => boolean): BrowserWindow {
+  // Свёрнутую в прошлый раз плашку и открываем значком в углу, уменьшенную —
+  // уменьшенной.
+  const место = свёрнуто() ? miniBounds(screen.getPrimaryDisplay().workArea) : placeOverlay(readSavedPosition(), размерРежима());
   const window = new BrowserWindow({
-    width: WIDTH,
-    height: HEIGHT,
-    x: saved?.x ?? work.x + work.width - WIDTH - MARGIN,
-    y: saved?.y ?? work.y + work.height - HEIGHT - MARGIN,
+    width: место.width,
+    height: место.height,
+    x: место.x,
+    y: место.y,
     frame: false,
     // Not transparent. A transparent frameless window on Windows renders
     // nothing at all here — the window exists, reports itself visible, and
@@ -714,7 +955,7 @@ function openWindow(pagePath: string, размерРежима: () => Разме
   const onHeight = (event: Electron.IpcMainEvent, height: unknown): void => {
     if (event.sender !== window.webContents) return;
     if (typeof height !== 'number' || !Number.isFinite(height)) return;
-    if (window.isDestroyed()) return;
+    if (window.isDestroyed() || свёрнуто()) return;
     // Размер берём у ТЕКУЩЕГО режима, а не у обычного.
     //
     // Здесь стояло `HEIGHT`/`WIDTH` числами, и это стирало крупный режим:
@@ -763,6 +1004,8 @@ function openWindow(pagePath: string, размерРежима: () => Разме
   // focus, so moving it does not interrupt whatever the user was typing in.
 
   window.on('moved', () => {
+    // Место значка не запоминаем: развернувшись, плашка встаёт туда, где была.
+    if (свёрнуто()) return;
     const [x, y] = window.getPosition();
     savePosition({ x, y });
   });
