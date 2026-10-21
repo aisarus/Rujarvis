@@ -245,7 +245,14 @@ async function поднятьСлух(options: LectureStartOptions, язык: st
     распознать: async (samples, sampleRate) => {
       const свой = await сервер;
       const endpoint = свой?.endpoint ?? options.mainEndpoint();
-      if (!endpoint) throw new Error('распознавать нечем: нет сервера на видеокарте (pnpm jarvis:gpu-stt)');
+      if (!endpoint) {
+        throw new Error(
+          tr(
+            'распознавать нечем: не установлено распознавание лекций (Настройки → Речь → «Распознавание лекций»)',
+            'nothing to transcribe with: lecture recognition is not installed (Settings → Speech → "Lecture recognition")',
+          ),
+        );
+      }
       return createGpuTranscriber({ endpoint, language: язык, timeoutMs: 120_000, withConfidence: true }).transcribe(samples, sampleRate);
     },
   };
@@ -351,8 +358,8 @@ async function начатьЛекцию(subject: string | undefined, options: Le
     ...(нечем
       ? {
           строка: tr(
-            'Только запись: расшифровать нечем (нет распознавания на видеокарте). Конспект — потом из файла.',
-            'Recording only: nothing to transcribe with (no GPU recognition). Notes later from the file.',
+            'Только запись: распознавание лекций не установлено (Настройки → Речь). Конспект — потом из этой записи.',
+            'Recording only: lecture recognition is not installed (Settings → Speech). Notes later from this recording.',
           ),
         }
       : {}),
@@ -371,16 +378,16 @@ async function начатьЛекцию(subject: string | undefined, options: Le
     : tr('Курс определю по лекции.', 'I will work out the course from the lecture.');
   if (нечем) {
     return tr(
-      'Записываю звук лекции, но расшифровать его нечем: не установлено распознавание на видеокарте (pnpm jarvis:gpu-stt). Конспект сделаю потом из этой записи.',
-      'Recording the lecture, but there is nothing to transcribe it with: GPU recognition is not installed (pnpm jarvis:gpu-stt). I will make the notes from this recording later.',
+      'Записываю звук лекции, но расшифровать его нечем: не установлено распознавание лекций. Поставить — в настройках, «Речь» → «Распознавание лекций»; потом отдайте эту запись кнопкой «Из файла…».',
+      'Recording the lecture, but there is nothing to transcribe it with: lecture recognition is not installed. Install it in Settings, "Speech" → "Lecture recognition", then give me this recording with "From a file…".',
     );
   }
   const откуда = zoom ? tr('Пишу звук компьютера (Zoom). ', 'Recording the computer sound (Zoom). ') : '';
   return слух.модель
     ? tr(`Конспектирую. ${откуда}${гдеКурс} Закончить — «Джарвис, закончи конспект».`, `Taking notes. ${откуда}${гдеКурс} Say "Jarvis, stop lecture notes" to finish.`)
     : tr(
-        `Конспектирую общим распознаванием. ${гдеКурс} Точнее будет с моделью для лекций: pnpm jarvis:lecture-model.`,
-        `Taking notes with the general recognition. ${гдеКурс} The lecture model is more accurate: pnpm jarvis:lecture-model.`,
+        `Конспектирую общим распознаванием. ${гдеКурс} Точнее будет с моделью для лекций — в настройках, «Распознавание лекций».`,
+        `Taking notes with the general recognition. ${гдеКурс} The lecture model is more accurate; install it in Settings, "Lecture recognition".`,
       );
 }
 

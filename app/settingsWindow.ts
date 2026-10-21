@@ -21,6 +21,8 @@ import { checkLocalModel, normaliseEndpoint } from '../jarvis/backends/localMode
 import type { JarvisPaths } from '../jarvis/setup/paths';
 import { jarvisOutputDir } from '../jarvis/setup/paths';
 import type { AppSettings, SettingsStore } from '../jarvis/setup/settings';
+import { gpuWhisperDir } from '../jarvis/voice/gpuWhisper';
+import { installLectureStt, lectureSttStatus } from '../jarvis/voice/lectureStt';
 import { WHISPER_MODELS, type WhisperModelId } from '../jarvis/voice/sttModels';
 import { installVoice, isVoiceInstalled, Speaker, voiceForLanguage, VOICES } from '../jarvis/voice/tts';
 import { installWhisperModel } from '../jarvis/voice/whisperInstall';
@@ -153,6 +155,7 @@ async function зависитОтНастроек() {
     bytes: voice.downloadBytes,
     installed: isVoiceInstalled(paths.voiceModels, voice.id),
   }));
+  const языкЛекций = settings.lectureLanguage || settings.language;
   return {
     settings,
     paths: {
@@ -164,6 +167,8 @@ async function зависитОтНастроек() {
     },
     whisper,
     voices,
+    // Будет ли конспект лекции и что для него поставить — для языка лекций из настроек.
+    lectureStt: { language: языкЛекций, ...(await lectureSttStatus(gpuWhisperDir(paths.home), языкЛекций)) },
   };
 }
 
@@ -201,6 +206,12 @@ async function state() {
  * Он, скорее всего, ещё не скачан — и мастер честно не пустит дальше, пока
  * его не поставят.
  */
+/** Язык лекций из страницы — только код языка: он уходит в выбор модели и имя файла. */
+function строкаЯзыка(id: unknown): string {
+  if (typeof id !== 'string' || !/^[a-z]{2,3}$/u.test(id)) throw new Error('неизвестный язык лекций');
+  return id;
+}
+
 function подобратьГолос(patch: Partial<AppSettings>, before: AppSettings): Partial<AppSettings> {
   const язык = patch.language;
   if (!язык || язык === before.language) return patch;
@@ -246,17 +257,25 @@ function registerHandlers(): void {
     window?.close();
   });
 
-  ipcMain.handle(`${SETTINGS_CHANNEL}:install`, (_event, kind: 'whisper' | 'voice', id: string) => {
+  ipcMain.handle(`${SETTINGS_CHANNEL}:install`, (_event, kind: 'whisper' | 'voice' | 'lecture', id: string) => {
     const key = `${kind}:${id}`;
     const running = installs.get(key);
     if (running) return running;
     const { paths } = current as SettingsWindowOptions;
     const progress = (p: { stage: string; ratio?: number; message?: string }) =>
       send('progress', { kind, id, ...p });
+    // Распознавание лекций — три загрузки подряд: строка под полоской
+    // называет, какая идёт, иначе полоска «сбрасывается» без объяснения.
     const job = (
       kind === 'whisper'
         ? installWhisperModel({ installRoot: paths.whisperModels, modelId: id as WhisperModelId, onProgress: progress })
-        : installVoice(paths.voiceModels, id, progress)
+        : kind === 'lecture'
+          ? installLectureStt(gpuWhisperDir(paths.home), строкаЯзыка(id), (что, p) =>
+              // «Готово» одной части — ещё не конец: страница на «complete» перечитывает
+              // всё окно и показала бы кнопку «Установить» между загрузками.
+              progress(p.stage === 'complete' ? { stage: 'extracting', ratio: 1, message: что } : { ...p, message: p.message ? `${что}: ${p.message}` : что }),
+            )
+          : installVoice(paths.voiceModels, id, progress)
     )
       .then((): InstallOutcome => ({ ok: true }))
       .catch((error: unknown): InstallOutcome => {

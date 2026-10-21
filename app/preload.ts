@@ -10,7 +10,7 @@ contextBridge.exposeInMainWorld('jarvis', {
   state: () => ipcRenderer.invoke(`${CHANNEL}:state`),
   update: (patch: Record<string, unknown>) => ipcRenderer.invoke(`${CHANNEL}:update`, patch),
   finish: () => ipcRenderer.invoke(`${CHANNEL}:finish`),
-  install: (kind: 'whisper' | 'voice', id: string) => ipcRenderer.invoke(`${CHANNEL}:install`, kind, id),
+  install: (kind: 'whisper' | 'voice' | 'lecture', id: string) => ipcRenderer.invoke(`${CHANNEL}:install`, kind, id),
   preview: (voiceId: string, text: string) => ipcRenderer.invoke(`${CHANNEL}:preview`, voiceId, text),
   open: (target: 'home' | 'log' | 'output') => ipcRenderer.invoke(`${CHANNEL}:open`, target),
   chooseFolder: () => ipcRenderer.invoke(`${CHANNEL}:chooseFolder`),

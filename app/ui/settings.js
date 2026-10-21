@@ -209,6 +209,59 @@ function lectureLanguageCard() {
   return card;
 }
 
+/**
+ * Распознавание лекций: будет ли конспект и что поставить одной кнопкой.
+ * Раньше — только установщиком или командой в терминале, а окно молчало, и
+ * студент узнавал, что конспекта нет, вечером над пустой заметкой.
+ */
+function lectureSttCard() {
+  const s = t();
+  const st = data.lectureStt;
+  const names = { he: s.langHe, ru: s.langRu, en: s.langEn, ar: s.langAr, fr: s.langFr, de: s.langDe, es: s.langEs };
+  const key = `lecture:${st.language}`;
+  const p = progress.get(key);
+  const ready = st.runtime && st.model;
+  const [pill, pillText, hint] = !st.supported
+    ? ['bad', s.lectureSttStatusMissing, s.lectureSttUnsupported]
+    : ready
+      ? ['ok', s.lectureSttStatusReady, s.lectureSttReady]
+      : st.runtime
+        ? ['warn', s.lectureSttStatusGeneral, s.lectureSttGeneral]
+        : ['bad', s.lectureSttStatusMissing, s.lectureSttMissing];
+  let action = '';
+  if (p && p.stage !== 'complete' && p.stage !== 'error') {
+    const label = p.stage === 'downloading' ? s.downloading : s.extracting;
+    action = `<div style="min-width:240px"><div class="row"><span class="pill">${label}</span><div class="bar"><i style="width:${Math.round((p.ratio ?? 1) * 100)}%"></i></div></div>${p.message ? `<div class="desc">${escapeHtml(p.message)}</div>` : ''}</div>`;
+  } else if (st.supported && !ready) {
+    action = `<button class="btn primary" data-act="install">${s.lectureSttInstall}${st.missingBytes ? ` · ${размерФайла(st.missingBytes)}` : ''}</button>`;
+  }
+  const card = el(`<div class="card" id="lecture-stt">
+    <div class="row"><h2>${s.lectureStt}</h2><span class="pill ${pill}">${pillText}</span></div>
+    <p class="hint" style="margin:8px 0 0">${hint}</p>
+    <p class="hint" style="margin:6px 0 0">${s.lectureSttLanguage.replace('{0}', escapeHtml(names[st.language] || st.language)).replace('{1}', escapeHtml(st.modelFile))}</p>
+    ${st.supported && !ready && st.gpu === 'none' ? `<p class="hint" style="margin:6px 0 0"><b>${s.lectureSttNoNvidia}</b></p>` : ''}
+    ${st.supported && !st.runtime && st.gpu === 'metal' ? `<p class="hint" style="margin:6px 0 0">${s.lectureSttMac}</p>` : ''}
+    ${p && p.stage === 'error' ? `<div class="error">${escapeHtml(p.message)}</div>` : ''}
+    ${action ? `<div class="row" style="justify-content:flex-start;margin-top:12px">${action}</div>` : ''}
+  </div>`);
+  const install = card.querySelector('[data-act=install]');
+  if (install) {
+    install.onclick = async () => {
+      progress.set(key, { stage: 'downloading', ratio: 0 });
+      render();
+      const итог = await api.install('lecture', st.language);
+      if (итог && итог.ok === false) {
+        progress.set(key, { stage: 'error', message: итог.message });
+        render();
+        return;
+      }
+      progress.delete(key);
+      await refresh();
+    };
+  }
+  return card;
+}
+
 function modelsCard() {
   const s = t();
   const lang = data.settings.language;
@@ -602,6 +655,7 @@ function renderSettings(main, nav) {
     main.append(speechPlaceCard());
     main.append(modelsCard());
     main.append(lectureLanguageCard());
+    main.append(lectureSttCard());
     main.append(el(`<h2 style="margin-top:8px">${s.stepMic}</h2>`), micCard());
   }
   if (tab === 'agents') {

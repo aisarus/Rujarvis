@@ -379,6 +379,11 @@ export function lectureModelFor(language: string): LectureModelSource {
   return LECTURE_MODELS.byLanguage[language] ?? LECTURE_MODELS.general;
 }
 
+/** Стоит ли эта модель для лекций: готовый файл или несжатый исходник. */
+export async function installedLectureModel(dir: string, source: LectureModelSource): Promise<string | null> {
+  return готоваяМодель(dir, source);
+}
+
 async function готоваяМодель(dir: string, source: LectureModelSource): Promise<string | null> {
   for (const имя of [source.file, source.quantize?.unquantizedFile]) {
     if (!имя) continue;

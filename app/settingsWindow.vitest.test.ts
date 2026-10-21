@@ -76,7 +76,16 @@ describe('окно настроек', () => {
   it('на сохранение отдаёт всё, что зависит от настроек, а не одни настройки', async () => {
     const { update } = await окно();
     const ответ = (await update(null, { language: 'en' } as never)) as Record<string, unknown>;
-    expect(Object.keys(ответ).sort()).toEqual(['paths', 'settings', 'voices', 'whisper']);
+    // `lectureStt` — будет ли конспект лекции: зависит от языка лекций.
+    expect(Object.keys(ответ).sort()).toEqual(['lectureStt', 'paths', 'settings', 'voices', 'whisper']);
+  });
+
+  it('распознавание лекций — для языка лекций из настроек; ничего не стоит — конспекта не будет', async () => {
+    const { update } = await окно();
+    const ответ = (await update(null, { lectureLanguage: 'he' } as never)) as { lectureStt: Record<string, unknown> };
+    expect(ответ.lectureStt).toMatchObject({ language: 'he', runtime: false, model: false, modelFile: 'ggml-ivrit-turbo-q5_0.bin' });
+    // Сколько качать — названо: программа, общая модель и модель для иврита.
+    expect(ответ.lectureStt.missingBytes).toBeGreaterThan(2_000_000_000);
   });
 
   it('после смены языка описания моделей и путь приходят на новом языке', async () => {
@@ -105,6 +114,7 @@ describe('окно настроек', () => {
       // Есть ли в системе ключ облака — для переключателя «где распознаётся
       // речь». Сам ключ окну не отдаётся.
       'cloudKey',
+      'lectureStt',
       'paths',
       'platform',
       'settings',
