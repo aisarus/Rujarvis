@@ -66,6 +66,9 @@ const STRINGS = {
     audioBtn: 'Звук · {0} ✕', audioKeep: 'Звук · {0}', audioKeepWhy: 'Звук нужен: расшифровка пустая или её нет — по нему лекцию можно расшифровать заново.',
     audioConfirm: 'Удалить звук насовсем?',
     mb: 'МБ', gb: 'ГБ',
+    move: 'Перенести…', moveTo: 'В курс:', moveNew: 'Новый курс…', moveYes: 'Перенести', moved: 'Лекция перенесена в «{0}».',
+    unsortedHint: 'Сюда попадают лекции, курс которых Джарвис не узнал. Перенесите каждую в свой курс кнопкой «Перенести…» — вместе с вопросами и карточками.',
+    unsortedEmpty: 'Все лекции разнесены по курсам.',
   },
   en: {
     title: 'Study', today: 'Today', courses: 'Courses', cards: 'Cards', back: '← Back',
@@ -117,6 +120,9 @@ const STRINGS = {
     audioBtn: 'Audio · {0} ✕', audioKeep: 'Audio · {0}', audioKeepWhy: 'This audio is needed: the transcript is empty or missing, and the lecture can be transcribed again from it.',
     audioConfirm: 'Delete the audio permanently?',
     mb: 'MB', gb: 'GB',
+    move: 'Move…', moveTo: 'To course:', moveNew: 'New course…', moveYes: 'Move', moved: 'The lecture was moved to "{0}".',
+    unsortedHint: 'Lectures whose course Jarvis did not recognise land here. Move each to its course with "Move…"; its questions and cards go with it.',
+    unsortedEmpty: 'All lectures are sorted into courses.',
   },
 }[LANG];
 
@@ -580,42 +586,48 @@ function courseRender(name) {
   return render;
 }
 
-async function renderCourse(name) {
+/** `message` — строка сверху: что сейчас сделано (лекция перенесена). */
+async function renderCourse(name, message) {
   const c = await call('course', name);
   const sub = [c.hebrew, c.code, c.schedule, c.credits ? `${c.credits} נ״ז` : '', c.lecturer].filter(Boolean).join(' · ');
   const box = el('div');
-  view.append(
+  // «Без курса» — не курс: его не правят и не удаляют, а разносят по курсам.
+  // Пустое отбрасываем: append у DOM вставил бы null словом «null».
+  view.append(...[
     el('button', { class: 'link', onclick: () => show(tab === 'courses' ? renderCourses : renderToday) }, t('back')),
     el('div', { class: 'row spread', style: 'flex-wrap:wrap' },
       el('h1', {}, c.name),
-      el('div', { class: 'row' },
+      c.unsorted ? null : el('div', { class: 'row' },
         el('button', { class: 'btn small', onclick: () => editCourseForm(box, c) }, t('edit')),
         el('button', { class: 'btn small', onclick: () => deleteCourseBox(box, c) }, t('deleteCourse')),
       ),
     ),
-    el('div', { class: 'muted', dir: 'auto' }, sub),
+    c.unsorted ? el('p', { class: 'hint' }, t('unsortedHint')) : el('div', { class: 'muted', dir: 'auto' }, sub),
+    typeof message === 'string' && message ? el('p', { class: 'hint' }, message) : null,
     box,
-    courseSettings(c),
+    c.unsorted ? null : courseSettings(c),
     el('div', { class: 'row', style: 'margin-bottom:14px;flex-wrap:wrap' },
       el('button', { class: 'btn primary', onclick: () => show(() => renderQuiz({ course: name })) }, t('courseQuiz')),
-      el('button', { class: 'btn', onclick: () => show(() => renderExamSetup(name)) }, t('examTraining')),
+      c.unsorted ? null : el('button', { class: 'btn', onclick: () => show(() => renderExamSetup(name)) }, t('examTraining')),
       el('button', { class: 'btn', onclick: () => show(() => renderCards(name)) }, t('courseCards', c.dueCards)),
     ),
-  );
-  if (!c.lectures.length && !c.unprepared.length) view.append(el('p', { class: 'muted' }, t('noLecturesYet')));
+  ].filter(Boolean));
+  if (!c.lectures.length && !c.unprepared.length) view.append(el('p', { class: 'muted' }, t(c.unsorted ? 'unsortedEmpty' : 'noLecturesYet')));
   // Заготовленные и нет — одним списком, по порядку лекций.
   const порядок = [...c.lectures.map((l) => ({ l })), ...c.unprepared.map((u) => ({ u }))]
     .sort((a, b) => ((a.l || a.u).number || 0) - ((b.l || b.u).number || 0) || (a.l || a.u).date.localeCompare((b.l || b.u).date));
   for (const { l, u } of порядок) {
-    if (u) { view.append(unpreparedBox(u)); continue; }
+    if (u) { view.append(unpreparedBox(u, name)); continue; }
     const tasks = l.topics.reduce((n, x) => n + x.tasks, 0);
-    const box = el('div', { class: 'card lecture' },
+    const box = el('div', { class: 'card lecture' });
+    box.append(
       el('div', { class: 'head' },
         el('b', {}, [l.number ? t('lecture', l.number) : '', l.date.split('-').reverse().join('.'), l.topic].filter(Boolean).join(' · ')),
         el('span', { style: 'flex:1' }),
         el('button', { class: 'btn small', onclick: () => call('openNote', l.notesFile) }, '↗'),
         el('button', { class: 'btn small', onclick: () => show(() => renderQuiz({ course: name, lecture: l.lecture })) }, t('quiz')),
         tasks ? el('button', { class: 'btn small', onclick: () => show(() => renderTasks(name, l.lecture)) }, t('tasks', tasks)) : null,
+        moveButton(box, l.notesFile, name),
         audioButton(l.notesFile, l.audio),
       ),
     );
@@ -631,18 +643,62 @@ async function renderCourse(name) {
   }
 }
 
-function unpreparedBox(u) {
+function unpreparedBox(u, course) {
   const busy = preparing.includes(u.lecture);
-  return el('div', { class: 'card lecture' },
+  const card = el('div', { class: 'card lecture' });
+  card.append(
     el('div', { class: 'head' },
       el('b', {}, [u.number ? t('lecture', u.number) : '', u.date.split('-').reverse().join('.'), u.topic].filter(Boolean).join(' · ')),
       el('span', { class: 'small muted' }, u.empty ? t('noMaterial') : t('unprepared')),
       el('span', { style: 'flex:1' }),
       el('button', { class: 'btn small', onclick: () => call('openNote', u.notesFile) }, '↗'),
       u.empty ? null : busy ? el('span', { class: 'pill' }, t('preparingNow')) : el('button', { class: 'btn small', onclick: () => call('prepare', u.notesFile) }, t('prepareBtn')),
+      moveButton(card, u.notesFile, course),
       audioButton(u.notesFile, u.audio),
     ),
   );
+  return card;
+}
+
+/**
+ * «Перенести…» у лекции: в курс из списка или в новый — прямо в карточке.
+ * Раньше лекцию из неправильного курса переносили только голосом и только
+ * последнюю с запуска; «Без курса» в окне не было видно вовсе.
+ */
+function moveButton(card, notesFile, from) {
+  const form = el('div', { class: 'row', style: 'flex-wrap:wrap;margin-top:10px' });
+  const open = async () => {
+    form.textContent = '';
+    let names = [];
+    try {
+      names = (await call('today')).today.courses.filter((c) => !c.unsorted && c.name !== from).map((c) => c.name);
+    } catch {
+      names = [];
+    }
+    const select = el('select', {}, ...names.map((n) => el('option', { value: n }, n)), el('option', { value: '' }, t('moveNew')));
+    const input = el('input', { type: 'text', placeholder: t('courseName') });
+    input.hidden = names.length > 0;
+    select.addEventListener('change', () => {
+      input.hidden = Boolean(select.value);
+      if (!input.hidden) input.focus();
+    });
+    const note = el('span', { class: 'small error' });
+    const yes = el('button', { class: 'btn small primary', onclick: async () => {
+      const куда = select.value || input.value.trim();
+      if (!куда) { input.focus(); return; }
+      yes.disabled = true;
+      try {
+        const r = await call('moveLecture', notesFile, куда);
+        show(() => renderCourse(from, t('moved', r.course)));
+      } catch (error) {
+        note.textContent = t('error', error.message);
+        yes.disabled = false;
+      }
+    } }, t('moveYes'));
+    form.append(el('span', { class: 'small' }, t('moveTo')), select, input, yes, el('button', { class: 'btn small', onclick: () => { form.textContent = ''; } }, t('cancel')), note);
+    if (!form.isConnected) card.append(form);
+  };
+  return el('button', { class: 'btn small', onclick: open }, t('move'));
 }
 
 /**

@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('study', {
   editCourse: (course: string, name: string, hebrew: string, code: string) => call('editCourse', course, name, hebrew, code),
   setCourseLanguages: (course: string, language: string, notes: string) => call('setCourseLanguages', course, language, notes),
   deleteCourse: (course: string) => call('deleteCourse', course),
+  moveLecture: (notesFile: string, course: string) => call('moveLecture', notesFile, course),
   recordings: () => call('recordings'),
   deleteRecording: (notesFile: string) => call('deleteRecording', notesFile),
   deleteAllRecordings: () => call('deleteAllRecordings'),

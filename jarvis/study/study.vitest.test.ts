@@ -350,6 +350,49 @@ describe('служба учёбы: сегодня, квиз, карточки, �
     expect(await s.deleteAllRecordings()).toEqual({ deleted: 1, bytes: 100, kept: 0, failed: 0 });
   });
 
+  it('«Перенести…»: лекция с вопросами, карточками и прогрессом переезжает в другой курс', async () => {
+    const { s, store, vault, заметка } = await служба();
+    await writeFile(path.join(vault, 'Микро', '2026-10-20 — Спрос.wav'), Buffer.alloc(10));
+    const квиз = s.startQuiz({ course: 'Микро', topic: '2026-10-20 — Спрос#1' });
+    s.answerQuiz(квиз.id, 0, 0);
+    s.addCardFromQuestion(квиз.id, 0);
+    s.createCourse('Макро');
+
+    expect(await s.moveLecture(заметка, 'макро')).toEqual({ course: 'Макро' });
+    const новая = path.join(vault, 'Макро', '2026-10-20 — Спрос.md');
+    expect(parseFrontmatter(await readFile(новая, 'utf8'))?.course).toBe('Макро');
+    expect(existsSync(path.join(vault, 'Макро', '2026-10-20 — Спрос.wav'))).toBe(true);
+    expect(existsSync(заметка)).toBe(false);
+    // Учёба — вслед за лекцией: банк с новыми путями, ответы и карточка из ошибки.
+    expect(store.banks('Микро')).toEqual([]);
+    expect(store.banks('Макро')[0]).toMatchObject({ course: 'Макро', notesFile: новая, audioFile: path.join(vault, 'Макро', '2026-10-20 — Спрос.wav') });
+    expect(store.progress('Микро').events).toEqual([]);
+    expect(store.progress('Микро').extraCards).toEqual([]);
+    expect(store.progress('Макро').events).toHaveLength(1);
+    expect(store.progress('Макро').extraCards).toHaveLength(1);
+    expect(s.course('Макро').lectures).toHaveLength(1);
+    expect(s.course('Микро')).toMatchObject({ lectures: [], unprepared: [] });
+    // Квиз, начатый до переноса, закрыт: ответ записал бы прогресс в прежний курс.
+    expect(() => s.answerQuiz(квиз.id, 1, 0)).toThrow(/нет/u);
+  });
+
+  it('«Без курса» виден в окне, пока там есть лекции, и разносится по курсам', async () => {
+    const { s, vault } = await служба();
+    const папка = path.join(vault, 'Без курса');
+    await mkdir(папка, { recursive: true });
+    const заметка = path.join(папка, '2026-10-21.md');
+    await writeFile(заметка, "---\nкурс: 'Без курса'\nлекция: 1\nдата: 2026-10-21\n---\n# Лекция\n", 'utf8');
+    expect(s.today().courses.at(-1)).toMatchObject({ name: 'Без курса', unsorted: true, lectures: 1 });
+    expect(s.course('Без курса')).toMatchObject({ unsorted: true, unprepared: [{ notesFile: заметка }] });
+
+    await expect(s.moveLecture(заметка, 'Без курса')).rejects.toThrow(/Без курса/u);
+    await expect(s.moveLecture(path.join(path.dirname(vault), 'чужое.md'), 'Микро')).rejects.toThrow(/не лекция/u);
+    expect(await s.moveLecture(заметка, 'Микро')).toEqual({ course: 'Микро' });
+    expect(s.today().courses.map((c) => c.name)).toEqual(['Микро']);
+    // Плитка считает и лекции без вопросов: «лекций: 0» при записанных парах врало.
+    expect(s.today().courses[0]?.lectures).toBe(2);
+  });
+
   it('пока конспект дописывается, звук не трогается', async () => {
     const { s, vault, заметка } = await служба({ audioBusy: () => 'Сейчас дописывается конспект' });
     await writeFile(path.join(vault, 'Микро', '2026-10-20 — Спрос.wav'), Buffer.alloc(10));

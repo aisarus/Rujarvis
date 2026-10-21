@@ -13,9 +13,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import {
+  COURSE_WORDS,
   isUnsortedName,
   listCourses,
   listLectures,
+  parseFrontmatter,
   readCourseInfo,
   renameCourseFolder,
   safeName,
@@ -33,7 +35,8 @@ import {
   type Recording,
   type RecordingsSummary,
 } from '../lecture/recordings';
-import { sectionTitle, type NotesLanguage } from '../lecture/session';
+import { moveLecture } from '../lecture/finalize';
+import { notesLanguageOf, sectionTitle, type NotesLanguage } from '../lecture/session';
 import { tr } from '../locale/language';
 import { readLectureSource } from './generate';
 import { STATE_PRIORITY, topicKnowledge, type ForgettingRisk, type KnowledgeState } from './knowledge';
@@ -105,6 +108,8 @@ export interface LectureView {
 
 export interface CourseView {
   name: string;
+  /** «Без курса»: не курс, а лекции, курс которых не узнался, — их разносят по курсам. */
+  unsorted?: boolean;
   code?: string;
   hebrew?: string;
   credits?: number;
@@ -146,7 +151,7 @@ export interface TodayView {
   classes: Array<{ course: string; time: string }>;
   items: TodayItem[];
   /** `hebrew` — название на языке лекций со страницы курса: плитка показывает его под русским. */
-  courses: Array<{ name: string; hebrew?: string; counts: Record<KnowledgeState, number>; lectures: number; dueCards: number }>;
+  courses: Array<{ name: string; hebrew?: string; counts: Record<KnowledgeState, number>; lectures: number; dueCards: number; unsorted?: boolean }>;
 }
 
 /** Вопрос как его видит окно: без верного ответа, варианты перемешаны. */
@@ -252,10 +257,22 @@ export class StudyService {
     return this.o.now?.() ?? Date.now();
   }
 
-  /** Курсы: из хранилища (страницы курсов) и из заготовок — вместе. */
+  /** «Без курса» — на языке конспектов: туда кладёт лекции, курс которых не узнался. */
+  private безКурса(): string {
+    return COURSE_WORDS[this.o.notes].unsorted;
+  }
+
+  /**
+   * Курсы: из хранилища (страницы курсов) и из заготовок — вместе. «Без
+   * курса» — последним и только когда в нём есть лекции: иначе такие лекции
+   * в окне не видны вовсе, и перенести их было нечем (аудит 21.10.2026).
+   */
   private курсы(): string[] {
     const из = new Set([...listCourses(this.o.vaultRoot()), ...this.o.store.courses()]);
-    return [...из].sort((a, b) => a.localeCompare(b));
+    из.delete(this.безКурса());
+    const курсы = [...из].sort((a, b) => a.localeCompare(b));
+    if (listLectures(this.o.vaultRoot(), this.безКурса()).length > 0 || this.o.store.courses().includes(this.безКурса())) курсы.push(this.безКурса());
+    return курсы;
   }
 
   private инфо(course: string): CourseInfo {
@@ -318,6 +335,7 @@ export class StudyService {
     const вХранилище = listLectures(this.o.vaultRoot(), name);
     return {
       name,
+      ...(name === this.безКурса() ? { unsorted: true } : {}),
       code: инфо.code,
       hebrew: инфо.hebrew,
       credits: инфо.credits,
@@ -371,7 +389,16 @@ export class StudyService {
       for (const s of инфо.slots) if (s.day === сегодня.getDay()) classes.push({ course: name, time: время(s.from) });
       const вид = this.course(name);
       карточек += вид.dueCards;
-      courses.push({ name, hebrew: инфо.hebrew || undefined, counts: вид.counts, lectures: вид.lectures.length, dueCards: вид.dueCards });
+      // Лекций — все: и заготовленные, и ждущие вопросов; иначе плитка курса с
+      // тремя записанными парами говорила «лекций: 0» (снимок 21.10.2026).
+      courses.push({
+        name,
+        hebrew: инфо.hebrew || undefined,
+        counts: вид.counts,
+        lectures: вид.lectures.length + вид.unprepared.length,
+        dueCards: вид.dueCards,
+        ...(вид.unsorted ? { unsorted: true } : {}),
+      });
       for (const л of вид.lectures) {
         if (!л.quizzed && л.topics.some((t) => t.questions > 0)) {
           items.push({
@@ -690,6 +717,37 @@ export class StudyService {
     if (existsSync(учёба)) await this.o.trash(учёба);
     this.забытьСессии(course);
     return { lectures: лекций };
+  }
+
+  /**
+   * «Перенести…» у лекции: в другой курс или в новый. Переезжают заметка,
+   * расшифровка, звук, строки на страницах обоих курсов (`moveLecture` в
+   * `finalize.ts`), вопросы, карточки и прогресс по ней. Раньше — только
+   * голосом и только последнюю лекцию с запуска.
+   */
+  async moveLecture(notesFile: string, to: string): Promise<{ course: string }> {
+    const root = this.o.vaultRoot();
+    const где = path.relative(root, notesFile);
+    const откуда = path.dirname(где);
+    if (!где || где.startsWith('..') || path.isAbsolute(где) || откуда === '.' || откуда.includes(path.sep)) {
+      throw new Error(tr('это не лекция из курса', 'this is not a lecture in a course'));
+    }
+    const текст = readFileSync(notesFile, 'utf8');
+    if (!parseFrontmatter(текст)) throw new Error(tr('это не лекция Джарвиса: в заметке нет свойств лекции', 'this is not a Jarvis lecture: the note has no lecture properties'));
+    const названо = safeName(to, 80);
+    if (!названо) throw new Error(tr('пустое название курса', 'empty course name'));
+    if (isUnsortedName(названо)) throw new Error(tr('в «Без курса» не переносят — выберите курс', 'lectures are not moved to Unsorted; choose a course'));
+    const имя = listCourses(root).find((c) => c.toLowerCase() === названо.toLowerCase()) ?? названо;
+    if (имя === откуда) return { course: имя };
+    const нельзя = this.o.busy?.(откуда) ?? this.o.busy?.(имя);
+    if (нельзя) throw new Error(нельзя);
+    const итог = await moveLecture(root, notesFile, имя, notesLanguageOf(текст) ?? this.o.notes);
+    this.o.store.moveLecture(откуда, итог.course, path.basename(notesFile, '.md'), {
+      notesFile: итог.notesFile,
+      audioFile: existsSync(итог.audioFile) ? итог.audioFile : undefined,
+    });
+    this.забытьСессии(откуда);
+    return { course: итог.course };
   }
 
   /** Звук лекций на диске: сколько, сколько места и удаляется ли сам. */

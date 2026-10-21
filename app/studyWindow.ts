@@ -122,6 +122,7 @@ function зарегистрировать(): void {
   );
   обработать('setCourseLanguages', (course, language, notes) => служба().setCourseLanguages(строка(course), строка(language), строка(notes)));
   обработать('deleteCourse', (course) => служба().deleteCourse(строка(course)));
+  обработать('moveLecture', (notesFile, course) => служба().moveLecture(строка(notesFile), строка(course)));
   обработать('recordings', () => служба().recordings());
   обработать('deleteRecording', (notesFile) => служба().deleteRecording(строка(notesFile)));
   обработать('deleteAllRecordings', () => служба().deleteAllRecordings());
