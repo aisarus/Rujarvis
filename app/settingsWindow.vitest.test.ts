@@ -84,8 +84,9 @@ describe('окно настроек', () => {
     const { update } = await окно();
     const ответ = (await update(null, { lectureLanguage: 'he' } as never)) as { lectureStt: Record<string, unknown> };
     expect(ответ.lectureStt).toMatchObject({ language: 'he', runtime: false, model: false, modelFile: 'ggml-ivrit-turbo-q5_0.bin' });
-    // Сколько качать — названо: программа, общая модель и модель для иврита.
-    expect(ответ.lectureStt.missingBytes).toBeGreaterThan(2_000_000_000);
+    // Сколько качать — названо: общая модель и модель для иврита (на Windows —
+    // ещё и программа; на маке её ставит Homebrew).
+    expect(ответ.lectureStt.missingBytes).toBeGreaterThan(1_800_000_000);
   });
 
   it('после смены языка описания моделей и путь приходят на новом языке', async () => {

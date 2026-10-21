@@ -47,8 +47,10 @@ export interface LectureSttStatus {
 export function detectGpu(platform: NodeJS.Platform = process.platform, exists: (file: string) => boolean = existsSync): GpuKind {
   if (platform === 'darwin') return 'metal';
   if (platform !== 'win32') return 'unknown';
+  // Путь Windows — разделителями Windows, на какой бы системе это ни считалось
+  // (проверки идут и на маке с Linux).
   const windows = process.env.SystemRoot ?? 'C:\\Windows';
-  const где = [path.join(windows, 'System32', 'nvidia-smi.exe'), 'C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe'];
+  const где = [path.win32.join(windows, 'System32', 'nvidia-smi.exe'), 'C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe'];
   return где.some((файл) => exists(файл)) ? 'nvidia' : 'none';
 }
 
