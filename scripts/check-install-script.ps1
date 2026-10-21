@@ -359,6 +359,24 @@ $текст = [IO.File]::ReadAllText($scriptPath)
 Assert-That 'install.ps1 кладёт ярлык на рабочий стол' ($текст -match "Join-Path \`$desktopDir 'Rujarvis\.lnk'")
 Assert-That 'папка рабочего стола спрошена у Windows, а не склеена' ($текст -match "GetFolderPath\('Desktop'\)")
 
+# Ярлык по пути с буквами вне кодировки системы. WScript.Shell на таком пути
+# падал («Value does not fall within the expected range») у первого тестера
+# 21.10.2026: Windows на иврите, пользователь «Алексей». Кириллица и иврит
+# вместе не помещаются ни в одну кодовую страницу — проверка честна на любой
+# машине, в том числе на английском раннере CI.
+$ярлыкПапка = Join-Path ([IO.Path]::GetTempPath()) ('rujarvis-lnk-' + [guid]::NewGuid().ToString('N').Substring(0, 6) + '-Алексей-תיקיה')
+New-Item -ItemType Directory -Force -Path $ярлыкПапка | Out-Null
+try {
+    $цельЯрлыка = Join-Path $ярлыкПапка 'electron.exe'
+    Set-Content -LiteralPath $цельЯрлыка -Value 'x'
+    $ярлык = Join-Path $ярлыкПапка 'Rujarvis.lnk'
+    New-Shortcut -Path $ярлык -Target $цельЯрлыка -Arguments "`"$(Join-Path $ярлыкПапка 'main.cjs')`"" -WorkingDirectory $ярлыкПапка -Icon $цельЯрлыка
+    Assert-That 'ярлык с кириллицей и ивритом в пути создан' (Test-Path -LiteralPath $ярлык)
+    Assert-That 'цель ярлыка читается той же, что записана' ([Rujarvis.ShellLink]::Target($ярлык) -eq $цельЯрлыка)
+} finally {
+    Remove-Item -LiteralPath $ярлыкПапка -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 foreach ($док in $ставитФайлом) {
     $путьДок = Join-Path (Split-Path -Parent $PSScriptRoot) $док
     if (-not (Test-Path $путьДок)) { continue }
