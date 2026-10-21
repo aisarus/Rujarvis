@@ -134,7 +134,10 @@ export async function finalizeLecture(input: FinalizeInput): Promise<FinalizeRes
   let текст = await readFile(input.notesFile, 'utf8');
   текст = withFrontmatter(текст, meta, input.notes);
   текст = текст.replace(/^# .*$/mu, `# ${input.topic ?? курс}`);
-  const ссылки = `${с.transcript}: [[${path.basename(расшифровка, '.md')}]] · [[${курс}]]\n\n![[${path.basename(звук)}]]`;
+  // Звук могли удалить, чтобы не занимал место (`recordings.ts`): тогда и
+  // проигрывателя нет — он вёл бы в никуда.
+  const проигрыватель = existsSync(input.audioFile) ? `\n\n![[${path.basename(звук)}]]` : '';
+  const ссылки = `${с.transcript}: [[${path.basename(расшифровка, '.md')}]] · [[${курс}]]${проигрыватель}`;
   // Прежний проигрыватель звука — долой: лекция, которую переносят второй
   // раз, получила бы их два.
   текст = текст.replace(/^!\[\[[^\]]*\.wav\]\][ \t]*\r?\n?/gmu, '');

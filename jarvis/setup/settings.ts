@@ -40,6 +40,13 @@ export const THEMES: readonly ThemeChoice[] = ['system', 'light', 'dark'];
  */
 export type SpeechLogging = 'off' | 'commands' | 'all';
 
+/**
+ * Сколько хранить звук лекций: неделю (потом удаляется сам — конспект и
+ * расшифровка остаются) или пока человек не удалит сам. Пара — около 280 МБ,
+ * семестр — 15–19 ГБ (`jarvis/lecture/recordings.ts`).
+ */
+export type RecordingsKeep = 'week' | 'forever';
+
 export interface AppSettings {
   language: Language;
   voiceId: string;
@@ -103,6 +110,8 @@ export interface AppSettings {
   theme: ThemeChoice;
   /** Как оформлять конспект лекции в Obsidian (`jarvis/notes/style.ts`). */
   notesStyle: NotesStyle;
+  /** Сколько хранить звук лекций. */
+  recordingsKeep: RecordingsKeep;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -126,6 +135,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   look: 'ring',
   theme: 'system',
   notesStyle: 'razbor',
+  // Владелец 21.10.2026: «пусть удаляет сам через неделю».
+  recordingsKeep: 'week',
 };
 
 /** Пределы, за которые голосовая настройка не уводит. */
@@ -189,6 +200,7 @@ export function normaliseSettings(raw: unknown): AppSettings {
     look: LOOKS.includes(input.look as Look) ? (input.look as Look) : DEFAULT_SETTINGS.look,
     theme: THEMES.includes(input.theme as ThemeChoice) ? (input.theme as ThemeChoice) : DEFAULT_SETTINGS.theme,
     notesStyle: NOTES_STYLES.includes(input.notesStyle as NotesStyle) ? (input.notesStyle as NotesStyle) : DEFAULT_SETTINGS.notesStyle,
+    recordingsKeep: input.recordingsKeep === 'forever' ? 'forever' : 'week',
   };
 }
 

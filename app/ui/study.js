@@ -55,6 +55,17 @@ const STRINGS = {
     lectureLang: 'Язык лекций:', notesLang: 'Язык конспекта:', asSettings: 'как в настройках — {0}', asSettingsPlain: 'как в настройках',
     langHint: 'Лекции этого курса Джарвис расшифровывает на языке лекций, а конспект пишет на языке конспекта.',
     langs: { he: 'иврит', ru: 'русский', en: 'английский', ar: 'арабский', fr: 'французский', de: 'немецкий', es: 'испанский' },
+    recTitle: 'Записи лекций: {0} · {1}', recNone: 'Записей лекций на диске нет.',
+    recAuto: 'Звук старше {0} дн. удаляется сам — конспект и расшифровка остаются. Меняется в настройках, «Папки и лог».',
+    recKeepAll: 'Звук хранится, пока не удалите его сами.',
+    recDeleteAll: 'Удалить все записи',
+    recConfirm: 'Удалить насовсем звук лекций: {0}, это {1}?',
+    recWhat: 'Конспекты, расшифровки, вопросы и карточки останутся. Пропадёт «▶ с этой минуты» в квизах и возможность расшифровать лекцию заново.',
+    recKept: 'Звук лекций без расшифровки ({0}) останется: по нему их можно расшифровать заново.',
+    recDeleted: 'Удалено записей: {0}, освобождено {1}.', recFailed: 'Не удалились: {0} — файл занят (открыт в проигрывателе?).',
+    audioBtn: 'Звук · {0} ✕', audioKeep: 'Звук · {0}', audioKeepWhy: 'Звук нужен: расшифровка пустая или её нет — по нему лекцию можно расшифровать заново.',
+    audioConfirm: 'Удалить звук насовсем?',
+    mb: 'МБ', gb: 'ГБ',
   },
   en: {
     title: 'Study', today: 'Today', courses: 'Courses', cards: 'Cards', back: '← Back',
@@ -95,6 +106,17 @@ const STRINGS = {
     lectureLang: 'Lecture language:', notesLang: 'Notes language:', asSettings: 'as in settings — {0}', asSettingsPlain: 'as in settings',
     langHint: 'Jarvis transcribes this course\'s lectures in the lecture language and writes the notes in the notes language.',
     langs: { he: 'Hebrew', ru: 'Russian', en: 'English', ar: 'Arabic', fr: 'French', de: 'German', es: 'Spanish' },
+    recTitle: 'Lecture recordings: {0} · {1}', recNone: 'No lecture recordings on disk.',
+    recAuto: 'Audio older than {0} days is deleted automatically; the notes and transcript stay. Change it in Settings, "Folders and log".',
+    recKeepAll: 'Audio is kept until you delete it.',
+    recDeleteAll: 'Delete all recordings',
+    recConfirm: 'Permanently delete the audio of {0} lectures, {1}?',
+    recWhat: 'Notes, transcripts, questions and cards stay. You lose "▶ from this minute" in quizzes and the chance to transcribe the lecture again.',
+    recKept: 'Audio of lectures without a transcript ({0}) stays: they can be transcribed again from it.',
+    recDeleted: 'Recordings deleted: {0}, {1} freed.', recFailed: 'Not deleted: {0}. The file is in use (open in a player?).',
+    audioBtn: 'Audio · {0} ✕', audioKeep: 'Audio · {0}', audioKeepWhy: 'This audio is needed: the transcript is empty or missing, and the lecture can be transcribed again from it.',
+    audioConfirm: 'Delete the audio permanently?',
+    mb: 'MB', gb: 'GB',
   },
 }[LANG];
 
@@ -274,7 +296,7 @@ async function renderToday() {
   view.append(items, el('h2', {}, t('courses')));
   const grid = el('div', { class: 'grid' });
   for (const c of today.courses) grid.append(courseTile(c));
-  view.append(grid, prepareAllRow());
+  view.append(grid, prepareAllRow(), recordingsRow());
 }
 renderToday.refreshable = true;
 
@@ -295,6 +317,103 @@ function prepareAllRow() {
   return el('div', { class: 'row', style: 'margin-top:16px;flex-wrap:wrap' }, btn, note);
 }
 
+// ——— Записи лекций: место на диске ———
+
+/** 281 МБ, 2,5 ГБ — по-человечески. */
+function size(bytes) {
+  const n = bytes >= 1e9 ? bytes / 1e9 : bytes / 1e6;
+  const digits = bytes >= 1e9 && n < 10 ? 1 : 0;
+  return `${n.toLocaleString(LANG === 'en' ? 'en-GB' : 'ru-RU', { maximumFractionDigits: digits })} ${bytes >= 1e9 ? t('gb') : t('mb')}`;
+}
+
+/**
+ * Сколько места занимает звук лекций и «Удалить все записи» — с
+ * подтверждением прямо здесь, без всплывающих окон. Пара — около 280 МБ.
+ */
+function recordingsRow() {
+  const box = el('div', { class: 'card stack', style: 'margin-top:16px' });
+  const draw = async (message) => {
+    box.textContent = '';
+    box.classList.remove('danger');
+    let r;
+    try {
+      r = await call('recordings');
+    } catch (error) {
+      box.append(el('div', { class: 'small error' }, t('error', error.message)));
+      return;
+    }
+    const auto = el('div', { class: 'small muted' }, r.autoDays ? t('recAuto', r.autoDays) : t('recKeepAll'));
+    const said = message ? el('div', { class: 'hint' }, message) : null;
+    // append у DOM вставил бы null словом «null» — пустое отбрасываем.
+    const put = (...nodes) => box.append(...nodes.filter(Boolean));
+    if (!r.count) {
+      put(el('b', {}, t('recNone')), said, auto);
+      return;
+    }
+    const confirm = () => {
+      box.textContent = '';
+      box.classList.add('danger');
+      const note = el('div', { class: 'small error' });
+      const yes = el('button', { class: 'btn danger', onclick: async () => {
+        yes.disabled = true;
+        try {
+          const x = await call('deleteAllRecordings');
+          await draw(t('recDeleted', x.deleted, size(x.bytes)) + (x.failed ? ` ${t('recFailed', x.failed)}` : ''));
+        } catch (error) {
+          note.textContent = t('error', error.message);
+          yes.disabled = false;
+        }
+      } }, t('deleteYes'));
+      put(
+        el('b', {}, t('recConfirm', r.deletable, size(r.deletableBytes))),
+        el('div', {}, t('recWhat')),
+        r.count > r.deletable ? el('div', { class: 'small muted' }, t('recKept', r.count - r.deletable)) : null,
+        el('div', { class: 'row' }, yes, el('button', { class: 'btn', onclick: () => draw() }, t('cancel'))),
+        note,
+      );
+    };
+    put(
+      el('div', { class: 'row spread', style: 'flex-wrap:wrap' },
+        el('b', {}, t('recTitle', r.count, size(r.bytes))),
+        el('button', { class: 'btn', disabled: !r.deletable, onclick: confirm }, t('recDeleteAll'))),
+      said,
+      auto,
+    );
+  };
+  void draw();
+  return box;
+}
+
+/**
+ * «Звук · 280 МБ ✕» в карточке лекции. Нужный звук (расшифровки нет или она
+ * пустая) удалить нельзя — кнопка без крестика, причина в подсказке.
+ */
+function audioButton(notesFile, audio) {
+  if (!audio) return null;
+  if (audio.keep) return el('button', { class: 'btn small', disabled: true, title: t('audioKeepWhy') }, t('audioKeep', size(audio.bytes)));
+  const slot = el('span', { class: 'row' });
+  const ask = () => {
+    slot.textContent = '';
+    const yes = el('button', { class: 'btn small danger', onclick: async () => {
+      yes.disabled = true;
+      try {
+        await call('deleteRecording', notesFile);
+        show(current);
+      } catch (error) {
+        slot.textContent = '';
+        slot.append(el('span', { class: 'small error' }, t('error', error.message)));
+      }
+    } }, t('deleteYes'));
+    slot.append(el('span', { class: 'small' }, t('audioConfirm')), yes, el('button', { class: 'btn small', onclick: draw }, t('cancel')));
+  };
+  const draw = () => {
+    slot.textContent = '';
+    slot.append(el('button', { class: 'btn small', onclick: ask }, t('audioBtn', size(audio.bytes))));
+  };
+  draw();
+  return slot;
+}
+
 /** `message` — строка сверху: что сейчас сделано (курс удалён). */
 async function renderCourses(message) {
   const { today } = await call('today');
@@ -304,7 +423,7 @@ async function renderCourses(message) {
   view.append(form);
   const grid = el('div', { class: 'grid' });
   for (const c of today.courses) grid.append(courseTile(c));
-  view.append(grid, prepareAllRow());
+  view.append(grid, prepareAllRow(), recordingsRow());
 }
 renderCourses.refreshable = false;
 
@@ -497,6 +616,7 @@ async function renderCourse(name) {
         el('button', { class: 'btn small', onclick: () => call('openNote', l.notesFile) }, '↗'),
         el('button', { class: 'btn small', onclick: () => show(() => renderQuiz({ course: name, lecture: l.lecture })) }, t('quiz')),
         tasks ? el('button', { class: 'btn small', onclick: () => show(() => renderTasks(name, l.lecture)) }, t('tasks', tasks)) : null,
+        audioButton(l.notesFile, l.audio),
       ),
     );
     for (const x of l.topics) {
@@ -520,6 +640,7 @@ function unpreparedBox(u) {
       el('span', { style: 'flex:1' }),
       el('button', { class: 'btn small', onclick: () => call('openNote', u.notesFile) }, '↗'),
       u.empty ? null : busy ? el('span', { class: 'pill' }, t('preparingNow')) : el('button', { class: 'btn small', onclick: () => call('prepare', u.notesFile) }, t('prepareBtn')),
+      audioButton(u.notesFile, u.audio),
     ),
   );
 }

@@ -24,6 +24,15 @@ import {
   type CourseSlot,
   type LectureLanguages,
 } from '../lecture/courses';
+import {
+  deleteRecording,
+  deleteRecordings,
+  listRecordings,
+  recordingOf,
+  summarizeRecordings,
+  type Recording,
+  type RecordingsSummary,
+} from '../lecture/recordings';
 import { sectionTitle, type NotesLanguage } from '../lecture/session';
 import { tr } from '../locale/language';
 import { readLectureSource } from './generate';
@@ -53,7 +62,22 @@ export interface StudyServiceOptions {
    * готовятся вопросы к его лекциям. Можно — null.
    */
   busy?: (course: string) => string | null;
+  /** Почему звук лекций сейчас не удалить (лекцию дописывают, перерасшифровывают); можно — null. */
+  audioBusy?: () => string | null;
+  /** Через сколько дней звук удаляется сам; null — хранится, пока не удалят. */
+  recordingsAutoDays?: () => number | null;
   now?: () => number;
+}
+
+/** Звук лекции, как его видит окно: размер и нужен ли он ещё. */
+export interface AudioView {
+  bytes: number;
+  keep?: Recording['keep'];
+}
+
+function звукВид(notesFile: string): AudioView | undefined {
+  const r = recordingOf(notesFile);
+  return r ? { bytes: r.bytes, ...(r.keep ? { keep: r.keep } : {}) } : undefined;
 }
 
 export interface TopicView {
@@ -75,6 +99,8 @@ export interface LectureView {
   notesFile: string;
   quizzed: boolean;
   topics: TopicView[];
+  /** Звук лекции на диске; удалён или не было — нет. */
+  audio?: AudioView;
 }
 
 export interface CourseView {
@@ -99,7 +125,7 @@ export interface CourseView {
   counts: Record<KnowledgeState, number>;
   lectures: LectureView[];
   /** Лекции курса в хранилище, к которым учёба ещё не заготовлена; `empty` — в конспекте нет материала. */
-  unprepared: Array<{ lecture: string; notesFile: string; date: string; number?: number; topic?: string; empty: boolean }>;
+  unprepared: Array<{ lecture: string; notesFile: string; date: string; number?: number; topic?: string; empty: boolean; audio?: AudioView }>;
 }
 
 export type StudyAction =
@@ -249,7 +275,10 @@ export class StudyService {
   private источник(bank: LectureBank | undefined, source: SourceRef): SourceView {
     const номер = bank?.number ? `лекция ${bank.number}` : bank?.date ?? source.lecture;
     const мм = source.at !== undefined ? `, ${String(Math.floor(source.at / 60)).padStart(2, '0')}:${String(source.at % 60).padStart(2, '0')}` : '';
-    return { label: `${номер}${мм}`, at: source.at, notesFile: bank?.notesFile, audioFile: bank?.audioFile };
+    // Звук удалили, чтобы не занимал место, — кнопки «▶» нет: немой
+    // проигрыватель хуже, чем никакого.
+    const audioFile = bank?.audioFile && existsSync(bank.audioFile) ? bank.audioFile : undefined;
+    return { label: `${номер}${мм}`, at: source.at, notesFile: bank?.notesFile, audioFile };
   }
 
   private темы(banks: LectureBank[], progress: CourseProgress, cards: StudyCard[]): Map<string, TopicView> {
@@ -311,9 +340,18 @@ export class StudyService {
         notesFile: b.notesFile,
         quizzed: b.questions.some((q) => спрошено.has(q.id)),
         topics: b.topics.map((t) => темы.get(t.id)).filter((t): t is TopicView => Boolean(t)),
+        audio: звукВид(b.notesFile),
       })),
       unprepared: вХранилище
-        .map((л) => ({ lecture: path.basename(л.file, '.md'), notesFile: л.file, date: л.meta.date, number: л.meta.number, topic: л.meta.topic, empty: !естьМатериал(л.file) }))
+        .map((л) => ({
+          lecture: path.basename(л.file, '.md'),
+          notesFile: л.file,
+          date: л.meta.date,
+          number: л.meta.number,
+          topic: л.meta.topic,
+          empty: !естьМатериал(л.file),
+          audio: звукВид(л.file),
+        }))
         .filter((л) => !banks.some((b) => b.lecture === л.lecture)),
     };
   }
@@ -652,6 +690,44 @@ export class StudyService {
     if (existsSync(учёба)) await this.o.trash(учёба);
     this.забытьСессии(course);
     return { lectures: лекций };
+  }
+
+  /** Звук лекций на диске: сколько, сколько места и удаляется ли сам. */
+  recordings(): RecordingsSummary & { autoDays: number | null } {
+    return { ...summarizeRecordings(listRecordings(this.o.vaultRoot())), autoDays: this.o.recordingsAutoDays?.() ?? null };
+  }
+
+  private звукМожно(): void {
+    const занято = this.o.audioBusy?.();
+    if (занято) throw new Error(занято);
+  }
+
+  /**
+   * Удалить звук одной лекции — насовсем: в Корзине он места не освободил бы.
+   * Конспект, расшифровка и вопросы остаются.
+   */
+  async deleteRecording(notesFile: string): Promise<{ bytes: number }> {
+    this.звукМожно();
+    const где = path.relative(this.o.vaultRoot(), notesFile);
+    if (!где || где.startsWith('..') || path.isAbsolute(где)) throw new Error(tr('это не лекция из «Лекций»', 'this is not a lecture in Lectures'));
+    const запись = recordingOf(notesFile);
+    if (!запись) throw new Error(tr('Звука у этой лекции уже нет.', 'This lecture has no audio any more.'));
+    if (запись.keep) {
+      throw new Error(
+        tr(
+          'Этот звук нужен: расшифровка пустая или её нет — по нему лекцию можно расшифровать заново.',
+          'This audio is still needed: the transcript is empty or missing, and the lecture can be transcribed again from it.',
+        ),
+      );
+    }
+    await deleteRecording(запись, new Date(this.now()));
+    return { bytes: запись.bytes };
+  }
+
+  /** Удалить звук всех лекций, какие можно; нужный (без расшифровки) остаётся. */
+  async deleteAllRecordings(): Promise<{ deleted: number; bytes: number; kept: number; failed: number }> {
+    this.звукМожно();
+    return deleteRecordings(listRecordings(this.o.vaultRoot()), new Date(this.now()));
   }
 
   /** «В карточки» у вопроса квиза — вопрос на лицевой стороне, ответ с разбором на обороте. */

@@ -19,7 +19,7 @@ import { jarvisPaths } from '../jarvis/setup/paths';
 import { SettingsStore } from '../jarvis/setup/settings';
 import { запроситьРазрешения, чегоНеХватает, type Система } from './macPermissions';
 import { openSettingsWindow, sendUpdateState } from './settingsWindow';
-import { configureStudy, showStudy } from './study';
+import { configureStudy, showStudy, startRecordingsCleanup } from './study';
 import { uiStrings } from './ui/strings';
 import { startUpdateChecks, updateState } from './updater';
 import { startJarvisVoiceBridge, type JarvisVoiceBridge } from './voiceBridge';
@@ -64,6 +64,8 @@ settings.subscribe((next) => setLanguage(next.language));
 
 // Учёба: окно открывается из трея, с плашки и голосом.
 configureStudy({ settings: () => settings.get(), paths: PATHS });
+// Звук лекций старше недели — прочь, если так в настройках: пара — 280 МБ.
+startRecordingsCleanup();
 let bridge: JarvisVoiceBridge | null = null;
 let starting: Promise<void> | null = null;
 let tray: Tray | null = null;

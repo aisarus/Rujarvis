@@ -12,6 +12,7 @@ import path from 'node:path';
 import { app, shell } from 'electron';
 
 import { lectureLanguagesFor, settingsLanguages } from '../jarvis/lecture/courses';
+import { deleteRecordings, expiredRecordings, listRecordings, RECORDING_KEEP_DAYS } from '../jarvis/lecture/recordings';
 import { lectureFolder } from '../jarvis/lecture/vault';
 import { createClaudeSummarizer } from '../jarvis/lecture/summarize';
 import { tr } from '../jarvis/locale/language';
@@ -65,6 +66,8 @@ export function studyService(): StudyService {
       languages: () => settingsLanguages(settings()),
       trash: (file) => shell.trashItem(file),
       busy: курсЗанят,
+      audioBusy: звукЗанят,
+      recordingsAutoDays: () => (settings().recordingsKeep === 'week' ? RECORDING_KEEP_DAYS : null),
     });
   }
   return служба;
@@ -83,6 +86,48 @@ function курсЗанят(course: string): string | null {
     return tr(`Готовлю вопросы к лекциям курса «${course}» — подождите, пока закончу.`, `Preparing questions for "${course}". Wait until it finishes.`);
   }
   return null;
+}
+
+/**
+ * Звук лекций сейчас не трогать: лекция поднимается или дописывается (файлы
+ * переезжают в папку курса), конспект по файлу читает звук прежней лекции.
+ * Пока лекция просто идёт — можно: её звук ещё без свойств лекции и в списке
+ * записей не виден.
+ */
+function звукЗанят(): string | null {
+  const состояние = lectureState();
+  if (состояние === 'off' || состояние === 'on') return null;
+  return tr('Сейчас дописывается конспект — звук можно удалить, когда он закончится.', 'Lecture notes are being finished. Audio can be deleted once they are done.');
+}
+
+/**
+ * Записи старше недели — прочь, если так оставлено в настройках: через две
+ * минуты после запуска и потом раз в шесть часов. Возвращает, как остановить.
+ */
+export function startRecordingsCleanup(): () => void {
+  const раз = async (): Promise<void> => {
+    if (!настройка || настройка.settings().recordingsKeep !== 'week' || звукЗанят()) return;
+    try {
+      const старые = expiredRecordings(listRecordings(папкаЛекций()), Date.now());
+      if (!старые.length) return;
+      const итог = await deleteRecordings(старые);
+      console.log(
+        `[jarvis:study] звук лекций старше ${RECORDING_KEEP_DAYS} дней удалён: ${итог.deleted}, освобождено ${Math.round(итог.bytes / 1_000_000)} МБ` +
+          (итог.failed ? `; не удалились (заняты): ${итог.failed}` : ''),
+      );
+      sendStudyUpdate();
+    } catch (error) {
+      console.error(`[jarvis:study] старые записи не удалились: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  const первый = setTimeout(() => void раз(), 2 * 60 * 1000);
+  const потом = setInterval(() => void раз(), 6 * 60 * 60 * 1000);
+  первый.unref?.();
+  потом.unref?.();
+  return () => {
+    clearTimeout(первый);
+    clearInterval(потом);
+  };
 }
 
 /** Что сейчас заготавливается — окно показывает «готовлю вопросы…». */

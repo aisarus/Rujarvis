@@ -624,6 +624,14 @@ function renderSettings(main, nav) {
       </div><p class="hint" style="margin:10px 0 0">${s.speechLoggingHint}</p></div>`);
     for (const radio of logging.querySelectorAll('input')) radio.onchange = () => update({ speechLogging: radio.value });
     main.append(logging);
+    // Звук лекций: пара — 280 МБ, и без этого за семестр уходило 15–20 ГБ.
+    const recordings = el(`<div class="card"><label class="field">${s.recordingsKeep}</label>
+      <div class="radio">
+        ${['week', 'forever'].map((v) => `<label><input type="radio" name="rec" value="${v}" ${data.settings.recordingsKeep === v ? 'checked' : ''}>
+          ${{ week: s.recordingsKeepWeek, forever: s.recordingsKeepForever }[v]}</label>`).join('')}
+      </div><p class="hint" style="margin:10px 0 0">${s.recordingsKeepHint}</p></div>`);
+    for (const radio of recordings.querySelectorAll('input')) radio.onchange = () => update({ recordingsKeep: radio.value });
+    main.append(recordings);
     const places = el(`<div class="card">
       <div class="row"><div><label class="field">${s.dataDir}</label><div class="path">${escapeHtml(data.paths.home)}</div><div class="hint" style="margin:0">${s.dataDirHint}</div></div><button class="btn" data-act="home">${s.open}</button></div>
       <div class="row"><div><label class="field">${s.logFile}</label><div class="path">${escapeHtml(data.paths.log)}</div></div><button class="btn" data-act="log">${s.open}</button></div>

@@ -122,6 +122,9 @@ function зарегистрировать(): void {
   );
   обработать('setCourseLanguages', (course, language, notes) => служба().setCourseLanguages(строка(course), строка(language), строка(notes)));
   обработать('deleteCourse', (course) => служба().deleteCourse(строка(course)));
+  обработать('recordings', () => служба().recordings());
+  обработать('deleteRecording', (notesFile) => служба().deleteRecording(строка(notesFile)));
+  обработать('deleteAllRecordings', () => служба().deleteAllRecordings());
   обработать('addCard', (id, index) => служба().addCardFromQuestion(строка(id), число(index)));
   обработать('recording', (on) => deps?.recording?.(Boolean(on)));
   обработать('transcribe', async (samples, sampleRate) => {

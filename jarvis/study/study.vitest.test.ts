@@ -326,6 +326,38 @@ describe('служба учёбы: сегодня, квиз, карточки, �
     expect(store.courses()).toEqual(['Микро введение']);
   });
 
+  it('звук лекции: размер в карточке, «▶» только пока он есть, удаление насовсем — по одной и скопом', async () => {
+    const { s, vault, заметка } = await служба({ recordingsAutoDays: () => 7 });
+    const звук = path.join(vault, 'Микро', '2026-10-20 — Спрос.wav');
+    expect(s.recordings()).toEqual({ count: 0, bytes: 0, deletable: 0, deletableBytes: 0, autoDays: 7 });
+    await writeFile(звук, Buffer.alloc(4096));
+    expect(s.course('Микро').lectures[0]?.audio).toEqual({ bytes: 4096 });
+    expect(s.recordings()).toMatchObject({ count: 1, bytes: 4096, deletable: 1 });
+    const квиз = s.startQuiz({ course: 'Микро', topic: '2026-10-20 — Спрос#1' });
+    expect(s.answerQuiz(квиз.id, 0, 0).source.audioFile).toBe(звук);
+
+    // Чужой файл мимо «Лекций» удалить нельзя.
+    await expect(s.deleteRecording(path.join(path.dirname(vault), 'чужое.md'))).rejects.toThrow(/не лекция/u);
+    expect(await s.deleteRecording(заметка)).toEqual({ bytes: 4096 });
+    expect(existsSync(звук)).toBe(false);
+    expect(s.course('Микро').lectures[0]?.audio).toBeUndefined();
+    // Звука нет — кнопки «▶» нет: немой проигрыватель хуже никакого.
+    const ещё = s.startQuiz({ course: 'Микро', topic: '2026-10-20 — Спрос#1' });
+    expect(s.answerQuiz(ещё.id, 0, 0).source.audioFile).toBeUndefined();
+    await expect(s.deleteRecording(заметка)).rejects.toThrow(/уже нет/u);
+
+    await writeFile(звук, Buffer.alloc(100));
+    expect(await s.deleteAllRecordings()).toEqual({ deleted: 1, bytes: 100, kept: 0, failed: 0 });
+  });
+
+  it('пока конспект дописывается, звук не трогается', async () => {
+    const { s, vault, заметка } = await служба({ audioBusy: () => 'Сейчас дописывается конспект' });
+    await writeFile(path.join(vault, 'Микро', '2026-10-20 — Спрос.wav'), Buffer.alloc(10));
+    await expect(s.deleteRecording(заметка)).rejects.toThrow(/дописывается/u);
+    await expect(s.deleteAllRecordings()).rejects.toThrow(/дописывается/u);
+    expect(existsSync(path.join(vault, 'Микро', '2026-10-20 — Спрос.wav'))).toBe(true);
+  });
+
   it('курс, в который пишется конспект, не переименовать и не удалить', async () => {
     const { s, vault } = await служба({
       busy: () => 'Сейчас идёт конспект',
