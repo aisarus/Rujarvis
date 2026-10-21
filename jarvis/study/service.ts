@@ -495,7 +495,7 @@ export class StudyService {
   answerQuiz(sessionId: string, index: number, chosen: number): AnswerFeedback {
     const s = this.сессии.get(sessionId);
     const item = s?.kind === 'quiz' ? s.items[index] : undefined;
-    if (!s || !item) throw new Error('такого вопроса в квизе нет');
+    if (!s || !item) throw new Error(tr('такого вопроса в квизе нет', 'there is no such question in the quiz'));
     const повтор = item.chosen !== undefined;
     item.chosen = item.chosen ?? chosen;
     const отзыв = this.отзыв(item, item.chosen);
@@ -531,8 +531,8 @@ export class StudyService {
     const s = this.сессии.get(sessionId);
     const item = s?.items[index];
     if (!s || !item) throw new Error('такого вопроса нет');
-    if (!answer.trim()) throw new Error('пустой ответ');
-    if (!this.o.summarize) throw new Error('проверять открытый ответ нечем');
+    if (!answer.trim()) throw new Error(tr('пустой ответ', 'empty answer'));
+    if (!this.o.summarize) throw new Error(tr('проверять открытый ответ нечем', 'nothing to check an open answer with'));
     const тема = item.bank.topics.findIndex((t) => t.id === item.q.topicId);
     const текст = тема >= 0 ? await this.текстТемы(item.bank, тема) : '';
     const { verdict, feedback } = parseOpenVerdict(await this.o.summarize(openAnswerPrompt(item.q, answer, текст)));
@@ -570,14 +570,14 @@ export class StudyService {
   answerExam(sessionId: string, index: number, chosen: number): void {
     const s = this.сессии.get(sessionId);
     const item = s?.kind === 'exam' && !s.finished ? s.items[index] : undefined;
-    if (!item) throw new Error('экзамен уже сдан или вопроса нет');
+    if (!item) throw new Error(tr('экзамен уже сдан или вопроса нет', 'the exam is already submitted or there is no such question'));
     if (s?.deadline && this.now() > s.deadline) return;
     item.chosen = chosen;
   }
 
   submitExam(sessionId: string): { total: number; correct: number; answered: number; timedOut: boolean; review: AnswerFeedback[]; chosen: Array<number | null> } {
     const s = this.сессии.get(sessionId);
-    if (!s || s.kind !== 'exam') throw new Error('такого экзамена нет');
+    if (!s || s.kind !== 'exam') throw new Error(tr('такого экзамена нет', 'there is no such exam'));
     const timedOut = Boolean(s.deadline && this.now() > s.deadline);
     const review = s.items.map((item) => this.отзыв(item, item.chosen ?? -1));
     if (!s.finished) {
@@ -619,7 +619,7 @@ export class StudyService {
 
   setSchedule(course: string, slots: CourseSlot[]): void {
     for (const s of slots) {
-      if (!Number.isInteger(s.day) || s.day < 0 || s.day > 6 || !(s.from >= 0 && s.to > s.from && s.to <= 24 * 60)) throw new Error('пара без дня или со временем задом наперёд');
+      if (!Number.isInteger(s.day) || s.day < 0 || s.day > 6 || !(s.from >= 0 && s.to > s.from && s.to <= 24 * 60)) throw new Error(tr('пара без дня или со временем задом наперёд', 'a class without a day or with the time backwards'));
     }
     writeCourseInfo(this.o.vaultRoot(), course, { slots: [...slots].sort((a, b) => a.day - b.day || a.from - b.from) });
   }
@@ -834,7 +834,7 @@ export class StudyService {
   reviewCard(course: string, cardId: string, verdict: 'again' | 'know'): void {
     const { cards } = this.все(course);
     const card = cards.find((c) => c.id === cardId);
-    if (!card) throw new Error('такой карточки нет');
+    if (!card) throw new Error(tr('такой карточки нет', 'there is no such card'));
     this.o.store.updateProgress(course, (p) => {
       p.cards[cardId] = reviewCard(p.cards[cardId], verdict, this.now());
       p.events.push({ id: randomUUID(), at: this.now(), topicId: card.topicId, itemId: cardId, kind: 'recall', source: 'card', outcome: verdict === 'know' ? 'success' : 'failure' });
@@ -865,7 +865,7 @@ export class StudyService {
   /** Решил или нет — со слов человека: такое свидетельство «знаю» одно не даст. */
   markTask(course: string, taskId: string, solved: boolean): void {
     const task = this.o.store.banks(course).flatMap((b) => b.tasks).find((t) => t.id === taskId);
-    if (!task) throw new Error('такой задачи нет');
+    if (!task) throw new Error(tr('такой задачи нет', 'there is no such problem'));
     this.o.store.updateProgress(course, (p) => {
       if (solved) p.solvedTasks[taskId] = this.now();
       else delete p.solvedTasks[taskId];

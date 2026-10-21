@@ -35,6 +35,16 @@ let служба: StudyService | null = null;
 let очередь: Promise<void> = Promise.resolve();
 /** Лекция или материал → курс: что в очереди заготовки и чей курс сейчас не трогать. */
 const готовятся = new Map<string, string>();
+/**
+ * Лекция → почему вопросы к ней не заготовились. Причина уходила только в
+ * журнал, а окно показывало «Вопросы не заготовлены» без объяснения (аудит
+ * 21.10.2026); теперь карточка лекции говорит её сама.
+ */
+const неВышло = new Map<string, string>();
+
+export function prepareFailures(): Record<string, string> {
+  return Object.fromEntries(неВышло);
+}
 
 export function configureStudy(options: Настройка): void {
   настройка = options;
@@ -148,6 +158,7 @@ export function prepareStudyFor(notesFile: string, material?: MaterialStudy): vo
   if (!настройка) return;
   const лекция = path.basename(notesFile, '.md');
   if (готовятся.has(лекция)) return;
+  неВышло.delete(лекция);
   готовятся.set(лекция, material?.course ?? path.basename(path.dirname(notesFile)));
   sendStudyUpdate();
   const s = настройка.settings();
@@ -171,7 +182,9 @@ export function prepareStudyFor(notesFile: string, material?: MaterialStudy): vo
           : `[jarvis:study] «${лекция}»: в конспекте нет разделов с материалом — заготавливать нечего`,
       );
     } catch (error) {
-      console.error(`[jarvis:study] «${лекция}» не заготовлена: ${error instanceof Error ? error.message : String(error)}`);
+      const причина = error instanceof Error ? error.message : String(error);
+      console.error(`[jarvis:study] «${лекция}» не заготовлена: ${причина}`);
+      неВышло.set(лекция, причина);
     } finally {
       готовятся.delete(лекция);
       sendStudyUpdate();
@@ -213,10 +226,11 @@ export function showStudy(): void {
   openStudyWindow({
     service: studyService,
     preparing: preparingLectures,
+    failures: prepareFailures,
     prepare: prepareStudyFor,
     prepareAll: prepareAllStudy,
     transcribe: async (samples, sampleRate) => {
-      if (!слух) throw new Error('слух Джарвиса не запущен — ответ голосом недоступен, напишите текстом');
+      if (!слух) throw new Error(tr('слух Джарвиса не запущен — ответ голосом недоступен, напишите текстом', 'Jarvis is not listening, so voice answers are unavailable; type the answer'));
       return слух(samples, sampleRate);
     },
     recording: (on) => приЗаписи?.(on),

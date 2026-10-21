@@ -430,7 +430,7 @@ export interface CoursePatch {
  */
 export function writeCourseInfo(root: string, course: string, patch: CoursePatch): void {
   const имя = safeName(course, 80);
-  if (!имя) throw new Error('пустое название курса');
+  if (!имя) throw new Error(tr('пустое название курса', 'empty course name'));
   const папка = path.join(root, имя);
   const файл = path.join(папка, `${имя}.md`);
   mkdirSync(папка, { recursive: true });
@@ -446,7 +446,7 @@ export function writeCourseInfo(root: string, course: string, patch: CoursePatch
   if (patch.code !== undefined) поставить(['код', 'code'], patch.code.trim() ? вЯмл(patch.code.trim()) : null);
   if (patch.slots !== undefined) поставить(['расписание', 'schedule'], patch.slots.length > 0 ? вЯмл(formatSchedule(patch.slots)) : null);
   if (patch.exam !== undefined) {
-    if (patch.exam !== null && !/^\d{4}-\d{2}-\d{2}$/u.test(patch.exam)) throw new Error('дата экзамена — ГГГГ-ММ-ДД');
+    if (patch.exam !== null && !/^\d{4}-\d{2}-\d{2}$/u.test(patch.exam)) throw new Error(tr('дата экзамена — ГГГГ-ММ-ДД', 'the exam date is YYYY-MM-DD'));
     поставить(['экзамен', 'exam'], patch.exam);
   }
   if (patch.language !== undefined) {

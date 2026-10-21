@@ -43,7 +43,7 @@ const STRINGS = {
     listen: '▶ {0}', close: 'Закрыть', error: 'Не вышло: {0}',
     examLabel: 'Экзамен:', save: 'Сохранить', saved: 'Сохранено', clear: 'Убрать', daysLeft: 'через {0} дн.',
     scheduleLabel: 'Расписание:', addSlot: '+ пара', remove: '✕', days: ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'],
-    newCourse: '+ Новый курс', courseName: 'Название курса', hebrewName: 'На иврите (как у лектора)', courseCode: 'Код курса', create: 'Создать', cancel: 'Отмена',
+    newCourse: '+ Новый курс', courseName: 'Название курса', hebrewName: 'На языке лекций (как у лектора)', courseCode: 'Код курса', create: 'Создать', cancel: 'Отмена',
     prepareAll: 'Заготовить вопросы ко всем лекциям', prepareAllDone: 'В очереди лекций: {0}. Готово будет в фоне.', nothingToPrepare: 'Все лекции уже заготовлены.',
     mic: '🎤 Голосом', stopRec: '■ Готово', recognizing: 'Распознаю…', micDenied: 'Микрофон недоступен: {0}',
     toCardsDone: 'В карточках',
@@ -69,6 +69,7 @@ const STRINGS = {
     move: 'Перенести…', moveTo: 'В курс:', moveNew: 'Новый курс…', moveYes: 'Перенести', moved: 'Лекция перенесена в «{0}».',
     unsortedHint: 'Сюда попадают лекции, курс которых Джарвис не узнал. Перенесите каждую в свой курс кнопкой «Перенести…» — вместе с вопросами и карточками.',
     unsortedEmpty: 'Все лекции разнесены по курсам.',
+    noAnswer: 'нет ответа', prepareFailed: 'Вопросы не заготовились: {0}',
   },
   en: {
     title: 'Study', today: 'Today', courses: 'Courses', cards: 'Cards', back: '← Back',
@@ -123,6 +124,7 @@ const STRINGS = {
     move: 'Move…', moveTo: 'To course:', moveNew: 'New course…', moveYes: 'Move', moved: 'The lecture was moved to "{0}".',
     unsortedHint: 'Lectures whose course Jarvis did not recognise land here. Move each to its course with "Move…"; its questions and cards go with it.',
     unsortedEmpty: 'All lectures are sorted into courses.',
+    noAnswer: 'no answer', prepareFailed: 'Questions were not prepared: {0}',
   },
 }[LANG];
 
@@ -149,9 +151,17 @@ function el(tag, props, ...children) {
 
 async function call(name, ...args) {
   const r = await API[name](...args);
-  if (!r || !r.ok) throw new Error((r && r.error) || 'нет ответа');
+  if (!r || !r.ok) throw new Error((r && r.error) || t('noAnswer'));
   return r.value;
 }
+
+// Кнопка, у которой нет своей обработки ошибки («Знаю», «Решил», «В карточки»),
+// раньше падала молча — человек жал ещё раз и не понимал, почему ничего не
+// происходит (аудит 21.10.2026). Теперь причина — в строке состояния окна.
+window.addEventListener('unhandledrejection', (event) => {
+  const причина = event.reason && event.reason.message ? event.reason.message : String(event.reason);
+  status.textContent = t('error', причина);
+});
 
 const view = document.getElementById('view');
 const status = document.getElementById('status');
@@ -617,7 +627,7 @@ async function renderCourse(name, message) {
   const порядок = [...c.lectures.map((l) => ({ l })), ...c.unprepared.map((u) => ({ u }))]
     .sort((a, b) => ((a.l || a.u).number || 0) - ((b.l || b.u).number || 0) || (a.l || a.u).date.localeCompare((b.l || b.u).date));
   for (const { l, u } of порядок) {
-    if (u) { view.append(unpreparedBox(u, name)); continue; }
+    if (u) { view.append(unpreparedBox(u, name, (c.failures || {})[u.lecture])); continue; }
     const tasks = l.topics.reduce((n, x) => n + x.tasks, 0);
     const box = el('div', { class: 'card lecture' });
     box.append(
@@ -643,13 +653,14 @@ async function renderCourse(name, message) {
   }
 }
 
-function unpreparedBox(u, course) {
+/** `failed` — почему вопросы к лекции не заготовились в прошлый раз. */
+function unpreparedBox(u, course, failed) {
   const busy = preparing.includes(u.lecture);
   const card = el('div', { class: 'card lecture' });
   card.append(
     el('div', { class: 'head' },
       el('b', {}, [u.number ? t('lecture', u.number) : '', u.date.split('-').reverse().join('.'), u.topic].filter(Boolean).join(' · ')),
-      el('span', { class: 'small muted' }, u.empty ? t('noMaterial') : t('unprepared')),
+      el('span', { class: failed && !busy ? 'small error' : 'small muted' }, u.empty ? t('noMaterial') : failed && !busy ? t('prepareFailed', failed) : t('unprepared')),
       el('span', { style: 'flex:1' }),
       el('button', { class: 'btn small', onclick: () => call('openNote', u.notesFile) }, '↗'),
       u.empty ? null : busy ? el('span', { class: 'pill' }, t('preparingNow')) : el('button', { class: 'btn small', onclick: () => call('prepare', u.notesFile) }, t('prepareBtn')),
@@ -987,6 +998,7 @@ async function renderCards(course) {
 async function renderExamSetup(course) {
   const count = el('select', {}, ...[10, 20, 30].map((n) => el('option', { value: n, selected: n === 20 }, n)));
   const minutes = el('select', {}, ...[15, 30, 45, 60, 90].map((n) => el('option', { value: n, selected: n === 45 }, n)));
+  const empty = el('p', { class: 'hint' });
   view.append(
     el('button', { class: 'link', onclick: () => show(courseRender(course)) }, t('back')),
     el('h1', {}, `${t('examSetup')}: ${course}`),
@@ -996,9 +1008,15 @@ async function renderExamSetup(course) {
       el('label', { class: 'row' }, t('minutes'), minutes),
       el('button', { class: 'btn primary', onclick: async () => {
         const session = await call('examStart', course, Number(count.value), Number(minutes.value));
+        // Вопросов нет — экран экзамена падал на пустом списке (аудит 21.10.2026).
+        if (!session.questions.length) {
+          empty.textContent = t('emptyQuiz');
+          return;
+        }
         show(() => renderExam(course, session));
       } }, t('examStart')),
     ),
+    empty,
   );
 }
 
