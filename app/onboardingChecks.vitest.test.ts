@@ -17,6 +17,10 @@ describe('отказ агента — словами, что делать', () =
     expect(agentFailure('codex', 'Codex вышел с кодом 1: usage limit reached')).toMatch(/Лимит|limit/u);
     expect(agentFailure('codex', 'Codex не найден — раздел конспекта собрать нечем')).toMatch(/Установить|Install/u);
     expect(agentFailure('codex', 'что-то совсем другое')).toBe('что-то совсем другое');
+    // Настоящий ответ Codex без входа: в номере запроса бывают цифры «429».
+    expect(agentFailure('codex', 'Codex вышел с кодом 1: unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: https://api.openai.com/v1/responses, cf-ray: a50bed539a429f486-TLV, request id: req_59485d0429')).toMatch(/Войти|Sign in/u);
+    expect(agentFailure('claude', 'Claude Code вышел с кодом 1: Failed to authenticate: OAuth session expired and could not be refreshed')).toMatch(/Войти|Sign in/u);
+    expect(agentFailure('codex', 'Codex вышел с кодом 1: stream error: 429 Too Many Requests')).toMatch(/Лимит|limit/u);
   });
 });
 

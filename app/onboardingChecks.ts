@@ -93,11 +93,15 @@ export function agentFailure(cli: 'claude' | 'codex', raw: string): string {
   if (/not supported when using codex with a chatgpt account/iu.test(raw)) {
     return tr('Ваш тариф ChatGPT не даёт Codex этой модели. Нужна подписка Plus или выше.', 'Your ChatGPT plan does not include this Codex model. Plus or higher is needed.');
   }
-  if (/usage limit|rate limit|limit reached|quota|too many requests|429/iu.test(raw)) {
-    return tr('Лимит подписки на сейчас исчерпан — попробуйте позже.', 'The subscription limit is used up for now — try again later.');
-  }
-  if (/login|log in|logged in|sign in|not authenticated|unauthori[sz]ed|invalid api key|401|auth/iu.test(raw)) {
+  // Вход — раньше лимита, а коды — только отдельным числом. Codex без входа
+  // отвечает «401 Unauthorized … request id: req_…», и в случайных цифрах
+  // номера попалось «429»: проверка звала незалогиненный Codex «лимит
+  // исчерпан» (CI на маке, 26.10.2026).
+  if (/\b401\b|unauthori[sz]ed|missing bearer|not logged in|logged out|log ?in|sign in|not authenticated|invalid api key|oauth|failed to authenticate/iu.test(raw)) {
     return tr('Вход не выполнен — нажмите «Войти».', 'Not signed in — press "Sign in".');
+  }
+  if (/usage limit|rate limit|limit reached|quota|too many requests|\b429\b/iu.test(raw)) {
+    return tr('Лимит подписки на сейчас исчерпан — попробуйте позже.', 'The subscription limit is used up for now — try again later.');
   }
   if (/не найден|not found|ENOENT/iu.test(raw)) {
     return tr(`${cli === 'claude' ? 'Claude Code' : 'Codex'} не установлен — нажмите «Установить».`, `${cli === 'claude' ? 'Claude Code' : 'Codex'} is not installed — press "Install".`);

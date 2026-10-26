@@ -117,7 +117,9 @@ async function main(): Promise<number> {
       const ошибка = await текст('[data-act=install-error]');
       if (!встал) return { вид: 'не прошло', что: `за 8 минут не встал${ошибка ? `: ${ошибка}` : ''}` };
       const после = await cliStatus(ставить);
-      const карточкаВидит = await ждать(async () => (await текст('main')).includes(ru.agentInstalled), 30_000);
+      // Своя карточка, а не любая: «установлен» у Codex было видно и до
+      // установки, и проверка шла дальше, пока страница ещё не перерисовалась.
+      const карточкаВидит = await ждать(async () => js<boolean>(`document.querySelector('[data-act=install]') === null`), 60_000);
       return карточкаВидит ? { вид: 'прошло', что: `${после.path} ${после.version ?? ''}` } : { вид: 'не прошло', что: 'встал, а карточка не показала «установлен»' };
     });
   }

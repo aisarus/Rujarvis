@@ -700,6 +700,15 @@ function notesOnly() {
 const ИМЕНА_АГЕНТОВ = { claude: 'Claude Code', codex: 'Codex' };
 let проверкаМодели = null;
 let проверкаСлуха = null;
+// Проверка идёт, а страницу перерисовали (закончилась установка агента) —
+// новая карточка должна знать, что ждёт, а ответ — лечь в неё, а не в старую.
+let модельПроверяется = false;
+let слухПроверяется = false;
+
+function перерисоватьКарточку(id, сделать) {
+  const живая = document.getElementById(id);
+  if (живая) живая.replaceWith(сделать());
+}
 
 function модельОтвечает() {
   return Boolean(проверкаМодели && проверкаМодели.order.some((cli) => проверкаМодели.results.some((r) => r.cli === cli && r.ok)));
@@ -714,7 +723,7 @@ function brainCheckCard() {
   const agents = data.agents || {};
   const естьКого = ['claude', 'codex'].some((key) => agents[key] && agents[key].installed);
   const node = el(`<div class="card" id="brain-check"><div class="row"><h2>${s.brainCheckTitle}</h2>
-    <button class="btn" data-act="run" ${естьКого ? '' : 'disabled'}>${s.brainCheckRun}</button></div>
+    <button class="btn" data-act="run" ${естьКого && !модельПроверяется ? '' : 'disabled'}>${модельПроверяется ? s.brainChecking : s.brainCheckRun}</button></div>
     <p class="hint" style="margin:6px 0 0">${естьКого ? s.brainCheckHint : s.brainCheckNone}</p><div data-act="result"></div></div>`);
   const box = node.querySelector('[data-act=result]');
   const draw = () => {
@@ -731,6 +740,7 @@ function brainCheckCard() {
   draw();
   const run = node.querySelector('[data-act=run]');
   run.onclick = async () => {
+    модельПроверяется = true;
     run.disabled = true;
     run.textContent = s.brainChecking;
     try {
@@ -738,10 +748,9 @@ function brainCheckCard() {
     } catch (error) {
       проверкаМодели = { order: [], results: [] };
     } finally {
-      run.disabled = false;
-      run.textContent = s.brainCheckRun;
+      модельПроверяется = false;
     }
-    draw();
+    перерисоватьКарточку('brain-check', brainCheckCard);
   };
   return node;
 }
@@ -751,7 +760,7 @@ function brainCheckCard() {
 function hearingCheckCard() {
   const s = t();
   const node = el(`<div class="card" id="hearing-check"><div class="row"><h2>${s.hearingTitle}</h2>
-    <button class="btn" data-act="rec">${s.hearingRun}</button></div>
+    <button class="btn" data-act="rec" ${слухПроверяется ? 'disabled' : ''}>${слухПроверяется ? s.hearingWorking : s.hearingRun}</button></div>
     <p class="hint" style="margin:6px 0 0">${s.hearingHint}</p><div data-act="result"></div></div>`);
   const box = node.querySelector('[data-act=result]');
   const draw = () => {
@@ -770,14 +779,15 @@ function hearingCheckCard() {
   draw();
   const rec = node.querySelector('[data-act=rec]');
   rec.onclick = async () => {
+    слухПроверяется = true;
     rec.disabled = true;
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: true } });
     } catch {
       проверкаСлуха = { ok: false, message: data.platform === 'darwin' ? s.micDeniedMac : s.micDenied };
-      rec.disabled = false;
-      draw();
+      слухПроверяется = false;
+      перерисоватьКарточку('hearing-check', hearingCheckCard);
       return;
     }
     const ctx = new AudioContext({ sampleRate: 16000 });
@@ -807,9 +817,8 @@ function hearingCheckCard() {
     } catch (error) {
       проверкаСлуха = { ok: false, message: String((error && error.message) || error) };
     }
-    rec.disabled = false;
-    rec.textContent = s.hearingRun;
-    draw();
+    слухПроверяется = false;
+    перерисоватьКарточку('hearing-check', hearingCheckCard);
   };
   return node;
 }
