@@ -85,6 +85,11 @@ if (файл) {
   app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
   // %noloop — сыграть файл один раз, дальше тишина: лекция кончилась.
   app.commandLine.appendSwitch('use-file-for-fake-audio-capture', `${файл}%noloop`);
+  // Файл подставного микрофона читает служба звука. На маке она в песочнице
+  // и к файлу не допускается — ошибка в сборке не печатается, а запись
+  // выходит тишиной (CI 26.10.2026: пик 0,00 на обоих маках, на Windows тот
+  // же путь слышит). Только для проверки: служба звука — в главном процессе.
+  app.commandLine.appendSwitch('disable-features', 'AudioServiceOutOfProcess,AudioServiceSandbox');
 }
 
 async function main(): Promise<number> {

@@ -655,6 +655,11 @@ jobs:
           pause = b'\x00' * (p.sampwidth * p.nchannels * p.framerate * 2)
           out = wave.open(sys.argv[2], 'wb'); out.setparams(p); out.writeframes(frames + pause + frames + pause); out.close()
           PY
+          # Для разбора: слышит ли подставной микрофон файл без переноса службы
+          # звука из песочницы (notes-check его переносит). Не проверка — справка.
+          node build.mjs >/dev/null
+          npx electron dist/qa/fake-mic.cjs --file="$RUNNER_TEMP/lecture.wav" --out="$RUNNER_TEMP/fake-raw.wav" --mode=raw --seconds=5 >/dev/null 2>&1 || true
+          python3 -c "import wave,array,sys; w=wave.open(sys.argv[1]); a=array.array('h', w.readframes(w.getnframes())); print('справка: подставной микрофон без переноса службы звука — пик', round(max([abs(x) for x in a] or [0])/32768, 3))" "$RUNNER_TEMP/fake-raw.wav" || echo 'справка: подставной микрофон ничего не записал'
           set +e
           pnpm jarvis:notes-check -- --file="$RUNNER_TEMP/lecture.wav" --expect=country --language=en 2>&1 | tee /tmp/notes-check.log | tail -20
           code=$?

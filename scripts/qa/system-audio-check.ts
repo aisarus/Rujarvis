@@ -17,7 +17,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -25,7 +25,8 @@ import { app, BrowserWindow, desktopCapturer, ipcMain, session } from 'electron'
 
 import { displayMediaGrant, macHasLoopback } from '../../app/systemAudio';
 
-app.setPath('userData', mkdtempSync(path.join(os.tmpdir(), 'jarvis-system-audio-')));
+const ПАПКА = mkdtempSync(path.join(os.tmpdir(), 'jarvis-system-audio-'));
+app.setPath('userData', ПАПКА);
 
 const СТРАНИЦА = `<!doctype html><meta charset="utf-8"><script>
 const { ipcRenderer } = require('electron');
@@ -84,7 +85,11 @@ async function main(): Promise<number> {
   });
   const итог = new Promise<{ states?: string[]; peak?: number; seconds?: number; error?: string }>((resolve) => ipcMain.once('done', (_e, r) => resolve(r)));
   const окно = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: true, contextIsolation: false } });
-  await окно.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(СТРАНИЦА)}`);
+  // Файлом, как окно звука: у страницы с адреса data: нет navigator.mediaDevices
+  // (CI 26.10.2026: «Cannot read properties of undefined (reading 'getDisplayMedia')»).
+  const страница = path.join(ПАПКА, 'capture.html');
+  writeFileSync(страница, СТРАНИЦА, 'utf8');
+  await окно.loadFile(страница);
   const r = await итог;
   окно.destroy();
 
