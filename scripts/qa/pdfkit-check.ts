@@ -21,7 +21,9 @@ const ПРИМЕТА = 'Lecture notes check 42: supply and demand in the short r
 
 /** PDF на две страницы руками: текст Helvetica на первой, синий прямоугольник без текста — на второй. */
 function маленькийPdf(): Buffer {
-  const поток1 = `BT /F1 24 Tf 72 720 Td (${ПРИМЕТА}) Tj ET`;
+  // Кегль 12: строка помещается в ширину страницы. На 24 она уходила за край,
+  // и PDFKit честно отдавал только видимое — «… in th».
+  const поток1 = `BT /F1 12 Tf 72 720 Td (${ПРИМЕТА}) Tj ET`;
   const поток2 = '0 0 1 rg 100 300 400 300 re f';
   const объекты = [
     '<< /Type /Catalog /Pages 2 0 R >>',
