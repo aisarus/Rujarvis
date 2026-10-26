@@ -48,6 +48,8 @@ await Promise.all([
   esbuild.build({ ...common, entryPoints: ['scripts/qa/study-courses-check.ts'], outfile: 'dist/qa/study-courses-check.cjs' }),
   // Вариант «только конспекты»: мост, плашка и окно звука, лекция с подставного микрофона.
   esbuild.build({ ...common, entryPoints: ['scripts/qa/notes-check.ts'], outfile: 'dist/qa/notes-check.cjs' }),
+  // Звук компьютера на маке: петля через CoreAudio Tap, разрешение «Запись системного звука».
+  esbuild.build({ ...common, entryPoints: ['scripts/qa/system-audio-check.ts'], outfile: 'dist/qa/system-audio-check.cjs' }),
 ]);
 
 // Скрипт драйвера мыши и клавиатуры сервер ищет рядом с собой.

@@ -107,6 +107,7 @@ import {
 import { createFileDecoder } from './lectureFileDecode';
 import { prepareStudyFor, setStudyHearing, showStudy } from './study';
 import { setBrain } from '../jarvis/lecture/summarize';
+import { displayMediaGrant } from './systemAudio';
 import { enqueueDocument, watchInbox } from './documents';
 import { DOCUMENT_EXTENSIONS, isDocument } from '../jarvis/documents/pipeline';
 import { lectureHeardForJarvis } from '../jarvis/lecture/voiceGate';
@@ -3372,17 +3373,17 @@ async function createAudioWindow(): Promise<BrowserWindow> {
   window.webContents.session.setPermissionRequestHandler((_contents, permission, callback) => {
     callback(permission === 'media' || permission === 'display-capture');
   });
-  // Лекция в Zoom: звук компьютера — петлёй вывода (loopback; на Windows).
-  // Картинку экрана окно звука тут же гасит, ему нужен только звук. Другой
-  // платформы петля нет — отдаём экран без звука, и окно честно скажет, что
-  // звука компьютера не получило, и перейдёт на микрофон.
+  // Лекция в Zoom: звук компьютера — петлёй вывода (Windows; macOS с 14.2 —
+  // `systemAudio.ts`). Картинку экрана окно звука тут же гасит, ему нужен
+  // только звук. Где петли нет — отдаём экран без звука, и окно честно скажет,
+  // что звука компьютера не получило, и перейдёт на микрофон.
   window.webContents.session.setDisplayMediaRequestHandler((_request, callback) => {
     desktopCapturer
       .getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } })
       .then((sources) => {
         const screen = sources[0];
         if (!screen) return callback({});
-        callback(process.platform === 'win32' ? { video: screen, audio: 'loopback' } : { video: screen });
+        callback(displayMediaGrant(screen));
       })
       .catch(() => callback({}));
   });

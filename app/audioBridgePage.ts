@@ -80,6 +80,7 @@ export function buildAudioBridgeHtml(): string {
 const { ipcRenderer } = require('electron');
 
 const CH = ${JSON.stringify(AUDIO_BRIDGE_CHANNELS)};
+const IS_MAC = ${JSON.stringify(process.platform === 'darwin')};
 const TARGET_SAMPLE_RATE = ${TARGET_SAMPLE_RATE};
 
 // Tuned by ear on a laptop mic: quiet enough to catch a normal speaking voice
@@ -183,10 +184,15 @@ async function startSystemCapture() {
   stopSystemCapture();
   const got = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });
   got.getVideoTracks().forEach(function (track) { track.stop(); });
-  const tracks = got.getAudioTracks();
+  const tracks = got.getAudioTracks().filter(function (track) { return track.readyState === 'live'; });
   if (tracks.length === 0) {
+    // macOS без разрешения отдаёт дорожку уже оконченной и молча: ни ошибки,
+    // ни звука. Человеку — какое разрешение включить.
+    const ended = got.getAudioTracks().length > 0;
     got.getTracks().forEach(function (track) { track.stop(); });
-    throw new Error('система не отдала звук компьютера');
+    throw new Error(ended && IS_MAC
+      ? 'macOS не дала звук компьютера — включите Electron в «Системные настройки → Конфиденциальность и безопасность → Запись экрана и системного звука»'
+      : 'система не отдала звук компьютера');
   }
   systemStream = got;
   systemContext = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });

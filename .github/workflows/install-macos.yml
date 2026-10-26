@@ -655,6 +655,21 @@ jobs:
           grep -a 'Всего' /tmp/notes-check.log || { echo 'Проверка не дошла до итога: судить не по чему.'; exit 1; }
           test "$code" -eq 0 || { echo "Конспектор не работает (код $code)"; exit 1; }
 
+      - name: 'Звук компьютера (Zoom): петля на macOS 14.2+'
+        # Разрешения «Запись системного звука» на раннере дать некому, поэтому
+        # «нечем мерить» здесь — не провал. Провал — живая дорожка и тишина.
+        run: |
+          set -o pipefail
+          cd "$HOME/Library/Application Support/Rujarvis/src"
+          plist="node_modules/electron/dist/Electron.app/Contents/Info.plist"
+          plutil -p "$plist" | grep -E 'AudioCapture|Microphone' || echo "в $plist нет NSAudioCaptureUsageDescription"
+          set +e
+          pnpm jarvis:system-audio-check 2>&1 | tee /tmp/system-audio.log | tail -6
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then echo 'Звук компьютера: нечем мерить.'; exit 0; fi
+          test "$code" -eq 0 || { echo "Звук компьютера не доходит (код $code)"; exit 1; }
+
       - name: Обновление без ключей не меняет вариант и язык лекций
         # «Обновить» в приложении запускает этот же установщик без
         # --notes и без языка лекций. Конспектор не должен стать голосовым
