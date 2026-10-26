@@ -448,9 +448,8 @@ function onAudio(event) {
 let lastComplaintAt = 0;
 const COMPLAIN_EVERY_MS = 30_000;
 
-async function restartCapture(reason) {
-  if (restarting) return;
-  restarting = true;
+// Отпустить микрофон совсем: устройство закрыто, значок микрофона гаснет.
+async function stopCapture() {
   try {
     if (processor) { processor.onaudioprocess = null; processor.disconnect(); }
     if (source) source.disconnect();
@@ -464,6 +463,12 @@ async function restartCapture(reason) {
   processor = null;
   stream = null;
   resetBuffer();
+}
+
+async function restartCapture(reason) {
+  if (restarting) return;
+  restarting = true;
+  await stopCapture();
 
   try {
     await ensureCapture();
@@ -575,6 +580,13 @@ ipcRenderer.on(CH.lecture, async (_event, payload) => {
   }
   // Лекция из Zoom кончилась — микрофон и так в режиме команд.
   if (!on && wasSystem) return;
+  // Команды не слушаются (вариант «только конспекты») — лекция кончилась,
+  // микрофон отпускаем совсем: держать его открытым между парами незачем, а
+  // на маке горящий значок микрофона — честный вопрос «а меня слушают?».
+  if (!on && !ambient && !pushing) {
+    await stopCapture();
+    return;
+  }
   // Обработка задаётся при взятии микрофона — берём его заново с нужной.
   if (audioContext) await restartCapture(on ? 'режим лекции' : 'лекция кончилась');
   else if (on) {

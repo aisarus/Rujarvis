@@ -46,6 +46,8 @@ await Promise.all([
   esbuild.build({ ...common, entryPoints: ['scripts/qa/study-window-check.ts'], outfile: 'dist/qa/study-window-check.cjs' }),
   // Правка курсов в окне учёбы: создать, языки, переименовать, удалить — на временном хранилище.
   esbuild.build({ ...common, entryPoints: ['scripts/qa/study-courses-check.ts'], outfile: 'dist/qa/study-courses-check.cjs' }),
+  // Вариант «только конспекты»: мост, плашка и окно звука, лекция с подставного микрофона.
+  esbuild.build({ ...common, entryPoints: ['scripts/qa/notes-check.ts'], outfile: 'dist/qa/notes-check.cjs' }),
 ]);
 
 // Скрипт драйвера мыши и клавиатуры сервер ищет рядом с собой.

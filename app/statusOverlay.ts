@@ -598,7 +598,11 @@ ipcRenderer.on(${JSON.stringify(STATUS_OVERLAY_CHANNEL)}, (_event, status) => {
   }
   if (Date.now() < noteUntil) return;
 
-  if (status.indicator === 'speaking' || status.indicator === 'working') {
+  // Своя подсказка — у варианта «только конспекты»: «скажите «Джарвис»» там
+  // было бы неправдой, голоса нет.
+  if (status.hint) {
+    hint.textContent = status.hint;
+  } else if (status.indicator === 'speaking' || status.indicator === 'working') {
     hint.textContent = ${JSON.stringify(tr('Говорите, чтобы перебить', 'Speak to interrupt'))};
   } else if (status.awake) {
     hint.textContent = ${JSON.stringify(tr('Слушаю без имени', 'Listening, no name needed'))};
@@ -612,10 +616,13 @@ ipcRenderer.on(${JSON.stringify(STATUS_OVERLAY_CHANNEL)}, (_event, status) => {
 </html>`;
 }
 
+/** Состояние для плашки; `hint` — своя строка под подписью вместо подсказки про голос. */
+export type OverlayStatus = VoiceStatus & { hint?: string };
+
 export interface StatusOverlay {
-  update(status: VoiceStatus): void;
+  update(status: OverlayStatus): void;
   /** Короткая строка о том, что услышано и что с этим стало. */
-  note(status: VoiceStatus, text: string): void;
+  note(status: OverlayStatus, text: string): void;
   /**
    * Включить крупный режим.
    *

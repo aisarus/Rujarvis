@@ -23,7 +23,7 @@ import { finishLecture, lectureFinishing, lectureState, onLectureState } from '.
 import { configureStudy, showStudy, startRecordingsCleanup } from './study';
 import { uiStrings } from './ui/strings';
 import { startUpdateChecks, updateState } from './updater';
-import { startJarvisVoiceBridge, type JarvisVoiceBridge } from './voiceBridge';
+import { startJarvisVoiceBridge, startNotesBridge, type JarvisVoiceBridge, type NotesBridge } from './voiceBridge';
 
 const PATHS = jarvisPaths();
 
@@ -67,7 +67,18 @@ settings.subscribe((next) => setLanguage(next.language));
 configureStudy({ settings: () => settings.get(), paths: PATHS });
 // Звук лекций старше недели — прочь, если так в настройках: пара — 280 МБ.
 startRecordingsCleanup();
-let bridge: JarvisVoiceBridge | null = null;
+// Мост — голосовой Джарвис целиком или конспектор без голоса (`edition`).
+let bridge: JarvisVoiceBridge | NotesBridge | null = null;
+
+/** Вариант «только конспекты»: ни слуха команд, ни голоса, ни рук на компьютере. */
+function толькоКонспекты(): boolean {
+  return settings.get().edition === 'notes';
+}
+
+/** Голосовой мост — у него есть сессия, немота и речь; у конспектора нет. */
+function голос(): JarvisVoiceBridge | null {
+  return bridge && 'session' in bridge ? bridge : null;
+}
 let starting: Promise<void> | null = null;
 let tray: Tray | null = null;
 let voiceError = '';
@@ -104,7 +115,7 @@ const СИСТЕМА: Система = {
 async function askPermissions(): Promise<void> {
   if (process.platform !== 'darwin') return;
   try {
-    const опрос = await запроситьРазрешения(СИСТЕМА);
+    const опрос = await запроситьРазрешения(СИСТЕМА, process.platform, !толькоКонспекты());
     console.log(
       `[main] разрешения macOS: микрофон ${опрос.микрофон}, ` +
         `универсальный доступ ${опрос.доступность}, запись экрана ${опрос.экран}`,
@@ -125,7 +136,7 @@ async function startVoice(): Promise<void> {
     // со второго раза поднялось. Человеку не нужно ради этого лезть в трей.
     for (let attempt = 1; attempt <= 2 && !bridge; attempt += 1) {
       try {
-        bridge = await startJarvisVoiceBridge({ settings });
+        bridge = толькоКонспекты() ? await startNotesBridge({ settings }) : await startJarvisVoiceBridge({ settings });
         voiceError = '';
       } catch (error) {
         voiceError = error instanceof Error ? error.message : String(error);
@@ -222,8 +233,9 @@ function showSettings(page?: 'onboarding'): void {
       //
       // Говорится один раз, сразу после настройки, и учит ровно трём вещам:
       // имени, остановке и тому, как спросить остальное.
+      // У конспектора голоса нет — и первых слов тоже.
       void restartVoice().then(() => {
-        void bridge?.session.speak(
+        void голос()?.session.speak(
           uiStrings(settings.get().language).firstWords,
         );
       });
@@ -231,8 +243,8 @@ function showSettings(page?: 'onboarding'): void {
     onSettingsChanged: (changed) => {
       // Язык, модель и место распознавания, папки читаются при запуске моста.
       // Облако — тоже: выключили его, а мост продолжал бы слать звук до
-      // следующего перезапуска.
-      if (changed.some((key) => ['language', 'whisperModel', 'cloudSpeech', 'workspace', 'outputDir', 'claudeModel', 'localModelUrl', 'localModelName'].includes(key))) {
+      // следующего перезапуска. Вариант — тем более: это другой мост.
+      if (changed.some((key) => ['language', 'whisperModel', 'cloudSpeech', 'workspace', 'outputDir', 'claudeModel', 'localModelUrl', 'localModelName', 'edition'].includes(key))) {
         перезапуститьКогдаМожно();
       }
       refreshTray();
@@ -262,7 +274,15 @@ export function трейПодсказка(status: string, предел = 127): 
 function refreshTray(): void {
   if (!tray) return;
   const t = uiStrings(settings.get().language);
-  const status = bridge ? t.trayListening : voiceError ? `${t.trayVoiceFailed}: ${voiceError}` : t.trayNotListening;
+  const конспекты = толькоКонспекты();
+  const status = bridge
+    ? конспекты
+      ? t.trayNotesReady
+      : t.trayListening
+    : voiceError
+      ? `${t.trayVoiceFailed}: ${voiceError}`
+      : t.trayNotListening;
+  const немой = голос();
   // Новая версия — заметно, но молча: строкой в меню и в подсказке значка.
   const обновление = updateState().result;
   const есть = обновление?.state === 'available';
@@ -279,15 +299,20 @@ function refreshTray(): void {
       // Выключался он только сочетанием Ctrl+M, а голосом вернуть слух нельзя
       // по определению: выключенный микрофон не слышит просьбы включиться.
       // Человек, которому сочетание недоступно, оставался с глухим
-      // помощником до прихода того, кому доступно.
-      {
-        label: bridge?.muteState().muted ? t.trayMicOn : t.trayMicOff,
-        enabled: Boolean(bridge),
-        click: () => {
-          bridge?.toggleMute();
-          refreshTray();
-        },
-      },
+      // помощником до прихода того, кому доступно. У конспектора слуха вне
+      // лекции нет — и выключать нечего.
+      ...(конспекты
+        ? []
+        : [
+            {
+              label: немой?.muteState().muted ? t.trayMicOn : t.trayMicOff,
+              enabled: Boolean(немой),
+              click: () => {
+                немой?.toggleMute();
+                refreshTray();
+              },
+            },
+          ]),
       { label: t.traySettings, click: () => showSettings() },
       // Настройку можно пройти заново.
       //
@@ -302,7 +327,7 @@ function refreshTray(): void {
       { label: t.trayOpenLog, click: () => void shell.openPath(PATHS.log) },
       { label: t.trayOpenData, click: () => void shell.openPath(PATHS.home) },
       { type: 'separator' },
-      { label: t.trayRestartVoice, click: () => void перезапуститьИзТрея() },
+      { label: конспекты ? t.trayRestartNotes : t.trayRestartVoice, click: () => void перезапуститьИзТрея() },
       { label: t.trayQuit, click: () => void выйтиИзТрея() },
     ]),
   );

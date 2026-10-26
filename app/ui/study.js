@@ -845,6 +845,7 @@ async function renderQuiz(scope) {
         }
       } }, t('check'));
       const micBtn = el('button', { class: 'btn', onclick: () => recordInto(area, micBtn, feedback) }, t('mic'));
+      if (!canHear) micBtn.style.display = 'none';
       const openBox = el('div', { class: 'stack', style: 'display:none' }, area, el('div', { class: 'row' }, micBtn, checkBtn));
       own.append(el('button', { class: 'link small', onclick: () => { openBox.style.display = 'flex'; area.focus(); } }, t('ownWords')), openBox);
     }
@@ -877,6 +878,11 @@ async function renderQuiz(scope) {
 
 /** Запись идёт: чем её остановить. Одна на окно. */
 let recording = null;
+// Слуха нет (вариант «только конспекты») — кнопки «Голосом» нет. Мост не
+// ответил — кнопка остаётся: по нажатию человек увидит причину, а пропавшая
+// кнопка не объясняет ничего.
+let canHear = true;
+call('hearing').then((value) => { canHear = value !== false; }).catch(() => undefined);
 
 /**
  * Ответ голосом прямо в окне: нажал — говоришь — «Готово». Звук уходит

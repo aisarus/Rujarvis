@@ -13,6 +13,8 @@
 #   --language ru|en        язык голоса и интерфейса (по умолчанию ru)
 #   --branch <ветка>        какую ветку ставить (по умолчанию main)
 #   --whisper-model <имя>   модель распознавания
+#   --notes                 только конспекты: без голосовых команд и рук на компьютере
+#   --lecture-language <код> язык лекций (he, ru, en…) — для модели лекций
 #   --autostart             запускать при входе в систему
 #   --no-launch             не запускать после установки
 #
@@ -30,6 +32,8 @@ AGENT_PLIST="$HOME/Library/LaunchAgents/com.rujarvis.app.plist"
 LANGUAGE="ru"
 BRANCH="main"
 WHISPER_MODEL=""
+EDITION=""
+LECTURE_LANGUAGE=""
 AUTOSTART=0
 LAUNCH=1
 
@@ -60,6 +64,9 @@ usage() {
   --language ru|en        язык голоса и интерфейса (по умолчанию ru)
   --branch <ветка>        какую ветку ставить (по умолчанию main)
   --whisper-model <имя>   модель распознавания
+  --notes                 только конспекты: без голосовых команд и рук на компьютере
+  --edition full|notes    то же явно; без ключа — как в прежней установке
+  --lecture-language <код> язык лекций (he, ru, en…) — для модели лекций
   --autostart             запускать при входе в систему
   --no-launch             не запускать после установки
 HELP
@@ -73,6 +80,9 @@ parse_args() {
       --language)      LANGUAGE="${2:-ru}"; shift 2 ;;
       --branch)        BRANCH="${2:-main}"; shift 2 ;;
       --whisper-model) WHISPER_MODEL="${2:-}"; shift 2 ;;
+      --notes)         EDITION="notes"; shift ;;
+      --edition)       EDITION="${2:-}"; shift 2 ;;
+      --lecture-language) LECTURE_LANGUAGE="${2:-}"; shift 2 ;;
       --autostart)     AUTOSTART=1; shift ;;
       --no-launch)     LAUNCH=0; shift ;;
       -h|--help)       usage; exit 0 ;;
@@ -84,6 +94,27 @@ parse_args() {
     ru|en) ;;
     *) die "Язык должен быть ru или en, а не «$LANGUAGE»." ;;
   esac
+  case "$EDITION" in
+    ''|full|notes) ;;
+    *) die "Вариант должен быть full или notes, а не «$EDITION»." ;;
+  esac
+  case "$LECTURE_LANGUAGE" in
+    '') ;;
+    [a-z][a-z]|[a-z][a-z][a-z]) ;;
+    *) die "Язык лекций — код из двух-трёх букв (he, ru, en), а не «$LECTURE_LANGUAGE»." ;;
+  esac
+}
+
+# Вариант без ключа — из настроек прежней установки: кнопка «Обновить»
+# запускает этот же установщик, и вариант «только конспекты» после обновления
+# не должен превратиться обратно в голосового Джарвиса. Новая установка — full.
+edition_from_settings() {
+  settings_file="$INSTALL_ROOT/data/settings.json"
+  if [ -f "$settings_file" ] && grep -Eq '"edition"[[:space:]]*:[[:space:]]*"notes"' "$settings_file"; then
+    printf 'notes'
+  else
+    printf 'full'
+  fi
 }
 
 # --- работающий Джарвис --------------------------------------------------------
@@ -151,9 +182,14 @@ fi
 # выполнить хоть что-то из неё.
 main() {
 parse_args "$@"
+[ -n "$EDITION" ] || EDITION="$(edition_from_settings)"
 
 printf '\n  %sRujarvis%s\n' "$C_STEP" "$C_OFF"
-printf '  Голосовой ассистент для macOS · Voice assistant for macOS\n\n'
+if [ "$EDITION" = "notes" ]; then
+  printf '  Конспекты лекций для macOS · Lecture notes for macOS\n\n'
+else
+  printf '  Голосовой ассистент для macOS · Voice assistant for macOS\n\n'
+fi
 
 [ "$(uname -s)" = "Darwin" ] || die "Этот установщик для macOS. Для Windows возьмите install.ps1."
 
@@ -367,20 +403,46 @@ ok 'Приложение собрано.'
 # Скачивание не обязательное: Edge или Chrome, если они есть, берутся первыми,
 # и тогда это просто лежит про запас. Поэтому неудача здесь не валит установку
 # — но и молчать о ней нельзя.
-step 'Кладу запасной браузер'
-if ( cd "$SOURCE_DIR" && pnpm exec playwright install chromium ); then
-  ok 'Запасной браузер на месте.'
+#
+# Конспектору вкладки не нужны: он не водит браузер.
+if [ "$EDITION" = "notes" ]; then
+  note 'Запасной браузер не кладу: варианту «только конспекты» он не нужен.'
 else
-  warn 'Запасной браузер не скачался. Вкладки будут работать, только если есть Chrome или Edge.'
+  step 'Кладу запасной браузер'
+  if ( cd "$SOURCE_DIR" && pnpm exec playwright install chromium ); then
+    ok 'Запасной браузер на месте.'
+  else
+    warn 'Запасной браузер не скачался. Вкладки будут работать, только если есть Chrome или Edge.'
+  fi
 fi
 
-step 'Скачиваю модели речи'
+if [ "$EDITION" = "notes" ]; then step 'Настраиваю вариант «только конспекты»'; else step 'Скачиваю модели речи'; fi
 if [ -n "$WHISPER_MODEL" ]; then
-  ( cd "$SOURCE_DIR" && pnpm jarvis:setup -- --language "$LANGUAGE" --model "$WHISPER_MODEL" ) \
+  ( cd "$SOURCE_DIR" && pnpm jarvis:setup -- --language "$LANGUAGE" --edition "$EDITION" --model "$WHISPER_MODEL" ) \
     || die 'Не удалось выполнить: jarvis:setup'
 else
-  ( cd "$SOURCE_DIR" && pnpm jarvis:setup -- --language "$LANGUAGE" ) \
+  ( cd "$SOURCE_DIR" && pnpm jarvis:setup -- --language "$LANGUAGE" --edition "$EDITION" ) \
     || die 'Не удалось выполнить: jarvis:setup'
+fi
+
+# Распознавание лекций: whisper.cpp от Homebrew (на Apple Silicon он считает
+# через Metal) и модель для лекций. Без него конспект только пишет звук —
+# расшифровать нечем. Конспектору оно нужно всегда, полному Джарвису — когда
+# назван язык лекций. Не поставилось — установка не срывается, а говорит, как
+# повторить: приложение работает и без него.
+#
+# Язык не назван — его не передаём: `jarvis:lecture-model` возьмёт язык лекций
+# из настроек (пусто — язык интерфейса). «Обновить» запускает установщик без
+# ключа, и подставь мы здесь язык интерфейса — у человека с лекциями на иврите
+# обновление молча переключило бы слух на русский.
+if [ -n "$LECTURE_LANGUAGE" ] || [ "$EDITION" = "notes" ]; then
+  step 'Распознавание лекций'
+  if ( cd "$SOURCE_DIR" && pnpm jarvis:gpu-stt && pnpm jarvis:lecture-model ${LECTURE_LANGUAGE:+-- "$LECTURE_LANGUAGE"} ) </dev/null; then
+    ok 'Распознавание лекций поставлено.'
+  else
+    warn "Распознавание лекций не поставилось. Повторить в папке $SOURCE_DIR:"
+    warn "    pnpm jarvis:gpu-stt && pnpm jarvis:lecture-model ${LECTURE_LANGUAGE:+-- $LECTURE_LANGUAGE}"
+  fi
 fi
 
 # --- ярлык -------------------------------------------------------------------
@@ -389,6 +451,14 @@ fi
 # точкой входа: так же, как ярлык в меню «Пуск» на Windows.
 
 step 'Создаю ярлык'
+
+# Строку человек увидит в системном запросе микрофона: она должна говорить,
+# зачем микрофон именно этому варианту.
+if [ "$EDITION" = "notes" ]; then
+  MIC_REASON='Rujarvis записывает лекцию, когда вы нажимаете «Конспект».'
+else
+  MIC_REASON='Rujarvis слушает голосовые команды.'
+fi
 
 ELECTRON_BIN="$SOURCE_DIR/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
 ENTRY="$SOURCE_DIR/dist/app/main.cjs"
@@ -411,7 +481,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>LSUIElement</key><true/>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Rujarvis слушает голосовые команды.</string>
+  <string>$MIC_REASON</string>
   <!--
     Apple Events — это весь драйвер рабочего стола на маке.
     Список окон, подъём, нажатия, ввод, чтение элементов и вождение Safari идут
@@ -485,15 +555,23 @@ fi
 # --- итог --------------------------------------------------------------------
 
 printf '\n  %sГотово.%s\n\n' "$C_OK" "$C_OFF"
-printf '  Rujarvis живёт в строке меню. При первом запуске он проведёт по настройке:\n'
-printf '  вход в Claude Code, проверка микрофона — и можно говорить.\n\n'
+if [ "$EDITION" = "notes" ]; then
+  printf '  Rujarvis живёт в строке меню. При первом запуске он проведёт по настройке:\n'
+  printf '  язык лекций, вход в Claude Code, проверка микрофона.\n'
+  printf '  На паре нажмите «● Конспект» на плашке.\n\n'
+else
+  printf '  Rujarvis живёт в строке меню. При первом запуске он проведёт по настройке:\n'
+  printf '  вход в Claude Code, проверка микрофона — и можно говорить.\n\n'
+fi
 printf '  Папка Джарвиса: %s\n' "$INSTALL_ROOT"
 printf '  Лог:            %s\n' "$INSTALL_ROOT/logs/jarvis.log"
 printf '\n'
-note 'Управление окнами на маке спросит два разрешения в «Конфиденциальности»:'
-note '«Универсальный доступ» — окна, мышь, клавиши; «Запись экрана» — снимки.'
-note 'Без первого нажатия не падают, а молча ничего не делают.'
-printf '\n'
+if [ "$EDITION" != "notes" ]; then
+  note 'Управление окнами на маке спросит два разрешения в «Конфиденциальности»:'
+  note '«Универсальный доступ» — окна, мышь, клавиши; «Запись экрана» — снимки.'
+  note 'Без первого нажатия не падают, а молча ничего не делают.'
+  printf '\n'
+fi
 note 'Микрофон macOS спросит один раз — разрешение будет записано на Electron:'
 note 'приложение запускается его двоичным файлом, своей подписи у сборки пока нет.'
 printf '\n'

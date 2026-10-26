@@ -47,6 +47,18 @@ export type SpeechLogging = 'off' | 'commands' | 'all';
  */
 export type RecordingsKeep = 'week' | 'forever';
 
+/**
+ * Что поставлено: Джарвис целиком или только конспекты.
+ *
+ * «Только конспекты» — для студента, которому нужен конспектор, а не
+ * голосовой помощник (первые тестеры на маке, 26.10.2026): кнопки конспекта
+ * на плашке, «Учёба», разбор документов. Ни слуха команд, ни голоса, ни
+ * агента с руками на компьютере; микрофон берётся только на время лекции.
+ * Одна программа, а не отдельная ветка: исправления и обновления приходят
+ * обоим вариантам сразу.
+ */
+export type Edition = 'full' | 'notes';
+
 export interface AppSettings {
   language: Language;
   voiceId: string;
@@ -112,6 +124,8 @@ export interface AppSettings {
   notesStyle: NotesStyle;
   /** Сколько хранить звук лекций. */
   recordingsKeep: RecordingsKeep;
+  /** Джарвис целиком или только конспекты. */
+  edition: Edition;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -137,6 +151,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notesStyle: 'razbor',
   // Владелец 21.10.2026: «пусть удаляет сам через неделю».
   recordingsKeep: 'week',
+  edition: 'full',
 };
 
 /** Пределы, за которые голосовая настройка не уводит. */
@@ -201,6 +216,7 @@ export function normaliseSettings(raw: unknown): AppSettings {
     theme: THEMES.includes(input.theme as ThemeChoice) ? (input.theme as ThemeChoice) : DEFAULT_SETTINGS.theme,
     notesStyle: NOTES_STYLES.includes(input.notesStyle as NotesStyle) ? (input.notesStyle as NotesStyle) : DEFAULT_SETTINGS.notesStyle,
     recordingsKeep: input.recordingsKeep === 'forever' ? 'forever' : 'week',
+    edition: input.edition === 'notes' ? 'notes' : 'full',
   };
 }
 

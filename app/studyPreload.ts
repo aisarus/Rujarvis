@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld('study', {
   deleteAllRecordings: () => call('deleteAllRecordings'),
   addCard: (id: string, index: number) => call('addCard', id, index),
   recording: (on: boolean) => call('recording', on),
+  hearing: () => call('hearing'),
   transcribe: (samples: Float32Array, sampleRate: number) => call('transcribe', samples, sampleRate),
   openNote: (file: string) => call('openNote', file),
   audioUrl: (file: string) => call('audioUrl', file),

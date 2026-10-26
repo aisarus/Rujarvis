@@ -234,6 +234,9 @@ export function showStudy(): void {
       return слух(samples, sampleRate);
     },
     recording: (on) => приЗаписи?.(on),
+    // У варианта «только конспекты» слуха нет: кнопка «Голосом» записала бы
+    // ответ, который некому расшифровать.
+    hearing: () => слух !== null,
     language: () => настройка?.settings().language ?? 'ru',
   });
 }

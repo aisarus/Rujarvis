@@ -43,6 +43,13 @@
     1,6 ГБ), а язык записывается в настройки. Без параметра распознавание на
     видеокарте всё равно ставится, а модель для лекций — нет.
 
+.PARAMETER Edition
+    Что ставить: full — Джарвис целиком (голосовой помощник и конспекты),
+    notes — только конспекты: без слуха команд, голоса и драйвера окон, зато
+    с распознаванием лекций и моделью для языка лекций (LectureLanguage, без
+    него — язык интерфейса). Без параметра вариант берётся из настроек
+    прежней установки (обновление его не меняет), а для новой — full.
+
 .PARAMETER Autostart
     Запускать Rujarvis при входе в Windows.
 
@@ -60,6 +67,8 @@ param(
     [string] $WhisperModel,
     [ValidatePattern('^[a-z]{2,3}$')]
     [string] $LectureLanguage,
+    [ValidateSet('', 'full', 'notes')]
+    [string] $Edition = '',
     [switch] $Autostart,
     [switch] $NoLaunch
 )
@@ -74,6 +83,21 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
 $RepoUrl = 'https://github.com/aisarus/Rujarvis.git'
 $SourceDir = Join-Path $InstallRoot 'src'
+
+# Вариант без параметра — из настроек прежней установки: кнопка «Обновить»
+# запускает этот же установщик, и тестер с вариантом «только конспекты» после
+# обновления не должен получить обратно голосового Джарвиса.
+if (-not $Edition) {
+    $Edition = 'full'
+    $settingsFile = Join-Path $InstallRoot 'data\settings.json'
+    if (Test-Path $settingsFile) {
+        try {
+            if ((Get-Content -Raw -Encoding UTF8 $settingsFile | ConvertFrom-Json).edition -eq 'notes') { $Edition = 'notes' }
+        }
+        catch { }
+    }
+}
+$NotesOnly = $Edition -eq 'notes'
 
 function Write-Step { param([string] $Message) Write-Host "`n==> $Message" -ForegroundColor Cyan }
 function Write-Ok { param([string] $Message) Write-Host "    $Message" -ForegroundColor Green }
@@ -757,10 +781,17 @@ try {
     Invoke-Checked -FilePath 'pnpm' -Arguments @('build') -What 'pnpm build'
     Write-Ok 'Приложение собрано.'
 
-    Write-Step 'Скачиваю модели речи'
-    $setupArgs = @('jarvis:setup', '--', '--language', $Language)
+    Write-Step ($(if ($NotesOnly) { 'Настраиваю вариант «только конспекты»' } else { 'Скачиваю модели речи' }))
+    $setupArgs = @('jarvis:setup', '--', '--language', $Language, '--edition', $Edition)
     if ($WhisperModel) { $setupArgs += @('--model', $WhisperModel) }
     Invoke-Checked -FilePath 'pnpm' -Arguments $setupArgs -What 'jarvis:setup'
+
+    # Конспектору модель для лекций нужна всегда: без неё лекция только пишется.
+    # Язык не назван — не передаём: jarvis:lecture-model возьмёт язык лекций из
+    # настроек (пусто — язык интерфейса). «Обновить» запускает установщик без
+    # -LectureLanguage, и подставь мы язык интерфейса — у человека с лекциями
+    # на иврите обновление молча переключило бы слух на русский.
+    $wantLectureModel = [bool]$LectureLanguage -or $NotesOnly
 
     # Распознавание на видеокарте — команды быстрее, и без него конспект лекций
     # только пишет звук: расшифровать нечем. Не поставилось — установка не
@@ -770,15 +801,17 @@ try {
         try {
             Invoke-Checked -FilePath 'pnpm' -Arguments @('jarvis:gpu-stt') -What 'jarvis:gpu-stt'
             Write-Ok 'Распознавание на видеокарте поставлено.'
-            if ($LectureLanguage) {
-                Write-Step "Модель для конспекта лекций (язык $LectureLanguage)"
-                Invoke-Checked -FilePath 'pnpm' -Arguments @('jarvis:lecture-model', '--', $LectureLanguage) -What 'jarvis:lecture-model'
-                Write-Ok "Модель для лекций поставлена; язык лекций — $LectureLanguage."
+            if ($wantLectureModel) {
+                Write-Step 'Модель для конспекта лекций'
+                $lectureArgs = @('jarvis:lecture-model')
+                if ($LectureLanguage) { $lectureArgs += @('--', $LectureLanguage) }
+                Invoke-Checked -FilePath 'pnpm' -Arguments $lectureArgs -What 'jarvis:lecture-model'
+                Write-Ok 'Модель для лекций поставлена.'
             }
         }
         catch {
             $again = 'pnpm jarvis:gpu-stt'
-            if ($LectureLanguage) { $again += " и pnpm jarvis:lecture-model -- $LectureLanguage" }
+            if ($wantLectureModel) { $again += " и pnpm jarvis:lecture-model$(if ($LectureLanguage) { " -- $LectureLanguage" })" }
             Write-Note "Не поставилось: $($_.Exception.Message). Повторить в папке ${SourceDir}: $again"
         }
     }
@@ -790,8 +823,14 @@ finally {
     Pop-Location
 }
 
-Write-Step 'Ставлю драйвер окон'
-Install-CuaDriver -InstallRoot $InstallRoot
+# Конспектору руки на компьютере не нужны — и драйвер окон тоже.
+if ($NotesOnly) {
+    Write-Note 'Драйвер окон не ставлю: варианту «только конспекты» он не нужен.'
+}
+else {
+    Write-Step 'Ставлю драйвер окон'
+    Install-CuaDriver -InstallRoot $InstallRoot
+}
 
 Write-Step 'Создаю ярлык'
 $electron = Join-Path $SourceDir 'node_modules\electron\dist\electron.exe'

@@ -44,6 +44,7 @@
     "jarvis:study-prepare": "tsx scripts/jarvis-study-prepare.ts",
     "jarvis:study-window-check": "node build.mjs && electron dist/qa/study-window-check.cjs",
     "jarvis:study-courses-check": "node build.mjs && electron dist/qa/study-courses-check.cjs",
+    "jarvis:notes-check": "node build.mjs && electron dist/qa/notes-check.cjs",
     "jarvis:roundtrip": "tsx scripts/voice-roundtrip.ts",
     "jarvis:mac-check": "tsx scripts/probe-darwin-driver.ts",
     "jarvis:health": "node scripts/health.mjs",

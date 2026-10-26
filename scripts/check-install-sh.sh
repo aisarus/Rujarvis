@@ -69,7 +69,38 @@ check 'чужой язык отклоняется' "$([ $? -ne 0 ] && printf 'д
 check 'неизвестный ключ отклоняется' "$([ $? -ne 0 ] && printf 'да')"
 
 check 'подсказка перечисляет ключи' \
-  "$(usage 2>/dev/null | grep -q -- '--autostart' && printf 'да')"
+  "$(usage 2>/dev/null | grep -q -- '--autostart' && usage 2>/dev/null | grep -q -- '--notes' && printf 'да')"
+
+# --- вариант «только конспекты» ----------------------------------------------
+
+check 'по умолчанию вариант не назван' "$([ -z "$EDITION" ] && printf 'да')"
+
+( parse_args --notes --lecture-language he; [ "$EDITION" = 'notes' ] && [ "$LECTURE_LANGUAGE" = 'he' ] ) >/dev/null 2>&1
+check '--notes и язык лекций разбираются' "$([ $? -eq 0 ] && printf 'да')"
+
+( parse_args --edition full; [ "$EDITION" = 'full' ] ) >/dev/null 2>&1
+check '--edition full разбирается' "$([ $? -eq 0 ] && printf 'да')"
+
+( parse_args --edition всё ) >/dev/null 2>&1
+check 'чужой вариант отклоняется' "$([ $? -ne 0 ] && printf 'да')"
+
+# Язык лекций уходит в команду pnpm: ничего, кроме кода языка, туда не пускаем.
+( parse_args --lecture-language 'he; rm' ) >/dev/null 2>&1
+check 'язык лекций — только код из букв' "$([ $? -ne 0 ] && printf 'да')"
+
+# Обновление — это повторный запуск установщика без ключей. Вариант обязан
+# пережить его: иначе конспектор после «Обновить» стал бы голосовым Джарвисом.
+probe_root="$(mktemp -d)"
+check 'без настроек — Джарвис целиком' \
+  "$( INSTALL_ROOT="$probe_root"; [ "$(edition_from_settings)" = 'full' ] && printf 'да')"
+mkdir -p "$probe_root/data"
+printf '{\n  "language": "ru",\n  "edition": "notes"\n}\n' > "$probe_root/data/settings.json"
+check 'вариант берётся из прежней установки' \
+  "$( INSTALL_ROOT="$probe_root"; [ "$(edition_from_settings)" = 'notes' ] && printf 'да')"
+rm -rf "$probe_root"
+
+check 'вариант доходит до jarvis:setup' \
+  "$(grep -q 'jarvis:setup -- --language "$LANGUAGE" --edition "$EDITION"' "$SCRIPT" && printf 'да')"
 
 # --- правила, которые стоили живых прогонов ----------------------------------
 #

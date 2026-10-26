@@ -30,6 +30,8 @@ export interface StudyWindowDeps {
   prepareAll?(): number;
   /** Ответ голосом → текст. */
   transcribe?(samples: Float32Array, sampleRate: number): Promise<string>;
+  /** Есть ли сейчас чем расшифровать ответ голосом; нет — кнопки «Голосом» нет. */
+  hearing?(): boolean;
   /** Окно записывает ответ голосом: мост пусть не слушает команды. */
   recording?(on: boolean): void;
   language(): 'ru' | 'en';
@@ -140,6 +142,7 @@ function зарегистрировать(): void {
   обработать('deleteAllRecordings', () => служба().deleteAllRecordings());
   обработать('addCard', (id, index) => служба().addCardFromQuestion(строка(id), число(index)));
   обработать('recording', (on) => deps?.recording?.(Boolean(on)));
+  обработать('hearing', () => deps?.hearing?.() ?? Boolean(deps?.transcribe));
   обработать('transcribe', async (samples, sampleRate) => {
     if (!deps?.transcribe) throw new Error(tr('ответ голосом недоступен', 'answering by voice is unavailable'));
     const звук = samples instanceof Float32Array ? samples : new Float32Array(samples as ArrayBuffer);

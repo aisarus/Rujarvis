@@ -476,7 +476,12 @@ function noAgentCard() {
   return node;
 }
 
-const STEPS = ['language', 'agent', 'models', 'mic', 'ready'];
+// У конспектора вместо моделей команд и голоса — распознавание лекций, и оно
+// не держит на шаге: без него лекция всё равно запишется, и карточка честно
+// говорит, что конспекта не будет.
+const STEPS_FULL = ['language', 'agent', 'models', 'mic', 'ready'];
+const STEPS_NOTES = ['language', 'agent', 'lecture', 'mic', 'ready'];
+let STEPS = STEPS_FULL;
 
 function stepReady() {
   const name = STEPS[step];
@@ -490,8 +495,9 @@ function stepReady() {
 
 function renderWizard(main) {
   const s = t();
+  STEPS = notesOnly() ? STEPS_NOTES : STEPS_FULL;
   const name = STEPS[step];
-  const короткие = [s.stepShortLanguage, s.stepShortAgent, s.stepShortModels, s.stepShortMic, s.stepShortReady];
+  const короткие = [s.stepShortLanguage, s.stepShortAgent, notesOnly() ? s.stepShortLecture : s.stepShortModels, s.stepShortMic, s.stepShortReady];
   main.append(
     el(`<div class="wiz-brand"><span class="logo"></span>Rujarvis</div>`),
     el(`<ol class="steps">${STEPS.map((_, i) => `<li class="${i < step ? 'done' : i === step ? 'now' : ''}"${i === step ? ' aria-current="step"' : ''}><span>${escapeHtml(короткие[i])}</span></li>`).join('')}</ol>`),
@@ -500,14 +506,20 @@ function renderWizard(main) {
     language: [s.onboardingTitle, s.onboardingIntro],
     agent: [s.stepAgent, s.stepAgentHint],
     models: [s.stepModels, s.stepModelsHint],
-    mic: [s.stepMic, s.stepMicHint],
-    ready: [s.stepReady, s.stepReadyHint],
+    lecture: [s.stepLecture, s.stepLectureHint],
+    mic: [s.stepMic, notesOnly() ? s.stepMicHintNotes : s.stepMicHint],
+    ready: [s.stepReady, notesOnly() ? s.stepReadyHintNotes : s.stepReadyHint],
   };
   main.append(el(`<h1>${titles[name][0]}</h1>`), el(`<p class="hint">${titles[name][1]}</p>`));
 
   if (name === 'language') {
     main.append(languageChoice());
-    main.append(el('<div style="height:14px"></div>'), appearanceCard());
+    main.append(el('<div style="height:14px"></div>'), editionCard());
+    main.append(appearanceCard());
+  }
+  if (name === 'lecture') {
+    main.append(lectureLanguageCard());
+    main.append(lectureSttCard());
   }
   if (name === 'agent') {
     main.append(agentCard('claude', 'Claude Code', false));
@@ -529,8 +541,11 @@ function renderWizard(main) {
     // и после «Начать» Джарвис на всё, кроме прямых команд, молчал. Не запрет
     // — человек вправе начать так, — а правда о том, что его ждёт.
     if (!агентГотов()) main.append(noAgentCard());
-    main.append(keysCard());
-    main.append(redLinesCard());
+    // Конспектору команды и красные линии ни к чему: рук на компьютере у него нет.
+    if (!notesOnly()) {
+      main.append(keysCard());
+      main.append(redLinesCard());
+    }
   }
   if (name !== 'mic') stopMic();
 
@@ -631,12 +646,37 @@ function reportCard() {
   return node;
 }
 
+/** Вариант «только конспекты»: без слуха команд, голоса и агента с руками. */
+function notesOnly() {
+  return data.settings.edition === 'notes';
+}
+
+/**
+ * Что поставлено: Джарвис целиком или только конспекты. Переключается на
+ * ходу — мост перезапустится (после лекции, если она идёт).
+ */
+function editionCard() {
+  const s = t();
+  const now = data.settings.edition === 'notes' ? 'notes' : 'full';
+  const card = el(`<div class="card" id="edition"><label class="field">${s.edition}</label>
+    <div class="radio">
+      <label><input type="radio" name="edition" value="full" ${now === 'full' ? 'checked' : ''}> ${s.editionFull}</label>
+      <label><input type="radio" name="edition" value="notes" ${now === 'notes' ? 'checked' : ''}> ${s.editionNotes}</label>
+    </div>
+    <p class="hint" style="margin:10px 0 0">${s.editionHint}</p></div>`);
+  for (const radio of card.querySelectorAll('input')) radio.onchange = () => update({ edition: radio.value });
+  return card;
+}
+
 const TABS = ['general', 'voice', 'agents', 'folders', 'keys'];
 
 function renderSettings(main, nav) {
   const s = t();
-  const labels = { general: s.tabGeneral, voice: s.tabVoice, agents: s.tabAgents, folders: s.tabFolders, keys: s.tabKeys };
-  for (const id of TABS) {
+  const labels = { general: s.tabGeneral, voice: notesOnly() ? s.tabLectures : s.tabVoice, agents: s.tabAgents, folders: s.tabFolders, keys: s.tabKeys };
+  // Команд у конспектора нет — и вкладки про них тоже.
+  const tabs = notesOnly() ? TABS.filter((id) => id !== 'keys') : TABS;
+  if (!tabs.includes(tab)) tab = 'general';
+  for (const id of tabs) {
     const button = el(`<button class="${id === tab ? 'active' : ''}"><span>${labels[id]}</span></button>`);
     button.onclick = () => { tab = id; if (id !== 'voice') stopMic(); if (id === 'agents') refresh(); else render(); };
     nav.append(button);
@@ -645,15 +685,19 @@ function renderSettings(main, nav) {
 
   if (tab === 'general') {
     main.append(el(`<p class="hint">${s.stepLanguageHint}</p>`), languageChoice());
-    main.append(el('<div style="height:14px"></div>'), appearanceCard());
+    main.append(el('<div style="height:14px"></div>'), editionCard());
+    main.append(appearanceCard());
     main.append(notesStyleCard());
-    main.append(redLinesCard());
+    if (!notesOnly()) main.append(redLinesCard());
     main.append(updateCard());
     main.append(reportCard());
   }
   if (tab === 'voice') {
-    main.append(speechPlaceCard());
-    main.append(modelsCard());
+    // Распознавание команд и голос Джарвиса конспектору не нужны.
+    if (!notesOnly()) {
+      main.append(speechPlaceCard());
+      main.append(modelsCard());
+    }
     main.append(lectureLanguageCard());
     main.append(lectureSttCard());
     main.append(el(`<h2 style="margin-top:8px">${s.stepMic}</h2>`), micCard());

@@ -181,6 +181,11 @@ export interface LectureStartOptions {
   mainEndpoint(): string | null;
   /** Откуда звук: микрофон (аудитория) или звук компьютера (Zoom). По умолчанию — микрофон. */
   source?: LectureSource;
+  /**
+   * Слышит ли Джарвис команды. У варианта «только конспекты» слуха нет, и
+   * совет «скажите „закончи конспект“» был бы советом говорить в пустоту.
+   */
+  voice?: boolean;
 }
 
 function занято(): string | null {
@@ -206,6 +211,8 @@ export async function startLecture(subject: string | undefined, options: Lecture
 interface Слух {
   сервер: Promise<GpuWhisperServer | null>;
   модель: string | null;
+  /** Слушает общая модель, а не модель для лекций. */
+  общая: boolean;
   распознать(samples: Float32Array, sampleRate: number): Promise<ConfidentResult>;
 }
 
@@ -217,13 +224,17 @@ interface Слух {
 async function поднятьСлух(options: LectureStartOptions, язык: string): Promise<Слух> {
   const dir = gpuWhisperDir(options.home);
   const files = await findGpuWhisper(dir).catch(() => null);
-  const модель = files ? await findLectureModel(dir, язык).catch(() => null) : null;
-  if (files && !модель) {
+  const своя = files ? await findLectureModel(dir, язык).catch(() => null) : null;
+  if (files && !своя) {
     const чужие = await otherLectureModels(dir, язык).catch(() => []);
     if (чужие.length > 0) {
-      console.log(`[jarvis:lecture] для языка «${язык}» модели для лекций нет, а модель для «${чужие.join('», «')}» чужому языку не годится — слушает общий сервер`);
+      console.log(`[jarvis:lecture] для языка «${язык}» модели для лекций нет, а модель для «${чужие.join('», «')}» чужому языку не годится — слушает общая`);
     }
   }
+  // Своей модели нет, а общего сервера команд тоже нет (вариант «только
+  // конспекты» его не поднимает) — свой сервер с общей моделью: хуже модели
+  // для лекций, но лучше, чем «расшифровать нечем».
+  const модель = своя ?? (files && !options.mainEndpoint() ? files.model : null);
   const сервер: Promise<GpuWhisperServer | null> =
     files && модель
       ? startGpuWhisper(
@@ -242,6 +253,7 @@ async function поднятьСлух(options: LectureStartOptions, язык: st
   return {
     сервер,
     модель,
+    общая: !своя,
     распознать: async (samples, sampleRate) => {
       const свой = await сервер;
       const endpoint = свой?.endpoint ?? options.mainEndpoint();
@@ -383,8 +395,12 @@ async function начатьЛекцию(subject: string | undefined, options: Le
     );
   }
   const откуда = zoom ? tr('Пишу звук компьютера (Zoom). ', 'Recording the computer sound (Zoom). ') : '';
-  return слух.модель
-    ? tr(`Конспектирую. ${откуда}${гдеКурс} Закончить — «Джарвис, закончи конспект».`, `Taking notes. ${откуда}${гдеКурс} Say "Jarvis, stop lecture notes" to finish.`)
+  const закончить =
+    options.voice === false
+      ? tr('Закончить — кнопкой «■ Закончить конспект».', 'To finish, press "■ Stop lecture notes".')
+      : tr('Закончить — «Джарвис, закончи конспект».', 'Say "Jarvis, stop lecture notes" to finish.');
+  return слух.модель && !слух.общая
+    ? tr(`Конспектирую. ${откуда}${гдеКурс} `, `Taking notes. ${откуда}${гдеКурс} `) + закончить
     : tr(
         `Конспектирую общим распознаванием. ${гдеКурс} Точнее будет с моделью для лекций — в настройках, «Распознавание лекций».`,
         `Taking notes with the general recognition. ${гдеКурс} The lecture model is more accurate; install it in Settings, "Lecture recognition".`,
