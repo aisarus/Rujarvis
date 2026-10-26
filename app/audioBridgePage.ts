@@ -191,7 +191,7 @@ async function startSystemCapture() {
     const ended = got.getAudioTracks().length > 0;
     got.getTracks().forEach(function (track) { track.stop(); });
     throw new Error(ended && IS_MAC
-      ? 'macOS не дала звук компьютера — включите Electron в «Системные настройки → Конфиденциальность и безопасность → Запись экрана и системного звука»'
+      ? 'macOS не дала звук компьютера — включите Electron в «Системные настройки → Конфиденциальность и безопасность → Запись экрана и системного звука» и откройте Rujarvis заново'
       : 'система не отдала звук компьютера');
   }
   systemStream = got;

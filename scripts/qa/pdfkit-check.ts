@@ -16,7 +16,8 @@ import path from 'node:path';
 
 import { gatherInputs, readPdfMac } from '../../jarvis/documents/codexAgent';
 
-const ПРИМЕТА = 'Lecture notes check 42';
+// Длиннее порога «мало текста» (40 знаков): короче — страница считается сканом и идёт картинкой.
+const ПРИМЕТА = 'Lecture notes check 42: supply and demand in the short run';
 
 /** PDF на две страницы руками: текст Helvetica на первой, синий прямоугольник без текста — на второй. */
 function маленькийPdf(): Buffer {
