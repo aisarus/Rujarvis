@@ -321,6 +321,8 @@ export class LectureSession {
   private мсЗвука = 0;
   /** Сколько секунд звука ждёт распознавания. */
   private вОчереди = 0;
+  /** Запись звука в файл — своей очередью, впереди распознавания. */
+  private запись: Promise<void> = Promise.resolve();
   /** Где кончился прошлый раздел, мс звука. */
   private последнийРаздел = 0;
   private номерРаздела = 0;
@@ -382,6 +384,19 @@ export class LectureSession {
     const конец = когда + (samples.length / sampleRate) * 1000;
     this.мсЗвука = конец;
     const секунд = samples.length / sampleRate;
+    if (когда === 0) this.частотаЗвука = sampleRate;
+    // Звук — в файл сразу, своей очередью, а не когда до куска дойдёт
+    // распознавание. На машине, которая распознаёт медленнее речи (мак на
+    // Intel без видеокарты), очередь распознавания отстаёт на десятки минут,
+    // и закрой человек Джарвис в это время — нераспознанный звук пропал бы
+    // вместе с памятью. Запись от скорости распознавания не зависит.
+    const pcm = pcm16(samples);
+    this.запись = this.запись
+      .then(async () => {
+        await appendFile(this.audioFile, pcm);
+        this.байтЗвука += pcm.length;
+      })
+      .catch((error: unknown) => this.deps.log?.(`звук куска ${метка(когда)} не записан: ${error instanceof Error ? error.message : String(error)}`));
     this.вОчереди += секунд;
     // Упавший кусок не должен останавливать очередь: цепочка обещаний после
     // отказа пропускала бы все следующие куски до конца лекции.
@@ -397,11 +412,6 @@ export class LectureSession {
   }
 
   private async кусок(samples: Float32Array, sampleRate: number, когда: number, конец: number): Promise<void> {
-    if (this.байтЗвука === 0) this.частотаЗвука = sampleRate;
-    const pcm = pcm16(samples);
-    await appendFile(this.audioFile, pcm);
-    this.байтЗвука += pcm.length;
-
     let текст = '';
     try {
       текст = (await this.deps.transcribe(samples, sampleRate)).trim();
@@ -462,7 +472,7 @@ export class LectureSession {
     this.заголовокПоРазмеру();
     // И ещё раз, когда очередь допишет уже принятые куски: иначе их звук
     // оказался бы за объявленным размером и не проигрывался бы.
-    void this.расшифровка.finally(() => this.заголовокПоРазмеру());
+    void this.запись.finally(() => this.заголовокПоРазмеру());
   }
 
   /**
@@ -471,6 +481,11 @@ export class LectureSession {
    * полминуты против десяти минут), и без этого весь звук лежал бы в памяти
    * очередью.
    */
+  /** Сколько секунд звука ещё ждёт распознавания: столько распознавание отстаёт от лекции. */
+  get lagSeconds(): number {
+    return this.вОчереди;
+  }
+
   async backlog(maxSec: number): Promise<void> {
     while (this.вОчереди > maxSec) await new Promise((готово) => setTimeout(готово, 200));
   }
@@ -519,6 +534,7 @@ export class LectureSession {
       }
     }
 
+    await this.запись;
     const файл = await open(this.audioFile, 'r+');
     try {
       await файл.write(wavHeader(this.байтЗвука, this.частотаЗвука), 0, 44, 0);

@@ -31,6 +31,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
+import os from 'node:os';
 import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -248,8 +249,23 @@ export async function installGpuWhisper(options: InstallGpuWhisperOptions): Prom
  * открывается, сервер падает (журнал тестера 20.10.2026). Имена моделей —
  * латиницей всегда, а папку передаёт сама система, без перекодировки.
  */
-export function serverArgs(files: GpuWhisperFiles, port: number): string[] {
-  return ['-m', path.basename(files.model), '--host', '127.0.0.1', '--port', String(port), '-t', '4'];
+export function serverArgs(files: GpuWhisperFiles, port: number, machine: { platform: NodeJS.Platform; arch: string; cpus: number } = { platform: process.platform, arch: process.arch, cpus: os.cpus().length }): string[] {
+  return ['-m', path.basename(files.model), '--host', '127.0.0.1', '--port', String(port), '-t', String(serverThreads(machine))];
+}
+
+/**
+ * Сколько потоков дать распознаванию.
+ *
+ * С видеокартой (CUDA, Metal) считает она, и четырёх потоков хватает. Мак на
+ * Intel считает процессором: Homebrew ставит whisper.cpp без Metal для
+ * видеокарт AMD, и на четырёх потоках виртуальный Intel раннера распознавал
+ * минуту речи за полторы (замер 26.10.2026). Там — по физическому ядру на
+ * поток (у MacBook Pro 2019 их шесть или восемь), но не больше восьми: дальше
+ * ядра делят память и только мешают друг другу.
+ */
+export function serverThreads(machine: { platform: NodeJS.Platform; arch: string; cpus: number }): number {
+  if (machine.platform !== 'darwin' || machine.arch !== 'x64') return 4;
+  return Math.min(8, Math.max(4, Math.floor(machine.cpus / 2)));
 }
 
 export interface GpuWhisperServer {

@@ -83,6 +83,8 @@ interface Лекция {
 let идёт: Лекция | null = null;
 /** Итог прошлой лекции ещё пишется: её сервер занимает тот же порт. */
 let дописывается: Promise<string> | null = null;
+/** Сессия, которая дописывается: по ней видно, сколько звука ещё не распознано. */
+let дописываемая: LectureSession | null = null;
 /**
  * Лекция поднимается: до `идёт` — несколько ожиданий. Двойное нажатие кнопки
  * или кнопка вместе с голосом заводили две сессии и два сервера на одном
@@ -142,6 +144,13 @@ export interface LectureInfo {
 export function lectureInfo(): LectureInfo | null {
   if (идёт) return { course: идёт.курс, courses: listCourses(идёт.root), line: идёт.строка };
   if (файлом) return { course: null, courses: [], line: файлом.строка };
+  // Распознавание отстало — «дописываю итог» длится не минуту, а столько,
+  // сколько звука осталось. Так и сказать, иначе это похоже на зависание.
+  const осталось = дописываемая?.lagSeconds ?? 0;
+  if (осталось > 30) {
+    const мин = Math.max(1, Math.round(осталось / 60));
+    return { course: null, courses: [], line: tr(`Дописываю: осталось распознать ${мин} мин звука.`, `Finishing: ${мин} min of audio left to transcribe.`) };
+  }
   return null;
 }
 
@@ -316,7 +325,24 @@ async function начатьЛекцию(subject: string | undefined, options: Le
     }
     const { text, confidence } = await слух.распознать(samples, sampleRate);
     слышно(монитор.observe({ seconds: секунд, level: уровень, text, confidence }));
+    отстаёт();
     return text;
+  };
+  // Машина распознаёт медленнее речи (мак на Intel без видеокарты) — сказать
+  // один раз и честно: запись идёт целиком, а конспект допишется после пары.
+  // Без этого человек видел бы, что расшифровка замерла на двадцатой минуте.
+  let сказаноПроОтставание = false;
+  const отстаёт = (): void => {
+    const л = лекция.value;
+    if (сказаноПроОтставание || !л || идёт !== л || л.session.lagSeconds < 180) return;
+    сказаноПроОтставание = true;
+    const мин = Math.round(л.session.lagSeconds / 60);
+    console.log(`[jarvis:lecture] распознавание отстаёт от лекции на ${мин} мин`);
+    л.строка = tr(
+      `Этот компьютер распознаёт медленнее речи — отстаю на ${мин} мин. Звук пишется целиком; расшифровка и конспект допишутся после пары.`,
+      `This computer transcribes slower than speech — ${мин} min behind. The audio is recorded in full; the transcript and notes will catch up after class.`,
+    );
+    оповестить();
   };
   const слышно = (вердикт: ReturnType<HearingMonitor['observe']>): void => {
     const л = лекция.value;
@@ -498,13 +524,19 @@ export function finishLecture(): Promise<string> | null {
   идёт = null;
   // Хвост записи — последним куском, пока сессия ещё принимает звук.
   была.recorder.flush();
+  дописываемая = была.session;
+  // Пока распознавание догоняет, плашка видит, сколько осталось.
+  const пульс = setInterval(оповестить, 15_000);
+  пульс.unref?.();
   const работа = (async (): Promise<string> => {
     try {
       const итог = await была.session.finish(coursesForModel(была.root));
       return await разложить({ ...была, when: была.session.startedAt }, итог);
     } finally {
+      clearInterval(пульс);
       (await была.сервер)?.stop();
       дописывается = null;
+      дописываемая = null;
       оповестить();
     }
   })();

@@ -327,6 +327,34 @@ describe('Джарвиса закрыли посреди лекции', () => {
     expect(wav.readUInt32LE(4)).toBe(wav.length - 8);
   });
 
+  it('распознавание отстаёт — звук всё равно уже в файле, и видно, на сколько отстало', async () => {
+    // Мак на Intel распознаёт медленнее речи: очередь копится. Раньше звук
+    // куска писался, только когда до него доходило распознавание, и закрытие
+    // в этот момент теряло всё нераспознанное.
+    const папка = await временная();
+    let отпустить: () => void = () => undefined;
+    const стоит = new Promise<void>((resolve) => {
+      отпустить = resolve;
+    });
+    const сессия = new LectureSession(папка, 'Физика', {
+      transcribe: async () => {
+        await стоит;
+        return '';
+      },
+      summarize: async () => '',
+    });
+    await сессия.start();
+    for (let i = 0; i < 3; i += 1) сессия.addAudio(new Float32Array(16_000), 16_000);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(сессия.lagSeconds).toBe(3);
+    сессия.abandon();
+    const wav = await readFile(сессия.audioFile);
+    // Три секунды по 16 000 отсчётов по два байта — в файле, хотя ни один кусок не распознан.
+    expect(wav.length - 44).toBe(3 * 16_000 * 2);
+    expect(wav.readUInt32LE(40)).toBe(3 * 16_000 * 2);
+    отпустить();
+  });
+
   it('конспект дописывается по сохранённой расшифровке: разделы по пять минут, итог сверху', async () => {
     const папка = await временная();
     const заметка = path.join(папка, '2026-09-29 истории.md');
