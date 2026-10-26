@@ -10,7 +10,7 @@
 import path from 'node:path';
 
 import { lectureLanguagesFor, listCourses, listLectures, settingsLanguages } from '../jarvis/lecture/courses';
-import { createClaudeSummarizer } from '../jarvis/lecture/summarize';
+import { brainFromArgs, createSummarizer, setBrain } from '../jarvis/lecture/summarize';
 import { lectureFolder } from '../jarvis/lecture/vault';
 import { jarvisOutputDir, jarvisPaths } from '../jarvis/setup/paths';
 import { SettingsStore } from '../jarvis/setup/settings';
@@ -21,6 +21,7 @@ import { StudyStore } from '../jarvis/study/store';
 async function main(): Promise<void> {
   const paths = jarvisPaths();
   const settings = new SettingsStore(paths.settings).get();
+  setBrain(() => brainFromArgs(process.argv, settings.brain));
   const notes = settings.language;
   const store = new StudyStore(studyRoot(paths.data));
   const заново = process.argv.includes('--again');
@@ -47,7 +48,7 @@ async function main(): Promise<void> {
       // Вопросы — на языке лекции курса, разбор — на языке его конспекта.
       const языки = lectureLanguagesFor(заметка, settingsLanguages(settings));
       const итог = await prepareLecture(заметка, store, {
-        summarize: createClaudeSummarizer(),
+        summarize: createSummarizer(),
         lectureLanguage: языки.lecture,
         notes: языки.notes,
         log: (строка) => console.log(`  ${строка}`),

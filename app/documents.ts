@@ -12,8 +12,10 @@ import path from 'node:path';
 
 import { shell } from 'electron';
 
-import { createClaudeDocumentAgent, isDocument, processDocument, withFallbackAgent } from '../jarvis/documents/pipeline';
+import { createCodexDocumentAgent } from '../jarvis/documents/codexAgent';
+import { createClaudeDocumentAgent, isDocument, processDocument, withFallbackAgent, type DocumentAgent } from '../jarvis/documents/pipeline';
 import { COURSE_WORDS } from '../jarvis/lecture/courses';
+import { brainOrder, currentBrain } from '../jarvis/lecture/summarize';
 import { lectureFolder, obsidianOpenUrl } from '../jarvis/lecture/vault';
 import { tr } from '../jarvis/locale/language';
 import { notify } from './notify';
@@ -46,6 +48,26 @@ export function enqueueDocument(file: string, options: DocumentsOptions, course?
     : tr(`Разбираю «${имя}». Это несколько минут — скажу, когда будет готово.`, `Reading "${имя}". It takes a few minutes — I will tell you when it is ready.`);
 }
 
+/**
+ * Кто разбирает: выбор из настроек, как у конспекта. Claude Code — Opus (разбор
+ * документа один, и он должен быть лучшим), лимит — Sonnet; Codex — один.
+ * «Сам» — установленные по очереди: не справился один — второй, с чистой `out/`.
+ */
+function агентПоВыбору(log: (line: string) => void): DocumentAgent {
+  return (job) => {
+    const порядок = brainOrder(currentBrain());
+    if (порядок.length === 0) {
+      return Promise.reject(new Error(tr('Ни Claude Code, ни Codex не найдены — документ разобрать нечем', 'Neither Claude Code nor Codex was found — nothing to read the document with')));
+    }
+    const агенты = порядок.map((мозг) =>
+      мозг === 'codex'
+        ? createCodexDocumentAgent({ log })
+        : withFallbackAgent(createClaudeDocumentAgent({ model: 'opus', log }), createClaudeDocumentAgent({ model: 'sonnet', log }), log),
+    );
+    return агенты.reduce((первый, второй) => withFallbackAgent(первый, второй, log))(job);
+  };
+}
+
 async function разобрать(file: string, options: DocumentsOptions, course?: string | null): Promise<boolean> {
   const имя = path.basename(file);
   const notes = options.notes();
@@ -58,8 +80,7 @@ async function разобрать(file: string, options: DocumentsOptions, cours
       root,
       notes,
       course,
-      // Opus — разбор документа один, и он должен быть лучшим; лимит — Sonnet.
-      agent: withFallbackAgent(createClaudeDocumentAgent({ model: 'opus', log }), createClaudeDocumentAgent({ model: 'sonnet', log }), log),
+      agent: агентПоВыбору(log),
       log,
     });
     log(`«${имя}» за ${Math.round((Date.now() - t0) / 1000)} с`);

@@ -59,6 +59,13 @@ export type RecordingsKeep = 'week' | 'forever';
  */
 export type Edition = 'full' | 'notes';
 
+/**
+ * Кто пишет конспект, «Учёбу» и разбор документов: Claude Code, Codex или
+ * «сам» — кто установлен, Claude Code первым. У первой тестерши на маке
+ * ChatGPT, а не Claude (26.10.2026).
+ */
+export type Brain = 'auto' | 'claude' | 'codex';
+
 export interface AppSettings {
   language: Language;
   voiceId: string;
@@ -126,6 +133,8 @@ export interface AppSettings {
   recordingsKeep: RecordingsKeep;
   /** Джарвис целиком или только конспекты. */
   edition: Edition;
+  /** Кто пишет конспект: Claude Code, Codex или кто установлен. */
+  brain: Brain;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -152,6 +161,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // Владелец 21.10.2026: «пусть удаляет сам через неделю».
   recordingsKeep: 'week',
   edition: 'full',
+  brain: 'auto',
 };
 
 /** Пределы, за которые голосовая настройка не уводит. */
@@ -217,6 +227,7 @@ export function normaliseSettings(raw: unknown): AppSettings {
     notesStyle: NOTES_STYLES.includes(input.notesStyle as NotesStyle) ? (input.notesStyle as NotesStyle) : DEFAULT_SETTINGS.notesStyle,
     recordingsKeep: input.recordingsKeep === 'forever' ? 'forever' : 'week',
     edition: input.edition === 'notes' ? 'notes' : 'full',
+    brain: input.brain === 'claude' || input.brain === 'codex' ? input.brain : 'auto',
   };
 }
 

@@ -106,6 +106,7 @@ import {
 } from './lectureMode';
 import { createFileDecoder } from './lectureFileDecode';
 import { prepareStudyFor, setStudyHearing, showStudy } from './study';
+import { setBrain } from '../jarvis/lecture/summarize';
 import { enqueueDocument, watchInbox } from './documents';
 import { DOCUMENT_EXTENSIONS, isDocument } from '../jarvis/documents/pipeline';
 import { lectureHeardForJarvis } from '../jarvis/lecture/voiceGate';
@@ -1242,6 +1243,7 @@ let конспектор: NotesBridge | null = null;
 export async function startNotesBridge(options: { settings: SettingsStore }): Promise<NotesBridge> {
   if (конспектор) return конспектор;
   settingsRef = options.settings;
+  setBrain(() => settings().brain);
   setLanguage(settings().language);
   const logPath = startLogFile(PATHS.log, [
     'вариант: только конспекты — без слуха команд, голоса и агента',
@@ -1391,6 +1393,7 @@ async function поднятьМост(options: {
   onStatus?(status: VoiceStatus): void;
 }): Promise<JarvisVoiceBridge> {
   settingsRef = options.settings;
+  setBrain(() => settings().brain);
   // Язык — до всего остального: с него начинается каждая сказанная фраза и
   // каждая таблица, которая выбирает ответ.
   setLanguage(settings().language);

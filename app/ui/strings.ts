@@ -65,6 +65,14 @@ const ru = {
     'Чтобы идти дальше, скачайте выбранную модель распознавания и выбранный голос: без них Джарвис не услышит и не ответит.',
   stepMic: 'Микрофон',
   stepMicHint: 'Скажите что-нибудь: полоска должна двигаться.',
+  stepAgentHintNotes:
+    'Конспект, «Учёбу» и разбор документов пишет модель по вашей подписке: Claude Code или Codex (ChatGPT). Хватит одного. Джарвис не хранит ключей — вход выполняется в самом агенте.',
+  brain: 'Кто пишет конспект',
+  brainAuto: 'Сам выбираю: Claude Code, если он есть, иначе Codex',
+  brainClaude: 'Claude Code',
+  brainCodex: 'Codex (ChatGPT)',
+  brainHint:
+    'Разделы и итог лекции, вопросы «Учёбы», проверку ответов и разбор документов. Не ответил выбранный «сам» — спрошу второго. PDF через Codex разбирается пока только на маке.',
   stepMicHintNotes: 'Скажите что-нибудь: полоска должна двигаться. Микрофон нужен только на время лекции — между парами конспектор его не держит.',
   stepLecture: 'Распознавание лекций',
   stepLectureHint: 'На каком языке говорит лектор и чем расшифровывать лекцию. Без распознавания лекция только запишется.',
@@ -305,6 +313,14 @@ const en: UiStrings = {
     'To go on, download the selected recognition model and the selected voice: without them Jarvis cannot hear you or answer.',
   stepMic: 'Microphone',
   stepMicHint: 'Say something: the bar should move.',
+  stepAgentHintNotes:
+    'Notes, Study and document reading are written by a model on your own subscription: Claude Code or Codex (ChatGPT). One is enough. Jarvis keeps no keys; you sign in inside the agent itself.',
+  brain: 'Who writes the notes',
+  brainAuto: 'Let me choose: Claude Code if it is installed, otherwise Codex',
+  brainClaude: 'Claude Code',
+  brainCodex: 'Codex (ChatGPT)',
+  brainHint:
+    'Lecture sections and summary, Study questions, answer checks and document reading. If the automatic choice does not answer, I ask the other one. PDF files go through Codex only on a Mac for now.',
   stepMicHintNotes: 'Say something: the bar should move. The microphone is only needed during a lecture; between classes the note-taker does not hold it.',
   stepLecture: 'Lecture recognition',
   stepLectureHint: 'Which language the lecturer speaks and what transcribes the lecture. Without recognition the lecture is only recorded.',

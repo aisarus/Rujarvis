@@ -104,6 +104,16 @@ function вопрос(extra: Record<string, unknown> = {}): Record<string, unkno
 }
 
 describe('проверка того, что заготовила модель', () => {
+  it('варианты-формулы, отличные знаком, — не повтор; отличные пунктуацией — повтор', () => {
+    const формулы = (тексты: string[]) =>
+      вопрос({ options: тексты.map((text, k) => ({ text, ru: text, why: k === 1 ? 'да' : 'нет', correct: k === 1 })) });
+    const годный = checkGenerated({ questions: [формулы(['$(m-n)(m+n)$', '$(m+n)(m+n)$', '$(m-n)^2$', '$m^2+n^2$'])] }, { lecture: 'L', topics: темы, translate: true });
+    expect(годный.warnings).toEqual([]);
+    expect(годный.questions).toHaveLength(1);
+    const повтор = checkGenerated({ questions: [формулы(['Да.', 'да', 'Нет', 'Не знаю'])] }, { lecture: 'L', topics: темы, translate: true });
+    expect(повтор.warnings[0]).toMatch(/повторяются/u);
+  });
+
   it('годный вопрос проходит; кривые выбрасываются с причиной', () => {
     const плохие = [
       вопрос({ prompt: 'ש1', options: [] }),

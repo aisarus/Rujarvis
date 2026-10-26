@@ -456,6 +456,11 @@ function folderField(label, hint, key, placeholder) {
  * Готов ли хоть один агент. «Не знаю» о входе (`unknown`) — не повод пугать:
  * вход мог прийти через окружение, и проверит его первая же задача.
  */
+function обаЕсть() {
+  const agents = data.agents || {};
+  return ['claude', 'codex'].every((key) => agents[key] && agents[key].installed);
+}
+
 function агентГотов() {
   const agents = data.agents || {};
   return ['claude', 'codex'].some((key) => agents[key] && agents[key].installed && agents[key].loggedIn !== false);
@@ -504,7 +509,7 @@ function renderWizard(main) {
   );
   const titles = {
     language: [s.onboardingTitle, s.onboardingIntro],
-    agent: [s.stepAgent, s.stepAgentHint],
+    agent: [s.stepAgent, notesOnly() ? s.stepAgentHintNotes : s.stepAgentHint],
     models: [s.stepModels, s.stepModelsHint],
     lecture: [s.stepLecture, s.stepLectureHint],
     mic: [s.stepMic, notesOnly() ? s.stepMicHintNotes : s.stepMicHint],
@@ -522,8 +527,10 @@ function renderWizard(main) {
     main.append(lectureSttCard());
   }
   if (name === 'agent') {
-    main.append(agentCard('claude', 'Claude Code', false));
+    // Хватит одного: нет Claude Code, но готов Codex — это не беда.
+    main.append(agentCard('claude', 'Claude Code', агентГотов()));
     main.append(agentCard('codex', s.codexOptional, true));
+    if (обаЕсть()) main.append(brainCard());
   }
   if (name === 'models') {
     main.append(modelsCard());
@@ -655,6 +662,22 @@ function notesOnly() {
  * Что поставлено: Джарвис целиком или только конспекты. Переключается на
  * ходу — мост перезапустится (после лекции, если она идёт).
  */
+// Кто пишет конспект. У первой тестерши на маке ChatGPT, а не Claude
+// (26.10.2026): без выбора конспект шёл бы только через Claude Code.
+function brainCard() {
+  const s = t();
+  const now = ['claude', 'codex'].includes(data.settings.brain) ? data.settings.brain : 'auto';
+  const card = el(`<div class="card" id="brain"><label class="field">${s.brain}</label>
+    <div class="radio">
+      <label><input type="radio" name="brain" value="auto" ${now === 'auto' ? 'checked' : ''}> ${s.brainAuto}</label>
+      <label><input type="radio" name="brain" value="claude" ${now === 'claude' ? 'checked' : ''}> ${s.brainClaude}</label>
+      <label><input type="radio" name="brain" value="codex" ${now === 'codex' ? 'checked' : ''}> ${s.brainCodex}</label>
+    </div>
+    <p class="hint" style="margin:10px 0 0">${s.brainHint}</p></div>`);
+  for (const radio of card.querySelectorAll('input')) radio.onchange = () => update({ brain: radio.value });
+  return card;
+}
+
 function editionCard() {
   const s = t();
   const now = data.settings.edition === 'notes' ? 'notes' : 'full';
@@ -703,8 +726,9 @@ function renderSettings(main, nav) {
     main.append(el(`<h2 style="margin-top:8px">${s.stepMic}</h2>`), micCard());
   }
   if (tab === 'agents') {
-    main.append(agentCard('claude', 'Claude Code', false));
+    main.append(agentCard('claude', 'Claude Code', агентГотов()));
     main.append(agentCard('codex', s.codexOptional, true));
+    main.append(brainCard());
     const model = el(`<div class="card"><label class="field">${s.claudeModel}</label><p class="hint" style="margin:0 0 8px">${s.claudeModelHint}</p>
       <div class="row"><input type="text" value="${escapeHtml(data.settings.claudeModel)}" placeholder="opus"></div></div>`);
     const input = model.querySelector('input');

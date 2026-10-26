@@ -10,7 +10,7 @@
  */
 import { settingsLanguages } from '../jarvis/lecture/courses';
 import { findAbandonedLectures, recoverLecture } from '../jarvis/lecture/recover';
-import { createClaudeSummarizer, createFinalSummarizer } from '../jarvis/lecture/summarize';
+import { brainFromArgs, createFinalSummarizer, createSummarizer, setBrain } from '../jarvis/lecture/summarize';
 import { lectureFolder } from '../jarvis/lecture/vault';
 import { jarvisOutputDir, jarvisPaths } from '../jarvis/setup/paths';
 import { SettingsStore } from '../jarvis/setup/settings';
@@ -18,6 +18,7 @@ import { SettingsStore } from '../jarvis/setup/settings';
 async function main(): Promise<void> {
   const paths = jarvisPaths();
   const settings = new SettingsStore(paths.settings).get();
+  setBrain(() => brainFromArgs(process.argv, settings.brain));
   const notes = settings.language;
   // Папка результатов — как у приложения: «Jarvis» у английского интерфейса.
   // Рабочий стол, перенесённый в OneDrive, скрипт без Electron не знает —
@@ -35,7 +36,7 @@ async function main(): Promise<void> {
     root,
     languages: settingsLanguages(settings),
     notesStyle: settings.notesStyle,
-    summarize: createClaudeSummarizer(),
+    summarize: createSummarizer(),
     summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`  ${строка}`) }),
     log: (строка) => console.log(`  ${строка}`),
   });

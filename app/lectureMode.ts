@@ -56,7 +56,7 @@ import { HearingMonitor, isSilentChunk } from '../jarvis/lecture/hearing';
 import { mediaSeconds } from '../jarvis/lecture/mediaSlices';
 import { LectureRecorder } from '../jarvis/lecture/recorder';
 import { LectureSession, NOTES_WORDS, type NotesLanguage } from '../jarvis/lecture/session';
-import { createClaudeSummarizer, createFinalSummarizer } from '../jarvis/lecture/summarize';
+import { createFinalSummarizer, createSummarizer } from '../jarvis/lecture/summarize';
 import { lectureFolder, obsidianOpenUrl } from '../jarvis/lecture/vault';
 import type { NotesStyle } from '../jarvis/notes/style';
 import { tr } from '../jarvis/locale/language';
@@ -343,7 +343,7 @@ async function начатьЛекцию(subject: string | undefined, options: Le
     subject ?? '',
     {
       transcribe,
-      summarize: createClaudeSummarizer(),
+      summarize: createSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
       summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
       lectureLanguage: языки.lecture,
       notesLanguage: языки.notes,
@@ -542,7 +542,7 @@ export async function recoverAbandonedLectures(options: LectureStartOptions, с�
           root,
           languages: { lecture: options.lectureLanguage, notes: options.notesLanguage },
           notesStyle: options.notesStyle,
-          summarize: createClaudeSummarizer(),
+          summarize: createSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
           summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
           log: (строка) => console.log(`[jarvis:lecture] ${строка}`),
         });
@@ -659,7 +659,7 @@ export async function lectureFromFile(file: string, options: LectureFileOptions)
           показать();
           return текст;
         },
-        summarize: createClaudeSummarizer(),
+        summarize: createSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
         summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`[jarvis:lecture] файл: ${строка}`) }),
         lectureLanguage: языки.lecture,
         notesLanguage: языки.notes,

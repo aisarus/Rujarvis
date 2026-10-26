@@ -616,10 +616,23 @@ jobs:
           fi
           if grep -q 'Кладу запасной браузер' /tmp/install-notes.log; then echo 'конспектору скачивался запасной браузер'; exit 1; fi
           echo "=== распознавание лекций ==="
-          ls -1 /opt/homebrew/bin/whisper-server /usr/local/bin/whisper-server 2>/dev/null || { echo 'whisper-server не поставился'; exit 1; }
+          # Homebrew живёт в /opt/homebrew на Apple Silicon и в /usr/local на Intel.
+          test -x /opt/homebrew/bin/whisper-server || test -x /usr/local/bin/whisper-server || { echo 'whisper-server не поставился'; exit 1; }
           ls -la "$ROOT/models/whisper-gpu"
           test "$(find "$ROOT/models/whisper-gpu" -name '*.bin' | wc -l)" -ge 2 || { echo 'нет общей модели или модели для лекций'; exit 1; }
           grep -q 'Конспект' "$HOME/Applications/Rujarvis.app/Contents/Info.plist" || { echo 'в Info.plist объяснение микрофона не для конспектора'; exit 1; }
+
+      - name: 'PDF для Codex: текст и страницы-сканы через PDFKit'
+        # Codex PDF сам не читает; на маке его страницы достаёт PDFKit через
+        # osascript. Сценарий JXA проверяется только на настоящей macOS.
+        run: |
+          set -o pipefail
+          cd "$HOME/Library/Application Support/Rujarvis/src"
+          set +e
+          pnpm jarvis:pdfkit-check 2>&1 | tee /tmp/pdfkit.log | tail -6
+          code=$?
+          set -e
+          test "$code" -eq 0 || { echo "PDF для Codex не читается (код $code)"; exit 1; }
 
       - name: 'Конспект с подставного микрофона: плашка, запись, расшифровка'
         # Речь — публичный образец whisper.cpp, дважды с паузами: лекции

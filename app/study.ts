@@ -14,7 +14,7 @@ import { app, shell } from 'electron';
 import { lectureLanguagesFor, settingsLanguages } from '../jarvis/lecture/courses';
 import { deleteRecordings, expiredRecordings, listRecordings, RECORDING_KEEP_DAYS } from '../jarvis/lecture/recordings';
 import { lectureFolder } from '../jarvis/lecture/vault';
-import { createClaudeSummarizer } from '../jarvis/lecture/summarize';
+import { createSummarizer } from '../jarvis/lecture/summarize';
 import { tr } from '../jarvis/locale/language';
 import type { JarvisPaths } from '../jarvis/setup/paths';
 import { jarvisOutputDir } from '../jarvis/setup/paths';
@@ -71,7 +71,7 @@ export function studyService(): StudyService {
     служба = new StudyService({
       store: хранилище(),
       vaultRoot: папкаЛекций,
-      summarize: createClaudeSummarizer(),
+      summarize: createSummarizer({ log: (строка) => console.log(`[jarvis:study] ${строка}`) }),
       notes: settings().language,
       languages: () => settingsLanguages(settings()),
       trash: (file) => shell.trashItem(file),
@@ -171,7 +171,7 @@ export function prepareStudyFor(notesFile: string, material?: MaterialStudy): vo
         ? { lecture: material.sourceLanguage || settingsLanguages(s).lecture, notes: material.notes }
         : lectureLanguagesFor(notesFile, settingsLanguages(s));
       const итог = await (material ? prepareMaterial : prepareLecture)(notesFile, хранилище(), {
-        summarize: createClaudeSummarizer(),
+        summarize: createSummarizer({ log: (строка) => console.log(`[jarvis:study] ${строка}`) }),
         lectureLanguage: языки.lecture,
         notes: языки.notes,
         log: (строка) => console.log(`[jarvis:study] ${строка}`),
