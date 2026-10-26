@@ -1,0 +1,74 @@
+# Сколько времени распознавание займёт на маке — замер, а не догадка.
+#
+# Первые тестеры на маке: MacBook Pro 2019 (Intel + AMD) и MacBook Air.
+# Распознавание лекций на маке — whisper.cpp из Homebrew; на Intel его не
+# мерил никто. Здесь — та же программа и те же модели, что ставит Джарвис
+# (small q8 — общая, large-v3-turbo q5 — для лекций), на минуте речи.
+#
+# Важно при чтении: раннеры GitHub — виртуальные машины без видеокарты, так что
+# это скорость на процессоре, нижняя граница. Настоящий мак с Metal быстрее.
+# Образец — публичный jfk.wav из whisper.cpp, лекции владельца сюда не уходят.
+name: Mac speech probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['mac/**']
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - name: Машина
+        run: |
+          uname -m
+          sysctl -n machdep.cpu.brand_string || true
+          echo "ядер: $(sysctl -n hw.ncpu), памяти: $(( $(sysctl -n hw.memsize) / 1073741824 )) ГБ"
+          system_profiler SPDisplaysDataType 2>/dev/null | grep -E 'Chipset|Metal' || echo 'видеокарты не видно'
+
+      - name: whisper.cpp из Homebrew
+        run: |
+          brew install whisper-cpp
+          brew info whisper-cpp | head -3
+          command -v whisper-cli whisper-server
+
+      - name: Модели и минута речи
+        run: |
+          mkdir -p probe && cd probe
+          curl -fsSL -o small.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q8_0.bin
+          curl -fsSL -o turbo.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin
+          curl -fsSL -o jfk.wav https://github.com/ggml-org/whisper.cpp/raw/master/samples/jfk.wav
+          python3 - <<'PY'
+          import wave
+          src = wave.open('jfk.wav')
+          params = src.getparams()
+          frames = src.readframes(src.getnframes())
+          src.close()
+          out = wave.open('minute.wav', 'wb')
+          out.setparams(params)
+          for _ in range(6):
+              out.writeframes(frames)
+          out.close()
+          w = wave.open('minute.wav')
+          print('звука: %.1f с' % (w.getnframes() / w.getframerate()))
+          PY
+
+      - name: Скорость
+        run: |
+          cd probe
+          for m in small turbo; do
+            start=$(python3 -c 'import time; print(time.time())')
+            whisper-cli -m "$m.bin" -f minute.wav -t 4 -l en -nt > "out-$m.txt" 2> "log-$m.txt" || echo "whisper-cli упал: $?"
+            end=$(python3 -c 'import time; print(time.time())')
+            python3 -c "d=$end-$start; print('$m: %.1f с на 66 с звука — %.2f× быстрее реального времени' % (d, 66/d))"
+            grep -iE 'metal|gpu|backend|blas|system_info' "log-$m.txt" | head -6 || true
+            echo "--- текст: $(head -c 160 "out-$m.txt")"
+          done
