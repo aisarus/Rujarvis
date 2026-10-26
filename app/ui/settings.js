@@ -91,9 +91,10 @@ function agentCard(key, name, optional) {
     ${installed ? '' : `<p class="hint" style="margin:8px 0 0">${escapeHtml(key === 'claude' ? s.agentInstallHint : s.codexInstallHint)}</p>`}
     <div class="row" style="justify-content:flex-start;margin-top:12px">
       ${installed && !signed ? `<button class="btn primary" data-act="signin">${s.agentSignIn}</button>` : ''}
-      ${!installed ? `<button class="btn primary" data-act="page">${s.agentInstallPage}</button>` : ''}
+      ${!installed ? `<button class="btn primary" data-act="install">${s.agentInstall}</button><button class="btn" data-act="page">${s.agentInstallManual}</button>` : ''}
       <button class="btn" data-act="check">${s.check}</button>
     </div>
+    <p class="error" data-act="install-error" style="margin:8px 0 0" hidden></p>
     ${installed && !signed ? `<p class="hint" style="margin:8px 0 0">${data.platform === 'darwin' ? s.agentSignInHintMac : s.agentSignInHint}</p>` : ''}
   </div>`);
   // Пока идёт проба, кнопка серая: она запускает CLI и думает секунды, а
@@ -107,6 +108,26 @@ function agentCard(key, name, optional) {
       check.disabled = false;
     }
   };
+  // Ставит сам Джарвис (`installAgent`): для человека не из IT страница npm и
+  // Терминал — тупик на втором шаге (тестеры на маке, 26.10.2026).
+  const install = node.querySelector('[data-act=install]');
+  if (install) {
+    install.onclick = async () => {
+      const ошибка = node.querySelector('[data-act=install-error]');
+      install.disabled = true;
+      install.textContent = s.agentInstalling;
+      ошибка.hidden = true;
+      const итог = await api.installAgent(key).catch((error) => ({ ok: false, message: String((error && error.message) || error) }));
+      if (итог && итог.ok) {
+        await refresh();
+        return;
+      }
+      install.disabled = false;
+      install.textContent = s.agentInstall;
+      ошибка.textContent = s.agentInstallFailed.replace('{0}', (итог && итог.message) || '');
+      ошибка.hidden = false;
+    };
+  }
   const signIn = node.querySelector('[data-act=signin]');
   if (signIn) signIn.onclick = () => api.signIn(key);
   // Адрес установки был написан словами в подсказке, а открыть его было
@@ -531,6 +552,7 @@ function renderWizard(main) {
     main.append(agentCard('claude', 'Claude Code', агентГотов()));
     main.append(agentCard('codex', s.codexOptional, true));
     if (обаЕсть()) main.append(brainCard());
+    main.append(brainCheckCard());
   }
   if (name === 'models') {
     main.append(modelsCard());
@@ -542,12 +564,19 @@ function renderWizard(main) {
     // надписи про это.
     if (!stepReady()) main.append(el(`<p class="hint" style="margin-top:14px">${s.stepModelsNeeded}</p>`));
   }
-  if (name === 'mic') main.append(micCard());
+  if (name === 'mic') {
+    main.append(micCard());
+    if (notesOnly()) main.append(hearingCheckCard());
+  }
   if (name === 'ready') {
     // Живой тест на маке 27.09.2026: мастер пустил дальше без входа в Codex,
     // и после «Начать» Джарвис на всё, кроме прямых команд, молчал. Не запрет
     // — человек вправе начать так, — а правда о том, что его ждёт.
     if (!агентГотов()) main.append(noAgentCard());
+    else {
+      const непроверено = checksCard();
+      if (непроверено) main.append(непроверено);
+    }
     // Конспектору команды и красные линии ни к чему: рук на компьютере у него нет.
     if (!notesOnly()) {
       main.append(keysCard());
@@ -662,6 +691,147 @@ function notesOnly() {
  * Что поставлено: Джарвис целиком или только конспекты. Переключается на
  * ходу — мост перезапустится (после лекции, если она идёт).
  */
+// ---------- проверки до первой пары ----------
+//
+// Тестерше помогать некому: всё, что может сломаться, мастер показывает сам —
+// до первой пары, а не вечером над пустой заметкой. Итоги живут, пока открыто
+// окно: на последнем шаге видно, что ещё не проверено.
+
+const ИМЕНА_АГЕНТОВ = { claude: 'Claude Code', codex: 'Codex' };
+let проверкаМодели = null;
+let проверкаСлуха = null;
+
+function модельОтвечает() {
+  return Boolean(проверкаМодели && проверкаМодели.order.some((cli) => проверкаМодели.results.some((r) => r.cli === cli && r.ok)));
+}
+
+function слухРаботает() {
+  return Boolean(проверкаСлуха && проверкаСлуха.ok && проверкаСлуха.text);
+}
+
+function brainCheckCard() {
+  const s = t();
+  const agents = data.agents || {};
+  const естьКого = ['claude', 'codex'].some((key) => agents[key] && agents[key].installed);
+  const node = el(`<div class="card" id="brain-check"><div class="row"><h2>${s.brainCheckTitle}</h2>
+    <button class="btn" data-act="run" ${естьКого ? '' : 'disabled'}>${s.brainCheckRun}</button></div>
+    <p class="hint" style="margin:6px 0 0">${естьКого ? s.brainCheckHint : s.brainCheckNone}</p><div data-act="result"></div></div>`);
+  const box = node.querySelector('[data-act=result]');
+  const draw = () => {
+    if (!проверкаМодели) { box.innerHTML = ''; return; }
+    const строки = проверкаМодели.results.map((r) => (r.ok
+      ? `<p class="hint" style="margin:8px 0 0;color:var(--ok)">✓ ${escapeHtml(s.brainCheckOk.replace('{0}', ИМЕНА_АГЕНТОВ[r.cli]).replace('{1}', String(Math.max(1, Math.round(r.seconds)))))}</p>`
+      : `<p class="error" style="margin:8px 0 0">✗ ${escapeHtml(ИМЕНА_АГЕНТОВ[r.cli])}: ${escapeHtml(r.message)}</p>`));
+    const кто = проверкаМодели.order.find((cli) => проверкаМодели.results.some((r) => r.cli === cli && r.ok));
+    строки.push(кто
+      ? `<p class="hint" style="margin:8px 0 0"><b>${escapeHtml(s.brainCheckWho.replace('{0}', ИМЕНА_АГЕНТОВ[кто]))}</b></p>`
+      : `<p class="error" style="margin:8px 0 0">${escapeHtml(s.brainCheckNobody)}</p>`);
+    box.innerHTML = строки.join('');
+  };
+  draw();
+  const run = node.querySelector('[data-act=run]');
+  run.onclick = async () => {
+    run.disabled = true;
+    run.textContent = s.brainChecking;
+    try {
+      проверкаМодели = await api.checkBrains();
+    } catch (error) {
+      проверкаМодели = { order: [], results: [] };
+    } finally {
+      run.disabled = false;
+      run.textContent = s.brainCheckRun;
+    }
+    draw();
+  };
+  return node;
+}
+
+// Фраза человека — той же моделью для лекций, что и лекция: проверяется
+// весь слух, от микрофона до сервера распознавания, и его скорость.
+function hearingCheckCard() {
+  const s = t();
+  const node = el(`<div class="card" id="hearing-check"><div class="row"><h2>${s.hearingTitle}</h2>
+    <button class="btn" data-act="rec">${s.hearingRun}</button></div>
+    <p class="hint" style="margin:6px 0 0">${s.hearingHint}</p><div data-act="result"></div></div>`);
+  const box = node.querySelector('[data-act=result]');
+  const draw = () => {
+    const r = проверкаСлуха;
+    if (!r) { box.innerHTML = ''; return; }
+    if (!r.ok) { box.innerHTML = `<p class="error" style="margin:8px 0 0">${escapeHtml(r.message)}</p>`; return; }
+    if (!r.text) { box.innerHTML = `<p class="error" style="margin:8px 0 0">${escapeHtml(s.hearingNothing)}</p>`; return; }
+    const наКусок = String(Math.max(1, Math.round(r.seconds * 1.3)));
+    const скорость = r.speed === 'fast' ? s.hearingFast : r.speed === 'tight' ? s.hearingTight : s.hearingSlow;
+    // Услышанное — в <bdi>: иврит внутри русской строки иначе переставляет
+    // кавычки и двоеточие. Медленный компьютер — не беда, а предупреждение.
+    const [до, после] = s.hearingHeard.split('{0}');
+    box.innerHTML = `<p class="hint" style="margin:8px 0 0;color:var(--ok)">✓ ${escapeHtml(до)}<bdi>${escapeHtml(r.text)}</bdi>${escapeHtml(после || '')}</p>
+      <p class="hint" style="margin:8px 0 0${r.speed === 'slow' ? ';color:var(--warn)' : ''}">${escapeHtml(скорость.replace('{0}', наКусок))}</p>`;
+  };
+  draw();
+  const rec = node.querySelector('[data-act=rec]');
+  rec.onclick = async () => {
+    rec.disabled = true;
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: true } });
+    } catch {
+      проверкаСлуха = { ok: false, message: data.platform === 'darwin' ? s.micDeniedMac : s.micDenied };
+      rec.disabled = false;
+      draw();
+      return;
+    }
+    const ctx = new AudioContext({ sampleRate: 16000 });
+    const src = ctx.createMediaStreamSource(stream);
+    const proc = ctx.createScriptProcessor(4096, 1, 1);
+    const parts = [];
+    let total = 0;
+    proc.onaudioprocess = (e) => { const c = new Float32Array(e.inputBuffer.getChannelData(0)); parts.push(c); total += c.length; };
+    src.connect(proc);
+    const mute = ctx.createGain();
+    mute.gain.value = 0;
+    proc.connect(mute);
+    mute.connect(ctx.destination);
+    for (let осталось = 8; осталось > 0; осталось -= 1) {
+      rec.textContent = s.hearingRecording.replace('{0}', String(осталось));
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    proc.onaudioprocess = null;
+    stream.getTracks().forEach((track) => track.stop());
+    await ctx.close().catch(() => undefined);
+    const звук = new Float32Array(total);
+    let at = 0;
+    for (const p of parts) { звук.set(p, at); at += p.length; }
+    rec.textContent = s.hearingWorking;
+    try {
+      проверкаСлуха = await api.checkHearing(звук, 16000);
+    } catch (error) {
+      проверкаСлуха = { ok: false, message: String((error && error.message) || error) };
+    }
+    rec.disabled = false;
+    rec.textContent = s.hearingRun;
+    draw();
+  };
+  return node;
+}
+
+// Последний шаг: что не проверено — напомнить, а не запретить.
+function checksCard() {
+  const s = t();
+  const нет = [];
+  if (notesOnly() && !слухРаботает()) нет.push(['mic', s.checksHearing]);
+  if (!модельОтвечает()) нет.push(['agent', s.checksBrain]);
+  if (нет.length === 0) return null;
+  const node = el(`<div class="card" id="checks"><h2>${s.checksTitle}</h2>
+    ${нет.map(([, текст]) => `<p class="hint" style="margin:6px 0 0">• ${escapeHtml(текст)}</p>`).join('')}
+    <div class="row" style="justify-content:flex-start;margin-top:12px"><button class="btn" data-act="back">${s.checksBack}</button></div></div>`);
+  node.querySelector('[data-act=back]').onclick = async () => {
+    step = STEPS.indexOf(нет[нет.length - 1][0]);
+    if (STEPS[step] === 'agent') await refresh();
+    render();
+  };
+  return node;
+}
+
 // Кто пишет конспект. У первой тестерши на маке ChatGPT, а не Claude
 // (26.10.2026): без выбора конспект шёл бы только через Claude Code.
 function brainCard() {
@@ -724,11 +894,13 @@ function renderSettings(main, nav) {
     main.append(lectureLanguageCard());
     main.append(lectureSttCard());
     main.append(el(`<h2 style="margin-top:8px">${s.stepMic}</h2>`), micCard());
+    main.append(hearingCheckCard());
   }
   if (tab === 'agents') {
     main.append(agentCard('claude', 'Claude Code', агентГотов()));
     main.append(agentCard('codex', s.codexOptional, true));
     main.append(brainCard());
+    main.append(brainCheckCard());
     const model = el(`<div class="card"><label class="field">${s.claudeModel}</label><p class="hint" style="margin:0 0 8px">${s.claudeModelHint}</p>
       <div class="row"><input type="text" value="${escapeHtml(data.settings.claudeModel)}" placeholder="opus"></div></div>`);
     const input = model.querySelector('input');

@@ -667,6 +667,21 @@ jobs:
           grep -a 'Всего' /tmp/notes-check.log || { echo 'Проверка не дошла до итога: судить не по чему.'; exit 1; }
           test "$code" -eq 0 || { echo "Конспектор не работает (код $code)"; exit 1; }
 
+      - name: 'Мастер конспектора: «Установить» Claude Code, проверки, «Начать»'
+        if: ${{ !cancelled() }}
+        # Самодостаточный онбординг: тестерша проходит его без Терминала.
+        # Claude Code ставится кнопкой — настоящим npm; запись проверки —
+        # подставным микрофоном из той же публичной речи.
+        run: |
+          set -o pipefail
+          cd "$HOME/Library/Application Support/Rujarvis/src"
+          set +e
+          pnpm jarvis:notes-onboarding-check -- --file="$RUNNER_TEMP/lecture.wav" --install=claude --language=en 2>&1 | tee /tmp/notes-onboarding.log | tail -16
+          code=$?
+          set -e
+          grep -a 'Всего' /tmp/notes-onboarding.log || { echo 'Проверка мастера не дошла до итога: судить не по чему.'; exit 1; }
+          test "$code" -eq 0 || { echo "Мастер конспектора не проходится (код $code)"; exit 1; }
+
       - name: 'Звук компьютера (Zoom): петля на macOS 14.2+'
         if: ${{ !cancelled() }}
         # Разрешения «Запись системного звука» на раннере дать некому, поэтому

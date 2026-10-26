@@ -27,6 +27,8 @@ import { WHISPER_MODELS, type WhisperModelId } from '../jarvis/voice/sttModels';
 import { installVoice, isVoiceInstalled, Speaker, voiceForLanguage, VOICES } from '../jarvis/voice/tts';
 import { installWhisperModel } from '../jarvis/voice/whisperInstall';
 import { isWhisperModelInstalled } from '../jarvis/voice/whisperRecognizer';
+import { installCli, type CliInstallResult } from '../jarvis/setup/cliInstall';
+import { checkBrains, checkHearing } from './onboardingChecks';
 import { UI_STRINGS } from './ui/strings';
 import { checkUpdateNow, runUpdateNow, saveReport, updateState } from './updater';
 
@@ -55,6 +57,7 @@ let preview: Speaker | null = null;
 type InstallOutcome = { ok: true } | { ok: false; message: string };
 
 const installs = new Map<string, Promise<InstallOutcome>>();
+const агенты = new Map<string, Promise<CliInstallResult>>();
 
 /**
  * Что показать: мастер или вкладки.
@@ -343,6 +346,45 @@ function registerHandlers(): void {
     // Сценарий входа лежит в папке Джарвиса: всё на диске живёт под одной
     // крышей, и мусор в чужих местах не остаётся.
     return openTerminal(status.path, args, path.join(paths.home, 'data'), cli === 'claude' ? 'Claude Code' : 'Codex');
+  });
+
+  // Агент кнопкой, без Терминала (`jarvis/setup/cliInstall.ts`). Один раз за
+  // раз: вторая кнопка во время установки ждёт ту же.
+  ipcMain.handle(`${SETTINGS_CHANNEL}:installAgent`, (_event, cli: 'claude' | 'codex') => {
+    if (cli !== 'claude' && cli !== 'codex') return { ok: false, message: 'unknown agent' };
+    const key = `agent:${cli}`;
+    const running = агенты.get(key);
+    if (running) return running;
+    const { paths } = current as SettingsWindowOptions;
+    const job = installCli(cli, { home: paths.home, log: (строка) => console.log(`[jarvis] установка агента: ${строка}`) })
+      .then((итог) => {
+        console.log(`[jarvis] установка агента ${cli}: ${итог.ok ? `поставлен (${итог.path})` : `не вышло — ${итог.message}`}`);
+        return итог;
+      })
+      .finally(() => агенты.delete(key));
+    агенты.set(key, job);
+    return job;
+  });
+
+  // Проверки до первой пары (`onboardingChecks.ts`): фраза человека — моделью
+  // для лекций, и короткий запрос к каждому агенту.
+  ipcMain.handle(`${SETTINGS_CHANNEL}:checkHearing`, async (_event, samples: Float32Array, sampleRate: number) => {
+    const { paths, settings } = current as SettingsWindowOptions;
+    const s = settings.get();
+    const звук = samples instanceof Float32Array ? samples : new Float32Array(samples as unknown as ArrayBuffer);
+    return checkHearing({
+      home: paths.home,
+      language: s.lectureLanguage || s.language,
+      samples: звук,
+      sampleRate: Number(sampleRate) || 16_000,
+      log: (строка) => console.log(`[jarvis] ${строка}`),
+    });
+  });
+  ipcMain.handle(`${SETTINGS_CHANNEL}:checkBrains`, async () => {
+    const { settings } = current as SettingsWindowOptions;
+    const итог = await checkBrains(settings.get().brain);
+    console.log(`[jarvis] проверка модели: ${итог.results.map((r) => `${r.cli} — ${r.ok ? `ответил за ${r.seconds.toFixed(0)} с` : r.message}`).join('; ') || 'агентов нет'}`);
+    return итог;
   });
 
   ipcMain.handle(`${SETTINGS_CHANNEL}:openUrl`, (_event, url: string) => {

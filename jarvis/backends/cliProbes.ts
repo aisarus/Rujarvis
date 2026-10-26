@@ -20,6 +20,7 @@ import type { ClaudeCliProbe } from './claudeCode';
 import type { CodexCliProbe } from './codex';
 import { cliLaunch } from './spawnCli';
 import { localModel } from './localModel';
+import { jarvisHome } from '../setup/paths';
 import { agentEnv } from './subscriptionEnv';
 
 const run = promisify(execFile);
@@ -67,6 +68,14 @@ export function commonCliPaths(cli: Cli, home = os.homedir(), platform = process
   ];
 }
 
+/**
+ * Где лежит CLI, поставленный мастером в папку Джарвиса (`setup/cliInstall.ts`):
+ * так бывает, когда в общую папку npm писать нельзя.
+ */
+export function jarvisCliPath(cli: Cli, home: string = jarvisHome(), platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32' ? path.join(home, 'node', `${cli}.cmd`) : path.join(home, 'node', 'bin', cli);
+}
+
 export function resolveCli(
   cli: Cli,
   env: NodeJS.ProcessEnv = process.env,
@@ -79,6 +88,8 @@ export function resolveCli(
   for (const candidate of commonCliPaths(cli, os.homedir(), platform)) {
     if (exists(candidate)) return candidate;
   }
+  const свой = jarvisCliPath(cli, jarvisHome(env, platform), platform);
+  if (exists(свой)) return свой;
 
   const names = platform === 'win32' ? [`${cli}.exe`, `${cli}.cmd`, `${cli}.bat`] : [cli];
   const dirs = (env.PATH ?? env.Path ?? '').split(platform === 'win32' ? ';' : ':');
