@@ -602,7 +602,7 @@ jobs:
       - name: Установка «только конспекты»
         run: |
           set -o pipefail
-          bash install.sh --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" --notes --lecture-language en --no-launch 2>&1 | tee /tmp/install-notes.log
+          bash install.sh --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" --notes --lecture-language en --codex --no-launch 2>&1 | tee /tmp/install-notes.log
 
       - name: Поставилось только нужное
         run: |
@@ -621,6 +621,10 @@ jobs:
           ls -la "$ROOT/models/whisper-gpu"
           test "$(find "$ROOT/models/whisper-gpu" -name '*.bin' | wc -l)" -ge 2 || { echo 'нет общей модели или модели для лекций'; exit 1; }
           grep -q 'Конспект' "$HOME/Applications/Rujarvis.app/Contents/Info.plist" || { echo 'в Info.plist объяснение микрофона не для конспектора'; exit 1; }
+          echo "=== Codex для подписки ChatGPT ==="
+          grep -E 'Codex( |:)' /tmp/install-notes.log | tail -3
+          grep -q 'Codex не поставился' /tmp/install-notes.log && { echo 'Codex не поставился'; exit 1; }
+          grep -E '^Codex: ' /tmp/install-notes.log | grep -vq 'не найден' || { echo 'jarvis:setup не увидел Codex'; exit 1; }
 
       - name: 'PDF для Codex: текст и страницы-сканы через PDFKit'
         # Codex PDF сам не читает; на маке его страницы достаёт PDFKit через

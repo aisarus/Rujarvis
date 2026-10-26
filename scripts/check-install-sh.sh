@@ -78,6 +78,10 @@ check 'по умолчанию вариант не назван' "$([ -z "$EDITI
 ( parse_args --notes --lecture-language he; [ "$EDITION" = 'notes' ] && [ "$LECTURE_LANGUAGE" = 'he' ] ) >/dev/null 2>&1
 check '--notes и язык лекций разбираются' "$([ $? -eq 0 ] && printf 'да')"
 
+( parse_args --codex; [ "$WITH_CODEX" = '1' ] ) >/dev/null 2>&1
+check '--codex разбирается' "$([ $? -eq 0 ] && printf 'да')"
+check 'по умолчанию Codex не ставится' "$([ "$WITH_CODEX" = '0' ] && printf 'да')"
+
 ( parse_args --edition full; [ "$EDITION" = 'full' ] ) >/dev/null 2>&1
 check '--edition full разбирается' "$([ $? -eq 0 ] && printf 'да')"
 

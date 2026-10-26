@@ -15,6 +15,7 @@
 #   --whisper-model <имя>   модель распознавания
 #   --notes                 только конспекты: без голосовых команд и рук на компьютере
 #   --lecture-language <код> язык лекций (he, ru, en…) — для модели лекций
+#   --codex                 поставить Codex (для подписки ChatGPT), если его нет
 #   --autostart             запускать при входе в систему
 #   --no-launch             не запускать после установки
 #
@@ -34,6 +35,7 @@ BRANCH="main"
 WHISPER_MODEL=""
 EDITION=""
 LECTURE_LANGUAGE=""
+WITH_CODEX=0
 AUTOSTART=0
 LAUNCH=1
 
@@ -67,6 +69,7 @@ usage() {
   --notes                 только конспекты: без голосовых команд и рук на компьютере
   --edition full|notes    то же явно; без ключа — как в прежней установке
   --lecture-language <код> язык лекций (he, ru, en…) — для модели лекций
+  --codex                 поставить Codex (для подписки ChatGPT), если его нет
   --autostart             запускать при входе в систему
   --no-launch             не запускать после установки
 HELP
@@ -83,6 +86,7 @@ parse_args() {
       --notes)         EDITION="notes"; shift ;;
       --edition)       EDITION="${2:-}"; shift 2 ;;
       --lecture-language) LECTURE_LANGUAGE="${2:-}"; shift 2 ;;
+      --codex)         WITH_CODEX=1; shift ;;
       --autostart)     AUTOSTART=1; shift ;;
       --no-launch)     LAUNCH=0; shift ;;
       -h|--help)       usage; exit 0 ;;
@@ -413,6 +417,28 @@ else
     ok 'Запасной браузер на месте.'
   else
     warn 'Запасной браузер не скачался. Вкладки будут работать, только если есть Chrome или Edge.'
+  fi
+fi
+
+# Codex — для тех, у кого подписка ChatGPT, а не Claude: конспект, «Учёбу» и
+# документы он пишет так же. Человек не из IT не должен ставить его сам
+# командой npm. Ставится туда же, куда npm ставит всё, а без прав на эту
+# папку — в папку Джарвиса: её ярлык и так кладёт в PATH. Войти — кнопкой
+# «Войти» в мастере первого запуска: вход — разговор человека с OpenAI.
+if [ "$WITH_CODEX" = "1" ]; then
+  step 'Ставлю Codex'
+  PATH="$INSTALL_ROOT/node/bin:$PATH"
+  export PATH
+  if have codex; then
+    ok "Codex уже есть: $(codex --version 2>/dev/null | head -1)"
+  else
+    npm install -g @openai/codex </dev/null >/dev/null 2>&1       || npm_config_prefix="$INSTALL_ROOT/node" npm install -g @openai/codex </dev/null >/dev/null 2>&1       || true
+    if have codex; then
+      ok "Codex $(codex --version 2>/dev/null | head -1)"
+      note 'Войти: при первом запуске, шаг «Claude Code или Codex» → «Войти» у Codex (вход через ChatGPT в браузере).'
+    else
+      warn 'Codex не поставился. Вручную: npm install -g @openai/codex — потом codex login.'
+    fi
   fi
 fi
 
