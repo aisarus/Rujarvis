@@ -345,7 +345,12 @@ describe('Джарвиса закрыли посреди лекции', () => {
     });
     await сессия.start();
     for (let i = 0; i < 3; i += 1) сессия.addAudio(new Float32Array(16_000), 16_000);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Дождаться записи, а не фиксированные 50 мс: под нагрузкой полного прогона
+    // три дописывания не успевали, и тест падал при верном коде.
+    const нужно = 44 + 3 * 16_000 * 2;
+    for (let i = 0; i < 100 && (await readFile(сессия.audioFile)).length < нужно; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
     expect(сессия.lagSeconds).toBe(3);
     сессия.abandon();
     const wav = await readFile(сессия.audioFile);
