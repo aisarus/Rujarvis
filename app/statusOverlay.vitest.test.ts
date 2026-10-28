@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('electron', () => ({ app: { getPath: () => '' }, BrowserWindow: class {}, ipcMain: { on: () => {} }, screen: {} }));
 
-const { buildOverlayHtml, fitOnScreen, isLectureSource, isOverlaySize, miniBounds, STATUS_OVERLAY_CHANNEL } = await import('./statusOverlay');
+const { buildOverlayHtml, fitOnScreen, isLectureSource, isOverlaySize, STATUS_OVERLAY_CHANNEL } = await import('./statusOverlay');
 
 describe('плашка', () => {
   const html = buildOverlayHtml();
@@ -35,22 +35,17 @@ describe('плашка', () => {
     expect(тело).toMatch(/if \(конспектИдёт\) \{\s*ipcRenderer\.send\(/u);
   });
 
-  it('три размера: обычная, уменьшенная и значок (тестер и владелец, 21.10.2026)', () => {
-    // Кнопки размера — в углу плашки и вне области перетаскивания, иначе нажатие тащило бы окно.
+  it('обычная, уменьшенная и свёрнутая в панель задач (тестер 21.10, владелец 28.10.2026)', () => {
+    // Кнопки — в углу плашки и вне области перетаскивания, иначе нажатие тащило бы окно.
     expect(html).toContain('<button id="smaller"');
     expect(html).toContain('<button id="mini"');
     expect(html).toMatch(/#corner \{[^}]*-webkit-app-region: no-drag/u);
-    const SIZE = `ipcRenderer.send(SIZE, `;
     expect(тело).toContain(`const SIZE = ${JSON.stringify(`${STATUS_OVERLAY_CHANNEL}:size`)}`);
-    expect(тело).toContain(`${SIZE}вид === 'compact' ? 'full' : 'compact')`);
-    expect(тело).toContain(`${SIZE}'icon')`);
-    // Значок разворачивается в тот размер, из которого его свернули.
-    expect(тело).toContain(`if (вид === 'icon') ${SIZE}развёрнутый)`);
-    // Значок — один знак состояния; запись лекции видна обводкой.
-    expect(html).toMatch(/body\.mini #text, body\.mini #row, body\.mini #corner, body\.mini #bar/u);
-    expect(html).toContain('body.mini.recording #pill');
-    // Значок высоту не просит: его размер задаёт главный процесс.
-    expect(тело).toMatch(/function подогнатьВысоту\(\) \{\s*\/\/[^\n]*\n\s*if \(вид === 'icon'\) return;/u);
+    expect(тело).toContain(`ipcRenderer.send(SIZE, вид === 'compact' ? 'full' : 'compact')`);
+    // «–» — свернуть окно, а не ещё один размер: значка в углу больше нет.
+    expect(тело).toContain(`ipcRenderer.send(${JSON.stringify(`${STATUS_OVERLAY_CHANNEL}:minimize`)})`);
+    expect(html).not.toContain('body.mini');
+    expect(html).toMatch(/<button id="mini"[^>]*title="Свернуть в (панель задач|Dock)"/u);
   });
 
   it('уменьшенная — только запись и готовый конспект', () => {
@@ -63,12 +58,6 @@ describe('плашка', () => {
     expect(тело).toContain(`await ipcRenderer.invoke(${JSON.stringify(`${STATUS_OVERLAY_CHANNEL}:open`)})`);
   });
 
-  it('значок — в правом нижнем углу рабочей области, над панелью задач', () => {
-    expect(miniBounds({ x: 0, y: 0, width: 1920, height: 1040 })).toEqual({ x: 1862, y: 982, width: 46, height: 46 });
-    // Второй монитор слева — тоже в его углу.
-    expect(miniBounds({ x: -1280, y: 0, width: 1280, height: 984 })).toEqual({ x: -58, y: 926, width: 46, height: 46 });
-  });
-
   it('развёрнутая плашка встаёт, где её оставили, но целиком на экране', () => {
     const экран = { x: 0, y: 0, width: 1920, height: 1040 };
     // Не двигали — в правый нижний угол с отступом.
@@ -78,8 +67,10 @@ describe('плашка', () => {
     expect(fitOnScreen({ x: 100, y: 200 }, { width: 270, height: 44 }, экран)).toEqual({ x: 100, y: 200, width: 270, height: 44 });
   });
 
-  it('размер из страницы принимается только из трёх известных', () => {
-    expect(['full', 'compact', 'icon'].every(isOverlaySize)).toBe(true);
+  it('размер из страницы принимается только из двух известных', () => {
+    expect(['full', 'compact'].every(isOverlaySize)).toBe(true);
+    // Значок в углу был до 28.10.2026; запомненный — открывается обычной.
+    expect(isOverlaySize('icon')).toBe(false);
     expect(isOverlaySize('huge')).toBe(false);
     expect(isOverlaySize(true)).toBe(false);
   });

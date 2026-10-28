@@ -13,7 +13,7 @@ import path from 'node:path';
 import { app, desktopCapturer, dialog, Menu, nativeImage, shell, systemPreferences, Tray } from 'electron';
 
 import { applyAppearance } from './look';
-import { APP_ROOT } from './root';
+import { APP_ROOT, APP_USER_MODEL_ID } from './root';
 import { setLanguage } from '../jarvis/locale/language';
 import { jarvisPaths } from '../jarvis/setup/paths';
 import { SettingsStore } from '../jarvis/setup/settings';
@@ -34,7 +34,7 @@ mkdirSync(PATHS.profile, { recursive: true });
 app.setPath('userData', PATHS.profile);
 app.setAppLogsPath(PATHS.logs);
 
-if (process.platform === 'win32') app.setAppUserModelId('io.github.aisarus.rujarvis');
+if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID);
 
 /**
  * Один экземпляр на машину.

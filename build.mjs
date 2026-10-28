@@ -52,6 +52,8 @@ await Promise.all([
   esbuild.build({ ...common, entryPoints: ['scripts/qa/system-audio-check.ts'], outfile: 'dist/qa/system-audio-check.cjs' }),
   // Мастер «только конспекты» настоящим окном: установка агента, проверки, «Начать».
   esbuild.build({ ...common, entryPoints: ['scripts/qa/notes-onboarding-check.ts'], outfile: 'dist/qa/notes-onboarding-check.cjs' }),
+  // Плашка сворачивается в панель задач и разворачивается — показывает окно, только для CI.
+  esbuild.build({ ...common, entryPoints: ['scripts/qa/overlay-minimize-check.ts'], outfile: 'dist/qa/overlay-minimize-check.cjs' }),
 ]);
 
 // Скрипт драйвера мыши и клавиатуры сервер ищет рядом с собой.
