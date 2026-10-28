@@ -25,6 +25,7 @@ import { buildCodexArgs, codexOwnerChoices, readCodexUserConfig, WORK_DISABLED_F
 import { resolveCli } from '../backends/cliProbes';
 import { cliLaunch } from '../backends/spawnCli';
 import { agentEnv } from '../backends/subscriptionEnv';
+import { tr } from '../locale/language';
 import type { Brain } from '../setup/settings';
 
 export type { Brain };
@@ -91,21 +92,63 @@ export function withFallback(
   first: (prompt: string) => Promise<string>,
   second: (prompt: string) => Promise<string>,
   log?: (line: string) => void,
+  /** Стоит ли спрашивать запасную после этого отказа; по умолчанию — всегда. */
+  worthRetry: (error: unknown) => boolean = () => true,
 ): (prompt: string) => Promise<string> {
   return async (prompt) => {
     try {
       return await first(prompt);
     } catch (error) {
+      if (!worthRetry(error)) throw error;
       log?.(`итог: первая модель не ответила (${error instanceof Error ? error.message : String(error)}) — беру запасную`);
       return second(prompt);
     }
   };
 }
 
-/** Кого спрашивать и в каком порядке. «Сам» — установленные, Claude Code первым. */
-export function brainOrder(choice: Brain, installed: (cli: 'claude' | 'codex') => boolean = (cli) => resolveCli(cli) !== null): Array<'claude' | 'codex'> {
+/**
+ * Отказ «не вошли» — у Claude Code и Codex. Коды — только отдельным числом:
+ * в номере запроса Codex («request id: req_…») бывают цифры вроде «429».
+ */
+export function looksSignedOut(message: string): boolean {
+  return /\b401\b|unauthori[sz]ed|missing bearer|not logged in|logged out|log ?in|sign in|not authenticated|invalid api key|oauth|failed to authenticate/iu.test(message);
+}
+
+/**
+ * Кто недавно ответил «не вошли» — в автоматическом выборе спрашивается
+ * последним, пока не пройдёт четверть часа или не ответит.
+ *
+ * Без этого истёкший вход в Claude Code (у владельца, 27.10.2026) стоил
+ * каждого раздела: сначала отказ Claude, потом Codex — 15–20 лишних отказов
+ * за пару, а итог шёл тремя кругами: Opus, Sonnet, Codex.
+ */
+const неВошли = new Map<'claude' | 'codex', number>();
+const ПОМНИТЬ_МС = 15 * 60_000;
+
+/** Итог вызова агента: удача стирает «не вошли», отказ «не вошли» запоминается. */
+export function rememberBrainOutcome(cli: 'claude' | 'codex', error: unknown | null, now = Date.now()): void {
+  if (error === null) {
+    неВошли.delete(cli);
+    return;
+  }
+  if (looksSignedOut(error instanceof Error ? error.message : String(error))) неВошли.set(cli, now);
+}
+
+/** Для проверок: забыть всё запомненное. */
+export function forgetBrainOutcomes(): void {
+  неВошли.clear();
+}
+
+/** Кого спрашивать и в каком порядке. «Сам» — установленные, Claude Code первым; недавно «не вошли» — последним. */
+export function brainOrder(
+  choice: Brain,
+  installed: (cli: 'claude' | 'codex') => boolean = (cli) => resolveCli(cli) !== null,
+  now = Date.now(),
+): Array<'claude' | 'codex'> {
   if (choice !== 'auto') return [choice];
-  return (['claude', 'codex'] as const).filter((cli) => installed(cli));
+  const есть = (['claude', 'codex'] as const).filter((cli) => installed(cli));
+  const недавноОтказал = (cli: 'claude' | 'codex'): boolean => (неВошли.get(cli) ?? -Infinity) > now - ПОМНИТЬ_МС;
+  return [...есть.filter((cli) => !недавноОтказал(cli)), ...есть.filter(недавноОтказал)];
 }
 
 const ИМЯ = { claude: 'Claude Code', codex: 'Codex' } as const;
@@ -119,13 +162,18 @@ const ИМЯ = { claude: 'Claude Code', codex: 'Codex' } as const;
 export function createSummarizer(options: SummarizerOptions & { final?: boolean; log?(line: string): void } = {}): (prompt: string) => Promise<string> {
   return async (prompt) => {
     const порядок = brainOrder(выборМозга());
-    if (порядок.length === 0) throw new Error('Ни Claude Code, ни Codex не найдены — конспект писать нечем');
+    if (порядок.length === 0) throw new Error(tr('Ни Claude Code, ни Codex не найдены — конспект писать нечем', 'Neither Claude Code nor Codex was found — nothing to write the notes with'));
     let ошибка: unknown;
     for (const [i, мозг] of порядок.entries()) {
       try {
-        if (мозг === 'codex') return await createCodexSummarizer({ timeoutMs: options.timeoutMs, env: options.env, effort: options.final ? undefined : 'low' })(prompt);
-        return await (options.final ? createClaudeFinalSummarizer(options) : createClaudeSummarizer(options))(prompt);
+        const ответ =
+          мозг === 'codex'
+            ? await createCodexSummarizer({ timeoutMs: options.timeoutMs, env: options.env, effort: options.final ? undefined : 'low' })(prompt)
+            : await (options.final ? createClaudeFinalSummarizer(options) : createClaudeSummarizer(options))(prompt);
+        rememberBrainOutcome(мозг, null);
+        return ответ;
       } catch (error) {
+        rememberBrainOutcome(мозг, error);
         ошибка = error;
         const следующий = порядок[i + 1];
         if (следующий) options.log?.(`${ИМЯ[мозг]} не ответил (${error instanceof Error ? error.message : String(error)}) — спрашиваю ${ИМЯ[следующий]}`);
@@ -148,12 +196,17 @@ export function createFinalSummarizer(options: SummarizerOptions & { log?(line: 
   return createSummarizer({ ...options, final: true });
 }
 
-/** Итог через Claude Code: Opus, с Sonnet в запасе. */
+/**
+ * Итог через Claude Code: Opus, с Sonnet в запасе. Не вошли — Sonnet не
+ * спрашиваем: вход у них один, и второй отказ только потратит время.
+ */
 export function createClaudeFinalSummarizer(options: SummarizerOptions & { log?(line: string): void } = {}): (prompt: string) => Promise<string> {
+  const opus = createClaudeSummarizer({ ...options, model: 'opus' });
   return withFallback(
-    createClaudeSummarizer({ ...options, model: 'opus' }),
+    opus,
     createClaudeSummarizer({ ...options, model: 'sonnet' }),
     options.log,
+    (error) => !looksSignedOut(error instanceof Error ? error.message : String(error)),
   );
 }
 
@@ -178,7 +231,7 @@ export function runCli(command: string, args: string[], prompt: string, options:
     let stderr = '';
     const таймер = setTimeout(() => {
       child.kill();
-      reject(new Error(`${options.имя} не ответил за ${Math.round(options.timeoutMs / 1000)} с`));
+      reject(new Error(tr(`${options.имя} не ответил за ${Math.round(options.timeoutMs / 1000)} с`, `${options.имя} did not answer in ${Math.round(options.timeoutMs / 1000)} s`)));
     }, options.timeoutMs);
     child.stdout?.setEncoding('utf8');
     child.stderr?.setEncoding('utf8');
@@ -203,7 +256,7 @@ export function runCli(command: string, args: string[], prompt: string, options:
 export function createClaudeSummarizer(options: SummarizerOptions = {}): (prompt: string) => Promise<string> {
   return async (prompt: string): Promise<string> => {
     const command = options.command ?? resolveCli('claude');
-    if (!command) throw new Error('Claude Code не найден — раздел конспекта собрать нечем');
+    if (!command) throw new Error(tr('Claude Code не найден — раздел конспекта собрать нечем', 'Claude Code was not found — nothing to write the section with'));
     const { code, stdout, stderr } = await runCli(command, options.args ?? claudeSummaryArgs(options.model), prompt, {
       // Нейтральная папка: в папке проекта CLI прочитал бы чужие правила.
       cwd: os.tmpdir(),
@@ -212,7 +265,7 @@ export function createClaudeSummarizer(options: SummarizerOptions = {}): (prompt
       имя: 'Claude Code',
     });
     if (code === 0 && stdout.trim()) return stdout.trim();
-    throw new Error(`Claude Code вышел с кодом ${code}: ${(stderr.trim() || stdout.trim()).slice(0, 200)}`);
+    throw new Error(`Claude Code ${tr('вышел с кодом', 'exited with code')} ${code}: ${(stderr.trim() || stdout.trim()).slice(0, 200)}`);
   };
 }
 
@@ -249,7 +302,7 @@ export function createCodexSummarizer(
 ): (prompt: string) => Promise<string> {
   return async (prompt: string): Promise<string> => {
     const command = options.command ?? resolveCli('codex');
-    if (!command) throw new Error('Codex не найден — раздел конспекта собрать нечем');
+    if (!command) throw new Error(tr('Codex не найден — раздел конспекта собрать нечем', 'Codex was not found — nothing to write the section with'));
     // Своя пустая папка на вызов: Codex читает правила папки (AGENTS.md) и
     // смотрит вокруг, а здесь смотреть не на что.
     const папка = mkdtempSync(path.join(os.tmpdir(), 'jarvis-codex-'));
@@ -263,7 +316,7 @@ export function createCodexSummarizer(
       });
       const ответ = existsSync(файл) ? readFileSync(файл, 'utf8').trim() : '';
       if (code === 0 && ответ) return ответ;
-      throw new Error(`Codex вышел с кодом ${code}: ${codexFailure(stdout, stderr)}`);
+      throw new Error(`Codex ${tr('вышел с кодом', 'exited with code')} ${code}: ${codexFailure(stdout, stderr)}`);
     } finally {
       rmSync(папка, { recursive: true, force: true });
     }
