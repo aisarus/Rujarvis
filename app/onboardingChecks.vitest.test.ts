@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
+import { forgetBrainOutcomes } from '../jarvis/lecture/summarize';
 import { agentFailure, checkBrains, hearingSpeed } from './onboardingChecks';
+
+afterEach(() => forgetBrainOutcomes());
 
 describe('успевает ли компьютер за лектором', () => {
   it('по времени на фразу — с запасом на кусок лекции', () => {
@@ -36,7 +39,8 @@ describe('проверка модели', () => {
       },
     });
     expect(спросили.sort()).toEqual(['claude', 'codex']);
-    expect(итог.order).toEqual(['claude', 'codex']);
+    // Claude не вошёл — проверка это запомнила, и конспект пойдёт к Codex первым.
+    expect(итог.order).toEqual(['codex', 'claude']);
     expect(итог.results.find((r) => r.cli === 'claude')).toMatchObject({ ok: false });
     expect(итог.results.find((r) => r.cli === 'claude')?.message).toMatch(/Войти|Sign in/u);
     expect(итог.results.find((r) => r.cli === 'codex')).toMatchObject({ ok: true, message: 'готово' });

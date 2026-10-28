@@ -13,7 +13,7 @@ import { createServer } from 'node:net';
 import path from 'node:path';
 
 import { resolveCli } from '../jarvis/backends/cliProbes';
-import { brainOrder, createClaudeSummarizer, createCodexSummarizer, type Brain } from '../jarvis/lecture/summarize';
+import { brainOrder, createClaudeSummarizer, createCodexSummarizer, looksSignedOut, rememberBrainOutcome, type Brain } from '../jarvis/lecture/summarize';
 import { tr } from '../jarvis/locale/language';
 import { findGpuWhisper, findLectureModel, gpuWhisperDir, startGpuWhisper } from '../jarvis/voice/gpuWhisper';
 import { createGpuTranscriber, isWhisperServerReady } from './gpuTranscriber';
@@ -97,7 +97,7 @@ export function agentFailure(cli: 'claude' | 'codex', raw: string): string {
   // отвечает «401 Unauthorized … request id: req_…», и в случайных цифрах
   // номера попалось «429»: проверка звала незалогиненный Codex «лимит
   // исчерпан» (CI на маке, 26.10.2026).
-  if (/\b401\b|unauthori[sz]ed|missing bearer|not logged in|logged out|log ?in|sign in|not authenticated|invalid api key|oauth|failed to authenticate/iu.test(raw)) {
+  if (looksSignedOut(raw)) {
     return tr('Вход не выполнен — нажмите «Войти».', 'Not signed in — press "Sign in".');
   }
   if (/usage limit|rate limit|limit reached|quota|too many requests|\b429\b/iu.test(raw)) {
@@ -142,8 +142,11 @@ export async function checkBrains(
       const t0 = Date.now();
       try {
         const ответ = (await ask(cli, ПРОБА)).trim();
+        rememberBrainOutcome(cli, null);
         return { cli, ok: ответ.length > 0, seconds: (Date.now() - t0) / 1000, message: ответ.slice(0, 80) };
       } catch (error) {
+        // Проверка — тоже опыт: не вошедший пойдёт в конспекте последним.
+        rememberBrainOutcome(cli, error);
         return { cli, ok: false, seconds: (Date.now() - t0) / 1000, message: agentFailure(cli, error instanceof Error ? error.message : String(error)) };
       }
     }),

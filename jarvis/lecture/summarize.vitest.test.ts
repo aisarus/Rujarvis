@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { brainFromArgs, brainOrder, codexFailure, codexSummaryArgs, createCodexSummarizer } from './summarize';
+import { brainFromArgs, brainOrder, codexFailure, codexSummaryArgs, createCodexSummarizer, forgetBrainOutcomes, looksSignedOut, rememberBrainOutcome, withFallback } from './summarize';
+
+afterEach(() => forgetBrainOutcomes());
 
 describe('кто пишет конспект', () => {
   it('«сам» — установленные, Claude Code первым', () => {
@@ -13,6 +15,38 @@ describe('кто пишет конспект', () => {
   it('выбранный руками — только он, даже если второй установлен', () => {
     expect(brainOrder('codex', () => true)).toEqual(['codex']);
     expect(brainOrder('claude', () => true)).toEqual(['claude']);
+  });
+
+  it('«не вошли» — в автоматическом выборе последним на четверть часа; ответил — снова первым', () => {
+    const t = 1_000_000;
+    rememberBrainOutcome('claude', new Error('Claude Code вышел с кодом 1: Failed to authenticate: OAuth session expired'), t);
+    expect(brainOrder('auto', () => true, t + 60_000)).toEqual(['codex', 'claude']);
+    expect(brainOrder('auto', () => true, t + 16 * 60_000)).toEqual(['claude', 'codex']);
+    // Выбор руками это не трогает.
+    expect(brainOrder('claude', () => true, t + 60_000)).toEqual(['claude']);
+    rememberBrainOutcome('claude', null, t + 2 * 60_000);
+    expect(brainOrder('auto', () => true, t + 3 * 60_000)).toEqual(['claude', 'codex']);
+    // Лимит или сбой сети — не «не вошли»: порядок прежний.
+    rememberBrainOutcome('claude', new Error('usage limit reached'), t);
+    expect(brainOrder('auto', () => true, t + 60_000)).toEqual(['claude', 'codex']);
+  });
+
+  it('итог: не вошли в Opus — Sonnet не спрашиваем, вход у них один', async () => {
+    const спросили: string[] = [];
+    const итог = withFallback(
+      async () => {
+        спросили.push('opus');
+        throw new Error('Invalid API key · Please run /login');
+      },
+      async () => {
+        спросили.push('sonnet');
+        return 'x';
+      },
+      undefined,
+      (error) => !looksSignedOut(String(error)),
+    );
+    await expect(итог('p')).rejects.toThrow(/login/u);
+    expect(спросили).toEqual(['opus']);
   });
 
   it('--brain= в командной строке — поверх настроек, мусор — нет', () => {
