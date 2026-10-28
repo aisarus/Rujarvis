@@ -288,6 +288,8 @@ describe('AppleScript', () => {
     const скрипт = typeScript('Привет');
     expect(скрипт).toContain('set saved to the clipboard as record');
     expect(скрипт).toContain('set the clipboard to saved');
+    // Своё, скопированное человеком за эту секунду, не затираем.
+    expect(скрипт).toContain('(the clipboard as text) is "Привет" then set the clipboard to saved');
     // Вернуть буфер раньше, чем чужая программа его прочитает, значит
     // вставить не то: задержка стоит между вставкой и возвратом.
     expect(скрипт.indexOf('delay')).toBeGreaterThan(скрипт.indexOf('key code 9'));
