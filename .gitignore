@@ -89,7 +89,6 @@ ajv-generated/
 .tsbuildinfo*
 ./.claude/settings.json
 windows_debugging.txt
-.agents
 .platform-workspace/
 
 # Codex generated artifacts (regenerate locally)

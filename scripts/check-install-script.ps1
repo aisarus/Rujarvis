@@ -9,6 +9,12 @@
 
 $ErrorActionPreference = 'Stop'
 
+# Вывод — в UTF-8, как у самого установщика. Иначе перехваченный вывод
+# проверки (из bash, из другой программы) на машине с ивритской или русской
+# системной кодировкой читался как «�஢�ન �㭪権 �ன����» — и выглядел
+# как битая кодировка установщика, хотя сам установщик тут ни при чём.
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+
 $scriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'install.ps1'
 $errors = $null
 $tokens = $null
