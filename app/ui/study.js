@@ -8,10 +8,17 @@
 const API = window.study;
 const LANG = new URLSearchParams(location.search).get('lang') === 'en' ? 'en' : 'ru';
 
+// Вид окна: при открытии — из адреса, потом — по сообщению главного процесса.
+function applyLook(look) {
+  if (['tetrad', 'marker', 'ring'].includes(look)) document.documentElement.dataset.look = look;
+}
+applyLook(new URLSearchParams(location.search).get('look'));
+if (API.onLook) API.onLook(applyLook);
+
 const STRINGS = {
   ru: {
     title: 'Учёба', today: 'Сегодня', courses: 'Курсы', cards: 'Карточки', back: '← Назад',
-    classesToday: 'Сегодня пары: {0}', noClasses: 'Сегодня пар нет',
+    classesLabel: 'Сегодня пары', noClasses: 'Сегодня пар нет',
     preparing: 'Готовлю вопросы: {0}…',
     allDone: 'На сегодня всё. Можно пройти квиз по любому курсу.',
     start: 'Начать', pass: 'Пройти', review: 'Разобрать', refresh: 'Освежить', train: 'Тренировка', solve: 'Решать',
@@ -36,7 +43,7 @@ const STRINGS = {
     listen: '▶ {0}', close: 'Закрыть', error: 'Не вышло: {0}',
     examLabel: 'Экзамен:', save: 'Сохранить', saved: 'Сохранено', clear: 'Убрать', daysLeft: 'через {0} дн.',
     scheduleLabel: 'Расписание:', addSlot: '+ пара', remove: '✕', days: ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'],
-    newCourse: '+ Новый курс', courseName: 'Название курса', hebrewName: 'На иврите (как у лектора)', courseCode: 'Код курса', create: 'Создать', cancel: 'Отмена',
+    newCourse: '+ Новый курс', courseName: 'Название курса', hebrewName: 'На языке лекций (как у лектора)', courseCode: 'Код курса', create: 'Создать', cancel: 'Отмена',
     prepareAll: 'Заготовить вопросы ко всем лекциям', prepareAllDone: 'В очереди лекций: {0}. Готово будет в фоне.', nothingToPrepare: 'Все лекции уже заготовлены.',
     mic: '🎤 Голосом', stopRec: '■ Готово', recognizing: 'Распознаю…', micDenied: 'Микрофон недоступен: {0}',
     toCardsDone: 'В карточках',
@@ -48,10 +55,25 @@ const STRINGS = {
     lectureLang: 'Язык лекций:', notesLang: 'Язык конспекта:', asSettings: 'как в настройках — {0}', asSettingsPlain: 'как в настройках',
     langHint: 'Лекции этого курса Джарвис расшифровывает на языке лекций, а конспект пишет на языке конспекта.',
     langs: { he: 'иврит', ru: 'русский', en: 'английский', ar: 'арабский', fr: 'французский', de: 'немецкий', es: 'испанский' },
+    recTitle: 'Записи лекций: {0} · {1}', recNone: 'Записей лекций на диске нет.',
+    recAuto: 'Звук старше {0} дн. удаляется сам — конспект и расшифровка остаются. Меняется в настройках, «Папки и лог».',
+    recKeepAll: 'Звук хранится, пока не удалите его сами.',
+    recDeleteAll: 'Удалить все записи',
+    recConfirm: 'Удалить насовсем звук лекций: {0}, это {1}?',
+    recWhat: 'Конспекты, расшифровки, вопросы и карточки останутся. Пропадёт «▶ с этой минуты» в квизах и возможность расшифровать лекцию заново.',
+    recKept: 'Звук лекций без расшифровки ({0}) останется: по нему их можно расшифровать заново.',
+    recDeleted: 'Удалено записей: {0}, освобождено {1}.', recFailed: 'Не удалились: {0} — файл занят (открыт в проигрывателе?).',
+    audioBtn: 'Звук · {0} ✕', audioKeep: 'Звук · {0}', audioKeepWhy: 'Звук нужен: расшифровка пустая или её нет — по нему лекцию можно расшифровать заново.',
+    audioConfirm: 'Удалить звук насовсем?',
+    mb: 'МБ', gb: 'ГБ',
+    move: 'Перенести…', moveTo: 'В курс:', moveNew: 'Новый курс…', moveYes: 'Перенести', moved: 'Лекция перенесена в «{0}».',
+    unsortedHint: 'Сюда попадают лекции, курс которых Джарвис не узнал. Перенесите каждую в свой курс кнопкой «Перенести…» — вместе с вопросами и карточками.',
+    unsortedEmpty: 'Все лекции разнесены по курсам.',
+    noAnswer: 'нет ответа', prepareFailed: 'Вопросы не заготовились: {0}',
   },
   en: {
     title: 'Study', today: 'Today', courses: 'Courses', cards: 'Cards', back: '← Back',
-    classesToday: 'Classes today: {0}', noClasses: 'No classes today',
+    classesLabel: 'Classes today', noClasses: 'No classes today',
     preparing: 'Preparing questions: {0}…',
     allDone: 'Nothing due today. You can take a quiz in any course.',
     start: 'Start', pass: 'Take', review: 'Review', refresh: 'Refresh', train: 'Train', solve: 'Solve',
@@ -88,6 +110,21 @@ const STRINGS = {
     lectureLang: 'Lecture language:', notesLang: 'Notes language:', asSettings: 'as in settings — {0}', asSettingsPlain: 'as in settings',
     langHint: 'Jarvis transcribes this course\'s lectures in the lecture language and writes the notes in the notes language.',
     langs: { he: 'Hebrew', ru: 'Russian', en: 'English', ar: 'Arabic', fr: 'French', de: 'German', es: 'Spanish' },
+    recTitle: 'Lecture recordings: {0} · {1}', recNone: 'No lecture recordings on disk.',
+    recAuto: 'Audio older than {0} days is deleted automatically; the notes and transcript stay. Change it in Settings, "Folders and log".',
+    recKeepAll: 'Audio is kept until you delete it.',
+    recDeleteAll: 'Delete all recordings',
+    recConfirm: 'Permanently delete the audio of {0} lectures, {1}?',
+    recWhat: 'Notes, transcripts, questions and cards stay. You lose "▶ from this minute" in quizzes and the chance to transcribe the lecture again.',
+    recKept: 'Audio of lectures without a transcript ({0}) stays: they can be transcribed again from it.',
+    recDeleted: 'Recordings deleted: {0}, {1} freed.', recFailed: 'Not deleted: {0}. The file is in use (open in a player?).',
+    audioBtn: 'Audio · {0} ✕', audioKeep: 'Audio · {0}', audioKeepWhy: 'This audio is needed: the transcript is empty or missing, and the lecture can be transcribed again from it.',
+    audioConfirm: 'Delete the audio permanently?',
+    mb: 'MB', gb: 'GB',
+    move: 'Move…', moveTo: 'To course:', moveNew: 'New course…', moveYes: 'Move', moved: 'The lecture was moved to "{0}".',
+    unsortedHint: 'Lectures whose course Jarvis did not recognise land here. Move each to its course with "Move…"; its questions and cards go with it.',
+    unsortedEmpty: 'All lectures are sorted into courses.',
+    noAnswer: 'no answer', prepareFailed: 'Questions were not prepared: {0}',
   },
 }[LANG];
 
@@ -114,9 +151,17 @@ function el(tag, props, ...children) {
 
 async function call(name, ...args) {
   const r = await API[name](...args);
-  if (!r || !r.ok) throw new Error((r && r.error) || 'нет ответа');
+  if (!r || !r.ok) throw new Error((r && r.error) || t('noAnswer'));
   return r.value;
 }
+
+// Кнопка, у которой нет своей обработки ошибки («Знаю», «Решил», «В карточки»),
+// раньше падала молча — человек жал ещё раз и не понимал, почему ничего не
+// происходит (аудит 21.10.2026). Теперь причина — в строке состояния окна.
+window.addEventListener('unhandledrejection', (event) => {
+  const причина = event.reason && event.reason.message ? event.reason.message : String(event.reason);
+  status.textContent = t('error', причина);
+});
 
 const view = document.getElementById('view');
 const status = document.getElementById('status');
@@ -144,7 +189,7 @@ function drawTabs() {
   const tabs = document.getElementById('tabs');
   tabs.textContent = '';
   for (const [id, label, render] of [['today', t('today'), renderToday], ['courses', t('courses'), renderCourses], ['cards', t('cards'), () => renderCards()]]) {
-    tabs.append(el('button', { class: tab === id ? 'active' : '', onclick: () => { tab = id; show(render); } }, label));
+    tabs.append(el('button', { class: tab === id ? 'active' : '', onclick: () => { tab = id; show(render); } }, el('span', {}, label)));
   }
   status.textContent = preparing.length ? t('preparing', preparing.join(', ')) : '';
 }
@@ -191,13 +236,25 @@ function sourceButtons(source) {
 
 // ——— Сегодня ———
 
+/**
+ * Полоска состояния тем курса. Те же доли — и кольцом (`--ring`): в виде
+ * «Кольцо» полоска рисуется кольцом, в остальных — полосой.
+ */
 function stateBar(counts) {
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
   const bar = el('div', { class: 'bar' });
   if (!total) return bar;
+  const цвет = { strong: 'var(--ok)', fragile: 'var(--accent)', weak: 'var(--warn)', covered: 'var(--line-2)' };
+  const дуги = [];
+  let от = 0;
   for (const s of ['strong', 'fragile', 'weak', 'covered']) {
-    if (counts[s]) bar.append(el('span', { class: `s-${s}`, style: `width:${(counts[s] / total) * 100}%` }));
+    if (!counts[s]) continue;
+    const доля = (counts[s] / total) * 100;
+    bar.append(el('span', { class: `s-${s}`, style: `width:${доля}%` }));
+    дуги.push(`${цвет[s]} ${от}% ${от + доля}%`);
+    от += доля;
   }
+  bar.style.setProperty('--ring', `conic-gradient(${дуги.join(', ')})`);
   return bar;
 }
 
@@ -205,10 +262,18 @@ function countsLine(counts) {
   return ['strong', 'fragile', 'weak', 'covered'].filter((s) => counts[s]).map((s) => `${t(`st.${s}`)} ${counts[s]}`).join(' · ');
 }
 
+/** Цвет курса — по имени: один и тот же на плитке, в парах дня и после перезапуска. */
+function hueOf(name) {
+  let h = 0;
+  for (const ch of String(name)) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+  return `h${(h % 6) + 1}`;
+}
+
 function courseTile(c) {
-  return el('button', { class: 'card', style: 'text-align:start;cursor:pointer', onclick: () => show(courseRender(c.name)) },
-    el('div', { class: 'row spread' }, el('b', {}, c.name), c.dueCards ? el('span', { class: 'pill' }, t('dueCards', c.dueCards)) : null),
-    el('div', { class: 'small muted' }, c.lectures ? `${t('lectures', c.lectures)}${countsLine(c.counts) ? ` · ${countsLine(c.counts)}` : ''}` : t('lectures', 0)),
+  return el('button', { class: `card tile ${hueOf(c.name)}`, onclick: () => show(courseRender(c.name)) },
+    el('div', { class: 'top' }, el('b', { class: 'name' }, el('span', {}, c.name)), c.dueCards ? el('span', { class: 'pill' }, t('dueCards', c.dueCards)) : null),
+    c.hebrew ? el('div', { class: 'he', dir: 'auto' }, c.hebrew) : null,
+    el('div', { class: 'meta' }, c.lectures ? `${t('lectures', c.lectures)}${countsLine(c.counts) ? ` · ${countsLine(c.counts)}` : ''}` : t('lectures', 0)),
     stateBar(c.counts),
   );
 }
@@ -229,20 +294,25 @@ async function renderToday() {
   const date = new Date().toLocaleDateString(LANG === 'en' ? 'en-GB' : 'ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
   view.append(
     el('h1', {}, date.charAt(0).toUpperCase() + date.slice(1)),
-    el('p', { class: 'hint' }, today.classes.length ? t('classesToday', today.classes.map((c) => `${c.course} ${c.time}`).join(' · ')) : t('noClasses')),
+    today.classes.length
+      ? el('div', { class: 'classes' }, el('span', { class: 'muted' }, t('classesLabel')),
+        ...today.classes.map((c) => el('span', { class: `class ${hueOf(c.course)}` }, el('b', {}, c.time), ' ', c.course)))
+      : el('p', { class: 'hint' }, t('noClasses')),
   );
   const items = el('div', { class: 'stack' });
-  for (const it of today.items) {
-    items.append(el('div', { class: `card item ${it.kind === 'weak' ? 'warn' : it.kind === 'exam' ? 'exam' : ''}` },
-      el('div', { class: 'what' }, el('div', {}, el('b', {}, it.title)), el('div', { class: 'small muted' }, it.detail)),
-      el('button', { class: 'btn', onclick: () => runAction(it.action) }, t(ACTION_LABEL[it.kind] || 'start')),
+  // Первое дело дня — главной кнопкой: с него и начинать.
+  today.items.forEach((it, i) => {
+    items.append(el('div', { class: `card item kind-${it.kind}` },
+      el('i', { class: 'mark', 'aria-hidden': 'true' }),
+      el('div', { class: 'what' }, el('div', {}, el('b', {}, it.title)), el('div', { class: 'small muted detail' }, it.detail)),
+      el('button', { class: i === 0 ? 'btn primary' : 'btn', onclick: () => runAction(it.action) }, t(ACTION_LABEL[it.kind] || 'start')),
     ));
-  }
+  });
   if (!today.items.length) items.append(el('p', { class: 'muted' }, t('allDone')));
   view.append(items, el('h2', {}, t('courses')));
   const grid = el('div', { class: 'grid' });
   for (const c of today.courses) grid.append(courseTile(c));
-  view.append(grid, prepareAllRow());
+  view.append(grid, prepareAllRow(), recordingsRow());
 }
 renderToday.refreshable = true;
 
@@ -263,6 +333,103 @@ function prepareAllRow() {
   return el('div', { class: 'row', style: 'margin-top:16px;flex-wrap:wrap' }, btn, note);
 }
 
+// ——— Записи лекций: место на диске ———
+
+/** 281 МБ, 2,5 ГБ — по-человечески. */
+function size(bytes) {
+  const n = bytes >= 1e9 ? bytes / 1e9 : bytes / 1e6;
+  const digits = bytes >= 1e9 && n < 10 ? 1 : 0;
+  return `${n.toLocaleString(LANG === 'en' ? 'en-GB' : 'ru-RU', { maximumFractionDigits: digits })} ${bytes >= 1e9 ? t('gb') : t('mb')}`;
+}
+
+/**
+ * Сколько места занимает звук лекций и «Удалить все записи» — с
+ * подтверждением прямо здесь, без всплывающих окон. Пара — около 280 МБ.
+ */
+function recordingsRow() {
+  const box = el('div', { class: 'card stack', style: 'margin-top:16px' });
+  const draw = async (message) => {
+    box.textContent = '';
+    box.classList.remove('danger');
+    let r;
+    try {
+      r = await call('recordings');
+    } catch (error) {
+      box.append(el('div', { class: 'small error' }, t('error', error.message)));
+      return;
+    }
+    const auto = el('div', { class: 'small muted' }, r.autoDays ? t('recAuto', r.autoDays) : t('recKeepAll'));
+    const said = message ? el('div', { class: 'hint' }, message) : null;
+    // append у DOM вставил бы null словом «null» — пустое отбрасываем.
+    const put = (...nodes) => box.append(...nodes.filter(Boolean));
+    if (!r.count) {
+      put(el('b', {}, t('recNone')), said, auto);
+      return;
+    }
+    const confirm = () => {
+      box.textContent = '';
+      box.classList.add('danger');
+      const note = el('div', { class: 'small error' });
+      const yes = el('button', { class: 'btn danger', onclick: async () => {
+        yes.disabled = true;
+        try {
+          const x = await call('deleteAllRecordings');
+          await draw(t('recDeleted', x.deleted, size(x.bytes)) + (x.failed ? ` ${t('recFailed', x.failed)}` : ''));
+        } catch (error) {
+          note.textContent = t('error', error.message);
+          yes.disabled = false;
+        }
+      } }, t('deleteYes'));
+      put(
+        el('b', {}, t('recConfirm', r.deletable, size(r.deletableBytes))),
+        el('div', {}, t('recWhat')),
+        r.count > r.deletable ? el('div', { class: 'small muted' }, t('recKept', r.count - r.deletable)) : null,
+        el('div', { class: 'row' }, yes, el('button', { class: 'btn', onclick: () => draw() }, t('cancel'))),
+        note,
+      );
+    };
+    put(
+      el('div', { class: 'row spread', style: 'flex-wrap:wrap' },
+        el('b', {}, t('recTitle', r.count, size(r.bytes))),
+        el('button', { class: 'btn', disabled: !r.deletable, onclick: confirm }, t('recDeleteAll'))),
+      said,
+      auto,
+    );
+  };
+  void draw();
+  return box;
+}
+
+/**
+ * «Звук · 280 МБ ✕» в карточке лекции. Нужный звук (расшифровки нет или она
+ * пустая) удалить нельзя — кнопка без крестика, причина в подсказке.
+ */
+function audioButton(notesFile, audio) {
+  if (!audio) return null;
+  if (audio.keep) return el('button', { class: 'btn small', disabled: true, title: t('audioKeepWhy') }, t('audioKeep', size(audio.bytes)));
+  const slot = el('span', { class: 'row' });
+  const ask = () => {
+    slot.textContent = '';
+    const yes = el('button', { class: 'btn small danger', onclick: async () => {
+      yes.disabled = true;
+      try {
+        await call('deleteRecording', notesFile);
+        show(current);
+      } catch (error) {
+        slot.textContent = '';
+        slot.append(el('span', { class: 'small error' }, t('error', error.message)));
+      }
+    } }, t('deleteYes'));
+    slot.append(el('span', { class: 'small' }, t('audioConfirm')), yes, el('button', { class: 'btn small', onclick: draw }, t('cancel')));
+  };
+  const draw = () => {
+    slot.textContent = '';
+    slot.append(el('button', { class: 'btn small', onclick: ask }, t('audioBtn', size(audio.bytes))));
+  };
+  draw();
+  return slot;
+}
+
 /** `message` — строка сверху: что сейчас сделано (курс удалён). */
 async function renderCourses(message) {
   const { today } = await call('today');
@@ -272,7 +439,7 @@ async function renderCourses(message) {
   view.append(form);
   const grid = el('div', { class: 'grid' });
   for (const c of today.courses) grid.append(courseTile(c));
-  view.append(grid, prepareAllRow());
+  view.append(grid, prepareAllRow(), recordingsRow());
 }
 renderCourses.refreshable = false;
 
@@ -429,42 +596,49 @@ function courseRender(name) {
   return render;
 }
 
-async function renderCourse(name) {
+/** `message` — строка сверху: что сейчас сделано (лекция перенесена). */
+async function renderCourse(name, message) {
   const c = await call('course', name);
   const sub = [c.hebrew, c.code, c.schedule, c.credits ? `${c.credits} נ״ז` : '', c.lecturer].filter(Boolean).join(' · ');
   const box = el('div');
-  view.append(
+  // «Без курса» — не курс: его не правят и не удаляют, а разносят по курсам.
+  // Пустое отбрасываем: append у DOM вставил бы null словом «null».
+  view.append(...[
     el('button', { class: 'link', onclick: () => show(tab === 'courses' ? renderCourses : renderToday) }, t('back')),
     el('div', { class: 'row spread', style: 'flex-wrap:wrap' },
       el('h1', {}, c.name),
-      el('div', { class: 'row' },
+      c.unsorted ? null : el('div', { class: 'row' },
         el('button', { class: 'btn small', onclick: () => editCourseForm(box, c) }, t('edit')),
         el('button', { class: 'btn small', onclick: () => deleteCourseBox(box, c) }, t('deleteCourse')),
       ),
     ),
-    el('div', { class: 'muted', dir: 'auto' }, sub),
+    c.unsorted ? el('p', { class: 'hint' }, t('unsortedHint')) : el('div', { class: 'muted', dir: 'auto' }, sub),
+    typeof message === 'string' && message ? el('p', { class: 'hint' }, message) : null,
     box,
-    courseSettings(c),
+    c.unsorted ? null : courseSettings(c),
     el('div', { class: 'row', style: 'margin-bottom:14px;flex-wrap:wrap' },
       el('button', { class: 'btn primary', onclick: () => show(() => renderQuiz({ course: name })) }, t('courseQuiz')),
-      el('button', { class: 'btn', onclick: () => show(() => renderExamSetup(name)) }, t('examTraining')),
+      c.unsorted ? null : el('button', { class: 'btn', onclick: () => show(() => renderExamSetup(name)) }, t('examTraining')),
       el('button', { class: 'btn', onclick: () => show(() => renderCards(name)) }, t('courseCards', c.dueCards)),
     ),
-  );
-  if (!c.lectures.length && !c.unprepared.length) view.append(el('p', { class: 'muted' }, t('noLecturesYet')));
+  ].filter(Boolean));
+  if (!c.lectures.length && !c.unprepared.length) view.append(el('p', { class: 'muted' }, t(c.unsorted ? 'unsortedEmpty' : 'noLecturesYet')));
   // Заготовленные и нет — одним списком, по порядку лекций.
   const порядок = [...c.lectures.map((l) => ({ l })), ...c.unprepared.map((u) => ({ u }))]
     .sort((a, b) => ((a.l || a.u).number || 0) - ((b.l || b.u).number || 0) || (a.l || a.u).date.localeCompare((b.l || b.u).date));
   for (const { l, u } of порядок) {
-    if (u) { view.append(unpreparedBox(u)); continue; }
+    if (u) { view.append(unpreparedBox(u, name, (c.failures || {})[u.lecture])); continue; }
     const tasks = l.topics.reduce((n, x) => n + x.tasks, 0);
-    const box = el('div', { class: 'card lecture' },
+    const box = el('div', { class: 'card lecture' });
+    box.append(
       el('div', { class: 'head' },
         el('b', {}, [l.number ? t('lecture', l.number) : '', l.date.split('-').reverse().join('.'), l.topic].filter(Boolean).join(' · ')),
         el('span', { style: 'flex:1' }),
         el('button', { class: 'btn small', onclick: () => call('openNote', l.notesFile) }, '↗'),
         el('button', { class: 'btn small', onclick: () => show(() => renderQuiz({ course: name, lecture: l.lecture })) }, t('quiz')),
         tasks ? el('button', { class: 'btn small', onclick: () => show(() => renderTasks(name, l.lecture)) }, t('tasks', tasks)) : null,
+        moveButton(box, l.notesFile, name),
+        audioButton(l.notesFile, l.audio),
       ),
     );
     for (const x of l.topics) {
@@ -479,17 +653,79 @@ async function renderCourse(name) {
   }
 }
 
-function unpreparedBox(u) {
+/** `failed` — почему вопросы к лекции не заготовились в прошлый раз. */
+function unpreparedBox(u, course, failed) {
   const busy = preparing.includes(u.lecture);
-  return el('div', { class: 'card lecture' },
+  const card = el('div', { class: 'card lecture' });
+  card.append(
     el('div', { class: 'head' },
       el('b', {}, [u.number ? t('lecture', u.number) : '', u.date.split('-').reverse().join('.'), u.topic].filter(Boolean).join(' · ')),
-      el('span', { class: 'small muted' }, u.empty ? t('noMaterial') : t('unprepared')),
+      el('span', { class: failed && !busy ? 'small error' : 'small muted' }, u.empty ? t('noMaterial') : failed && !busy ? t('prepareFailed', failed) : t('unprepared')),
       el('span', { style: 'flex:1' }),
       el('button', { class: 'btn small', onclick: () => call('openNote', u.notesFile) }, '↗'),
       u.empty ? null : busy ? el('span', { class: 'pill' }, t('preparingNow')) : el('button', { class: 'btn small', onclick: () => call('prepare', u.notesFile) }, t('prepareBtn')),
+      moveButton(card, u.notesFile, course),
+      audioButton(u.notesFile, u.audio),
     ),
   );
+  return card;
+}
+
+/**
+ * «Перенести…» у лекции: в курс из списка или в новый — прямо в карточке.
+ * Раньше лекцию из неправильного курса переносили только голосом и только
+ * последнюю с запуска; «Без курса» в окне не было видно вовсе.
+ */
+function moveButton(card, notesFile, from) {
+  const form = el('div', { class: 'row', style: 'flex-wrap:wrap;margin-top:10px' });
+  const open = async () => {
+    form.textContent = '';
+    let names = [];
+    try {
+      names = (await call('today')).today.courses.filter((c) => !c.unsorted && c.name !== from).map((c) => c.name);
+    } catch {
+      names = [];
+    }
+    const select = el('select', {}, ...names.map((n) => el('option', { value: n }, n)), el('option', { value: '' }, t('moveNew')));
+    const input = el('input', { type: 'text', placeholder: t('courseName') });
+    input.hidden = names.length > 0;
+    select.addEventListener('change', () => {
+      input.hidden = Boolean(select.value);
+      if (!input.hidden) input.focus();
+    });
+    const note = el('span', { class: 'small error' });
+    const yes = el('button', { class: 'btn small primary', onclick: async () => {
+      const куда = select.value || input.value.trim();
+      if (!куда) { input.focus(); return; }
+      yes.disabled = true;
+      try {
+        const r = await call('moveLecture', notesFile, куда);
+        show(() => renderCourse(from, t('moved', r.course)));
+      } catch (error) {
+        note.textContent = t('error', error.message);
+        yes.disabled = false;
+      }
+    } }, t('moveYes'));
+    form.append(el('span', { class: 'small' }, t('moveTo')), select, input, yes, el('button', { class: 'btn small', onclick: () => { form.textContent = ''; } }, t('cancel')), note);
+    if (!form.isConnected) card.append(form);
+  };
+  return el('button', { class: 'btn small', onclick: open }, t('move'));
+}
+
+/**
+ * Вариант ответа: номер отдельным значком, текст (на языке лекции — своим
+ * направлением письма), перевод и разбор. Номер не склеивается с текстом: в
+ * строке на иврите «1.» уезжал на другой край.
+ */
+function optionParts(o, i, why) {
+  return [
+    el('span', { class: 'onum', 'aria-hidden': 'true' }, i + 1),
+    el('span', { class: 'obody' },
+      el('span', { class: 'otext', dir: 'auto' }, el('span', { class: 'omark' }, o.text)),
+      o.translation && showTranslation ? el('span', { class: 'tr', dir: 'auto' }, o.translation) : null,
+      why,
+    ),
+  ];
 }
 
 // ——— Квиз ———
@@ -528,9 +764,7 @@ async function renderQuiz(scope) {
       q.promptTranslation ? translationToggle(draw) : el('span'),
     );
     const options = q.options.map((o, i) => el('button', { class: 'option', onclick: () => choose(i) },
-      el('div', { dir: 'auto' }, `${i + 1}. ${o.text}`),
-      o.translation && showTranslation ? el('div', { class: 'tr', dir: 'auto' }, o.translation) : null,
-      el('div', { class: 'why', dir: 'auto', style: 'display:none' }),
+      ...optionParts(o, i, el('div', { class: 'why', dir: 'auto', style: 'display:none' })),
     ));
     const feedback = el('div', { class: 'feedback' });
     const own = el('div', { style: 'margin-top:10px' });
@@ -611,6 +845,7 @@ async function renderQuiz(scope) {
         }
       } }, t('check'));
       const micBtn = el('button', { class: 'btn', onclick: () => recordInto(area, micBtn, feedback) }, t('mic'));
+      if (!canHear) micBtn.style.display = 'none';
       const openBox = el('div', { class: 'stack', style: 'display:none' }, area, el('div', { class: 'row' }, micBtn, checkBtn));
       own.append(el('button', { class: 'link small', onclick: () => { openBox.style.display = 'flex'; area.focus(); } }, t('ownWords')), openBox);
     }
@@ -643,6 +878,11 @@ async function renderQuiz(scope) {
 
 /** Запись идёт: чем её остановить. Одна на окно. */
 let recording = null;
+// Слуха нет (вариант «только конспекты») — кнопки «Голосом» нет. Мост не
+// ответил — кнопка остаётся: по нажатию человек увидит причину, а пропавшая
+// кнопка не объясняет ничего.
+let canHear = true;
+call('hearing').then((value) => { canHear = value !== false; }).catch(() => undefined);
 
 /**
  * Ответ голосом прямо в окне: нажал — говоришь — «Готово». Звук уходит
@@ -764,6 +1004,7 @@ async function renderCards(course) {
 async function renderExamSetup(course) {
   const count = el('select', {}, ...[10, 20, 30].map((n) => el('option', { value: n, selected: n === 20 }, n)));
   const minutes = el('select', {}, ...[15, 30, 45, 60, 90].map((n) => el('option', { value: n, selected: n === 45 }, n)));
+  const empty = el('p', { class: 'hint' });
   view.append(
     el('button', { class: 'link', onclick: () => show(courseRender(course)) }, t('back')),
     el('h1', {}, `${t('examSetup')}: ${course}`),
@@ -773,9 +1014,15 @@ async function renderExamSetup(course) {
       el('label', { class: 'row' }, t('minutes'), minutes),
       el('button', { class: 'btn primary', onclick: async () => {
         const session = await call('examStart', course, Number(count.value), Number(minutes.value));
+        // Вопросов нет — экран экзамена падал на пустом списке (аудит 21.10.2026).
+        if (!session.questions.length) {
+          empty.textContent = t('emptyQuiz');
+          return;
+        }
         show(() => renderExam(course, session));
       } }, t('examStart')),
     ),
+    empty,
   );
 }
 
@@ -827,7 +1074,7 @@ function renderExam(course, session) {
           busy = false;
         }
         draw();
-      } }, el('div', { dir: 'auto' }, `${i + 1}. ${o.text}`), o.translation && showTranslation ? el('div', { class: 'tr', dir: 'auto' }, o.translation) : null)),
+      } }, ...optionParts(o, i, null))),
     );
     keyHandler = (e) => {
       if (/^[1-4]$/.test(e.key)) view.querySelectorAll('.option')[Number(e.key) - 1]?.click();

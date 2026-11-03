@@ -13,9 +13,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import {
+  COURSE_WORDS,
   isUnsortedName,
   listCourses,
   listLectures,
+  parseFrontmatter,
   readCourseInfo,
   renameCourseFolder,
   safeName,
@@ -24,7 +26,17 @@ import {
   type CourseSlot,
   type LectureLanguages,
 } from '../lecture/courses';
-import { sectionTitle, type NotesLanguage } from '../lecture/session';
+import {
+  deleteRecording,
+  deleteRecordings,
+  listRecordings,
+  recordingOf,
+  summarizeRecordings,
+  type Recording,
+  type RecordingsSummary,
+} from '../lecture/recordings';
+import { moveLecture } from '../lecture/finalize';
+import { notesLanguageOf, sectionTitle, type NotesLanguage } from '../lecture/session';
 import { tr } from '../locale/language';
 import { readLectureSource } from './generate';
 import { STATE_PRIORITY, topicKnowledge, type ForgettingRisk, type KnowledgeState } from './knowledge';
@@ -53,7 +65,22 @@ export interface StudyServiceOptions {
    * готовятся вопросы к его лекциям. Можно — null.
    */
   busy?: (course: string) => string | null;
+  /** Почему звук лекций сейчас не удалить (лекцию дописывают, перерасшифровывают); можно — null. */
+  audioBusy?: () => string | null;
+  /** Через сколько дней звук удаляется сам; null — хранится, пока не удалят. */
+  recordingsAutoDays?: () => number | null;
   now?: () => number;
+}
+
+/** Звук лекции, как его видит окно: размер и нужен ли он ещё. */
+export interface AudioView {
+  bytes: number;
+  keep?: Recording['keep'];
+}
+
+function звукВид(notesFile: string): AudioView | undefined {
+  const r = recordingOf(notesFile);
+  return r ? { bytes: r.bytes, ...(r.keep ? { keep: r.keep } : {}) } : undefined;
 }
 
 export interface TopicView {
@@ -75,10 +102,14 @@ export interface LectureView {
   notesFile: string;
   quizzed: boolean;
   topics: TopicView[];
+  /** Звук лекции на диске; удалён или не было — нет. */
+  audio?: AudioView;
 }
 
 export interface CourseView {
   name: string;
+  /** «Без курса»: не курс, а лекции, курс которых не узнался, — их разносят по курсам. */
+  unsorted?: boolean;
   code?: string;
   hebrew?: string;
   credits?: number;
@@ -99,7 +130,7 @@ export interface CourseView {
   counts: Record<KnowledgeState, number>;
   lectures: LectureView[];
   /** Лекции курса в хранилище, к которым учёба ещё не заготовлена; `empty` — в конспекте нет материала. */
-  unprepared: Array<{ lecture: string; notesFile: string; date: string; number?: number; topic?: string; empty: boolean }>;
+  unprepared: Array<{ lecture: string; notesFile: string; date: string; number?: number; topic?: string; empty: boolean; audio?: AudioView }>;
 }
 
 export type StudyAction =
@@ -119,7 +150,8 @@ export interface TodayView {
   date: string;
   classes: Array<{ course: string; time: string }>;
   items: TodayItem[];
-  courses: Array<{ name: string; counts: Record<KnowledgeState, number>; lectures: number; dueCards: number }>;
+  /** `hebrew` — название на языке лекций со страницы курса: плитка показывает его под русским. */
+  courses: Array<{ name: string; hebrew?: string; counts: Record<KnowledgeState, number>; lectures: number; dueCards: number; unsorted?: boolean }>;
 }
 
 /** Вопрос как его видит окно: без верного ответа, варианты перемешаны. */
@@ -225,10 +257,22 @@ export class StudyService {
     return this.o.now?.() ?? Date.now();
   }
 
-  /** Курсы: из хранилища (страницы курсов) и из заготовок — вместе. */
+  /** «Без курса» — на языке конспектов: туда кладёт лекции, курс которых не узнался. */
+  private безКурса(): string {
+    return COURSE_WORDS[this.o.notes].unsorted;
+  }
+
+  /**
+   * Курсы: из хранилища (страницы курсов) и из заготовок — вместе. «Без
+   * курса» — последним и только когда в нём есть лекции: иначе такие лекции
+   * в окне не видны вовсе, и перенести их было нечем (аудит 21.10.2026).
+   */
   private курсы(): string[] {
     const из = new Set([...listCourses(this.o.vaultRoot()), ...this.o.store.courses()]);
-    return [...из].sort((a, b) => a.localeCompare(b));
+    из.delete(this.безКурса());
+    const курсы = [...из].sort((a, b) => a.localeCompare(b));
+    if (listLectures(this.o.vaultRoot(), this.безКурса()).length > 0 || this.o.store.courses().includes(this.безКурса())) курсы.push(this.безКурса());
+    return курсы;
   }
 
   private инфо(course: string): CourseInfo {
@@ -248,7 +292,10 @@ export class StudyService {
   private источник(bank: LectureBank | undefined, source: SourceRef): SourceView {
     const номер = bank?.number ? `лекция ${bank.number}` : bank?.date ?? source.lecture;
     const мм = source.at !== undefined ? `, ${String(Math.floor(source.at / 60)).padStart(2, '0')}:${String(source.at % 60).padStart(2, '0')}` : '';
-    return { label: `${номер}${мм}`, at: source.at, notesFile: bank?.notesFile, audioFile: bank?.audioFile };
+    // Звук удалили, чтобы не занимал место, — кнопки «▶» нет: немой
+    // проигрыватель хуже, чем никакого.
+    const audioFile = bank?.audioFile && existsSync(bank.audioFile) ? bank.audioFile : undefined;
+    return { label: `${номер}${мм}`, at: source.at, notesFile: bank?.notesFile, audioFile };
   }
 
   private темы(banks: LectureBank[], progress: CourseProgress, cards: StudyCard[]): Map<string, TopicView> {
@@ -288,6 +335,7 @@ export class StudyService {
     const вХранилище = listLectures(this.o.vaultRoot(), name);
     return {
       name,
+      ...(name === this.безКурса() ? { unsorted: true } : {}),
       code: инфо.code,
       hebrew: инфо.hebrew,
       credits: инфо.credits,
@@ -310,9 +358,18 @@ export class StudyService {
         notesFile: b.notesFile,
         quizzed: b.questions.some((q) => спрошено.has(q.id)),
         topics: b.topics.map((t) => темы.get(t.id)).filter((t): t is TopicView => Boolean(t)),
+        audio: звукВид(b.notesFile),
       })),
       unprepared: вХранилище
-        .map((л) => ({ lecture: path.basename(л.file, '.md'), notesFile: л.file, date: л.meta.date, number: л.meta.number, topic: л.meta.topic, empty: !естьМатериал(л.file) }))
+        .map((л) => ({
+          lecture: path.basename(л.file, '.md'),
+          notesFile: л.file,
+          date: л.meta.date,
+          number: л.meta.number,
+          topic: л.meta.topic,
+          empty: !естьМатериал(л.file),
+          audio: звукВид(л.file),
+        }))
         .filter((л) => !banks.some((b) => b.lecture === л.lecture)),
     };
   }
@@ -332,7 +389,16 @@ export class StudyService {
       for (const s of инфо.slots) if (s.day === сегодня.getDay()) classes.push({ course: name, time: время(s.from) });
       const вид = this.course(name);
       карточек += вид.dueCards;
-      courses.push({ name, counts: вид.counts, lectures: вид.lectures.length, dueCards: вид.dueCards });
+      // Лекций — все: и заготовленные, и ждущие вопросов; иначе плитка курса с
+      // тремя записанными парами говорила «лекций: 0» (снимок 21.10.2026).
+      courses.push({
+        name,
+        hebrew: инфо.hebrew || undefined,
+        counts: вид.counts,
+        lectures: вид.lectures.length + вид.unprepared.length,
+        dueCards: вид.dueCards,
+        ...(вид.unsorted ? { unsorted: true } : {}),
+      });
       for (const л of вид.lectures) {
         if (!л.quizzed && л.topics.some((t) => t.questions > 0)) {
           items.push({
@@ -429,7 +495,7 @@ export class StudyService {
   answerQuiz(sessionId: string, index: number, chosen: number): AnswerFeedback {
     const s = this.сессии.get(sessionId);
     const item = s?.kind === 'quiz' ? s.items[index] : undefined;
-    if (!s || !item) throw new Error('такого вопроса в квизе нет');
+    if (!s || !item) throw new Error(tr('такого вопроса в квизе нет', 'there is no such question in the quiz'));
     const повтор = item.chosen !== undefined;
     item.chosen = item.chosen ?? chosen;
     const отзыв = this.отзыв(item, item.chosen);
@@ -465,8 +531,8 @@ export class StudyService {
     const s = this.сессии.get(sessionId);
     const item = s?.items[index];
     if (!s || !item) throw new Error('такого вопроса нет');
-    if (!answer.trim()) throw new Error('пустой ответ');
-    if (!this.o.summarize) throw new Error('проверять открытый ответ нечем');
+    if (!answer.trim()) throw new Error(tr('пустой ответ', 'empty answer'));
+    if (!this.o.summarize) throw new Error(tr('проверять открытый ответ нечем', 'nothing to check an open answer with'));
     const тема = item.bank.topics.findIndex((t) => t.id === item.q.topicId);
     const текст = тема >= 0 ? await this.текстТемы(item.bank, тема) : '';
     const { verdict, feedback } = parseOpenVerdict(await this.o.summarize(openAnswerPrompt(item.q, answer, текст)));
@@ -504,14 +570,14 @@ export class StudyService {
   answerExam(sessionId: string, index: number, chosen: number): void {
     const s = this.сессии.get(sessionId);
     const item = s?.kind === 'exam' && !s.finished ? s.items[index] : undefined;
-    if (!item) throw new Error('экзамен уже сдан или вопроса нет');
+    if (!item) throw new Error(tr('экзамен уже сдан или вопроса нет', 'the exam is already submitted or there is no such question'));
     if (s?.deadline && this.now() > s.deadline) return;
     item.chosen = chosen;
   }
 
   submitExam(sessionId: string): { total: number; correct: number; answered: number; timedOut: boolean; review: AnswerFeedback[]; chosen: Array<number | null> } {
     const s = this.сессии.get(sessionId);
-    if (!s || s.kind !== 'exam') throw new Error('такого экзамена нет');
+    if (!s || s.kind !== 'exam') throw new Error(tr('такого экзамена нет', 'there is no such exam'));
     const timedOut = Boolean(s.deadline && this.now() > s.deadline);
     const review = s.items.map((item) => this.отзыв(item, item.chosen ?? -1));
     if (!s.finished) {
@@ -553,7 +619,7 @@ export class StudyService {
 
   setSchedule(course: string, slots: CourseSlot[]): void {
     for (const s of slots) {
-      if (!Number.isInteger(s.day) || s.day < 0 || s.day > 6 || !(s.from >= 0 && s.to > s.from && s.to <= 24 * 60)) throw new Error('пара без дня или со временем задом наперёд');
+      if (!Number.isInteger(s.day) || s.day < 0 || s.day > 6 || !(s.from >= 0 && s.to > s.from && s.to <= 24 * 60)) throw new Error(tr('пара без дня или со временем задом наперёд', 'a class without a day or with the time backwards'));
     }
     writeCourseInfo(this.o.vaultRoot(), course, { slots: [...slots].sort((a, b) => a.day - b.day || a.from - b.from) });
   }
@@ -653,6 +719,75 @@ export class StudyService {
     return { lectures: лекций };
   }
 
+  /**
+   * «Перенести…» у лекции: в другой курс или в новый. Переезжают заметка,
+   * расшифровка, звук, строки на страницах обоих курсов (`moveLecture` в
+   * `finalize.ts`), вопросы, карточки и прогресс по ней. Раньше — только
+   * голосом и только последнюю лекцию с запуска.
+   */
+  async moveLecture(notesFile: string, to: string): Promise<{ course: string }> {
+    const root = this.o.vaultRoot();
+    const где = path.relative(root, notesFile);
+    const откуда = path.dirname(где);
+    if (!где || где.startsWith('..') || path.isAbsolute(где) || откуда === '.' || откуда.includes(path.sep)) {
+      throw new Error(tr('это не лекция из курса', 'this is not a lecture in a course'));
+    }
+    const текст = readFileSync(notesFile, 'utf8');
+    if (!parseFrontmatter(текст)) throw new Error(tr('это не лекция Джарвиса: в заметке нет свойств лекции', 'this is not a Jarvis lecture: the note has no lecture properties'));
+    const названо = safeName(to, 80);
+    if (!названо) throw new Error(tr('пустое название курса', 'empty course name'));
+    if (isUnsortedName(названо)) throw new Error(tr('в «Без курса» не переносят — выберите курс', 'lectures are not moved to Unsorted; choose a course'));
+    const имя = listCourses(root).find((c) => c.toLowerCase() === названо.toLowerCase()) ?? названо;
+    if (имя === откуда) return { course: имя };
+    const нельзя = this.o.busy?.(откуда) ?? this.o.busy?.(имя);
+    if (нельзя) throw new Error(нельзя);
+    const итог = await moveLecture(root, notesFile, имя, notesLanguageOf(текст) ?? this.o.notes);
+    this.o.store.moveLecture(откуда, итог.course, path.basename(notesFile, '.md'), {
+      notesFile: итог.notesFile,
+      audioFile: existsSync(итог.audioFile) ? итог.audioFile : undefined,
+    });
+    this.забытьСессии(откуда);
+    return { course: итог.course };
+  }
+
+  /** Звук лекций на диске: сколько, сколько места и удаляется ли сам. */
+  recordings(): RecordingsSummary & { autoDays: number | null } {
+    return { ...summarizeRecordings(listRecordings(this.o.vaultRoot())), autoDays: this.o.recordingsAutoDays?.() ?? null };
+  }
+
+  private звукМожно(): void {
+    const занято = this.o.audioBusy?.();
+    if (занято) throw new Error(занято);
+  }
+
+  /**
+   * Удалить звук одной лекции — насовсем: в Корзине он места не освободил бы.
+   * Конспект, расшифровка и вопросы остаются.
+   */
+  async deleteRecording(notesFile: string): Promise<{ bytes: number }> {
+    this.звукМожно();
+    const где = path.relative(this.o.vaultRoot(), notesFile);
+    if (!где || где.startsWith('..') || path.isAbsolute(где)) throw new Error(tr('это не лекция из «Лекций»', 'this is not a lecture in Lectures'));
+    const запись = recordingOf(notesFile);
+    if (!запись) throw new Error(tr('Звука у этой лекции уже нет.', 'This lecture has no audio any more.'));
+    if (запись.keep) {
+      throw new Error(
+        tr(
+          'Этот звук нужен: расшифровка пустая или её нет — по нему лекцию можно расшифровать заново.',
+          'This audio is still needed: the transcript is empty or missing, and the lecture can be transcribed again from it.',
+        ),
+      );
+    }
+    await deleteRecording(запись, new Date(this.now()));
+    return { bytes: запись.bytes };
+  }
+
+  /** Удалить звук всех лекций, какие можно; нужный (без расшифровки) остаётся. */
+  async deleteAllRecordings(): Promise<{ deleted: number; bytes: number; kept: number; failed: number }> {
+    this.звукМожно();
+    return deleteRecordings(listRecordings(this.o.vaultRoot()), new Date(this.now()));
+  }
+
   /** «В карточки» у вопроса квиза — вопрос на лицевой стороне, ответ с разбором на обороте. */
   addCardFromQuestion(sessionId: string, index: number): void {
     const s = this.сессии.get(sessionId);
@@ -699,7 +834,7 @@ export class StudyService {
   reviewCard(course: string, cardId: string, verdict: 'again' | 'know'): void {
     const { cards } = this.все(course);
     const card = cards.find((c) => c.id === cardId);
-    if (!card) throw new Error('такой карточки нет');
+    if (!card) throw new Error(tr('такой карточки нет', 'there is no such card'));
     this.o.store.updateProgress(course, (p) => {
       p.cards[cardId] = reviewCard(p.cards[cardId], verdict, this.now());
       p.events.push({ id: randomUUID(), at: this.now(), topicId: card.topicId, itemId: cardId, kind: 'recall', source: 'card', outcome: verdict === 'know' ? 'success' : 'failure' });
@@ -730,7 +865,7 @@ export class StudyService {
   /** Решил или нет — со слов человека: такое свидетельство «знаю» одно не даст. */
   markTask(course: string, taskId: string, solved: boolean): void {
     const task = this.o.store.banks(course).flatMap((b) => b.tasks).find((t) => t.id === taskId);
-    if (!task) throw new Error('такой задачи нет');
+    if (!task) throw new Error(tr('такой задачи нет', 'there is no such problem'));
     this.o.store.updateProgress(course, (p) => {
       if (solved) p.solvedTasks[taskId] = this.now();
       else delete p.solvedTasks[taskId];

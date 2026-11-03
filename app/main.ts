@@ -10,17 +10,20 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 
-import { app, desktopCapturer, Menu, nativeImage, shell, systemPreferences, Tray } from 'electron';
+import { app, desktopCapturer, dialog, Menu, nativeImage, shell, systemPreferences, Tray } from 'electron';
 
-import { APP_ROOT } from './root';
+import { applyAppearance } from './look';
+import { APP_ROOT, APP_USER_MODEL_ID } from './root';
 import { setLanguage } from '../jarvis/locale/language';
 import { jarvisPaths } from '../jarvis/setup/paths';
 import { SettingsStore } from '../jarvis/setup/settings';
 import { запроситьРазрешения, чегоНеХватает, type Система } from './macPermissions';
-import { openSettingsWindow } from './settingsWindow';
-import { configureStudy, showStudy } from './study';
+import { openSettingsWindow, sendUpdateState } from './settingsWindow';
+import { finishLecture, lectureFinishing, lectureState, onLectureState } from './lectureMode';
+import { configureStudy, showStudy, startRecordingsCleanup } from './study';
 import { uiStrings } from './ui/strings';
-import { startJarvisVoiceBridge, type JarvisVoiceBridge } from './voiceBridge';
+import { startUpdateChecks, updateState } from './updater';
+import { startJarvisVoiceBridge, startNotesBridge, type JarvisVoiceBridge, type NotesBridge } from './voiceBridge';
 
 const PATHS = jarvisPaths();
 
@@ -31,7 +34,7 @@ mkdirSync(PATHS.profile, { recursive: true });
 app.setPath('userData', PATHS.profile);
 app.setAppLogsPath(PATHS.logs);
 
-if (process.platform === 'win32') app.setAppUserModelId('io.github.aisarus.rujarvis');
+if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID);
 
 /**
  * Один экземпляр на машину.
@@ -62,7 +65,20 @@ settings.subscribe((next) => setLanguage(next.language));
 
 // Учёба: окно открывается из трея, с плашки и голосом.
 configureStudy({ settings: () => settings.get(), paths: PATHS });
-let bridge: JarvisVoiceBridge | null = null;
+// Звук лекций старше недели — прочь, если так в настройках: пара — 280 МБ.
+startRecordingsCleanup();
+// Мост — голосовой Джарвис целиком или конспектор без голоса (`edition`).
+let bridge: JarvisVoiceBridge | NotesBridge | null = null;
+
+/** Вариант «только конспекты»: ни слуха команд, ни голоса, ни рук на компьютере. */
+function толькоКонспекты(): boolean {
+  return settings.get().edition === 'notes';
+}
+
+/** Голосовой мост — у него есть сессия, немота и речь; у конспектора нет. */
+function голос(): JarvisVoiceBridge | null {
+  return bridge && 'session' in bridge ? bridge : null;
+}
 let starting: Promise<void> | null = null;
 let tray: Tray | null = null;
 let voiceError = '';
@@ -99,7 +115,7 @@ const СИСТЕМА: Система = {
 async function askPermissions(): Promise<void> {
   if (process.platform !== 'darwin') return;
   try {
-    const опрос = await запроситьРазрешения(СИСТЕМА);
+    const опрос = await запроситьРазрешения(СИСТЕМА, process.platform, !толькоКонспекты());
     console.log(
       `[main] разрешения macOS: микрофон ${опрос.микрофон}, ` +
         `универсальный доступ ${опрос.доступность}, запись экрана ${опрос.экран}`,
@@ -120,7 +136,7 @@ async function startVoice(): Promise<void> {
     // со второго раза поднялось. Человеку не нужно ради этого лезть в трей.
     for (let attempt = 1; attempt <= 2 && !bridge; attempt += 1) {
       try {
-        bridge = await startJarvisVoiceBridge({ settings });
+        bridge = толькоКонспекты() ? await startNotesBridge({ settings }) : await startJarvisVoiceBridge({ settings });
         voiceError = '';
       } catch (error) {
         voiceError = error instanceof Error ? error.message : String(error);
@@ -141,6 +157,68 @@ async function restartVoice(): Promise<void> {
   await startVoice();
 }
 
+// Посреди лекции перезапуск и выход обрывали запись, а итог не дописывался
+// вовсе (тестер 21.10.2026 обновился посреди пары). Брошенную лекцию теперь
+// дописывает `recoverAbandonedLectures`, но оборвать запись случайно, щелчком в
+// трее или сменой настройки, всё равно нельзя.
+
+let перезапускПослеЛекции = false;
+
+/** Настройки, которые читаются при запуске моста: посреди лекции — когда она кончится. */
+function перезапуститьКогдаМожно(): void {
+  if (lectureState() === 'off') {
+    void restartVoice();
+    return;
+  }
+  if (перезапускПослеЛекции) return;
+  перезапускПослеЛекции = true;
+  console.log('[main] настройки изменились посреди лекции — голос перезапущу, когда конспект закончится');
+  const отписаться = onLectureState((state) => {
+    if (state !== 'off') return;
+    отписаться();
+    перезапускПослеЛекции = false;
+    void restartVoice();
+  });
+}
+
+async function спроситьПроЛекцию(detail: string, buttons: string[], cancelId: number): Promise<number> {
+  const t = uiStrings(settings.get().language);
+  const { response } = await dialog.showMessageBox({ type: 'question', title: 'Rujarvis', message: t.lectureBusyTitle, detail, buttons, defaultId: 0, cancelId, noLink: true });
+  return response;
+}
+
+async function перезапуститьИзТрея(): Promise<void> {
+  if (lectureState() === 'on') {
+    const t = uiStrings(settings.get().language);
+    if ((await спроситьПроЛекцию(t.restartDuringLecture, [t.restartAnyway, t.dialogCancel], 1)) !== 0) return;
+  }
+  await restartVoice();
+}
+
+async function выйтиИзТрея(): Promise<void> {
+  const состояние = lectureState();
+  if (состояние !== 'on' && состояние !== 'finishing') {
+    app.quit();
+    return;
+  }
+  const t = uiStrings(settings.get().language);
+  const идёт = состояние === 'on';
+  const ответ = await спроситьПроЛекцию(
+    идёт ? t.quitDuringLecture : t.quitWhileFinishing,
+    [идёт ? t.quitFinishFirst : t.quitWaitFirst, t.quitNow, t.dialogCancel],
+    2,
+  );
+  if (ответ === 2) return;
+  if (ответ === 0) {
+    const итог = (идёт ? finishLecture() : null) ?? lectureFinishing();
+    console.log('[main] выход: дописываю итог лекции, потом выхожу');
+    tray?.setToolTip(трейПодсказка(t.quitting));
+    // Не дольше десяти минут: зависшая модель не должна держать выход вечно.
+    await Promise.race([итог?.catch(() => undefined), new Promise((r) => setTimeout(r, 10 * 60_000))]);
+  }
+  app.quit();
+}
+
 function showSettings(page?: 'onboarding'): void {
   openSettingsWindow({
     settings,
@@ -155,8 +233,9 @@ function showSettings(page?: 'onboarding'): void {
       //
       // Говорится один раз, сразу после настройки, и учит ровно трём вещам:
       // имени, остановке и тому, как спросить остальное.
+      // У конспектора голоса нет — и первых слов тоже.
       void restartVoice().then(() => {
-        void bridge?.session.speak(
+        void голос()?.session.speak(
           uiStrings(settings.get().language).firstWords,
         );
       });
@@ -164,9 +243,9 @@ function showSettings(page?: 'onboarding'): void {
     onSettingsChanged: (changed) => {
       // Язык, модель и место распознавания, папки читаются при запуске моста.
       // Облако — тоже: выключили его, а мост продолжал бы слать звук до
-      // следующего перезапуска.
-      if (changed.some((key) => ['language', 'whisperModel', 'cloudSpeech', 'workspace', 'outputDir', 'claudeModel', 'localModelUrl', 'localModelName'].includes(key))) {
-        void restartVoice();
+      // следующего перезапуска. Вариант — тем более: это другой мост.
+      if (changed.some((key) => ['language', 'whisperModel', 'cloudSpeech', 'workspace', 'outputDir', 'claudeModel', 'localModelUrl', 'localModelName', 'edition'].includes(key))) {
+        перезапуститьКогдаМожно();
       }
       refreshTray();
     },
@@ -195,11 +274,23 @@ export function трейПодсказка(status: string, предел = 127): 
 function refreshTray(): void {
   if (!tray) return;
   const t = uiStrings(settings.get().language);
-  const status = bridge ? t.trayListening : voiceError ? `${t.trayVoiceFailed}: ${voiceError}` : t.trayNotListening;
-  tray.setToolTip(трейПодсказка(status));
+  const конспекты = толькоКонспекты();
+  const status = bridge
+    ? конспекты
+      ? t.trayNotesReady
+      : t.trayListening
+    : voiceError
+      ? `${t.trayVoiceFailed}: ${voiceError}`
+      : t.trayNotListening;
+  const немой = голос();
+  // Новая версия — заметно, но молча: строкой в меню и в подсказке значка.
+  const обновление = updateState().result;
+  const есть = обновление?.state === 'available';
+  tray.setToolTip(трейПодсказка(есть ? `${status} · ${t.trayUpdateShort}` : status));
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: status, enabled: false },
+      ...(есть ? [{ label: t.trayUpdateAvailable, click: () => showSettings() }] : []),
       { type: 'separator' },
       { label: t.trayEvents, enabled: Boolean(bridge), click: () => bridge?.showEvents() },
       { label: t.trayStudy, click: () => showStudy() },
@@ -208,15 +299,20 @@ function refreshTray(): void {
       // Выключался он только сочетанием Ctrl+M, а голосом вернуть слух нельзя
       // по определению: выключенный микрофон не слышит просьбы включиться.
       // Человек, которому сочетание недоступно, оставался с глухим
-      // помощником до прихода того, кому доступно.
-      {
-        label: bridge?.muteState().muted ? t.trayMicOn : t.trayMicOff,
-        enabled: Boolean(bridge),
-        click: () => {
-          bridge?.toggleMute();
-          refreshTray();
-        },
-      },
+      // помощником до прихода того, кому доступно. У конспектора слуха вне
+      // лекции нет — и выключать нечего.
+      ...(конспекты
+        ? []
+        : [
+            {
+              label: немой?.muteState().muted ? t.trayMicOn : t.trayMicOff,
+              enabled: Boolean(немой),
+              click: () => {
+                немой?.toggleMute();
+                refreshTray();
+              },
+            },
+          ]),
       { label: t.traySettings, click: () => showSettings() },
       // Настройку можно пройти заново.
       //
@@ -227,11 +323,12 @@ function refreshTray(): void {
       // середине, рабочее состояние остаётся прежним.
       { label: t.trayRunSetup, click: () => showSettings('onboarding') },
       { type: 'separator' },
+      { label: t.trayUpdates, click: () => showSettings() },
       { label: t.trayOpenLog, click: () => void shell.openPath(PATHS.log) },
       { label: t.trayOpenData, click: () => void shell.openPath(PATHS.home) },
       { type: 'separator' },
-      { label: t.trayRestartVoice, click: () => void restartVoice() },
-      { label: t.trayQuit, click: () => app.quit() },
+      { label: конспекты ? t.trayRestartNotes : t.trayRestartVoice, click: () => void перезапуститьИзТрея() },
+      { label: t.trayQuit, click: () => void выйтиИзТрея() },
     ]),
   );
 }
@@ -277,10 +374,23 @@ void app.whenReady().then(async () => {
   // Второй экземпляр сюда доходить не должен: ни значка, ни микрофона.
   if (!единственный) return;
 
+  // Вид и тема — до первого окна: плашка и настройки открываются уже в них.
+  applyAppearance(settings.get());
+
   const image = nativeImage.createFromPath(iconPath(process.platform === 'win32' ? 'tray.ico' : 'tray.png'));
   tray = new Tray(image);
   tray.on('click', () => showSettings());
   refreshTray();
+  // Обновления проверяются и до конца настройки: тестер с поломкой на первом
+  // шаге должен получить исправление, не проходя мастер.
+  startUpdateChecks({
+    paths: PATHS,
+    settings: () => settings.get(),
+    onChange: () => {
+      refreshTray();
+      sendUpdateState();
+    },
+  });
 
   if (!settings.get().onboarded) {
     showSettings('onboarding');

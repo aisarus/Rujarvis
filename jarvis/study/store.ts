@@ -11,7 +11,7 @@
  * оборванная запись не должна съесть прогресс семестра.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { safeName } from '../lecture/courses';
@@ -64,6 +64,44 @@ export class StudyStore {
       if (!bank || bank.version !== 1) continue;
       записать(path.join(стало, имя), { ...bank, course: to, notesFile: вНовую(bank.notesFile) ?? bank.notesFile, audioFile: вНовую(bank.audioFile) });
     }
+  }
+
+  /**
+   * Лекция переехала в другой курс: её банк — в папку учёбы нового курса, с
+   * новыми путями к заметке и звуку; ответы, карточки и решённые задачи по
+   * ней — в прогресс нового курса. Своё у лекции узнаётся по id: все они
+   * начинаются с её имени («2026-10-20 — Спрос#3»).
+   */
+  moveLecture(from: string, to: string, lecture: string, files: { notesFile: string; audioFile?: string }): void {
+    const своё = (id: string | undefined): boolean => Boolean(id?.startsWith(`${lecture}#`));
+    const банк = path.join(this.courseDir(from), `${safeName(lecture, 120)}.json`);
+    const bank = прочитать<LectureBank>(банк);
+    if (bank && bank.version === 1) {
+      записать(path.join(this.courseDir(to), `${safeName(lecture, 120)}.json`), { ...bank, course: to, notesFile: files.notesFile, audioFile: files.audioFile });
+      rmSync(банк, { force: true });
+    }
+    if (!existsSync(path.join(this.courseDir(from), ПРОГРЕСС))) return;
+    const было = this.progress(from);
+    const уходит = {
+      events: было.events.filter((e) => своё(e.topicId) || своё(e.itemId)),
+      cards: Object.entries(было.cards).filter(([id]) => своё(id)),
+      extraCards: было.extraCards.filter((c) => своё(c.id) || своё(c.topicId)),
+      solvedTasks: Object.entries(было.solvedTasks).filter(([id]) => своё(id)),
+    };
+    if (!уходит.events.length && !уходит.cards.length && !уходит.extraCards.length && !уходит.solvedTasks.length) return;
+    this.updateProgress(to, (p) => {
+      p.events.push(...уходит.events);
+      Object.assign(p.cards, Object.fromEntries(уходит.cards));
+      p.extraCards.push(...уходит.extraCards);
+      Object.assign(p.solvedTasks, Object.fromEntries(уходит.solvedTasks));
+    });
+    this.saveProgress(from, {
+      ...было,
+      events: было.events.filter((e) => !уходит.events.includes(e)),
+      cards: Object.fromEntries(Object.entries(было.cards).filter(([id]) => !своё(id))),
+      extraCards: было.extraCards.filter((c) => !уходит.extraCards.includes(c)),
+      solvedTasks: Object.fromEntries(Object.entries(было.solvedTasks).filter(([id]) => !своё(id))),
+    });
   }
 
   /** Курсы, у которых есть хоть что-то заготовленное. */

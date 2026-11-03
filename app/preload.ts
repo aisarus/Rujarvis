@@ -10,15 +10,27 @@ contextBridge.exposeInMainWorld('jarvis', {
   state: () => ipcRenderer.invoke(`${CHANNEL}:state`),
   update: (patch: Record<string, unknown>) => ipcRenderer.invoke(`${CHANNEL}:update`, patch),
   finish: () => ipcRenderer.invoke(`${CHANNEL}:finish`),
-  install: (kind: 'whisper' | 'voice', id: string) => ipcRenderer.invoke(`${CHANNEL}:install`, kind, id),
+  install: (kind: 'whisper' | 'voice' | 'lecture', id: string) => ipcRenderer.invoke(`${CHANNEL}:install`, kind, id),
   preview: (voiceId: string, text: string) => ipcRenderer.invoke(`${CHANNEL}:preview`, voiceId, text),
   open: (target: 'home' | 'log' | 'output') => ipcRenderer.invoke(`${CHANNEL}:open`, target),
   chooseFolder: () => ipcRenderer.invoke(`${CHANNEL}:chooseFolder`),
   checkLocal: (url: string, model: string) => ipcRenderer.invoke(`${CHANNEL}:checkLocal`, url, model),
   signIn: (cli: 'claude' | 'codex') => ipcRenderer.invoke(`${CHANNEL}:signIn`, cli),
   openUrl: (url: string) => ipcRenderer.invoke(`${CHANNEL}:openUrl`, url),
+  installAgent: (cli: 'claude' | 'codex') => ipcRenderer.invoke(`${CHANNEL}:installAgent`, cli),
+  checkHearing: (samples: Float32Array, sampleRate: number) => ipcRenderer.invoke(`${CHANNEL}:checkHearing`, samples, sampleRate),
+  checkBrains: () => ipcRenderer.invoke(`${CHANNEL}:checkBrains`),
+  checkUpdate: () => ipcRenderer.invoke(`${CHANNEL}:checkUpdate`),
+  runUpdate: () => ipcRenderer.invoke(`${CHANNEL}:runUpdate`),
+  saveReport: () => ipcRenderer.invoke(`${CHANNEL}:saveReport`),
   onProgress: (listener: (progress: unknown) => void) => {
     ipcRenderer.on(`${CHANNEL}:progress`, (_event, progress) => listener(progress));
+  },
+  onUpdateState: (listener: (state: unknown) => void) => {
+    ipcRenderer.on(`${CHANNEL}:updateState`, (_event, state) => listener(state));
+  },
+  onLook: (listener: (look: string) => void) => {
+    ipcRenderer.on('jarvis-look', (_event, look) => listener(look));
   },
   onPage: (listener: (page: string) => void) => {
     ipcRenderer.on(`${CHANNEL}:page`, (_event, page) => listener(page));

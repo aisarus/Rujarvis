@@ -8,3 +8,6 @@
 import path from 'node:path';
 
 export const APP_ROOT = path.resolve(__dirname, '..', '..');
+
+/** Имя приложения для Windows: им панель задач собирает окна Джарвиса в одну кнопку. */
+export const APP_USER_MODEL_ID = 'io.github.aisarus.rujarvis';

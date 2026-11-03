@@ -104,6 +104,16 @@ function вопрос(extra: Record<string, unknown> = {}): Record<string, unkno
 }
 
 describe('проверка того, что заготовила модель', () => {
+  it('варианты-формулы, отличные знаком, — не повтор; отличные пунктуацией — повтор', () => {
+    const формулы = (тексты: string[]) =>
+      вопрос({ options: тексты.map((text, k) => ({ text, ru: text, why: k === 1 ? 'да' : 'нет', correct: k === 1 })) });
+    const годный = checkGenerated({ questions: [формулы(['$(m-n)(m+n)$', '$(m+n)(m+n)$', '$(m-n)^2$', '$m^2+n^2$'])] }, { lecture: 'L', topics: темы, translate: true });
+    expect(годный.warnings).toEqual([]);
+    expect(годный.questions).toHaveLength(1);
+    const повтор = checkGenerated({ questions: [формулы(['Да.', 'да', 'Нет', 'Не знаю'])] }, { lecture: 'L', topics: темы, translate: true });
+    expect(повтор.warnings[0]).toMatch(/повторяются/u);
+  });
+
   it('годный вопрос проходит; кривые выбрасываются с причиной', () => {
     const плохие = [
       вопрос({ prompt: 'ש1', options: [] }),
@@ -324,6 +334,81 @@ describe('служба учёбы: сегодня, квиз, карточки, �
     // Имя, которое Windows не пускает в папку, приводится, а не роняет правку.
     expect(await s.renameCourse('Микро', 'Микро: введение')).toBe('Микро введение');
     expect(store.courses()).toEqual(['Микро введение']);
+  });
+
+  it('звук лекции: размер в карточке, «▶» только пока он есть, удаление насовсем — по одной и скопом', async () => {
+    const { s, vault, заметка } = await служба({ recordingsAutoDays: () => 7 });
+    const звук = path.join(vault, 'Микро', '2026-10-20 — Спрос.wav');
+    expect(s.recordings()).toEqual({ count: 0, bytes: 0, deletable: 0, deletableBytes: 0, autoDays: 7 });
+    await writeFile(звук, Buffer.alloc(4096));
+    expect(s.course('Микро').lectures[0]?.audio).toEqual({ bytes: 4096 });
+    expect(s.recordings()).toMatchObject({ count: 1, bytes: 4096, deletable: 1 });
+    const квиз = s.startQuiz({ course: 'Микро', topic: '2026-10-20 — Спрос#1' });
+    expect(s.answerQuiz(квиз.id, 0, 0).source.audioFile).toBe(звук);
+
+    // Чужой файл мимо «Лекций» удалить нельзя.
+    await expect(s.deleteRecording(path.join(path.dirname(vault), 'чужое.md'))).rejects.toThrow(/не лекция/u);
+    expect(await s.deleteRecording(заметка)).toEqual({ bytes: 4096 });
+    expect(existsSync(звук)).toBe(false);
+    expect(s.course('Микро').lectures[0]?.audio).toBeUndefined();
+    // Звука нет — кнопки «▶» нет: немой проигрыватель хуже никакого.
+    const ещё = s.startQuiz({ course: 'Микро', topic: '2026-10-20 — Спрос#1' });
+    expect(s.answerQuiz(ещё.id, 0, 0).source.audioFile).toBeUndefined();
+    await expect(s.deleteRecording(заметка)).rejects.toThrow(/уже нет/u);
+
+    await writeFile(звук, Buffer.alloc(100));
+    expect(await s.deleteAllRecordings()).toEqual({ deleted: 1, bytes: 100, kept: 0, failed: 0 });
+  });
+
+  it('«Перенести…»: лекция с вопросами, карточками и прогрессом переезжает в другой курс', async () => {
+    const { s, store, vault, заметка } = await служба();
+    await writeFile(path.join(vault, 'Микро', '2026-10-20 — Спрос.wav'), Buffer.alloc(10));
+    const квиз = s.startQuiz({ course: 'Микро', topic: '2026-10-20 — Спрос#1' });
+    s.answerQuiz(квиз.id, 0, 0);
+    s.addCardFromQuestion(квиз.id, 0);
+    s.createCourse('Макро');
+
+    expect(await s.moveLecture(заметка, 'макро')).toEqual({ course: 'Макро' });
+    const новая = path.join(vault, 'Макро', '2026-10-20 — Спрос.md');
+    expect(parseFrontmatter(await readFile(новая, 'utf8'))?.course).toBe('Макро');
+    expect(existsSync(path.join(vault, 'Макро', '2026-10-20 — Спрос.wav'))).toBe(true);
+    expect(existsSync(заметка)).toBe(false);
+    // Учёба — вслед за лекцией: банк с новыми путями, ответы и карточка из ошибки.
+    expect(store.banks('Микро')).toEqual([]);
+    expect(store.banks('Макро')[0]).toMatchObject({ course: 'Макро', notesFile: новая, audioFile: path.join(vault, 'Макро', '2026-10-20 — Спрос.wav') });
+    expect(store.progress('Микро').events).toEqual([]);
+    expect(store.progress('Микро').extraCards).toEqual([]);
+    expect(store.progress('Макро').events).toHaveLength(1);
+    expect(store.progress('Макро').extraCards).toHaveLength(1);
+    expect(s.course('Макро').lectures).toHaveLength(1);
+    expect(s.course('Микро')).toMatchObject({ lectures: [], unprepared: [] });
+    // Квиз, начатый до переноса, закрыт: ответ записал бы прогресс в прежний курс.
+    expect(() => s.answerQuiz(квиз.id, 1, 0)).toThrow(/нет/u);
+  });
+
+  it('«Без курса» виден в окне, пока там есть лекции, и разносится по курсам', async () => {
+    const { s, vault } = await служба();
+    const папка = path.join(vault, 'Без курса');
+    await mkdir(папка, { recursive: true });
+    const заметка = path.join(папка, '2026-10-21.md');
+    await writeFile(заметка, "---\nкурс: 'Без курса'\nлекция: 1\nдата: 2026-10-21\n---\n# Лекция\n", 'utf8');
+    expect(s.today().courses.at(-1)).toMatchObject({ name: 'Без курса', unsorted: true, lectures: 1 });
+    expect(s.course('Без курса')).toMatchObject({ unsorted: true, unprepared: [{ notesFile: заметка }] });
+
+    await expect(s.moveLecture(заметка, 'Без курса')).rejects.toThrow(/Без курса/u);
+    await expect(s.moveLecture(path.join(path.dirname(vault), 'чужое.md'), 'Микро')).rejects.toThrow(/не лекция/u);
+    expect(await s.moveLecture(заметка, 'Микро')).toEqual({ course: 'Микро' });
+    expect(s.today().courses.map((c) => c.name)).toEqual(['Микро']);
+    // Плитка считает и лекции без вопросов: «лекций: 0» при записанных парах врало.
+    expect(s.today().courses[0]?.lectures).toBe(2);
+  });
+
+  it('пока конспект дописывается, звук не трогается', async () => {
+    const { s, vault, заметка } = await служба({ audioBusy: () => 'Сейчас дописывается конспект' });
+    await writeFile(path.join(vault, 'Микро', '2026-10-20 — Спрос.wav'), Buffer.alloc(10));
+    await expect(s.deleteRecording(заметка)).rejects.toThrow(/дописывается/u);
+    await expect(s.deleteAllRecordings()).rejects.toThrow(/дописывается/u);
+    expect(existsSync(path.join(vault, 'Микро', '2026-10-20 — Спрос.wav'))).toBe(true);
   });
 
   it('курс, в который пишется конспект, не переименовать и не удалить', async () => {

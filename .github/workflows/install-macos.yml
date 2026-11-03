@@ -572,3 +572,148 @@ jobs:
       - name: Журнал установки, если что-то упало
         if: failure()
         run: tail -100 /tmp/install.log || true
+
+  notes:
+    # Вариант «только конспекты» — его ставят первым тестерам на маке
+    # (26.10.2026): MacBook Pro 2019 на Intel и MacBook Air. Поэтому две
+    # машины, Apple Silicon и Intel, и каждая чистая: полный Джарвис из
+    # соседней задачи не должен подложить конспектору модели и браузер,
+    # которых тот сам не ставит.
+    name: notes (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ветка PR — та самая, а не однофамилица
+        # Как в задаче выше: установщик тянет исходники по имени ветки.
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          want='${{ github.event.pull_request.head.sha }}'
+          have=$(git ls-remote https://github.com/aisarus/Rujarvis.git \
+            "refs/heads/${GITHUB_HEAD_REF}" | cut -f1)
+          test "$have" = "$want" || { echo 'имя ветки ведёт не к этому коду — поставить ровно его нечем'; exit 1; }
+
+      - name: Установка «только конспекты»
+        run: |
+          set -o pipefail
+          bash install.sh --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" --notes --lecture-language en --codex --no-launch 2>&1 | tee /tmp/install-notes.log
+
+      - name: Поставилось только нужное
+        run: |
+          set -e
+          ROOT="$HOME/Library/Application Support/Rujarvis"
+          cat "$ROOT/data/settings.json"
+          grep -Eq '"edition"[[:space:]]*:[[:space:]]*"notes"' "$ROOT/data/settings.json" || { echo 'в настройках нет edition: notes'; exit 1; }
+          grep -Eq '"lectureLanguage"[[:space:]]*:[[:space:]]*"en"' "$ROOT/data/settings.json" || { echo 'язык лекций не записан'; exit 1; }
+          if [ -n "$(find "$ROOT/models/whisper" "$ROOT/models/voices" -type f -print -quit 2>/dev/null)" ]; then
+            echo 'конспектору скачались модели команд или голос'; exit 1
+          fi
+          if grep -q 'Кладу запасной браузер' /tmp/install-notes.log; then echo 'конспектору скачивался запасной браузер'; exit 1; fi
+          echo "=== распознавание лекций ==="
+          # Homebrew живёт в /opt/homebrew на Apple Silicon и в /usr/local на Intel.
+          test -x /opt/homebrew/bin/whisper-server || test -x /usr/local/bin/whisper-server || { echo 'whisper-server не поставился'; exit 1; }
+          ls -la "$ROOT/models/whisper-gpu"
+          test "$(find "$ROOT/models/whisper-gpu" -name '*.bin' | wc -l)" -ge 2 || { echo 'нет общей модели или модели для лекций'; exit 1; }
+          grep -q 'Конспект' "$HOME/Applications/Rujarvis.app/Contents/Info.plist" || { echo 'в Info.plist объяснение микрофона не для конспектора'; exit 1; }
+          echo "=== Codex для подписки ChatGPT ==="
+          grep -E 'Codex( |:)' /tmp/install-notes.log | tail -3
+          grep -q 'Codex не поставился' /tmp/install-notes.log && { echo 'Codex не поставился'; exit 1; }
+          grep -E '^Codex: ' /tmp/install-notes.log | grep -vq 'не найден' || { echo 'jarvis:setup не увидел Codex'; exit 1; }
+
+      - name: 'PDF для Codex: текст и страницы-сканы через PDFKit'
+        # Проверки независимы: упавшая не должна прятать остальные.
+        if: ${{ !cancelled() }}
+        # Codex PDF сам не читает; на маке его страницы достаёт PDFKit через
+        # osascript. Сценарий JXA проверяется только на настоящей macOS.
+        run: |
+          set -o pipefail
+          cd "$HOME/Library/Application Support/Rujarvis/src"
+          set +e
+          pnpm jarvis:pdfkit-check 2>&1 | tee /tmp/pdfkit.log | tail -6
+          code=$?
+          set -e
+          test "$code" -eq 0 || { echo "PDF для Codex не читается (код $code)"; exit 1; }
+
+      - name: 'Конспект с подставного микрофона: плашка, запись, расшифровка'
+        if: ${{ !cancelled() }}
+        # Речь — публичный образец whisper.cpp, дважды с паузами: лекции
+        # владельца в облако не уходят. Claude Code и Codex здесь не вошли,
+        # поэтому итога конспекта нет и не ждётся: проверяются звук и слух.
+        run: |
+          set -o pipefail
+          cd "$HOME/Library/Application Support/Rujarvis/src"
+          curl -fsSL -o "$RUNNER_TEMP/jfk.wav" https://github.com/ggml-org/whisper.cpp/raw/master/samples/jfk.wav
+          python3 - "$RUNNER_TEMP/jfk.wav" "$RUNNER_TEMP/lecture.wav" <<'PY'
+          import sys, wave
+          src = wave.open(sys.argv[1]); p = src.getparams(); frames = src.readframes(src.getnframes())
+          pause = b'\x00' * (p.sampwidth * p.nchannels * p.framerate * 2)
+          out = wave.open(sys.argv[2], 'wb'); out.setparams(p); out.writeframes(frames + pause + frames + pause); out.close()
+          PY
+          # Для разбора: слышит ли подставной микрофон файл без переноса службы
+          # звука из песочницы (notes-check его переносит). Не проверка — справка.
+          node build.mjs >/dev/null
+          npx electron dist/qa/fake-mic.cjs --file="$RUNNER_TEMP/lecture.wav" --out="$RUNNER_TEMP/fake-raw.wav" --mode=raw --seconds=5 >/dev/null 2>&1 || true
+          python3 -c "import wave,array,sys; w=wave.open(sys.argv[1]); a=array.array('h', w.readframes(w.getnframes())); print('справка: подставной микрофон без переноса службы звука — пик', round(max([abs(x) for x in a] or [0])/32768, 3))" "$RUNNER_TEMP/fake-raw.wav" || echo 'справка: подставной микрофон ничего не записал'
+          set +e
+          pnpm jarvis:notes-check -- --file="$RUNNER_TEMP/lecture.wav" --expect=country --language=en 2>&1 | tee /tmp/notes-check.log | tail -20
+          code=$?
+          set -e
+          grep -a 'Всего' /tmp/notes-check.log || { echo 'Проверка не дошла до итога: судить не по чему.'; exit 1; }
+          test "$code" -eq 0 || { echo "Конспектор не работает (код $code)"; exit 1; }
+
+      - name: 'Мастер конспектора: «Установить» Claude Code, проверки, «Начать»'
+        if: ${{ !cancelled() }}
+        # Самодостаточный онбординг: тестерша проходит его без Терминала.
+        # Claude Code ставится кнопкой — настоящим npm; запись проверки —
+        # подставным микрофоном из той же публичной речи.
+        run: |
+          set -o pipefail
+          cd "$HOME/Library/Application Support/Rujarvis/src"
+          set +e
+          pnpm jarvis:notes-onboarding-check -- --file="$RUNNER_TEMP/lecture.wav" --install=claude --language=en 2>&1 | tee /tmp/notes-onboarding.log | tail -16
+          code=$?
+          set -e
+          grep -a 'Всего' /tmp/notes-onboarding.log || { echo 'Проверка мастера не дошла до итога: судить не по чему.'; exit 1; }
+          test "$code" -eq 0 || { echo "Мастер конспектора не проходится (код $code)"; exit 1; }
+
+      - name: 'Звук компьютера (Zoom): петля на macOS 14.2+'
+        if: ${{ !cancelled() }}
+        # Разрешения «Запись системного звука» на раннере дать некому, поэтому
+        # «нечем мерить» здесь — не провал. Провал — живая дорожка и тишина.
+        run: |
+          set -o pipefail
+          cd "$HOME/Library/Application Support/Rujarvis/src"
+          plist="node_modules/electron/dist/Electron.app/Contents/Info.plist"
+          plutil -p "$plist" | grep -E 'AudioCapture|Microphone' || echo "в $plist нет NSAudioCaptureUsageDescription"
+          set +e
+          pnpm jarvis:system-audio-check 2>&1 | tee /tmp/system-audio.log | tail -6
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then echo 'Звук компьютера: нечем мерить.'; exit 0; fi
+          test "$code" -eq 0 || { echo "Звук компьютера не доходит (код $code)"; exit 1; }
+
+      - name: Обновление без ключей не меняет вариант и язык лекций
+        if: ${{ !cancelled() }}
+        # «Обновить» в приложении запускает этот же установщик без
+        # --notes и без языка лекций. Конспектор не должен стать голосовым
+        # Джарвисом, а слух лекций — переключиться на язык интерфейса.
+        run: |
+          set -o pipefail
+          ROOT="$HOME/Library/Application Support/Rujarvis"
+          bash install.sh --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" --no-launch 2>&1 | tee /tmp/install-notes2.log | tail -15
+          grep -Eq '"edition"[[:space:]]*:[[:space:]]*"notes"' "$ROOT/data/settings.json" || { echo 'обновление сделало из конспектора Джарвиса целиком'; exit 1; }
+          grep -Eq '"lectureLanguage"[[:space:]]*:[[:space:]]*"en"' "$ROOT/data/settings.json" || { echo 'обновление сменило язык лекций'; exit 1; }
+          if grep -q 'Кладу запасной браузер' /tmp/install-notes2.log; then echo 'обновление конспектора качало запасной браузер'; exit 1; fi
+          echo 'вариант и язык лекций пережили обновление'
+
+      - name: Журналы, если что-то упало
+        if: failure()
+        run: |
+          tail -60 /tmp/install-notes.log || true
+          tail -120 "$HOME/Library/Application Support/Rujarvis/logs/jarvis.log" || true

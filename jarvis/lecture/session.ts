@@ -25,6 +25,7 @@ import { closeSync, openSync, statSync, writeSync } from 'node:fs';
 import { appendFile, mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { finalStyleRules, fromSummary, obsidianRules, sectionStyleRules, tidyNoteMarkdown, type NoteLanguages, type NotesStyle } from '../notes/style';
 import { splitCourseAndTopic } from './courses';
 import { lectureFileBase } from './vault';
 
@@ -40,6 +41,8 @@ export interface LectureDeps {
   lectureLanguage?: string;
   /** Язык конспекта. По умолчанию — русский. */
   notesLanguage?: NotesLanguage;
+  /** Вид конспекта в Obsidian. По умолчанию — «Разбор». */
+  notesStyle?: NotesStyle;
   /** Не чаще, чем раз в столько звука, — раздел конспекта. */
   sectionEveryMs?: number;
   /** И не меньше стольких новых слов расшифровки. */
@@ -120,6 +123,8 @@ function названиеЯзыка(код: string, notes: NotesLanguage): strin
 export interface PromptLanguages {
   lecture: string;
   notes: NotesLanguage;
+  /** Вид конспекта (`jarvis/notes/style.ts`); нет — «Разбор». */
+  style?: NotesStyle;
 }
 
 function слова(текст: string): number {
@@ -240,9 +245,36 @@ function правилоПроверки(notes: NotesLanguage, где: 'кусо�
 }
 
 /**
- * Промпт раздела. `прежние` — тексты уже написанных разделов, а не одни их
- * названия: условие задачи звучит в одном куске, а ответ — через десять
- * минут в другом, и сверить число из куска без них не с чем.
+ * Ответ — это и есть текст заметки.
+ *
+ * Живая проверка 20.10.2026: в промпте стояло «конспект живёт в Obsidian», и
+ * Claude Code полез открывать хранилище, получил отказ и начал раздел словами
+ * «Доступа к хранилищу Obsidian сейчас нет — вставьте раздел сами». Модели
+ * незачем знать, куда ляжет текст: только что вернуть.
+ */
+const ОТВЕТ_ТЕКСТОМ = {
+  ru: 'Ответь только текстом в разметке Markdown: ничего не открывай, не читай и не сохраняй — твой ответ целиком и есть текст, его вставит программа. Никаких пояснений до и после.',
+  en: 'Reply with the Markdown text only: open, read or save nothing — your whole reply is the text, a program inserts it. No remarks before or after.',
+} as const;
+
+/** Языки для правил оформления: чужой язык лекции — по имени, свой — null. */
+function языкиЗаметки(языки: PromptLanguages): NoteLanguages {
+  return {
+    notes: языки.notes,
+    foreign: языки.lecture !== языки.notes ? названиеЯзыка(языки.lecture, языки.notes) : null,
+  };
+}
+
+/**
+ * Раздел конспекта: кусок расшифровки → один раздел.
+ *
+ * Метки «[мм:сс]» в куске — место в звуке лекции: по ним модель ставит минуту
+ * у слов лектора и у пометок. Как оформлять раздел — по виду конспекта, который
+ * выбрал человек; общие правила разметки — одни на все заметки Джарвиса.
+ *
+ * `прежние` — тексты уже написанных разделов, а не одни их названия: условие
+ * задачи звучит в одном куске, а ответ — через десять минут в другом, и сверить
+ * число из куска без них не с чем.
  */
 export function sectionPrompt(
   кусок: string,
@@ -252,22 +284,21 @@ export function sectionPrompt(
 ): string {
   const чужой = языки.lecture !== языки.notes;
   const язык = названиеЯзыка(языки.lecture, языки.notes);
+  const вид = языки.style ?? 'razbor';
+  const правила = [...sectionStyleRules(вид, языкиЗаметки(языки)), ...obsidianRules(языкиЗаметки(языки)).map((п) => `- ${п}`)];
   if (языки.notes === 'en') {
     return [
       `You are taking notes on a lecture${чужой ? ` in ${язык}` : ''} for a student who reads English.`,
+      ОТВЕТ_ТЕКСТОМ.en,
       `Subject: ${subject || 'not given'}.`,
-      'Below is a new chunk of the verbatim transcript; each line starts with its time [mm:ss]. Recognition is automatic and has errors: restore the meaning, not the letters — except numbers, formulas and notation, see below.',
+      'Below is a new chunk of the verbatim transcript; each line starts with its time [mm:ss]. Recognition is automatic and has errors: restore the meaning, not the letters — except numbers, formulas and notation, see below. The "[mm:ss]" labels are only for citing the lecturer and for marks, do not copy them otherwise.',
       '',
       'Write ONE section of notes in English:',
       '- the first line is a heading: "### " and the topic of this chunk in your own words, with no formulas (for example, "### The demand curve");',
-      '- then 3–8 bullet points "- …" with the essentials: definitions, formulas, examples, what the lecturer stressed;',
-      чужой
-        ? `- terms in English with the lecturer's own word in ${язык} in parentheses;`
-        : "- terms as the lecturer said them;",
+      ...правила,
       '- no introductions, no retelling of earlier sections, nothing made up;',
       '- the chunk is cut by time and may start and end mid-sentence: leave out what is cut off at the edges, do not mark it.',
-      '- course logistics that matter to the student (exam format, deadlines, required reading, office hours) go into a short section "### Course logistics";',
-      `If the chunk has neither lecture content nor such logistics (noise, chatter, sound checks), reply with one word: ${NOTES_WORDS.en.skip}`,
+      `If the chunk has neither lecture content nor course logistics (noise, chatter, sound checks), reply with one word: ${NOTES_WORDS.en.skip}`,
       '',
       ...правилоФормул('en'),
       '',
@@ -283,17 +314,16 @@ export function sectionPrompt(
   }
   return [
     `Ты конспектируешь лекцию${чужой ? ` на ${язык}` : ''} для студента, который читает по-русски.`,
+    ОТВЕТ_ТЕКСТОМ.ru,
     `Предмет: ${subject || 'не назван'}.`,
-    'Ниже — новый кусок дословной расшифровки, каждая строка начинается со своего времени [мм:сс]. Распознавание автоматическое, в нём бывают ошибки: восстанавливай смысл, а не буквы, — кроме чисел, формул и обозначений, о них ниже.',
+    'Ниже — новый кусок дословной расшифровки, каждая строка начинается со своего времени [мм:сс]. Распознавание автоматическое, в нём бывают ошибки: восстанавливай смысл, а не буквы, — кроме чисел, формул и обозначений, о них ниже. Метки «[мм:сс]» — только для подписи слов лектора и пометок, больше никуда их не переноси.',
     '',
     'Сделай ОДИН раздел конспекта на русском:',
     '- первая строка — заголовок: «### » и тема этого куска своими словами, без формул (например, «### Кривая спроса»);',
-    '- дальше 3–8 пунктов «- …» с главным: определения, формулы, примеры, что лектор подчеркнул;',
-    чужой ? `- термины — по-русски и в скобках на ${язык}, как их сказал лектор;` : '- термины — как их сказал лектор;',
+    ...правила,
     '- без вступлений, без пересказа прошлых разделов, без выдуманного;',
     '- кусок режется по времени и может начинаться и кончаться на полуслове: оборванное по краям просто опусти, не помечай.',
-    '- организационное, важное студенту (формат экзамена, сроки, обязательная литература, часы приёма), — коротким разделом «### Организационное»;',
-    `Если в куске нет ни содержания лекции, ни такого организационного (шум, болтовня, проверка звука) — ответь одним словом: ${NOTES_WORDS.ru.skip}`,
+    `Если в куске нет ни содержания лекции, ни организационного (шум, болтовня, проверка звука) — ответь одним словом: ${NOTES_WORDS.ru.skip}`,
     '',
     ...правилоФормул('ru'),
     '',
@@ -308,6 +338,7 @@ export function sectionPrompt(
   ].join('\n');
 }
 
+/** Итог лекции: курс и тема двумя строками, дальше — части по виду конспекта. */
 export function finalPrompt(
   расшифровка: string,
   subject: string,
@@ -316,9 +347,13 @@ export function finalPrompt(
 ): string {
   const чужой = языки.lecture !== языки.notes;
   const язык = названиеЯзыка(языки.lecture, языки.notes);
+  const вид = языки.style ?? 'razbor';
+  const части = finalStyleRules(вид, языкиЗаметки(языки));
+  const разметка = obsidianRules(языкиЗаметки(языки)).map((п) => `- ${п}`);
   if (языки.notes === 'en') {
     return [
       `Below is the whole transcript of a lecture${чужой ? ` in ${язык}` : ''} (automatic recognition, with errors; each line starts with its time [mm:ss]).`,
+      ОТВЕТ_ТЕКСТОМ.en,
       `Subject as the student named it: ${subject || 'not given'}.`,
       `The student's courses: ${курсы.length > 0 ? курсы.join('; ') : 'none yet'}.`,
       '',
@@ -326,12 +361,11 @@ export function finalPrompt(
       "Course: <which of the student's courses this lecture belongs to, exactly as listed; if none fits — a short name for a new course, in English>",
       'Topic: <the topic of this lecture in 3–6 words, in English, with no formulas>',
       '',
-      'Then write three parts in English markdown, with no introduction and nothing made up:',
-      '## Summary — 3–6 sentences: what the lecture is about and the main conclusion.',
-      чужой
-        ? `## Concepts — 5–15 lines like "- term in English (the lecturer's term in ${язык}) — one line of explanation".`
-        : '## Concepts — 5–15 lines like "- term — one line of explanation".',
-      '## Exam questions — 3–7 questions on the lecture material.',
+      'Then write these parts in English, in this order, with no introduction and nothing made up:',
+      ...части,
+      '',
+      'Formatting:',
+      ...разметка,
       '',
       ...правилоФормул('en'),
       '',
@@ -343,6 +377,7 @@ export function finalPrompt(
   }
   return [
     `Ниже — вся расшифровка лекции${чужой ? ` на ${язык}` : ''} (распознавание автоматическое, с ошибками; каждая строка начинается со своего времени [мм:сс]).`,
+    ОТВЕТ_ТЕКСТОМ.ru,
     `Предмет, как его назвал студент: ${subject || 'не назван'}.`,
     `Курсы студента: ${курсы.length > 0 ? курсы.join('; ') : 'пока нет'}.`,
     '',
@@ -350,12 +385,11 @@ export function finalPrompt(
     'Предмет: <к какому из курсов студента относится лекция — точно как в списке; если ни один не подходит — короткое название нового курса по-русски, в именительном падеже>',
     'Тема: <тема этой лекции в 3–6 словах, по-русски, без формул>',
     '',
-    'Дальше напиши на русском три части в markdown, без вступлений и без выдуманного:',
-    '## Кратко — 3–6 предложений: о чём лекция и главный вывод.',
-    чужой
-      ? `## Понятия — 5–15 строк вида «- термин по-русски (термин лектора на ${язык}) — одна строка объяснения».`
-      : '## Понятия — 5–15 строк вида «- термин — одна строка объяснения».',
-    '## Вопросы к экзамену — 3–7 вопросов по материалу лекции.',
+    'Дальше напиши на русском эти части, по порядку, без вступлений и без выдуманного:',
+    ...части,
+    '',
+    'Оформление:',
+    ...разметка,
     '',
     ...правилоФормул('ru'),
     '',
@@ -371,7 +405,10 @@ export function finalPrompt(
  * узнаётся на обоих языках: модель иногда отвечает не тем словом, что просили.
  */
 export function sectionFromReply(ответ: string, номер: number, notes: NotesLanguage = 'ru'): string | null {
-  const текст = ответ.trim();
+  let текст = tidyNoteMarkdown(ответ);
+  // Слова модели до заголовка раздела — не конспект («доступа нет, вставьте сами»).
+  const заголовок = текст.search(/^### /mu);
+  if (заголовок > 0) текст = текст.slice(заголовок);
   const начало = текст.toUpperCase();
   if (!текст || начало.startsWith(NOTES_WORDS.ru.skip) || начало.startsWith(NOTES_WORDS.en.skip)) return null;
   return текст.startsWith('### ') ? текст : `### ${NOTES_WORDS[notes].section} ${номер}\n${текст}`;
@@ -420,6 +457,8 @@ export class LectureSession {
   private мсЗвука = 0;
   /** Сколько секунд звука ждёт распознавания. */
   private вОчереди = 0;
+  /** Запись звука в файл — своей очередью, впереди распознавания. */
+  private запись: Promise<void> = Promise.resolve();
   /** Где кончился прошлый раздел, мс звука. */
   private последнийРаздел = 0;
   private номерРаздела = 0;
@@ -436,7 +475,7 @@ export class LectureSession {
     when: Date = new Date(),
   ) {
     const notes = deps.notesLanguage ?? 'ru';
-    this.языки = { lecture: deps.lectureLanguage ?? notes, notes };
+    this.языки = { lecture: deps.lectureLanguage ?? notes, notes, style: deps.notesStyle };
     this.слова = NOTES_WORDS[notes];
     const base = lectureFileBase(subject, when, notes);
     this.notesFile = path.join(folder, `${base}.md`);
@@ -481,6 +520,19 @@ export class LectureSession {
     const конец = когда + (samples.length / sampleRate) * 1000;
     this.мсЗвука = конец;
     const секунд = samples.length / sampleRate;
+    if (когда === 0) this.частотаЗвука = sampleRate;
+    // Звук — в файл сразу, своей очередью, а не когда до куска дойдёт
+    // распознавание. На машине, которая распознаёт медленнее речи (мак на
+    // Intel без видеокарты), очередь распознавания отстаёт на десятки минут,
+    // и закрой человек Джарвис в это время — нераспознанный звук пропал бы
+    // вместе с памятью. Запись от скорости распознавания не зависит.
+    const pcm = pcm16(samples);
+    this.запись = this.запись
+      .then(async () => {
+        await appendFile(this.audioFile, pcm);
+        this.байтЗвука += pcm.length;
+      })
+      .catch((error: unknown) => this.deps.log?.(`звук куска ${метка(когда)} не записан: ${error instanceof Error ? error.message : String(error)}`));
     this.вОчереди += секунд;
     // Упавший кусок не должен останавливать очередь: цепочка обещаний после
     // отказа пропускала бы все следующие куски до конца лекции.
@@ -496,11 +548,6 @@ export class LectureSession {
   }
 
   private async кусок(samples: Float32Array, sampleRate: number, когда: number, конец: number): Promise<void> {
-    if (this.байтЗвука === 0) this.частотаЗвука = sampleRate;
-    const pcm = pcm16(samples);
-    await appendFile(this.audioFile, pcm);
-    this.байтЗвука += pcm.length;
-
     let текст = '';
     try {
       текст = (await this.deps.transcribe(samples, sampleRate)).trim();
@@ -562,7 +609,7 @@ export class LectureSession {
     this.заголовокПоРазмеру();
     // И ещё раз, когда очередь допишет уже принятые куски: иначе их звук
     // оказался бы за объявленным размером и не проигрывался бы.
-    void this.расшифровка.finally(() => this.заголовокПоРазмеру());
+    void this.запись.finally(() => this.заголовокПоРазмеру());
   }
 
   /**
@@ -571,6 +618,11 @@ export class LectureSession {
    * полминуты против десяти минут), и без этого весь звук лежал бы в памяти
    * очередью.
    */
+  /** Сколько секунд звука ещё ждёт распознавания: столько распознавание отстаёт от лекции. */
+  get lagSeconds(): number {
+    return this.вОчереди;
+  }
+
   async backlog(maxSec: number): Promise<void> {
     while (this.вОчереди > maxSec) await new Promise((готово) => setTimeout(готово, 200));
   }
@@ -607,7 +659,7 @@ export class LectureSession {
         const итогом = this.deps.summarizeFinal ?? this.deps.summarize;
         const ответ = splitCourseAndTopic(await итогом(finalPrompt(расшифровка, this.subject, this.языки, курсы)));
         ({ course, topic } = ответ);
-        const итог = ответ.rest;
+        const итог = ответ.rest ? tidyNoteMarkdown(fromSummary(ответ.rest)) : '';
         if (итог) {
           const заметка = await readFile(this.notesFile, 'utf8');
           const место = заметка.indexOf(this.слова.notes);
@@ -619,6 +671,7 @@ export class LectureSession {
       }
     }
 
+    await this.запись;
     const файл = await open(this.audioFile, 'r+');
     try {
       await файл.write(wavHeader(this.байтЗвука, this.частотаЗвука), 0, 44, 0);

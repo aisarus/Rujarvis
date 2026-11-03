@@ -12,6 +12,14 @@ const KEY_WORDS = {
 
 let data = null;
 let page = new URLSearchParams(location.search).get('page') === 'onboarding' ? 'onboarding' : 'settings';
+
+// Вид — сразу, до первой отрисовки: настройки ещё едут из главного процесса.
+const LOOKS = ['tetrad', 'marker', 'ring'];
+function applyLook(look) {
+  if (LOOKS.includes(look)) document.documentElement.dataset.look = look;
+}
+applyLook(new URLSearchParams(location.search).get('look'));
+if (api.onLook) api.onLook(applyLook);
 let step = 0;
 let tab = 'general';
 /** Ход загрузок: `${kind}:${id}` → { stage, ratio, message }. */
@@ -83,9 +91,10 @@ function agentCard(key, name, optional) {
     ${installed ? '' : `<p class="hint" style="margin:8px 0 0">${escapeHtml(key === 'claude' ? s.agentInstallHint : s.codexInstallHint)}</p>`}
     <div class="row" style="justify-content:flex-start;margin-top:12px">
       ${installed && !signed ? `<button class="btn primary" data-act="signin">${s.agentSignIn}</button>` : ''}
-      ${!installed ? `<button class="btn primary" data-act="page">${s.agentInstallPage}</button>` : ''}
+      ${!installed ? `<button class="btn primary" data-act="install">${s.agentInstall}</button><button class="btn" data-act="page">${s.agentInstallManual}</button>` : ''}
       <button class="btn" data-act="check">${s.check}</button>
     </div>
+    <p class="error" data-act="install-error" style="margin:8px 0 0" hidden></p>
     ${installed && !signed ? `<p class="hint" style="margin:8px 0 0">${data.platform === 'darwin' ? s.agentSignInHintMac : s.agentSignInHint}</p>` : ''}
   </div>`);
   // Пока идёт проба, кнопка серая: она запускает CLI и думает секунды, а
@@ -99,6 +108,26 @@ function agentCard(key, name, optional) {
       check.disabled = false;
     }
   };
+  // Ставит сам Джарвис (`installAgent`): для человека не из IT страница npm и
+  // Терминал — тупик на втором шаге (тестеры на маке, 26.10.2026).
+  const install = node.querySelector('[data-act=install]');
+  if (install) {
+    install.onclick = async () => {
+      const ошибка = node.querySelector('[data-act=install-error]');
+      install.disabled = true;
+      install.textContent = s.agentInstalling;
+      ошибка.hidden = true;
+      const итог = await api.installAgent(key).catch((error) => ({ ok: false, message: String((error && error.message) || error) }));
+      if (итог && итог.ok) {
+        await refresh();
+        return;
+      }
+      install.disabled = false;
+      install.textContent = s.agentInstall;
+      ошибка.textContent = s.agentInstallFailed.replace('{0}', (итог && итог.message) || '');
+      ошибка.hidden = false;
+    };
+  }
   const signIn = node.querySelector('[data-act=signin]');
   if (signIn) signIn.onclick = () => api.signIn(key);
   // Адрес установки был написан словами в подсказке, а открыть его было
@@ -201,6 +230,59 @@ function lectureLanguageCard() {
   return card;
 }
 
+/**
+ * Распознавание лекций: будет ли конспект и что поставить одной кнопкой.
+ * Раньше — только установщиком или командой в терминале, а окно молчало, и
+ * студент узнавал, что конспекта нет, вечером над пустой заметкой.
+ */
+function lectureSttCard() {
+  const s = t();
+  const st = data.lectureStt;
+  const names = { he: s.langHe, ru: s.langRu, en: s.langEn, ar: s.langAr, fr: s.langFr, de: s.langDe, es: s.langEs };
+  const key = `lecture:${st.language}`;
+  const p = progress.get(key);
+  const ready = st.runtime && st.model;
+  const [pill, pillText, hint] = !st.supported
+    ? ['bad', s.lectureSttStatusMissing, s.lectureSttUnsupported]
+    : ready
+      ? ['ok', s.lectureSttStatusReady, s.lectureSttReady]
+      : st.runtime
+        ? ['warn', s.lectureSttStatusGeneral, s.lectureSttGeneral]
+        : ['bad', s.lectureSttStatusMissing, s.lectureSttMissing];
+  let action = '';
+  if (p && p.stage !== 'complete' && p.stage !== 'error') {
+    const label = p.stage === 'downloading' ? s.downloading : s.extracting;
+    action = `<div style="min-width:240px"><div class="row"><span class="pill">${label}</span><div class="bar"><i style="width:${Math.round((p.ratio ?? 1) * 100)}%"></i></div></div>${p.message ? `<div class="desc">${escapeHtml(p.message)}</div>` : ''}</div>`;
+  } else if (st.supported && !ready) {
+    action = `<button class="btn primary" data-act="install">${s.lectureSttInstall}${st.missingBytes ? ` · ${размерФайла(st.missingBytes)}` : ''}</button>`;
+  }
+  const card = el(`<div class="card" id="lecture-stt">
+    <div class="row"><h2>${s.lectureStt}</h2><span class="pill ${pill}">${pillText}</span></div>
+    <p class="hint" style="margin:8px 0 0">${hint}</p>
+    <p class="hint" style="margin:6px 0 0">${s.lectureSttLanguage.replace('{0}', escapeHtml(names[st.language] || st.language)).replace('{1}', escapeHtml(st.modelFile))}</p>
+    ${st.supported && !ready && st.gpu === 'none' ? `<p class="hint" style="margin:6px 0 0"><b>${s.lectureSttNoNvidia}</b></p>` : ''}
+    ${st.supported && !st.runtime && st.gpu === 'metal' ? `<p class="hint" style="margin:6px 0 0">${s.lectureSttMac}</p>` : ''}
+    ${p && p.stage === 'error' ? `<div class="error">${escapeHtml(p.message)}</div>` : ''}
+    ${action ? `<div class="row" style="justify-content:flex-start;margin-top:12px">${action}</div>` : ''}
+  </div>`);
+  const install = card.querySelector('[data-act=install]');
+  if (install) {
+    install.onclick = async () => {
+      progress.set(key, { stage: 'downloading', ratio: 0 });
+      render();
+      const итог = await api.install('lecture', st.language);
+      if (итог && итог.ok === false) {
+        progress.set(key, { stage: 'error', message: итог.message });
+        render();
+        return;
+      }
+      progress.delete(key);
+      await refresh();
+    };
+  }
+  return card;
+}
+
 function modelsCard() {
   const s = t();
   const lang = data.settings.language;
@@ -270,6 +352,40 @@ async function startMic(node) {
 function stopMic() {
   if (micStream) for (const track of micStream.getTracks()) track.stop();
   micStream = null;
+}
+
+/**
+ * Вид и тема. Каждая карточка вида нарисована в своём виде — человек
+ * выбирает, глядя на образец, а не на название.
+ */
+function appearanceCard() {
+  const s = t();
+  const looks = [['tetrad', s.lookTetrad, s.lookTetradHint], ['marker', s.lookMarker, s.lookMarkerHint], ['ring', s.lookRing, s.lookRingHint]];
+  const themes = [['system', s.themeSystem], ['light', s.themeLight], ['dark', s.themeDark]];
+  const listening = data.settings.language === 'en' ? 'Listening…' : 'Слушаю…';
+  const node = el(`<div class="card" id="appearance">
+    <div class="row" style="margin-bottom:10px"><h2>${s.lookTitle}</h2>
+      <div class="seg" role="radiogroup">${themes.map(([id, name]) => `<button type="button" role="radio" data-theme="${id}" class="${data.settings.theme === id ? 'on' : ''}" aria-checked="${data.settings.theme === id}">${escapeHtml(name)}</button>`).join('')}</div></div>
+    <p class="hint" style="margin:0 0 12px">${s.lookHint}</p>
+    <div class="looks">${looks.map(([id, name, hint]) => `<button type="button" class="look-card ${data.settings.look === id ? 'selected' : ''}" data-look="${id}" aria-pressed="${data.settings.look === id}">
+      <div class="look-mini paper"><div class="mini-pill"><i class="mini-dot"></i>${listening}</div><div class="mini-btns"><i></i><i></i><i></i></div></div>
+      <div class="look-name"><b>${escapeHtml(name)}</b><span>${escapeHtml(hint)}</span></div></button>`).join('')}</div>
+  </div>`);
+  for (const button of node.querySelectorAll('.look-card')) button.onclick = () => { applyLook(button.dataset.look); update({ look: button.dataset.look }); };
+  for (const button of node.querySelectorAll('[data-theme]')) button.onclick = () => update({ theme: button.dataset.theme });
+  return node;
+}
+
+/** Как оформлять конспект лекции в Obsidian. */
+function notesStyleCard() {
+  const s = t();
+  const styles = [['razbor', s.notesRazbor, s.notesRazborHint], ['questions', s.notesQuestions, s.notesQuestionsHint], ['bilingual', s.notesBilingual, s.notesBilingualHint]];
+  const node = el(`<div class="card" id="notes-style"><h2>${s.notesStyleTitle}</h2>
+    <p class="hint" style="margin:4px 0 12px">${s.notesStyleHint}</p>
+    <div class="notes-styles">${styles.map(([id, name, hint]) => `<button type="button" data-style="${id}" class="${data.settings.notesStyle === id ? 'selected' : ''}" aria-pressed="${data.settings.notesStyle === id}"><i></i><div><b>${escapeHtml(name)}</b><span>${escapeHtml(hint)}</span></div></button>`).join('')}</div>
+  </div>`);
+  for (const button of node.querySelectorAll('[data-style]')) button.onclick = () => update({ notesStyle: button.dataset.style });
+  return node;
 }
 
 function languageChoice() {
@@ -361,6 +477,11 @@ function folderField(label, hint, key, placeholder) {
  * Готов ли хоть один агент. «Не знаю» о входе (`unknown`) — не повод пугать:
  * вход мог прийти через окружение, и проверит его первая же задача.
  */
+function обаЕсть() {
+  const agents = data.agents || {};
+  return ['claude', 'codex'].every((key) => agents[key] && agents[key].installed);
+}
+
 function агентГотов() {
   const agents = data.agents || {};
   return ['claude', 'codex'].some((key) => agents[key] && agents[key].installed && agents[key].loggedIn !== false);
@@ -381,7 +502,12 @@ function noAgentCard() {
   return node;
 }
 
-const STEPS = ['language', 'agent', 'models', 'mic', 'ready'];
+// У конспектора вместо моделей команд и голоса — распознавание лекций, и оно
+// не держит на шаге: без него лекция всё равно запишется, и карточка честно
+// говорит, что конспекта не будет.
+const STEPS_FULL = ['language', 'agent', 'models', 'mic', 'ready'];
+const STEPS_NOTES = ['language', 'agent', 'lecture', 'mic', 'ready'];
+let STEPS = STEPS_FULL;
 
 function stepReady() {
   const name = STEPS[step];
@@ -395,21 +521,38 @@ function stepReady() {
 
 function renderWizard(main) {
   const s = t();
+  STEPS = notesOnly() ? STEPS_NOTES : STEPS_FULL;
   const name = STEPS[step];
-  main.append(el(`<div class="steps">${STEPS.map((_, i) => `<i class="${i <= step ? 'on' : ''}"></i>`).join('')}</div>`));
+  const короткие = [s.stepShortLanguage, s.stepShortAgent, notesOnly() ? s.stepShortLecture : s.stepShortModels, s.stepShortMic, s.stepShortReady];
+  main.append(
+    el(`<div class="wiz-brand"><span class="logo"></span>Rujarvis</div>`),
+    el(`<ol class="steps">${STEPS.map((_, i) => `<li class="${i < step ? 'done' : i === step ? 'now' : ''}"${i === step ? ' aria-current="step"' : ''}><span>${escapeHtml(короткие[i])}</span></li>`).join('')}</ol>`),
+  );
   const titles = {
     language: [s.onboardingTitle, s.onboardingIntro],
-    agent: [s.stepAgent, s.stepAgentHint],
+    agent: [s.stepAgent, notesOnly() ? s.stepAgentHintNotes : s.stepAgentHint],
     models: [s.stepModels, s.stepModelsHint],
-    mic: [s.stepMic, s.stepMicHint],
-    ready: [s.stepReady, s.stepReadyHint],
+    lecture: [s.stepLecture, s.stepLectureHint],
+    mic: [s.stepMic, notesOnly() ? s.stepMicHintNotes : s.stepMicHint],
+    ready: [s.stepReady, notesOnly() ? s.stepReadyHintNotes : s.stepReadyHint],
   };
   main.append(el(`<h1>${titles[name][0]}</h1>`), el(`<p class="hint">${titles[name][1]}</p>`));
 
-  if (name === 'language') main.append(languageChoice());
+  if (name === 'language') {
+    main.append(languageChoice());
+    main.append(el('<div style="height:14px"></div>'), editionCard());
+    main.append(appearanceCard());
+  }
+  if (name === 'lecture') {
+    main.append(lectureLanguageCard());
+    main.append(lectureSttCard());
+  }
   if (name === 'agent') {
-    main.append(agentCard('claude', 'Claude Code', false));
+    // Хватит одного: нет Claude Code, но готов Codex — это не беда.
+    main.append(agentCard('claude', 'Claude Code', агентГотов()));
     main.append(agentCard('codex', s.codexOptional, true));
+    if (обаЕсть()) main.append(brainCard());
+    main.append(brainCheckCard());
   }
   if (name === 'models') {
     main.append(modelsCard());
@@ -421,14 +564,24 @@ function renderWizard(main) {
     // надписи про это.
     if (!stepReady()) main.append(el(`<p class="hint" style="margin-top:14px">${s.stepModelsNeeded}</p>`));
   }
-  if (name === 'mic') main.append(micCard());
+  if (name === 'mic') {
+    main.append(micCard());
+    if (notesOnly()) main.append(hearingCheckCard());
+  }
   if (name === 'ready') {
     // Живой тест на маке 27.09.2026: мастер пустил дальше без входа в Codex,
     // и после «Начать» Джарвис на всё, кроме прямых команд, молчал. Не запрет
     // — человек вправе начать так, — а правда о том, что его ждёт.
     if (!агентГотов()) main.append(noAgentCard());
-    main.append(keysCard());
-    main.append(redLinesCard());
+    else {
+      const непроверено = checksCard();
+      if (непроверено) main.append(непроверено);
+    }
+    // Конспектору команды и красные линии ни к чему: рук на компьютере у него нет.
+    if (!notesOnly()) {
+      main.append(keysCard());
+      main.append(redLinesCard());
+    }
   }
   if (name !== 'mic') stopMic();
 
@@ -452,13 +605,281 @@ function renderWizard(main) {
 
 // ---------- настройки ----------
 
+// ---------- версия, обновление, отчёт ----------
+
+// Обновление — кнопкой, а не командами в PowerShell: первый тестер получал
+// исправление, вводя `git pull` и `pnpm build` по инструкции.
+function updateCard() {
+  const s = t();
+  const u = data.update || {};
+  const v = u.version;
+  const r = u.result;
+  let status = s.versionNotChecked;
+  if (u.checking) status = s.versionChecking;
+  else if (r && r.state === 'current') status = s.versionCurrent;
+  else if (r && r.state === 'available') status = s.versionAvailable;
+  else if (r && r.state === 'unknown') status = `${s.versionUnknown}: ${escapeHtml(r.reason)}`;
+  const changes = r && r.state === 'available'
+    ? `<ul class="changes">${r.changes.slice(0, 12).map((c) => `<li>${escapeHtml(c)}</li>`).join('')}</ul>${r.more || r.changes.length > 12 ? `<p class="hint" style="margin:4px 0 0">${s.versionMore}</p>` : ''}`
+    : '';
+  const node = el(`<div class="card">
+    <div class="row"><h2>${s.versionTitle}</h2>${v ? `<span class="pill">${escapeHtml(v.short)} · ${s.versionOf} ${escapeHtml(v.date)}</span>` : ''}</div>
+    ${v ? `<p class="hint" style="margin:6px 0 0">${escapeHtml(v.subject)}</p>` : ''}
+    ${u.installed ? `<p style="margin:10px 0 0">${status}</p>${changes}` : `<p class="hint" style="margin:10px 0 0">${s.versionDev}</p>`}
+    ${u.installed ? `<div class="row" style="justify-content:flex-start;margin-top:12px">
+      ${r && r.state === 'available' ? `<button class="btn primary" data-act="run">${s.updateRun}</button>` : ''}
+      <button class="btn" data-act="check" ${u.checking ? 'disabled' : ''}>${s.updateCheck}</button>
+    </div>` : ''}
+    ${u.installed && r && r.state === 'available' ? `<p class="hint" style="margin:8px 0 0">${s.updateHint}</p>` : ''}
+    <p class="hint error" data-role="error" style="margin:8px 0 0" hidden></p>
+  </div>`);
+  const error = node.querySelector('[data-role=error]');
+  const check = node.querySelector('[data-act=check]');
+  if (check) check.onclick = async () => {
+    check.disabled = true;
+    data.update = { ...u, checking: true };
+    render();
+    data.update = await api.checkUpdate();
+    render();
+  };
+  const run = node.querySelector('[data-act=run]');
+  if (run) run.onclick = async () => {
+    run.disabled = true;
+    run.textContent = s.updateStarting;
+    const outcome = await api.runUpdate();
+    // Удачный запуск закрывает Джарвиса вместе с окном; сюда доходит отказ.
+    if (!outcome.ok) {
+      run.disabled = false;
+      run.textContent = s.updateRun;
+      error.textContent = outcome.message;
+      error.hidden = false;
+    }
+  };
+  return node;
+}
+
+function reportCard() {
+  const s = t();
+  const node = el(`<div class="card">
+    <h2>${s.reportTitle}</h2>
+    <p class="hint" style="margin:8px 0 0">${s.reportHint}</p>
+    <div class="row" style="justify-content:flex-start;margin-top:12px"><button class="btn" data-act="save">${s.reportSave}</button></div>
+    <div class="path" data-role="file" hidden></div>
+  </div>`);
+  const save = node.querySelector('[data-act=save]');
+  const file = node.querySelector('[data-role=file]');
+  save.onclick = async () => {
+    save.disabled = true;
+    try {
+      const outcome = await api.saveReport();
+      file.textContent = outcome.ok ? outcome.file : outcome.message;
+      file.hidden = false;
+      if (outcome.ok) toast(s.reportSaved);
+    } finally {
+      save.disabled = false;
+    }
+  };
+  return node;
+}
+
+/** Вариант «только конспекты»: без слуха команд, голоса и агента с руками. */
+function notesOnly() {
+  return data.settings.edition === 'notes';
+}
+
+/**
+ * Что поставлено: Джарвис целиком или только конспекты. Переключается на
+ * ходу — мост перезапустится (после лекции, если она идёт).
+ */
+// ---------- проверки до первой пары ----------
+//
+// Тестерше помогать некому: всё, что может сломаться, мастер показывает сам —
+// до первой пары, а не вечером над пустой заметкой. Итоги живут, пока открыто
+// окно: на последнем шаге видно, что ещё не проверено.
+
+const ИМЕНА_АГЕНТОВ = { claude: 'Claude Code', codex: 'Codex' };
+let проверкаМодели = null;
+let проверкаСлуха = null;
+// Проверка идёт, а страницу перерисовали (закончилась установка агента) —
+// новая карточка должна знать, что ждёт, а ответ — лечь в неё, а не в старую.
+let модельПроверяется = false;
+let слухПроверяется = false;
+
+function перерисоватьКарточку(id, сделать) {
+  const живая = document.getElementById(id);
+  if (живая) живая.replaceWith(сделать());
+}
+
+function модельОтвечает() {
+  return Boolean(проверкаМодели && проверкаМодели.order.some((cli) => проверкаМодели.results.some((r) => r.cli === cli && r.ok)));
+}
+
+function слухРаботает() {
+  return Boolean(проверкаСлуха && проверкаСлуха.ok && проверкаСлуха.text);
+}
+
+function brainCheckCard() {
+  const s = t();
+  const agents = data.agents || {};
+  const естьКого = ['claude', 'codex'].some((key) => agents[key] && agents[key].installed);
+  const node = el(`<div class="card" id="brain-check"><div class="row"><h2>${s.brainCheckTitle}</h2>
+    <button class="btn" data-act="run" ${естьКого && !модельПроверяется ? '' : 'disabled'}>${модельПроверяется ? s.brainChecking : s.brainCheckRun}</button></div>
+    <p class="hint" style="margin:6px 0 0">${естьКого ? s.brainCheckHint : s.brainCheckNone}</p><div data-act="result"></div></div>`);
+  const box = node.querySelector('[data-act=result]');
+  const draw = () => {
+    if (!проверкаМодели) { box.innerHTML = ''; return; }
+    const строки = проверкаМодели.results.map((r) => (r.ok
+      ? `<p class="hint" style="margin:8px 0 0;color:var(--ok)">✓ ${escapeHtml(s.brainCheckOk.replace('{0}', ИМЕНА_АГЕНТОВ[r.cli]).replace('{1}', String(Math.max(1, Math.round(r.seconds)))))}</p>`
+      : `<p class="error" style="margin:8px 0 0">✗ ${escapeHtml(ИМЕНА_АГЕНТОВ[r.cli])}: ${escapeHtml(r.message)}</p>`));
+    const кто = проверкаМодели.order.find((cli) => проверкаМодели.results.some((r) => r.cli === cli && r.ok));
+    строки.push(кто
+      ? `<p class="hint" style="margin:8px 0 0"><b>${escapeHtml(s.brainCheckWho.replace('{0}', ИМЕНА_АГЕНТОВ[кто]))}</b></p>`
+      : `<p class="error" style="margin:8px 0 0">${escapeHtml(s.brainCheckNobody)}</p>`);
+    box.innerHTML = строки.join('');
+  };
+  draw();
+  const run = node.querySelector('[data-act=run]');
+  run.onclick = async () => {
+    модельПроверяется = true;
+    run.disabled = true;
+    run.textContent = s.brainChecking;
+    try {
+      проверкаМодели = await api.checkBrains();
+    } catch (error) {
+      проверкаМодели = { order: [], results: [] };
+    } finally {
+      модельПроверяется = false;
+    }
+    перерисоватьКарточку('brain-check', brainCheckCard);
+  };
+  return node;
+}
+
+// Фраза человека — той же моделью для лекций, что и лекция: проверяется
+// весь слух, от микрофона до сервера распознавания, и его скорость.
+function hearingCheckCard() {
+  const s = t();
+  const node = el(`<div class="card" id="hearing-check"><div class="row"><h2>${s.hearingTitle}</h2>
+    <button class="btn" data-act="rec" ${слухПроверяется ? 'disabled' : ''}>${слухПроверяется ? s.hearingWorking : s.hearingRun}</button></div>
+    <p class="hint" style="margin:6px 0 0">${s.hearingHint}</p><div data-act="result"></div></div>`);
+  const box = node.querySelector('[data-act=result]');
+  const draw = () => {
+    const r = проверкаСлуха;
+    if (!r) { box.innerHTML = ''; return; }
+    if (!r.ok) { box.innerHTML = `<p class="error" style="margin:8px 0 0">${escapeHtml(r.message)}</p>`; return; }
+    if (!r.text) { box.innerHTML = `<p class="error" style="margin:8px 0 0">${escapeHtml(s.hearingNothing)}</p>`; return; }
+    const наКусок = String(Math.max(1, Math.round(r.seconds * 1.3)));
+    const скорость = r.speed === 'fast' ? s.hearingFast : r.speed === 'tight' ? s.hearingTight : s.hearingSlow;
+    // Услышанное — в <bdi>: иврит внутри русской строки иначе переставляет
+    // кавычки и двоеточие. Медленный компьютер — не беда, а предупреждение.
+    const [до, после] = s.hearingHeard.split('{0}');
+    box.innerHTML = `<p class="hint" style="margin:8px 0 0;color:var(--ok)">✓ ${escapeHtml(до)}<bdi>${escapeHtml(r.text)}</bdi>${escapeHtml(после || '')}</p>
+      <p class="hint" style="margin:8px 0 0${r.speed === 'slow' ? ';color:var(--warn)' : ''}">${escapeHtml(скорость.replace('{0}', наКусок))}</p>`;
+  };
+  draw();
+  const rec = node.querySelector('[data-act=rec]');
+  rec.onclick = async () => {
+    слухПроверяется = true;
+    rec.disabled = true;
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: true } });
+    } catch {
+      проверкаСлуха = { ok: false, message: data.platform === 'darwin' ? s.micDeniedMac : s.micDenied };
+      слухПроверяется = false;
+      перерисоватьКарточку('hearing-check', hearingCheckCard);
+      return;
+    }
+    const ctx = new AudioContext({ sampleRate: 16000 });
+    const src = ctx.createMediaStreamSource(stream);
+    const proc = ctx.createScriptProcessor(4096, 1, 1);
+    const parts = [];
+    let total = 0;
+    proc.onaudioprocess = (e) => { const c = new Float32Array(e.inputBuffer.getChannelData(0)); parts.push(c); total += c.length; };
+    src.connect(proc);
+    const mute = ctx.createGain();
+    mute.gain.value = 0;
+    proc.connect(mute);
+    mute.connect(ctx.destination);
+    for (let осталось = 8; осталось > 0; осталось -= 1) {
+      rec.textContent = s.hearingRecording.replace('{0}', String(осталось));
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    proc.onaudioprocess = null;
+    stream.getTracks().forEach((track) => track.stop());
+    await ctx.close().catch(() => undefined);
+    const звук = new Float32Array(total);
+    let at = 0;
+    for (const p of parts) { звук.set(p, at); at += p.length; }
+    rec.textContent = s.hearingWorking;
+    try {
+      проверкаСлуха = await api.checkHearing(звук, 16000);
+    } catch (error) {
+      проверкаСлуха = { ok: false, message: String((error && error.message) || error) };
+    }
+    слухПроверяется = false;
+    перерисоватьКарточку('hearing-check', hearingCheckCard);
+  };
+  return node;
+}
+
+// Последний шаг: что не проверено — напомнить, а не запретить.
+function checksCard() {
+  const s = t();
+  const нет = [];
+  if (notesOnly() && !слухРаботает()) нет.push(['mic', s.checksHearing]);
+  if (!модельОтвечает()) нет.push(['agent', s.checksBrain]);
+  if (нет.length === 0) return null;
+  const node = el(`<div class="card" id="checks"><h2>${s.checksTitle}</h2>
+    ${нет.map(([, текст]) => `<p class="hint" style="margin:6px 0 0">• ${escapeHtml(текст)}</p>`).join('')}
+    <div class="row" style="justify-content:flex-start;margin-top:12px"><button class="btn" data-act="back">${s.checksBack}</button></div></div>`);
+  node.querySelector('[data-act=back]').onclick = async () => {
+    step = STEPS.indexOf(нет[нет.length - 1][0]);
+    if (STEPS[step] === 'agent') await refresh();
+    render();
+  };
+  return node;
+}
+
+// Кто пишет конспект. У первой тестерши на маке ChatGPT, а не Claude
+// (26.10.2026): без выбора конспект шёл бы только через Claude Code.
+function brainCard() {
+  const s = t();
+  const now = ['claude', 'codex'].includes(data.settings.brain) ? data.settings.brain : 'auto';
+  const card = el(`<div class="card" id="brain"><label class="field">${s.brain}</label>
+    <div class="radio">
+      <label><input type="radio" name="brain" value="auto" ${now === 'auto' ? 'checked' : ''}> ${s.brainAuto}</label>
+      <label><input type="radio" name="brain" value="claude" ${now === 'claude' ? 'checked' : ''}> ${s.brainClaude}</label>
+      <label><input type="radio" name="brain" value="codex" ${now === 'codex' ? 'checked' : ''}> ${s.brainCodex}</label>
+    </div>
+    <p class="hint" style="margin:10px 0 0">${s.brainHint}</p></div>`);
+  for (const radio of card.querySelectorAll('input')) radio.onchange = () => update({ brain: radio.value });
+  return card;
+}
+
+function editionCard() {
+  const s = t();
+  const now = data.settings.edition === 'notes' ? 'notes' : 'full';
+  const card = el(`<div class="card" id="edition"><label class="field">${s.edition}</label>
+    <div class="radio">
+      <label><input type="radio" name="edition" value="full" ${now === 'full' ? 'checked' : ''}> ${s.editionFull}</label>
+      <label><input type="radio" name="edition" value="notes" ${now === 'notes' ? 'checked' : ''}> ${s.editionNotes}</label>
+    </div>
+    <p class="hint" style="margin:10px 0 0">${s.editionHint}</p></div>`);
+  for (const radio of card.querySelectorAll('input')) radio.onchange = () => update({ edition: radio.value });
+  return card;
+}
+
 const TABS = ['general', 'voice', 'agents', 'folders', 'keys'];
 
 function renderSettings(main, nav) {
   const s = t();
-  const labels = { general: s.tabGeneral, voice: s.tabVoice, agents: s.tabAgents, folders: s.tabFolders, keys: s.tabKeys };
-  for (const id of TABS) {
-    const button = el(`<button class="${id === tab ? 'active' : ''}">${labels[id]}</button>`);
+  const labels = { general: s.tabGeneral, voice: notesOnly() ? s.tabLectures : s.tabVoice, agents: s.tabAgents, folders: s.tabFolders, keys: s.tabKeys };
+  // Команд у конспектора нет — и вкладки про них тоже.
+  const tabs = notesOnly() ? TABS.filter((id) => id !== 'keys') : TABS;
+  if (!tabs.includes(tab)) tab = 'general';
+  for (const id of tabs) {
+    const button = el(`<button class="${id === tab ? 'active' : ''}"><span>${labels[id]}</span></button>`);
     button.onclick = () => { tab = id; if (id !== 'voice') stopMic(); if (id === 'agents') refresh(); else render(); };
     nav.append(button);
   }
@@ -466,17 +887,29 @@ function renderSettings(main, nav) {
 
   if (tab === 'general') {
     main.append(el(`<p class="hint">${s.stepLanguageHint}</p>`), languageChoice());
-    main.append(el('<div style="height:14px"></div>'), redLinesCard());
+    main.append(el('<div style="height:14px"></div>'), editionCard());
+    main.append(appearanceCard());
+    main.append(notesStyleCard());
+    if (!notesOnly()) main.append(redLinesCard());
+    main.append(updateCard());
+    main.append(reportCard());
   }
   if (tab === 'voice') {
-    main.append(speechPlaceCard());
-    main.append(modelsCard());
+    // Распознавание команд и голос Джарвиса конспектору не нужны.
+    if (!notesOnly()) {
+      main.append(speechPlaceCard());
+      main.append(modelsCard());
+    }
     main.append(lectureLanguageCard());
+    main.append(lectureSttCard());
     main.append(el(`<h2 style="margin-top:8px">${s.stepMic}</h2>`), micCard());
+    main.append(hearingCheckCard());
   }
   if (tab === 'agents') {
-    main.append(agentCard('claude', 'Claude Code', false));
+    main.append(agentCard('claude', 'Claude Code', агентГотов()));
     main.append(agentCard('codex', s.codexOptional, true));
+    main.append(brainCard());
+    main.append(brainCheckCard());
     const model = el(`<div class="card"><label class="field">${s.claudeModel}</label><p class="hint" style="margin:0 0 8px">${s.claudeModelHint}</p>
       <div class="row"><input type="text" value="${escapeHtml(data.settings.claudeModel)}" placeholder="opus"></div></div>`);
     const input = model.querySelector('input');
@@ -494,6 +927,14 @@ function renderSettings(main, nav) {
       </div><p class="hint" style="margin:10px 0 0">${s.speechLoggingHint}</p></div>`);
     for (const radio of logging.querySelectorAll('input')) radio.onchange = () => update({ speechLogging: radio.value });
     main.append(logging);
+    // Звук лекций: пара — 280 МБ, и без этого за семестр уходило 15–20 ГБ.
+    const recordings = el(`<div class="card"><label class="field">${s.recordingsKeep}</label>
+      <div class="radio">
+        ${['week', 'forever'].map((v) => `<label><input type="radio" name="rec" value="${v}" ${data.settings.recordingsKeep === v ? 'checked' : ''}>
+          ${{ week: s.recordingsKeepWeek, forever: s.recordingsKeepForever }[v]}</label>`).join('')}
+      </div><p class="hint" style="margin:10px 0 0">${s.recordingsKeepHint}</p></div>`);
+    for (const radio of recordings.querySelectorAll('input')) radio.onchange = () => update({ recordingsKeep: radio.value });
+    main.append(recordings);
     const places = el(`<div class="card">
       <div class="row"><div><label class="field">${s.dataDir}</label><div class="path">${escapeHtml(data.paths.home)}</div><div class="hint" style="margin:0">${s.dataDirHint}</div></div><button class="btn" data-act="home">${s.open}</button></div>
       <div class="row"><div><label class="field">${s.logFile}</label><div class="path">${escapeHtml(data.paths.log)}</div></div><button class="btn" data-act="log">${s.open}</button></div>
@@ -518,6 +959,7 @@ function render() {
   // Язык страницы — здесь, а не только в refresh: иначе после смены языка
   // атрибут оставался прежним, и переносы со словарём шли по чужому языку.
   document.documentElement.lang = data.settings.language;
+  applyLook(data.settings.look);
   if (page === 'onboarding') renderWizard(main);
   else renderSettings(main, nav);
 }
@@ -531,5 +973,7 @@ api.onProgress((p) => {
 // человек, свернувший окно на середине настройки и открывший его снова из
 // трея, каждый раз начинал бы мастер сначала.
 api.onPage((next) => { if (next !== page) { page = next; step = 0; } render(); });
+// Проверка обновлений идёт и в фоне: закончилась — показать итог, если окно открыто.
+api.onUpdateState((next) => { if (data) { data.update = next; if (page === 'settings' && tab === 'general') render(); } });
 
 void refresh();

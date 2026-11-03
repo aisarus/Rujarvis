@@ -72,9 +72,27 @@ const smooth = (edge0, edge1, x) => {
   const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);
 };
-const ACCENT = [79, 163, 255];
 
-/** Иконка приложения: тёмная плашка, светящееся кольцо, точка. */
+/**
+ * Цвет кольца по углу: слушаю (мятный) → думаю (сиреневый) → говорю (розовый)
+ * → разговариваю (жёлтый) и снова мятный. Кольцо — знак состояния на плашке, значок — то же
+ * кольцо целиком: все состояния сразу.
+ */
+function ringColor(u, v, stops) {
+  const t = (Math.atan2(v, u) / (2 * Math.PI) + 1.08) % 1;
+  const k = t * stops.length;
+  const i = Math.floor(k);
+  const f = k - i;
+  const a = stops[i % stops.length];
+  const b = stops[(i + 1) % stops.length];
+  return [0, 1, 2].map((c) => a[c] + (b[c] - a[c]) * f);
+}
+const NIGHT = [15, 21, 48];
+const APP_STOPS = [[79, 224, 176], [142, 156, 255], [255, 127, 168], [255, 196, 102]];
+// В трее — насыщеннее: значок стоит и на светлой, и на тёмной панели.
+const TRAY_STOPS = [[18, 184, 134], [108, 123, 240], [232, 87, 138], [230, 150, 30]];
+
+/** Иконка приложения: ночная плашка, кольцо всех состояний, светлая точка. */
 function appPixel(x, y, size) {
   const s = 4; // сглаживание подвыборкой
   let r = 0, g = 0, b = 0, a = 0;
@@ -86,11 +104,16 @@ function appPixel(x, y, size) {
     const inside = Math.hypot(qx, qy) <= corner ? 1 : 0;
     if (!inside) continue;
     const d = Math.hypot(u, v);
-    const ring = 1 - smooth(0.04, 0.08, Math.abs(d - 0.55));
-    const glow = Math.exp(-((d - 0.55) ** 2) / 0.02) * 0.45;
-    const dot = 1 - smooth(0.12, 0.17, d);
-    const light = Math.min(1, ring + glow + dot);
-    r += 15 + (ACCENT[0] - 15) * light; g += 17 + (ACCENT[1] - 17) * light; b += 21 + (ACCENT[2] - 21) * light; a += 255;
+    const ring = 1 - smooth(0.075, 0.1, Math.abs(d - 0.52));
+    const glow = Math.exp(-((d - 0.52) ** 2) / 0.03) * 0.25;
+    const dot = 1 - smooth(0.11, 0.15, d);
+    const цвет = ringColor(u, v, APP_STOPS);
+    const кольцо = Math.min(1, ring + glow);
+    let pr = NIGHT[0] + (цвет[0] - NIGHT[0]) * кольцо;
+    let pg = NIGHT[1] + (цвет[1] - NIGHT[1]) * кольцо;
+    let pb = NIGHT[2] + (цвет[2] - NIGHT[2]) * кольцо;
+    pr += (238 - pr) * dot; pg += (241 - pg) * dot; pb += (255 - pb) * dot;
+    r += pr; g += pg; b += pb; a += 255;
   }
   const n = s * s;
   return [r / n, g / n, b / n, a / n].map(Math.round);
@@ -99,16 +122,21 @@ function appPixel(x, y, size) {
 /** Иконка трея: только кольцо и точка на прозрачном — видно и на светлой, и на тёмной панели. */
 function trayPixel(x, y, size) {
   const s = 4;
-  let a = 0;
+  let a = 0, r = 0, g = 0, b = 0;
   for (let sy = 0; sy < s; sy += 1) for (let sx = 0; sx < s; sx += 1) {
     const u = (x + (sx + 0.5) / s) / size * 2 - 1;
     const v = (y + (sy + 0.5) / s) / size * 2 - 1;
     const d = Math.hypot(u, v);
-    const ring = 1 - smooth(0.1, 0.16, Math.abs(d - 0.68));
-    const dot = 1 - smooth(0.2, 0.28, d);
-    a += Math.min(1, ring + dot) * 255;
+    const ring = 1 - smooth(0.12, 0.18, Math.abs(d - 0.66));
+    const dot = 1 - smooth(0.18, 0.26, d);
+    const цвет = dot > ring ? TRAY_STOPS[1] : ringColor(u, v, TRAY_STOPS);
+    const сила = Math.min(1, ring + dot);
+    r += цвет[0] * сила; g += цвет[1] * сила; b += цвет[2] * сила; a += сила * 255;
   }
-  return [...ACCENT, Math.round(a / (s * s))];
+  const n = s * s;
+  // Цвет — без примеси прозрачного: края не темнеют.
+  const w = a / 255 || 1;
+  return [r / w, g / w, b / w, a / n].map(Math.round);
 }
 
 mkdirSync(OUT, { recursive: true });

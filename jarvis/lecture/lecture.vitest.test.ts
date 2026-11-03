@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { normaliseSettings } from '../setup/settings';
 import { finishFromTranscript, parseTranscript } from './finishFromTranscript';
 import { finalPrompt, LectureSession, sectionFromReply, sectionPrompt } from './session';
-import { claudeSummaryArgs, createClaudeSummarizer, createFinalSummarizer, FINAL_TIMEOUT_MS, withFallback } from './summarize';
+import { claudeSummaryArgs, createClaudeFinalSummarizer, createClaudeSummarizer, FINAL_TIMEOUT_MS, withFallback } from './summarize';
 import { lectureFileBase, lectureFolder, obsidianOpenUrl, openObsidianVault } from './vault';
 
 const папки: string[] = [];
@@ -72,7 +72,7 @@ describe('конспект лекции на ходу', () => {
         transcribe: async (samples) => `מילה `.repeat(samples.length / 8000).trim(),
         summarize: async (prompt) => {
           просьбы.push(prompt);
-          return prompt.includes('## Кратко')
+          return prompt.includes('[!abstract]')
             ? 'Предмет: Математический анализ\nТема: Пределы функций\n\n## Кратко\nЛекция о пределах.'
             : '### Пределы\n- предел (גבול) — к чему стремится функция';
         },
@@ -114,7 +114,7 @@ describe('конспект лекции на ходу', () => {
     // Прошлый раздел — целиком, с числами и временем: следующему по нему сверять.
     expect(разделы[1]).toContain('### Пределы (00:00–00:16)\n- предел (גבול) — к чему стремится функция');
     expect(разделы[1]).toMatch(/^\[00:16\] מילה/mu);
-    const итоговая = просьбы.find((p) => p.includes('## Кратко'));
+    const итоговая = просьбы.find((p) => p.includes('[!abstract]'));
     expect(итоговая).toContain('Курсы студента: Математический анализ; Физика.');
     expect(итоговая).toMatch(/^\[00:00\] מילה[\s\S]*^\[00:16\] מילה/mu);
 
@@ -215,7 +215,7 @@ describe('итог лекции — сильнейшей моделью', () => 
     const итог = await сессия.finish(['Математический анализ']);
     expect(итогом).toHaveLength(1);
     expect(разделами.length).toBeGreaterThan(0);
-    expect(разделами.some((p) => p.includes('## Кратко'))).toBe(false);
+    expect(разделами.some((p) => p.includes('[!abstract]'))).toBe(false);
     expect(итог.topic).toBe('Пределы');
   });
 
@@ -252,7 +252,7 @@ describe('вызов модели для раздела', () => {
   it('итог ждут дольше раздела, и срок — у обеих моделей (03.11.2026: итог 1:55 пропал за 180 с)', async () => {
     expect(FINAL_TIMEOUT_MS).toBeGreaterThan(180_000);
     const журнал: string[] = [];
-    const итог = createFinalSummarizer({
+    const итог = createClaudeFinalSummarizer({
       command: process.execPath,
       args: ['-e', "setTimeout(()=>process.stdout.write('поздно'),5000)"],
       env: process.env,
@@ -282,7 +282,7 @@ describe('языки лекции и конспекта', () => {
     const чужой = sectionPrompt('кусок', 'Физика', [], { lecture: 'he', notes: 'ru' });
     expect(чужой).toMatch(/лекцию на иврите/u);
     expect(чужой).toMatch(/в скобках на иврите/u);
-    expect(finalPrompt('текст', '', { lecture: 'he', notes: 'ru' })).toMatch(/термин лектора на иврите/u);
+    expect(finalPrompt('текст', '', { lecture: 'he', notes: 'ru' })).toMatch(/На иврите/u);
 
     // Языка нет в списке названий — код как есть, а не пустое место.
     expect(sectionPrompt('кусок', '', [], { lecture: 'pt', notes: 'ru' })).toMatch(/на языке «pt»/u);
@@ -415,7 +415,7 @@ describe('языки лекции и конспекта', () => {
     expect(свой).toMatch(/Write ONE section of notes in English/u);
     expect(свой).not.toMatch(/parentheses/u);
     expect(sectionPrompt('chunk', '', [], { lecture: 'ru', notes: 'en' })).toMatch(/lecture in Russian[\s\S]*in Russian in parentheses/u);
-    expect(finalPrompt('text', '', { lecture: 'en', notes: 'en' })).toMatch(/## Summary[\s\S]*## Concepts[\s\S]*## Exam questions/u);
+    expect(finalPrompt('text', '', { lecture: 'en', notes: 'en' })).toMatch(/\[!abstract\] Summary[\s\S]*## Concepts[\s\S]*## Exam questions/u);
     expect(sectionFromReply('SKIP', 1, 'en')).toBeNull();
     expect(sectionFromReply('- point', 2, 'en')).toBe('### Section 2\n- point');
   });
@@ -427,7 +427,7 @@ describe('языки лекции и конспекта', () => {
       '',
       {
         transcribe: async () => 'today we talk about limits of functions',
-        summarize: async (prompt) => (prompt.includes('## Summary') ? '## Summary\nLimits.' : '### Limits\n- a limit is where a function tends'),
+        summarize: async (prompt) => (prompt.includes('[!abstract]') ? '## Summary\nLimits.' : '### Limits\n- a limit is where a function tends'),
         lectureLanguage: 'en',
         notesLanguage: 'en',
         sectionEveryMs: 0,
@@ -470,6 +470,39 @@ describe('Джарвиса закрыли посреди лекции', () => {
     expect(wav.readUInt32LE(4)).toBe(wav.length - 8);
   });
 
+  it('распознавание отстаёт — звук всё равно уже в файле, и видно, на сколько отстало', async () => {
+    // Мак на Intel распознаёт медленнее речи: очередь копится. Раньше звук
+    // куска писался, только когда до него доходило распознавание, и закрытие
+    // в этот момент теряло всё нераспознанное.
+    const папка = await временная();
+    let отпустить: () => void = () => undefined;
+    const стоит = new Promise<void>((resolve) => {
+      отпустить = resolve;
+    });
+    const сессия = new LectureSession(папка, 'Физика', {
+      transcribe: async () => {
+        await стоит;
+        return '';
+      },
+      summarize: async () => '',
+    });
+    await сессия.start();
+    for (let i = 0; i < 3; i += 1) сессия.addAudio(new Float32Array(16_000), 16_000);
+    // Дождаться записи, а не фиксированные 50 мс: под нагрузкой полного прогона
+    // три дописывания не успевали, и тест падал при верном коде.
+    const нужно = 44 + 3 * 16_000 * 2;
+    for (let i = 0; i < 100 && (await readFile(сессия.audioFile)).length < нужно; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(сессия.lagSeconds).toBe(3);
+    сессия.abandon();
+    const wav = await readFile(сессия.audioFile);
+    // Три секунды по 16 000 отсчётов по два байта — в файле, хотя ни один кусок не распознан.
+    expect(wav.length - 44).toBe(3 * 16_000 * 2);
+    expect(wav.readUInt32LE(40)).toBe(3 * 16_000 * 2);
+    отпустить();
+  });
+
   it('конспект дописывается по сохранённой расшифровке: разделы по пять минут, итог сверху', async () => {
     const папка = await временная();
     const заметка = path.join(папка, '2026-09-29 истории.md');
@@ -482,7 +515,7 @@ describe('Джарвиса закрыли посреди лекции', () => {
       notesFile: заметка,
       summarize: async (prompt) => {
         просьбы.push(prompt);
-        return prompt.includes('## Кратко') ? '## Кратко\nО лекции.' : `### Тема ${просьбы.length}\n- пункт`;
+        return prompt.includes('[!abstract]') ? '## Кратко\nО лекции.' : `### Тема ${просьбы.length}\n- пункт`;
       },
       lectureLanguage: 'he',
       notesLanguage: 'ru',
@@ -511,7 +544,7 @@ describe('Джарвиса закрыли посреди лекции', () => {
       notesFile: заметка,
       summarize: async (prompt) => {
         просьбы.push(prompt);
-        return prompt.includes('## Кратко') ? '## Кратко\nО лекции.' : '### Остаток\n- пункт';
+        return prompt.includes('[!abstract]') ? '## Кратко\nО лекции.' : '### Остаток\n- пункт';
       },
       lectureLanguage: 'he',
       notesLanguage: 'ru',
@@ -525,7 +558,7 @@ describe('Джарвиса закрыли посреди лекции', () => {
     // Куски — с метками времени, и в разделе, и в итоге.
     expect(просьбы[0]).toMatch(/^\[06:00\] מילה/mu);
     expect(просьбы[0]).not.toMatch(/^\[05:20\]/mu);
-    expect(просьбы.find((p) => p.includes('## Кратко'))).toMatch(/^\[00:00\] מילה[\s\S]*^\[08:40\] מילה/mu);
+    expect(просьбы.find((p) => p.includes('[!abstract]'))).toMatch(/^\[00:00\] מילה[\s\S]*^\[08:40\] מילה/mu);
   });
 
   it('метки расшифровки читаются и с часами', () => {

@@ -170,7 +170,7 @@ Whisper её распознаёт, разбор команд её исполня
 Установка — одна строка в PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 | iex
+$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; & $f
 ```
 
 - Код: https://github.com/aisarus/Rujarvis

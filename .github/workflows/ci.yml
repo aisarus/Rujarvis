@@ -52,6 +52,33 @@ jobs:
       - run: pnpm typecheck:tests
       - run: pnpm test
       - run: pnpm build
+      # Плашка сворачивается в панель задач (на маке — в Dock) и
+      # разворачивается — настоящим окном. Окно показывается и сворачивается
+      # на экране, поэтому здесь, на машине без человека, а не у владельца.
+      # У Linux-раннера экрана нет.
+      - name: Плашка сворачивается и разворачивается
+        if: runner.os != 'Linux'
+        shell: bash
+        env:
+          OVERLAY_SHOT: ${{ runner.temp }}/overlay-minimized.png
+        run: |
+          set -o pipefail
+          set +e
+          pnpm exec electron dist/qa/overlay-minimize-check.cjs 2>&1 | tee overlay.log | tail -20
+          code=$?
+          set -e
+          grep -a 'Всего' overlay.log || { echo 'Проверка не дошла до итога: судить не по чему.'; exit 1; }
+          if [ "$code" -eq 2 ]; then
+            echo 'Плашка: часть проверки нечем мерить (см. выше) — это машина, а не программа.'
+            exit 0
+          fi
+          exit "$code"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && runner.os != 'Linux' }}
+        with:
+          name: overlay-minimized-${{ matrix.os }}
+          path: ${{ runner.temp }}/overlay-minimized.png
+          if-no-files-found: ignore
       - name: Installer script parses and its pure functions pass
         if: runner.os == 'Windows'
         shell: pwsh

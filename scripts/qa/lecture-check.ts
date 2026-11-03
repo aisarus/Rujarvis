@@ -31,10 +31,11 @@ import { coursesForModel, parseFrontmatter } from '../../jarvis/lecture/courses'
 import { finalizeLecture } from '../../jarvis/lecture/finalize';
 import { BAD_CONFIDENCE } from '../../jarvis/lecture/hearing';
 import { LectureSession } from '../../jarvis/lecture/session';
-import { createClaudeSummarizer, createFinalSummarizer } from '../../jarvis/lecture/summarize';
+import { brainFromArgs, brainOrder, createFinalSummarizer, createSummarizer, setBrain } from '../../jarvis/lecture/summarize';
 import { jarvisPaths } from '../../jarvis/setup/paths';
 import { SettingsStore } from '../../jarvis/setup/settings';
 import { findGpuWhisper, findLectureModel, gpuWhisperDir, startGpuWhisper } from '../../jarvis/voice/gpuWhisper';
+import { hasSummary } from '../../jarvis/notes/style';
 import { DEFAULT_VOICE, isVoiceInstalled, Speaker } from '../../jarvis/voice/tts';
 import { decodeWav, resampleTo16k } from '../../jarvis/voice/wav';
 
@@ -67,10 +68,11 @@ async function main(): Promise<void> {
   const запись = process.argv.slice(2).find((a) => !a.startsWith('--'));
   const paths = jarvisPaths();
   const settings = new SettingsStore(paths.settings).get();
+  setBrain(() => brainFromArgs(process.argv, settings.brain));
   const язык = (process.argv.find((a) => a.startsWith('--language='))?.slice('--language='.length) || settings.lectureLanguage || settings.language).toLowerCase();
   const конспект = settings.language;
   console.log('');
-  console.log(`Конспект лекции: язык лекции «${язык}», конспект — «${конспект}»; куски по паузам, разделы — Claude Code по подписке`);
+  console.log(`Конспект лекции: язык лекции «${язык}», конспект — «${конспект}»; куски по паузам, разделы — ${brainOrder(brainFromArgs(process.argv, settings.brain)).join(" или ") || "некому"}`);
   const dir = gpuWhisperDir(paths.home);
   const files = await findGpuWhisper(dir);
   if (!files) {
@@ -164,7 +166,7 @@ async function main(): Promise<void> {
         времена.push((performance.now() - t0) / 1000 / (samples.length / 16_000));
         return текст;
       },
-      summarize: createClaudeSummarizer(),
+      summarize: createSummarizer(),
       summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`  ${строка}`) }),
       log: (строка) => console.log(`  ${строка}`),
     });
@@ -188,7 +190,10 @@ async function main(): Promise<void> {
     const заметка = await readFile(место.notesFile, 'utf8');
     const свойства = parseFrontmatter(заметка);
     const среднее = уверенность.length > 0 ? уверенность.reduce((a, b) => a + b, 0) / уверенность.length : null;
-    const естьИтог = заметка.includes(конспект === 'en' ? '## Summary' : '## Кратко');
+    // Итог узнаётся так же, как его узнаёт сам Джарвис: выноской «Кратко».
+    // Здесь искался прежний заголовок «## Кратко», и проверка звала
+    // «нет итога» конспект, в котором итог был (замер 26.10.2026).
+    const естьИтог = hasSummary(заметка);
     const скорость = времена.length > 0 ? Math.max(...времена) : 0;
     console.log(`  расшифровка: ${итог.words} слов; распознавание — не медленнее ${скорость.toFixed(2)} × реального времени`);
     console.log(`  разделов: ${итог.sections}; итог: ${естьИтог ? 'есть' : 'нет'}; конспект собран за ${Math.round((Date.now() - t0) / 1000)} с после записи`);

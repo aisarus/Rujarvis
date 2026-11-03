@@ -19,12 +19,13 @@ vi.mock('../jarvis/lecture/vault', async (importOriginal) => ({
 // Модель конспекта понарошку: курс, тема и итог — без настоящего Claude Code.
 vi.mock('../jarvis/lecture/summarize', () => {
   const модель = () => async (prompt: string) =>
-    prompt.includes('## Кратко') ? 'Предмет: История\nТема: Аграрная революция\n\n## Кратко\nО земледелии.' : '### Земледелие\n- пункт';
-  return { createClaudeSummarizer: модель, createFinalSummarizer: модель };
+    prompt.includes('[!abstract]') ? 'Предмет: История\nТема: Аграрная революция\n\n## Кратко\nО земледелии.' : '### Земледелие\n- пункт';
+  return { createClaudeSummarizer: модель, createFinalSummarizer: модель, createSummarizer: модель };
 });
 
-const { feedLecture, finishLecture, lectureActive, lectureFromFile, lectureInfo, lectureState, onLectureState, startLecture } = await import('./lectureMode');
-const { parseFrontmatter } = await import('../jarvis/lecture/courses');
+const { feedLecture, finishLecture, latestNotesFile, lectureActive, lectureFromFile, lectureInfo, lectureState, onLectureState, recoverAbandonedLectures, startLecture } = await import('./lectureMode');
+const { LectureSession } = await import('../jarvis/lecture/session');
+const { parseFrontmatter, renderFrontmatter } = await import('../jarvis/lecture/courses');
 const { encodeWav16 } = await import('../jarvis/voice/wav');
 const { readWavParts } = await import('../jarvis/lecture/mediaSlices');
 
@@ -34,6 +35,25 @@ afterEach(async () => {
 });
 
 describe('режим лекции в мосте', () => {
+  it('«Конспект ↗» без лекции в памяти — самый свежий конспект на диске, «без курса» тоже', async () => {
+    // Идёт первым: после перезапуска Джарвис последнюю лекцию не помнит.
+    папка.путь = await mkdtemp(path.join(tmpdir(), 'jarvis-latest-notes-'));
+    const options = { outputDir: папка.путь, notesLanguage: 'ru' as const };
+    expect(latestNotesFile(options)).toBeNull();
+    const положить = async (курс: string, имя: string, date: string, start?: string): Promise<string> => {
+      await mkdir(path.join(папка.путь, курс), { recursive: true });
+      const файл = path.join(папка.путь, курс, `${имя}.md`);
+      await writeFile(файл, `${renderFrontmatter({ course: курс, date, start }, 'ru')}текст`, 'utf8');
+      return файл;
+    };
+    await положить('История', '2026-10-14 — Неолит', '2026-10-14', '10:00');
+    const свежая = await положить('Без курса', '2026-10-20', '2026-10-20', '18:30');
+    await положить('Физика', '2026-10-20 — Оптика', '2026-10-20', '09:00');
+    // Расшифровка — не конспект, хоть и новее.
+    await положить('Физика', '2026-10-21 — Свет — расшифровка', '2026-10-21');
+    expect(latestNotesFile(options)).toBe(свежая);
+  });
+
   it('«закончи» не держит мост: лекция кончается сразу, итог приходит потом', async () => {
     папка.путь = await mkdtemp(path.join(tmpdir(), 'jarvis-lecture-mode-'));
     const options = { home: папка.путь, outputDir: папка.путь, lectureLanguage: 'ru', notesLanguage: 'ru' as const, mainEndpoint: () => null };
@@ -45,6 +65,8 @@ describe('режим лекции в мосте', () => {
     expect(await startLecture('Физика', options)).toMatch(/нечем|nothing to transcribe/u);
     expect(lectureInfo()?.line).toMatch(/Только запись|Recording only/u);
     expect(lectureActive()).toBe(true);
+    // Пока лекция идёт, «Конспект ↗» открывает её живую заметку.
+    expect(latestNotesFile(options)?.startsWith(папка.путь)).toBe(true);
     expect(await startLecture('Физика', options)).toMatch(/уже пишется|Already/u);
 
     const итог = finishLecture();
@@ -61,12 +83,36 @@ describe('режим лекции в мосте', () => {
     const безКурса = path.join(папка.путь, 'Без курса');
     expect((await readdir(безКурса)).filter((f) => f.endsWith('.md')).sort()).toHaveLength(3);
     expect((await readdir(папка.путь)).filter((f) => f.endsWith('.md'))).toHaveLength(0);
+    // Закончили — та же лекция, уже разложенная.
+    expect(path.dirname(latestNotesFile(options) ?? '')).toBe(безКурса);
     expect(await startLecture('Химия', options)).not.toMatch(/дописываю|Still finishing/u);
     expect(lectureActive()).toBe(true);
   });
 
   it('«закончи», когда конспекта нет, — не ошибка и не ожидание', () => {
     expect(finishLecture()).toBeNull();
+  });
+
+  it('лекция, брошенная обновлением или выходом, дописывается при запуске и встаёт в курс', async () => {
+    папка.путь = await mkdtemp(path.join(tmpdir(), 'jarvis-lecture-recover-'));
+    const options = { home: папка.путь, outputDir: папка.путь, lectureLanguage: 'he', notesLanguage: 'ru' as const, mainEndpoint: () => null };
+    const курс = path.join(папка.путь, 'История');
+    await mkdir(курс, { recursive: true });
+    const сессия = new LectureSession(курс, '', { transcribe: async () => 'החקלאות שינתה הכול', summarize: async () => '' }, new Date(2026, 9, 20, 10, 5));
+    await сессия.start();
+    сессия.addAudio(new Float32Array(16_000), 16_000);
+    await new Promise((r) => setTimeout(r, 50));
+    сессия.abandon();
+
+    const сказано: string[] = [];
+    await recoverAbandonedLectures(options, (текст) => сказано.push(текст));
+    expect(сказано).toEqual(['Дописал лекцию, которую прервали: История, лекция 1.']);
+    const заметка = latestNotesFile(options)!;
+    expect(path.dirname(заметка)).toBe(курс);
+    expect(parseFrontmatter(await readFile(заметка, 'utf8'))).toMatchObject({ course: 'История', number: 1, topic: 'Аграрная революция' });
+    // Второй запуск — дописывать нечего.
+    await recoverAbandonedLectures(options, (текст) => сказано.push(текст));
+    expect(сказано).toHaveLength(1);
   });
 });
 

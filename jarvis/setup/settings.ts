@@ -15,8 +15,22 @@ import { DEFAULT_WHISPER_MODEL, WHISPER_MODEL_IDS, type WhisperModelId } from '.
 import { DEFAULT_VOICE, VOICES } from '../voice/tts';
 
 import type { Language } from '../locale/language';
+import { NOTES_STYLES, type NotesStyle } from '../notes/style';
 
-export type { Language };
+export type { Language, NotesStyle };
+
+/**
+ * Вид окон: тетрадь в клетку, белый лист с маркерами, кольцо Джарвиса.
+ *
+ * Выбирает человек, а не мы: владелец посмотрел три варианта и попросил все
+ * три — переключаемыми (20.10.2026).
+ */
+export type Look = 'tetrad' | 'marker' | 'ring';
+export const LOOKS: readonly Look[] = ['tetrad', 'marker', 'ring'];
+
+/** Тема: как в системе, светлая или тёмная. */
+export type ThemeChoice = 'system' | 'light' | 'dark';
+export const THEMES: readonly ThemeChoice[] = ['system', 'light', 'dark'];
 
 /**
  * Что из речи писать в лог.
@@ -25,6 +39,32 @@ export type { Language };
  * диктовку, для разбора, почему он не расслышал; `off` — ничего из сказанного.
  */
 export type SpeechLogging = 'off' | 'commands' | 'all';
+
+/**
+ * Сколько хранить звук лекций: неделю (потом удаляется сам — конспект и
+ * расшифровка остаются) или пока человек не удалит сам. Пара — около 280 МБ,
+ * семестр — 15–19 ГБ (`jarvis/lecture/recordings.ts`).
+ */
+export type RecordingsKeep = 'week' | 'forever';
+
+/**
+ * Что поставлено: Джарвис целиком или только конспекты.
+ *
+ * «Только конспекты» — для студента, которому нужен конспектор, а не
+ * голосовой помощник (первые тестеры на маке, 26.10.2026): кнопки конспекта
+ * на плашке, «Учёба», разбор документов. Ни слуха команд, ни голоса, ни
+ * агента с руками на компьютере; микрофон берётся только на время лекции.
+ * Одна программа, а не отдельная ветка: исправления и обновления приходят
+ * обоим вариантам сразу.
+ */
+export type Edition = 'full' | 'notes';
+
+/**
+ * Кто пишет конспект, «Учёбу» и разбор документов: Claude Code, Codex или
+ * «сам» — кто установлен, Claude Code первым. У первой тестерши на маке
+ * ChatGPT, а не Claude (26.10.2026).
+ */
+export type Brain = 'auto' | 'claude' | 'codex';
 
 export interface AppSettings {
   language: Language;
@@ -83,6 +123,18 @@ export interface AppSettings {
    * если лекция на другом, термины идут в скобках так, как их сказал лектор.
    */
   lectureLanguage: string;
+  /** Вид окон и плашки. */
+  look: Look;
+  /** Светлая, тёмная или как в системе — для всех окон сразу. */
+  theme: ThemeChoice;
+  /** Как оформлять конспект лекции в Obsidian (`jarvis/notes/style.ts`). */
+  notesStyle: NotesStyle;
+  /** Сколько хранить звук лекций. */
+  recordingsKeep: RecordingsKeep;
+  /** Джарвис целиком или только конспекты. */
+  edition: Edition;
+  /** Кто пишет конспект: Claude Code, Codex или кто установлен. */
+  brain: Brain;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -103,6 +155,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   speechVolume: 1,
   bigMode: false,
   lectureLanguage: '',
+  look: 'ring',
+  theme: 'system',
+  notesStyle: 'razbor',
+  // Владелец 21.10.2026: «пусть удаляет сам через неделю».
+  recordingsKeep: 'week',
+  edition: 'full',
+  brain: 'auto',
 };
 
 /** Пределы, за которые голосовая настройка не уводит. */
@@ -163,6 +222,12 @@ export function normaliseSettings(raw: unknown): AppSettings {
     bigMode: input.bigMode === true,
     // Только код языка: всё прочее ушло бы в запрос к серверу распознавания.
     lectureLanguage: /^[a-z]{2,3}$/u.test(text('lectureLanguage', '').toLowerCase()) ? text('lectureLanguage', '').toLowerCase() : '',
+    look: LOOKS.includes(input.look as Look) ? (input.look as Look) : DEFAULT_SETTINGS.look,
+    theme: THEMES.includes(input.theme as ThemeChoice) ? (input.theme as ThemeChoice) : DEFAULT_SETTINGS.theme,
+    notesStyle: NOTES_STYLES.includes(input.notesStyle as NotesStyle) ? (input.notesStyle as NotesStyle) : DEFAULT_SETTINGS.notesStyle,
+    recordingsKeep: input.recordingsKeep === 'forever' ? 'forever' : 'week',
+    edition: input.edition === 'notes' ? 'notes' : 'full',
+    brain: input.brain === 'claude' || input.brain === 'codex' ? input.brain : 'auto',
   };
 }
 

@@ -38,6 +38,7 @@ import { shell } from 'electron';
 
 import { chunkLevel } from '../jarvis/lecture/audioCut';
 import {
+  COURSE_WORDS,
   courseLanguages,
   coursesForModel,
   guessByDeclared,
@@ -50,12 +51,14 @@ import {
   type LectureLanguages,
 } from '../jarvis/lecture/courses';
 import { finalizeLecture, moveLecture } from '../jarvis/lecture/finalize';
+import { findAbandonedLectures, recoverLecture } from '../jarvis/lecture/recover';
 import { HearingMonitor, isSilentChunk } from '../jarvis/lecture/hearing';
 import { mediaSeconds } from '../jarvis/lecture/mediaSlices';
 import { LectureRecorder } from '../jarvis/lecture/recorder';
 import { LectureSession, NOTES_WORDS, type NotesLanguage } from '../jarvis/lecture/session';
-import { createClaudeSummarizer, createFinalSummarizer } from '../jarvis/lecture/summarize';
+import { createFinalSummarizer, createSummarizer } from '../jarvis/lecture/summarize';
 import { lectureFolder, obsidianOpenUrl } from '../jarvis/lecture/vault';
+import type { NotesStyle } from '../jarvis/notes/style';
 import { tr } from '../jarvis/locale/language';
 import { findGpuWhisper, findLectureModel, gpuWhisperDir, otherLectureModels, startGpuWhisper, type GpuWhisperServer } from '../jarvis/voice/gpuWhisper';
 import { resampleTo16k } from '../jarvis/voice/wav';
@@ -80,6 +83,8 @@ interface Лекция {
 let идёт: Лекция | null = null;
 /** Итог прошлой лекции ещё пишется: её сервер занимает тот же порт. */
 let дописывается: Promise<string> | null = null;
+/** Сессия, которая дописывается: по ней видно, сколько звука ещё не распознано. */
+let дописываемая: LectureSession | null = null;
 /**
  * Лекция поднимается: до `идёт` — несколько ожиданий. Двойное нажатие кнопки
  * или кнопка вместе с голосом заводили две сессии и два сервера на одном
@@ -93,6 +98,33 @@ let последняя: { notesFile: string; root: string; notes: NotesLanguage 
 
 export function lectureActive(): boolean {
   return идёт !== null;
+}
+
+/** Итог законченной лекции ещё пишется — его и ждать перед выходом; нет — null. */
+export function lectureFinishing(): Promise<string> | null {
+  return дописывается;
+}
+
+/**
+ * Какой конспект открыть кнопкой на уменьшенной плашке: идущей лекции, только
+ * что законченной или самый свежий в «Лекциях» — после перезапуска Джарвис
+ * последнюю не помнит, а конспект на диске есть.
+ */
+export function latestNotesFile(options: Pick<LectureStartOptions, 'outputDir' | 'notesLanguage'>): string | null {
+  if (идёт) return идёт.session.notesFile;
+  if (последняя && existsSync(последняя.notesFile)) return последняя.notesFile;
+  const { folder: root } = lectureFolder(options.outputDir, options.notesLanguage);
+  // «Без курса» — тоже лекции: курс им не нашёлся, а конспект есть.
+  const лекции = [...listLectures(root), ...listLectures(root, COURSE_WORDS.ru.unsorted), ...listLectures(root, COURSE_WORDS.en.unsorted)];
+  const свежая = лекции.sort((a, b) => a.meta.date.localeCompare(b.meta.date) || (a.meta.start ?? '').localeCompare(b.meta.start ?? '')).at(-1);
+  return свежая?.file ?? null;
+}
+
+/** Открыть конспект — в Obsidian, если «Лекции» в его хранилище, иначе программой по умолчанию. */
+export async function openNotes(file: string, options: Pick<LectureStartOptions, 'outputDir' | 'notesLanguage'>): Promise<void> {
+  const { vault } = lectureFolder(options.outputDir, options.notesLanguage);
+  if (vault) await shell.openExternal(obsidianOpenUrl(file));
+  else await shell.openPath(file);
 }
 
 /** Что с конспектом сейчас — для кнопки на плашке. */
@@ -112,6 +144,13 @@ export interface LectureInfo {
 export function lectureInfo(): LectureInfo | null {
   if (идёт) return { course: идёт.курс, courses: listCourses(идёт.root), line: идёт.строка };
   if (файлом) return { course: null, courses: [], line: файлом.строка };
+  // Распознавание отстало — «дописываю итог» длится не минуту, а столько,
+  // сколько звука осталось. Так и сказать, иначе это похоже на зависание.
+  const осталось = дописываемая?.lagSeconds ?? 0;
+  if (осталось > 30) {
+    const мин = Math.max(1, Math.round(осталось / 60));
+    return { course: null, courses: [], line: tr(`Дописываю: осталось распознать ${мин} мин звука.`, `Finishing: ${мин} min of audio left to transcribe.`) };
+  }
   return null;
 }
 
@@ -145,10 +184,17 @@ export interface LectureStartOptions {
   lectureLanguage: string;
   /** Язык интерфейса: папка «Лекции» и конспект, если у курса свой не задан. */
   notesLanguage: NotesLanguage;
+  /** Вид конспекта в Obsidian — из настроек. */
+  notesStyle?: NotesStyle;
   /** Адрес общего сервера распознавания — запасной, когда модели для лекций нет. */
   mainEndpoint(): string | null;
   /** Откуда звук: микрофон (аудитория) или звук компьютера (Zoom). По умолчанию — микрофон. */
   source?: LectureSource;
+  /**
+   * Слышит ли Джарвис команды. У варианта «только конспекты» слуха нет, и
+   * совет «скажите „закончи конспект“» был бы советом говорить в пустоту.
+   */
+  voice?: boolean;
 }
 
 function занято(): string | null {
@@ -174,6 +220,8 @@ export async function startLecture(subject: string | undefined, options: Lecture
 interface Слух {
   сервер: Promise<GpuWhisperServer | null>;
   модель: string | null;
+  /** Слушает общая модель, а не модель для лекций. */
+  общая: boolean;
   распознать(samples: Float32Array, sampleRate: number): Promise<ConfidentResult>;
 }
 
@@ -185,13 +233,17 @@ interface Слух {
 async function поднятьСлух(options: LectureStartOptions, язык: string): Promise<Слух> {
   const dir = gpuWhisperDir(options.home);
   const files = await findGpuWhisper(dir).catch(() => null);
-  const модель = files ? await findLectureModel(dir, язык).catch(() => null) : null;
-  if (files && !модель) {
+  const своя = files ? await findLectureModel(dir, язык).catch(() => null) : null;
+  if (files && !своя) {
     const чужие = await otherLectureModels(dir, язык).catch(() => []);
     if (чужие.length > 0) {
-      console.log(`[jarvis:lecture] для языка «${язык}» модели для лекций нет, а модель для «${чужие.join('», «')}» чужому языку не годится — слушает общий сервер`);
+      console.log(`[jarvis:lecture] для языка «${язык}» модели для лекций нет, а модель для «${чужие.join('», «')}» чужому языку не годится — слушает общая`);
     }
   }
+  // Своей модели нет, а общего сервера команд тоже нет (вариант «только
+  // конспекты» его не поднимает) — свой сервер с общей моделью: хуже модели
+  // для лекций, но лучше, чем «расшифровать нечем».
+  const модель = своя ?? (files && !options.mainEndpoint() ? files.model : null);
   const сервер: Promise<GpuWhisperServer | null> =
     files && модель
       ? startGpuWhisper(
@@ -210,10 +262,18 @@ async function поднятьСлух(options: LectureStartOptions, язык: st
   return {
     сервер,
     модель,
+    общая: !своя,
     распознать: async (samples, sampleRate) => {
       const свой = await сервер;
       const endpoint = свой?.endpoint ?? options.mainEndpoint();
-      if (!endpoint) throw new Error('распознавать нечем: нет сервера на видеокарте (pnpm jarvis:gpu-stt)');
+      if (!endpoint) {
+        throw new Error(
+          tr(
+            'распознавать нечем: не установлено распознавание лекций (Настройки → Речь → «Распознавание лекций»)',
+            'nothing to transcribe with: lecture recognition is not installed (Settings → Speech → "Lecture recognition")',
+          ),
+        );
+      }
       return createGpuTranscriber({ endpoint, language: язык, timeoutMs: 120_000, withConfidence: true }).transcribe(samples, sampleRate);
     },
   };
@@ -265,7 +325,24 @@ async function начатьЛекцию(subject: string | undefined, options: Le
     }
     const { text, confidence } = await слух.распознать(samples, sampleRate);
     слышно(монитор.observe({ seconds: секунд, level: уровень, text, confidence }));
+    отстаёт();
     return text;
+  };
+  // Машина распознаёт медленнее речи (мак на Intel без видеокарты) — сказать
+  // один раз и честно: запись идёт целиком, а конспект допишется после пары.
+  // Без этого человек видел бы, что расшифровка замерла на двадцатой минуте.
+  let сказаноПроОтставание = false;
+  const отстаёт = (): void => {
+    const л = лекция.value;
+    if (сказаноПроОтставание || !л || идёт !== л || л.session.lagSeconds < 180) return;
+    сказаноПроОтставание = true;
+    const мин = Math.round(л.session.lagSeconds / 60);
+    console.log(`[jarvis:lecture] распознавание отстаёт от лекции на ${мин} мин`);
+    л.строка = tr(
+      `Этот компьютер распознаёт медленнее речи — отстаю на ${мин} мин. Звук пишется целиком; расшифровка и конспект допишутся после пары.`,
+      `This computer transcribes slower than speech — ${мин} min behind. The audio is recorded in full; the transcript and notes will catch up after class.`,
+    );
+    оповестить();
   };
   const слышно = (вердикт: ReturnType<HearingMonitor['observe']>): void => {
     const л = лекция.value;
@@ -292,10 +369,11 @@ async function начатьЛекцию(subject: string | undefined, options: Le
     subject ?? '',
     {
       transcribe,
-      summarize: createClaudeSummarizer(),
+      summarize: createSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
       summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
       lectureLanguage: языки.lecture,
       notesLanguage: языки.notes,
+      notesStyle: options.notesStyle,
       // Только счёт и события: сама лекция в журнал Джарвиса не пишется.
       log: (строка) => console.log(`[jarvis:lecture] ${строка}`),
     },
@@ -318,8 +396,8 @@ async function начатьЛекцию(subject: string | undefined, options: Le
     ...(нечем
       ? {
           строка: tr(
-            'Только запись: расшифровать нечем (нет распознавания на видеокарте). Конспект — потом из файла.',
-            'Recording only: nothing to transcribe with (no GPU recognition). Notes later from the file.',
+            'Только запись: распознавание лекций не установлено (Настройки → Речь). Конспект — потом из этой записи.',
+            'Recording only: lecture recognition is not installed (Settings → Speech). Notes later from this recording.',
           ),
         }
       : {}),
@@ -338,16 +416,20 @@ async function начатьЛекцию(subject: string | undefined, options: Le
     : tr('Курс определю по лекции.', 'I will work out the course from the lecture.');
   if (нечем) {
     return tr(
-      'Записываю звук лекции, но расшифровать его нечем: не установлено распознавание на видеокарте (pnpm jarvis:gpu-stt). Конспект сделаю потом из этой записи.',
-      'Recording the lecture, but there is nothing to transcribe it with: GPU recognition is not installed (pnpm jarvis:gpu-stt). I will make the notes from this recording later.',
+      'Записываю звук лекции, но расшифровать его нечем: не установлено распознавание лекций. Поставить — в настройках, «Речь» → «Распознавание лекций»; потом отдайте эту запись кнопкой «Из файла…».',
+      'Recording the lecture, but there is nothing to transcribe it with: lecture recognition is not installed. Install it in Settings, "Speech" → "Lecture recognition", then give me this recording with "From a file…".',
     );
   }
   const откуда = zoom ? tr('Пишу звук компьютера (Zoom). ', 'Recording the computer sound (Zoom). ') : '';
-  return слух.модель
-    ? tr(`Конспектирую. ${откуда}${гдеКурс} Закончить — «Джарвис, закончи конспект».`, `Taking notes. ${откуда}${гдеКурс} Say "Jarvis, stop lecture notes" to finish.`)
+  const закончить =
+    options.voice === false
+      ? tr('Закончить — кнопкой «■ Закончить конспект».', 'To finish, press "■ Stop lecture notes".')
+      : tr('Закончить — «Джарвис, закончи конспект».', 'Say "Jarvis, stop lecture notes" to finish.');
+  return слух.модель && !слух.общая
+    ? tr(`Конспектирую. ${откуда}${гдеКурс} `, `Taking notes. ${откуда}${гдеКурс} `) + закончить
     : tr(
-        `Конспектирую общим распознаванием. ${гдеКурс} Точнее будет с моделью для лекций: pnpm jarvis:lecture-model.`,
-        `Taking notes with the general recognition. ${гдеКурс} The lecture model is more accurate: pnpm jarvis:lecture-model.`,
+        `Конспектирую общим распознаванием. ${гдеКурс} Точнее будет с моделью для лекций — в настройках, «Распознавание лекций».`,
+        `Taking notes with the general recognition. ${гдеКурс} The lecture model is more accurate; install it in Settings, "Lecture recognition".`,
       );
 }
 
@@ -419,10 +501,12 @@ async function разложить(
     );
   } catch (error) {
     последняя = null;
-    console.error(`[jarvis:lecture] не разложил по курсу: ${error instanceof Error ? error.message : String(error)}`);
+    const причина = error instanceof Error ? error.message : String(error);
+    console.error(`[jarvis:lecture] не разложил по курсу: ${причина}`);
+    // Причину — сразу: журнала из окон не видно (аудит интерфейса 21.10.2026).
     return tr(
-      `Конспект готов, разделов — ${итог.sections}, но в папку курса не разложен — причина в журнале.`,
-      `Notes are ready (${итог.sections} sections), but not filed into the course folder — see the log.`,
+      `Конспект готов, разделов — ${итог.sections}, но в папку курса не разложен: ${причина}.`,
+      `Notes are ready (${итог.sections} sections), but not filed into the course folder: ${причина}.`,
     );
   }
 }
@@ -440,13 +524,19 @@ export function finishLecture(): Promise<string> | null {
   идёт = null;
   // Хвост записи — последним куском, пока сессия ещё принимает звук.
   была.recorder.flush();
+  дописываемая = была.session;
+  // Пока распознавание догоняет, плашка видит, сколько осталось.
+  const пульс = setInterval(оповестить, 15_000);
+  пульс.unref?.();
   const работа = (async (): Promise<string> => {
     try {
       const итог = await была.session.finish(coursesForModel(была.root));
       return await разложить({ ...была, when: была.session.startedAt }, итог);
     } finally {
+      clearInterval(пульс);
       (await была.сервер)?.stop();
       дописывается = null;
+      дописываемая = null;
       оповестить();
     }
   })();
@@ -455,10 +545,65 @@ export function finishLecture(): Promise<string> | null {
   return работа;
 }
 
+let восстанавливаю = false;
+
+/**
+ * Брошенные лекции — дописать и разложить по курсу (`jarvis/lecture/recover.ts`).
+ * Мост зовёт это через минуту после запуска: лекцию, оборванную обновлением,
+ * перезапуском или выходом, человек находит готовой, без команды в терминале
+ * (тестер 21.10.2026 обновился посреди лекции, и она осталась без итога).
+ *
+ * Пока лекция поднимается, дописывается или делается по файлу, её заметка
+ * тоже без свойств — ждём, пока закончится.
+ */
+export async function recoverAbandonedLectures(options: LectureStartOptions, сообщить: (текст: string) => void): Promise<void> {
+  if (восстанавливаю) return;
+  восстанавливаю = true;
+  try {
+    for (let попытка = 0; lectureState() !== 'off' && lectureState() !== 'on'; попытка += 1) {
+      if (попытка >= 15) return;
+      await new Promise((r) => setTimeout(r, 120_000).unref?.());
+    }
+    const { folder: root } = lectureFolder(options.outputDir, options.notesLanguage);
+    const брошенные = findAbandonedLectures(root, new Set(идёт ? [идёт.session.notesFile] : []));
+    if (!брошенные.length) return;
+    console.log(`[jarvis:lecture] брошенных лекций: ${брошенные.length} — дописываю`);
+    for (const заметка of брошенные) {
+      try {
+        const место = await recoverLecture(заметка, {
+          root,
+          languages: { lecture: options.lectureLanguage, notes: options.notesLanguage },
+          notesStyle: options.notesStyle,
+          summarize: createSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
+          summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
+          log: (строка) => console.log(`[jarvis:lecture] ${строка}`),
+        });
+        последняя = { notesFile: место.notesFile, root, notes: options.notesLanguage };
+        try {
+          приРазложенной?.(место.notesFile);
+        } catch (error) {
+          console.error(`[jarvis:lecture] заготовка учёбы не запустилась: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        console.log(`[jarvis:lecture] брошенная лекция дописана: курс «${место.course}», лекция ${место.number}, разделов ${место.sections}`);
+        сообщить(
+          tr(
+            `Дописал лекцию, которую прервали: ${место.course}, лекция ${место.number}.`,
+            `Finished a lecture that was interrupted: ${место.course}, lecture ${место.number}.`,
+          ),
+        );
+      } catch (error) {
+        console.error(`[jarvis:lecture] брошенная лекция не дописалась (${path.basename(заметка)}): ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  } finally {
+    восстанавливаю = false;
+  }
+}
+
 /**
  * Мост закрывается посреди лекции: сервер — погасить (свой pid), записанное
  * остаётся на диске как есть. Итога нет — на него нужна минута модели, а
- * закрытие ждать не может.
+ * закрытие ждать не может; допишет `recoverAbandonedLectures` при запуске.
  */
 export function abandonLecture(): void {
   const была = идёт;
@@ -546,10 +691,11 @@ export async function lectureFromFile(file: string, options: LectureFileOptions)
           показать();
           return текст;
         },
-        summarize: createClaudeSummarizer(),
+        summarize: createSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
         summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`[jarvis:lecture] файл: ${строка}`) }),
         lectureLanguage: языки.lecture,
         notesLanguage: языки.notes,
+        notesStyle: options.notesStyle,
         log: (строка) => console.log(`[jarvis:lecture] файл: ${строка}`),
       },
       new Date(времяФайла),

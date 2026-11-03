@@ -13,6 +13,7 @@ import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
 
 import { cloudSpeechKey } from './cloudTranscriber';
+import { applyAppearance, currentLook, windowBackground } from './look';
 import { терминалДляВхода } from './loginTerminal';
 import { APP_ROOT } from './root';
 import { cliStatus, createClaudeProbe, createCodexProbe } from '../jarvis/backends/cliProbes';
@@ -20,11 +21,16 @@ import { checkLocalModel, normaliseEndpoint } from '../jarvis/backends/localMode
 import type { JarvisPaths } from '../jarvis/setup/paths';
 import { jarvisOutputDir } from '../jarvis/setup/paths';
 import type { AppSettings, SettingsStore } from '../jarvis/setup/settings';
+import { gpuWhisperDir } from '../jarvis/voice/gpuWhisper';
+import { installLectureStt, lectureSttStatus } from '../jarvis/voice/lectureStt';
 import { WHISPER_MODELS, type WhisperModelId } from '../jarvis/voice/sttModels';
 import { installVoice, isVoiceInstalled, Speaker, voiceForLanguage, VOICES } from '../jarvis/voice/tts';
 import { installWhisperModel } from '../jarvis/voice/whisperInstall';
 import { isWhisperModelInstalled } from '../jarvis/voice/whisperRecognizer';
+import { installCli, type CliInstallResult } from '../jarvis/setup/cliInstall';
+import { checkBrains, checkHearing } from './onboardingChecks';
 import { UI_STRINGS } from './ui/strings';
+import { checkUpdateNow, runUpdateNow, saveReport, updateState } from './updater';
 
 export interface SettingsWindowOptions {
   settings: SettingsStore;
@@ -51,6 +57,7 @@ let preview: Speaker | null = null;
 type InstallOutcome = { ok: true } | { ok: false; message: string };
 
 const installs = new Map<string, Promise<InstallOutcome>>();
+const агенты = new Map<string, Promise<CliInstallResult>>();
 
 /**
  * Что показать: мастер или вкладки.
@@ -84,7 +91,7 @@ export function openSettingsWindow(options: SettingsWindowOptions): void {
     minWidth: 640,
     minHeight: 520,
     title: UI_STRINGS[options.settings.get().language].windowTitle,
-    backgroundColor: '#0f1115',
+    backgroundColor: windowBackground(),
     autoHideMenuBar: true,
     show: false,
     icon: path.join(APP_ROOT, 'resources', 'icon.png'),
@@ -102,12 +109,17 @@ export function openSettingsWindow(options: SettingsWindowOptions): void {
     preview = null;
   });
   void window.loadFile(path.join(APP_ROOT, 'app', 'ui', 'settings.html'), {
-    query: { page: какуюСтраницу(options) },
+    query: { page: какуюСтраницу(options), look: currentLook() },
   });
 }
 
 function send(channel: string, payload: unknown): void {
   if (window && !window.isDestroyed()) window.webContents.send(`${SETTINGS_CHANNEL}:${channel}`, payload);
+}
+
+/** Проверка обновлений закончилась, пока окно открыто, — показать итог. */
+export function sendUpdateState(): void {
+  send('updateState', updateState());
 }
 
 /**
@@ -146,6 +158,7 @@ async function зависитОтНастроек() {
     bytes: voice.downloadBytes,
     installed: isVoiceInstalled(paths.voiceModels, voice.id),
   }));
+  const языкЛекций = settings.lectureLanguage || settings.language;
   return {
     settings,
     paths: {
@@ -157,6 +170,8 @@ async function зависитОтНастроек() {
     },
     whisper,
     voices,
+    // Будет ли конспект лекции и что для него поставить — для языка лекций из настроек.
+    lectureStt: { language: языкЛекций, ...(await lectureSttStatus(gpuWhisperDir(paths.home), языкЛекций)) },
   };
 }
 
@@ -173,6 +188,7 @@ async function state() {
     agents: { claude, codex },
     // Только «есть ли ключ облака», сам ключ окну не нужен.
     cloudKey: Boolean(cloudSpeechKey(true)),
+    update: updateState(),
   };
 }
 
@@ -193,6 +209,12 @@ async function state() {
  * Он, скорее всего, ещё не скачан — и мастер честно не пустит дальше, пока
  * его не поставят.
  */
+/** Язык лекций из страницы — только код языка: он уходит в выбор модели и имя файла. */
+function строкаЯзыка(id: unknown): string {
+  if (typeof id !== 'string' || !/^[a-z]{2,3}$/u.test(id)) throw new Error('неизвестный язык лекций');
+  return id;
+}
+
 function подобратьГолос(patch: Partial<AppSettings>, before: AppSettings): Partial<AppSettings> {
   const язык = patch.language;
   if (!язык || язык === before.language) return patch;
@@ -205,6 +227,9 @@ function applyPatch(patch: Partial<AppSettings>): AppSettings {
   const before = options.settings.get();
   const after = options.settings.update(подобратьГолос(patch, before));
   const changed = (Object.keys(after) as Array<keyof AppSettings>).filter((key) => before[key] !== after[key]);
+  // Вид и тема — сразу и во всех окнах, в том числе посреди первого запуска:
+  // там их и выбирают, глядя на само окно.
+  if (changed.includes('look') || changed.includes('theme')) applyAppearance(after);
   if (changed.length > 0 && after.onboarded) options.onSettingsChanged(changed);
   return after;
 }
@@ -235,17 +260,25 @@ function registerHandlers(): void {
     window?.close();
   });
 
-  ipcMain.handle(`${SETTINGS_CHANNEL}:install`, (_event, kind: 'whisper' | 'voice', id: string) => {
+  ipcMain.handle(`${SETTINGS_CHANNEL}:install`, (_event, kind: 'whisper' | 'voice' | 'lecture', id: string) => {
     const key = `${kind}:${id}`;
     const running = installs.get(key);
     if (running) return running;
     const { paths } = current as SettingsWindowOptions;
     const progress = (p: { stage: string; ratio?: number; message?: string }) =>
       send('progress', { kind, id, ...p });
+    // Распознавание лекций — три загрузки подряд: строка под полоской
+    // называет, какая идёт, иначе полоска «сбрасывается» без объяснения.
     const job = (
       kind === 'whisper'
         ? installWhisperModel({ installRoot: paths.whisperModels, modelId: id as WhisperModelId, onProgress: progress })
-        : installVoice(paths.voiceModels, id, progress)
+        : kind === 'lecture'
+          ? installLectureStt(gpuWhisperDir(paths.home), строкаЯзыка(id), (что, p) =>
+              // «Готово» одной части — ещё не конец: страница на «complete» перечитывает
+              // всё окно и показала бы кнопку «Установить» между загрузками.
+              progress(p.stage === 'complete' ? { stage: 'extracting', ratio: 1, message: что } : { ...p, message: p.message ? `${что}: ${p.message}` : что }),
+            )
+          : installVoice(paths.voiceModels, id, progress)
     )
       .then((): InstallOutcome => ({ ok: true }))
       .catch((error: unknown): InstallOutcome => {
@@ -315,8 +348,60 @@ function registerHandlers(): void {
     return openTerminal(status.path, args, path.join(paths.home, 'data'), cli === 'claude' ? 'Claude Code' : 'Codex');
   });
 
+  // Агент кнопкой, без Терминала (`jarvis/setup/cliInstall.ts`). Один раз за
+  // раз: вторая кнопка во время установки ждёт ту же.
+  ipcMain.handle(`${SETTINGS_CHANNEL}:installAgent`, (_event, cli: 'claude' | 'codex') => {
+    if (cli !== 'claude' && cli !== 'codex') return { ok: false, message: 'unknown agent' };
+    const key = `agent:${cli}`;
+    const running = агенты.get(key);
+    if (running) return running;
+    const { paths } = current as SettingsWindowOptions;
+    const job = installCli(cli, { home: paths.home, log: (строка) => console.log(`[jarvis] установка агента: ${строка}`) })
+      .then((итог) => {
+        console.log(`[jarvis] установка агента ${cli}: ${итог.ok ? `поставлен (${итог.path})` : `не вышло — ${итог.message}`}`);
+        return итог;
+      })
+      .finally(() => агенты.delete(key));
+    агенты.set(key, job);
+    return job;
+  });
+
+  // Проверки до первой пары (`onboardingChecks.ts`): фраза человека — моделью
+  // для лекций, и короткий запрос к каждому агенту.
+  ipcMain.handle(`${SETTINGS_CHANNEL}:checkHearing`, async (_event, samples: Float32Array, sampleRate: number) => {
+    const { paths, settings } = current as SettingsWindowOptions;
+    const s = settings.get();
+    const звук = samples instanceof Float32Array ? samples : new Float32Array(samples as unknown as ArrayBuffer);
+    return checkHearing({
+      home: paths.home,
+      language: s.lectureLanguage || s.language,
+      samples: звук,
+      sampleRate: Number(sampleRate) || 16_000,
+      log: (строка) => console.log(`[jarvis] ${строка}`),
+    });
+  });
+  ipcMain.handle(`${SETTINGS_CHANNEL}:checkBrains`, async () => {
+    const { settings } = current as SettingsWindowOptions;
+    const итог = await checkBrains(settings.get().brain);
+    console.log(`[jarvis] проверка модели: ${итог.results.map((r) => `${r.cli} — ${r.ok ? `ответил за ${r.seconds.toFixed(0)} с` : r.message}`).join('; ') || 'агентов нет'}`);
+    return итог;
+  });
+
   ipcMain.handle(`${SETTINGS_CHANNEL}:openUrl`, (_event, url: string) => {
     if (/^https:\/\//u.test(url)) void shell.openExternal(url);
+  });
+
+  ipcMain.handle(`${SETTINGS_CHANNEL}:checkUpdate`, async () => {
+    await checkUpdateNow();
+    return updateState();
+  });
+  ipcMain.handle(`${SETTINGS_CHANNEL}:runUpdate`, () => runUpdateNow());
+  ipcMain.handle(`${SETTINGS_CHANNEL}:saveReport`, async () => {
+    try {
+      return { ok: true as const, file: await saveReport() };
+    } catch (error) {
+      return { ok: false as const, message: error instanceof Error ? error.message : String(error) };
+    }
   });
 }
 

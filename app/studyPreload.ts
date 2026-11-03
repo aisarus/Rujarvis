@@ -29,11 +29,19 @@ contextBridge.exposeInMainWorld('study', {
   editCourse: (course: string, name: string, hebrew: string, code: string) => call('editCourse', course, name, hebrew, code),
   setCourseLanguages: (course: string, language: string, notes: string) => call('setCourseLanguages', course, language, notes),
   deleteCourse: (course: string) => call('deleteCourse', course),
+  moveLecture: (notesFile: string, course: string) => call('moveLecture', notesFile, course),
+  recordings: () => call('recordings'),
+  deleteRecording: (notesFile: string) => call('deleteRecording', notesFile),
+  deleteAllRecordings: () => call('deleteAllRecordings'),
   addCard: (id: string, index: number) => call('addCard', id, index),
   recording: (on: boolean) => call('recording', on),
+  hearing: () => call('hearing'),
   transcribe: (samples: Float32Array, sampleRate: number) => call('transcribe', samples, sampleRate),
   openNote: (file: string) => call('openNote', file),
   audioUrl: (file: string) => call('audioUrl', file),
+  onLook: (listener: (look: string) => void) => {
+    ipcRenderer.on('jarvis-look', (_event, look: string) => listener(look));
+  },
   onChanged: (listener: (preparing: string[]) => void) => {
     ipcRenderer.on(`${CHANNEL}:changed`, (_event, preparing: string[]) => listener(preparing));
   },

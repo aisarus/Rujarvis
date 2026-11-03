@@ -95,14 +95,21 @@ import {
   lectureActive,
   lectureFromFile,
   lectureState,
+  latestNotesFile,
   onLectureFiled,
   onLectureState,
+  openNotes,
+  recoverAbandonedLectures,
   setLectureCourse,
   startLecture,
   type LectureStartOptions,
 } from './lectureMode';
 import { createFileDecoder } from './lectureFileDecode';
 import { prepareStudyFor, setStudyHearing, showStudy } from './study';
+import { setBrain } from '../jarvis/lecture/summarize';
+import { displayMediaGrant } from './systemAudio';
+import { enqueueDocument, watchInbox } from './documents';
+import { DOCUMENT_EXTENSIONS, isDocument } from '../jarvis/documents/pipeline';
 import { lectureHeardForJarvis } from '../jarvis/lecture/voiceGate';
 import {
   createGpuTranscriber,
@@ -133,7 +140,8 @@ import { describeLessons, lessonsFrom } from '../jarvis/memory/lessons';
 import { PlanStore } from '../jarvis/agent/planStore';
 import { planSummary, renderPlan } from '../jarvis/agent/plan';
 import { SpeechQueue } from '../jarvis/voice/speechQueue';
-import { createStatusOverlay, type LectureSource, type StatusOverlay } from './statusOverlay';
+import { notify } from './notify';
+import { createStatusOverlay, type LectureSource, type OverlayStatus, type StatusOverlay } from './statusOverlay';
 import { writeShowWork } from '../jarvis/desktop/showWork';
 
 /** Ctrl+Space is what `jarvis:setup` tells the user to press. */
@@ -510,6 +518,22 @@ function звукЛекции(on: boolean, source: LectureSource = 'mic'): void 
   }
 }
 
+/**
+ * Итог конспекта — ещё и уведомлением: строка на плашке живёт шесть секунд,
+ * а итог приходит через минуту-другую, когда человек уже ушёл с пары.
+ * Щелчок открывает конспект.
+ */
+function конспектГотов(текст: string): void {
+  notify(tr('Конспект готов', 'Lecture notes ready'), текст, () => {
+    const файл = latestNotesFile(настройкиЛекции());
+    if (файл) void openNotes(файл, настройкиЛекции()).catch(() => undefined);
+  });
+}
+
+function конспектНеВышел(текст: string): void {
+  notify(tr('Конспект не собрался', 'Lecture notes failed'), текст);
+}
+
 /** Где лекции и на каком языке — одно для голоса, кнопки и файла. */
 function настройкиЛекции(): LectureStartOptions {
   return {
@@ -517,10 +541,12 @@ function настройкиЛекции(): LectureStartOptions {
     // Пусто в настройках — лекция на языке интерфейса.
     lectureLanguage: settings().lectureLanguage || settings().language,
     notesLanguage: settings().language,
+    notesStyle: settings().notesStyle,
     outputDir:
       settings().outputDir ||
       jarvisOutputDir(process.env, app.getPath('desktop'), settings().language === 'en' ? 'Jarvis' : 'Джарвис'),
     mainEndpoint: () => серверРаспознавания?.endpoint ?? (process.env.JARVIS_GPU_STT?.trim() || null),
+    voice: settings().edition !== 'notes',
   };
 }
 
@@ -530,17 +556,31 @@ function настройкиЛекции(): LectureStartOptions {
  */
 const раскрытьФайл = createFileDecoder(() => окноЗвука);
 
-/** Конспект по файлу; сообщает, как вышло. Файл не назван — окно выбора. */
+/**
+ * Конспект или разбор по файлу; сообщает, как вышло. Файл не назван — окно
+ * выбора. Звук и видео — конспект лекции, документ (PDF, Word, PowerPoint,
+ * картинка, текст) — конвейер документов: «Из файла…» на плашке берёт и то,
+ * и другое.
+ */
 async function конспектПоФайлу(file: string | null, сообщить: (текст: string) => Promise<void> | void): Promise<void> {
   let путь = file;
   if (!путь) {
     const выбор = await dialog.showOpenDialog({
-      title: tr('Запись лекции', 'Lecture recording'),
+      title: tr('Запись лекции или учебный документ', 'Lecture recording or study document'),
       properties: ['openFile'],
-      filters: [{ name: tr('Звук и видео', 'Audio and video'), extensions: LECTURE_FILE_EXTENSIONS }],
+      filters: [
+        { name: tr('Записи и документы', 'Recordings and documents'), extensions: [...LECTURE_FILE_EXTENSIONS, ...DOCUMENT_EXTENSIONS] },
+        { name: tr('Документы', 'Documents'), extensions: DOCUMENT_EXTENSIONS },
+        { name: tr('Звук и видео', 'Audio and video'), extensions: LECTURE_FILE_EXTENSIONS },
+      ],
     });
     путь = выбор.canceled ? null : (выбор.filePaths[0] ?? null);
     if (!путь) return;
+  }
+  if (isDocument(путь)) {
+    console.log(`[jarvis:docs] документ: ${path.basename(путь)}`);
+    await сообщить(enqueueDocument(путь, документы(сообщить)));
+    return;
   }
   console.log(`[jarvis:lecture] конспект по файлу: ${path.basename(путь)}`);
   await сообщить(tr(`Беру ${path.basename(путь)}. Когда будет готово — скажу.`, `Taking ${path.basename(путь)}. I will tell you when it is ready.`));
@@ -549,17 +589,34 @@ async function конспектПоФайлу(file: string | null, сообщи�
     decode: раскрытьФайл,
     trash: (старый) => shell.trashItem(старый),
   });
+  // Заголовок нейтральный: итог по файлу — и «готово», и «расшифровать нечем».
+  notify(tr('Конспект по файлу', 'Notes from a file'), итог, () => {
+    const файл = latestNotesFile(настройкиЛекции());
+    if (файл) void openNotes(файл, настройкиЛекции()).catch(() => undefined);
+  });
   await сообщить(итог);
 }
 
-/** Самая свежая запись в «Загрузках» за сутки — для «конспект по последней записи». */
-function последняяЗапись(): string | null {
+/** Куда конвейер документов кладёт итог и как о нём сообщает. */
+function документы(сообщить: (текст: string) => Promise<void> | void) {
+  return {
+    outputDir: () => настройкиЛекции().outputDir,
+    notes: () => (settings().language === 'en' ? ('en' as const) : ('ru' as const)),
+    say: (текст: string) => void сообщить(текст),
+  };
+}
+
+/**
+ * Самый свежий файл нужного вида в «Загрузках» за сутки — для «конспект по
+ * последней записи» и «разбери последний документ».
+ */
+function последняяЗапись(расширения: readonly string[] = LECTURE_FILE_EXTENSIONS): string | null {
   const папка = app.getPath('downloads');
   const сутки = Date.now() - 24 * 60 * 60 * 1000;
   let лучший: { путь: string; когда: number } | null = null;
   try {
     for (const имя of readdirSync(папка)) {
-      if (!LECTURE_FILE_EXTENSIONS.includes(path.extname(имя).slice(1).toLowerCase())) continue;
+      if (!расширения.includes(path.extname(имя).slice(1).toLowerCase())) continue;
       const путь = path.join(папка, имя);
       const когда = statSync(путь).mtimeMs;
       if (когда >= сутки && (!лучший || когда > лучший.когда)) лучший = { путь, когда };
@@ -596,10 +653,20 @@ async function переключитьЛекцию(
   }
   звукЛекции(false);
   void итог
-    .then((ответ) => сообщить(ответ))
+    .then((ответ) => {
+      конспектГотов(ответ);
+      return сообщить(ответ);
+    })
     .catch((error: unknown) => {
-      console.error(`[jarvis:lecture] итог не дописан: ${error instanceof Error ? error.message : String(error)}`);
-      return сообщить(tr('Итог не собрался. Записанное — на диске.', 'The summary failed. What was recorded is on disk.'));
+      const причина = error instanceof Error ? error.message : String(error);
+      console.error(`[jarvis:lecture] итог не дописан: ${причина}`);
+      // Заметка без свойств лекции — значит, брошенная: её допишет запуск.
+      const текст = tr(
+        `Итог не собрался: ${причина}. Записанное на диске — попробую дописать при следующем запуске.`,
+        `The summary failed: ${причина}. The recording is on disk; I will try to finish it on the next start.`,
+      );
+      конспектНеВышел(текст);
+      return сообщить(текст);
     })
     .catch(() => undefined);
   await сообщить(tr('Дописываю итог. Когда будет готов — сообщу.', 'Writing the summary. I will let you know when it is ready.'));
@@ -721,9 +788,21 @@ export async function runDirectCommand(
         }
         // Не ждём: расшифровка — минуты, а реплики разбираются по одной.
         void конспектПоФайлу(файл, (текст) => session.speak(текст)).catch((error: unknown) => {
-          console.error(`[jarvis:lecture] конспект по файлу не вышел: ${error instanceof Error ? error.message : String(error)}`);
-          return session.speak(tr('Конспект по файлу не вышел — причина в журнале.', 'Notes from the file failed — see the log.'));
+          const причина = error instanceof Error ? error.message : String(error);
+          console.error(`[jarvis:lecture] конспект по файлу не вышел: ${причина}`);
+          const текст = tr(`Конспект по файлу не вышел: ${причина}`, `Notes from the file failed: ${причина}`);
+          конспектНеВышел(текст);
+          return session.speak(текст);
         });
+        break;
+      }
+      case 'documentFile': {
+        const файл = последняяЗапись(DOCUMENT_EXTENSIONS);
+        if (!файл) {
+          await session.speak(tr('В «Загрузках» нет документов за сутки.', 'No documents in Downloads from the last day.'));
+          break;
+        }
+        await session.speak(enqueueDocument(файл, документы((текст) => session.speak(текст))));
         break;
       }
       case 'volume': {
@@ -1089,6 +1168,8 @@ function describeDirect(command: DirectCommand): string {
       return command.mode === 'code' ? 'Claude: Code' : 'Claude: Chat';
     case 'lectureFile':
       return 'конспект по последней записи';
+    case 'documentFile':
+      return 'разбор последнего документа';
     case 'volume':
       return `громкость ${command.level}%`;
     case 'openSite':
@@ -1141,11 +1222,179 @@ export async function startJarvisVoiceBridge(options: {
   }
 }
 
+/** Вариант «только конспекты»: мост без голоса. */
+export interface NotesBridge {
+  /** Окно журнала — тот же журнал, что у полного Джарвиса. */
+  showEvents(): void;
+  dispose(): void;
+}
+
+let конспектор: NotesBridge | null = null;
+
+/**
+ * Вариант «только конспекты» (`edition: 'notes'`).
+ *
+ * Из всего Джарвиса — то, что студенту нужно на паре и после неё: окно звука
+ * (лекция с микрофона или из Zoom, раскрытие файла записи), конспект,
+ * «Учёба», разбор документов и плашка с кнопками. Нет слуха команд, голоса,
+ * агента и драйвера рабочего стола: микрофон берётся только на время лекции,
+ * а на маке не нужны ни «Универсальный доступ», ни «Запись экрана» (первые
+ * тестеры на маке, 26.10.2026).
+ */
+export async function startNotesBridge(options: { settings: SettingsStore }): Promise<NotesBridge> {
+  if (конспектор) return конспектор;
+  settingsRef = options.settings;
+  setBrain(() => settings().brain);
+  setLanguage(settings().language);
+  const logPath = startLogFile(PATHS.log, [
+    'вариант: только конспекты — без слуха команд, голоса и агента',
+    `язык: ${settings().language}, язык лекций: ${settings().lectureLanguage || settings().language}`,
+    `папка Джарвиса: ${PATHS.home}`,
+    `платформа: ${process.platform} ${os.release()}, Electron ${process.versions.electron ?? '-'}`,
+  ]);
+  if (logPath) console.log(`[jarvis] логи пишутся в ${logPath}`);
+
+  const audioWindow = await createAudioWindow();
+  окноЗвука = audioWindow;
+  поколениеМоста += 1;
+
+  // Что показать на плашке: без голоса подсказка — про кнопку, а не про имя.
+  const статус = (): OverlayStatus => {
+    switch (lectureState()) {
+      case 'on':
+        return {
+          indicator: 'listening',
+          label: tr('Пишу лекцию', 'Recording the lecture'),
+          awake: true,
+          hint: tr('Закончить — «■ Закончить конспект»', 'To finish, press "■ Stop lecture notes"'),
+        };
+      case 'starting':
+        return { indicator: 'transcribing', label: tr('Начинаю конспект…', 'Starting the notes…'), awake: true, hint: tr('Секунду', 'One moment') };
+      case 'finishing':
+        return { indicator: 'thinking', label: tr('Дописываю итог…', 'Writing the summary…'), awake: true, hint: tr('Минута-другая', 'A minute or two') };
+      case 'importing':
+        return { indicator: 'working', label: tr('Конспект по файлу', 'Notes from a file'), awake: true, hint: tr('Сообщу, когда будет готово', 'I will tell you when it is ready') };
+      default:
+        return { indicator: 'idle', label: tr('Конспектор', 'Note-taker'), awake: false, hint: tr('На паре нажмите «● Конспект»', 'In class, press "● Lecture notes"') };
+    }
+  };
+
+  const overlay = createStatusOverlay({
+    onLectureButton: (source) => {
+      if (lectureState() === 'finishing' || lectureState() === 'starting') return;
+      console.log(`[jarvis:lecture] кнопка на плашке: ${lectureActive() ? 'закончить' : 'начать'}`);
+      void переключитьЛекцию(!lectureActive(), undefined, (текст) => overlay.note(статус(), текст), source ?? 'mic').catch((error: unknown) => {
+        const причина = error instanceof Error ? error.message : String(error);
+        console.error(`[jarvis:lecture] кнопка не сработала: ${причина}`);
+        overlay.note(статус(), tr(`Конспект не запустился: ${причина}`, `Lecture notes did not start: ${причина}`));
+      });
+    },
+    onCourse: (course) => {
+      console.log(`[jarvis:lecture] курс на плашке: ${course || 'угадать'}`);
+      void setLectureCourse(course)
+        .then((текст) => overlay.note(статус(), текст))
+        .catch((error: unknown) => console.error(`[jarvis:lecture] курс не сменился: ${error instanceof Error ? error.message : String(error)}`));
+    },
+    onStudy: () => showStudy(),
+    onOpenNotes: () => {
+      const файл = latestNotesFile(настройкиЛекции());
+      if (!файл) return false;
+      void openNotes(файл, настройкиЛекции()).catch((error: unknown) =>
+        console.error(`[jarvis:lecture] конспект не открылся: ${error instanceof Error ? error.message : String(error)}`),
+      );
+      return true;
+    },
+    onFile: (file) => {
+      if (lectureState() !== 'off') return;
+      void конспектПоФайлу(file, (текст) => overlay.note(статус(), текст)).catch((error: unknown) => {
+        const причина = error instanceof Error ? error.message : String(error);
+        console.error(`[jarvis:lecture] конспект по файлу не вышел: ${причина}`);
+        const текст = tr(`Конспект по файлу не вышел: ${причина}`, `Notes from the file failed: ${причина}`);
+        конспектНеВышел(текст);
+        overlay.note(статус(), текст);
+      });
+    },
+  });
+  overlay.setBig(settings().bigMode);
+  overlay.update(статус());
+  overlayRef = overlay;
+  logWindow = createLogWindow();
+
+  onLectureFiled(prepareStudyFor);
+  // Ответа голосом в «Учёбе» нет: слуха команд в этом варианте нет.
+  setStudyHearing(null, null);
+  const отписатьЛекцию = onLectureState((state, info) => {
+    overlay.setLecture(state);
+    overlay.setLectureInfo(info);
+    overlay.update(статус());
+  });
+  const перестатьСмотретьВходящие = watchInbox(документы((текст) => overlay.note(статус(), текст)));
+  const дописатьБрошенные = setTimeout(
+    () =>
+      void recoverAbandonedLectures(настройкиЛекции(), (текст) => {
+        конспектГотов(текст);
+        overlay.note(статус(), текст);
+      }),
+    60_000,
+  );
+  дописатьБрошенные.unref?.();
+  // Плашку пересоздают после падения — состояние ей напоминается.
+  const пульс = setInterval(() => overlay.update(статус()), 5_000);
+  пульс.unref?.();
+
+  ipcMain.on(
+    AUDIO_BRIDGE_CHANNELS.lectureAudio,
+    (_event, payload: { samples?: Float32Array; sampleRate?: number } | null) => {
+      if (!payload?.samples || !payload.sampleRate || !lectureActive()) return;
+      feedLecture(toFloat32(payload.samples), payload.sampleRate);
+    },
+  );
+  ipcMain.on(AUDIO_BRIDGE_CHANNELS.lectureSource, (_event, payload: { ok?: boolean; error?: string } | null) => {
+    if (payload?.ok) {
+      console.log('[jarvis:lecture] звук компьютера взят — пишу лекцию из Zoom');
+      return;
+    }
+    const причина = String(payload?.error ?? 'неизвестно').slice(0, 160);
+    console.error(`[jarvis:lecture] звук компьютера не взят (${причина}) — пишу с микрофона`);
+    if (lectureActive()) {
+      overlay.note(статус(), tr(`Звук компьютера взять не вышло (${причина}). Пишу с микрофона.`, `Could not capture the computer sound (${причина}). Recording from the microphone.`));
+    }
+  });
+  ipcMain.on(AUDIO_BRIDGE_CHANNELS.error, (_event, message: string) => {
+    console.error(`[jarvis] аудио: ${message}`);
+  });
+
+  console.log('[jarvis] конспектор готов: кнопки на плашке, «Учёба», «Входящие»');
+  конспектор = {
+    showEvents: () => logWindow?.open(),
+    dispose: () => {
+      ipcMain.removeAllListeners(AUDIO_BRIDGE_CHANNELS.lectureAudio);
+      ipcMain.removeAllListeners(AUDIO_BRIDGE_CHANNELS.lectureSource);
+      ipcMain.removeAllListeners(AUDIO_BRIDGE_CHANNELS.error);
+      clearInterval(пульс);
+      clearTimeout(дописатьБрошенные);
+      отписатьЛекцию();
+      перестатьСмотретьВходящие();
+      abandonLecture();
+      overlay.dispose();
+      overlayRef = null;
+      logWindow?.dispose();
+      logWindow = null;
+      поколениеМоста += 1;
+      окноЗвука = null;
+      if (!audioWindow.isDestroyed()) audioWindow.destroy();
+      конспектор = null;
+    },
+  };
+  return конспектор;
+}
+
 async function поднятьМост(options: {
   settings: SettingsStore;
   onStatus?(status: VoiceStatus): void;
 }): Promise<JarvisVoiceBridge> {
   settingsRef = options.settings;
+  setBrain(() => settings().brain);
   // Язык — до всего остального: с него начинается каждая сказанная фраза и
   // каждая таблица, которая выбирает ответ.
   setLanguage(settings().language);
@@ -1490,8 +1739,9 @@ async function поднятьМост(options: {
       console.log(`[jarvis:lecture] кнопка на плашке: ${lectureActive() ? 'закончить' : 'начать'}`);
       void переключитьЛекцию(!lectureActive(), undefined, (текст) => overlay.note(session.status, текст), source ?? 'mic').catch(
         (error: unknown) => {
-          console.error(`[jarvis:lecture] кнопка не сработала: ${error instanceof Error ? error.message : String(error)}`);
-          overlay.note(session.status, tr('Конспект не запустился — причина в журнале.', 'Lecture notes did not start — see the log.'));
+          const причина = error instanceof Error ? error.message : String(error);
+          console.error(`[jarvis:lecture] кнопка не сработала: ${причина}`);
+          overlay.note(session.status, tr(`Конспект не запустился: ${причина}`, `Lecture notes did not start: ${причина}`));
         },
       );
     },
@@ -1502,11 +1752,22 @@ async function поднятьМост(options: {
         .catch((error: unknown) => console.error(`[jarvis:lecture] курс не сменился: ${error instanceof Error ? error.message : String(error)}`));
     },
     onStudy: () => showStudy(),
+    onOpenNotes: () => {
+      const файл = latestNotesFile(настройкиЛекции());
+      if (!файл) return false;
+      void openNotes(файл, настройкиЛекции()).catch((error: unknown) =>
+        console.error(`[jarvis:lecture] конспект не открылся: ${error instanceof Error ? error.message : String(error)}`),
+      );
+      return true;
+    },
     onFile: (file) => {
       if (lectureState() !== 'off') return;
       void конспектПоФайлу(file, (текст) => overlay.note(session.status, текст)).catch((error: unknown) => {
-        console.error(`[jarvis:lecture] конспект по файлу не вышел: ${error instanceof Error ? error.message : String(error)}`);
-        overlay.note(session.status, tr('Конспект по файлу не вышел — причина в журнале.', 'Notes from the file failed — see the log.'));
+        const причина = error instanceof Error ? error.message : String(error);
+        console.error(`[jarvis:lecture] конспект по файлу не вышел: ${причина}`);
+        const текст = tr(`Конспект по файлу не вышел: ${причина}`, `Notes from the file failed: ${причина}`);
+        конспектНеВышел(текст);
+        overlay.note(session.status, текст);
       });
     },
   });
@@ -1525,6 +1786,19 @@ async function поднятьМост(options: {
     overlay.setLecture(state);
     overlay.setLectureInfo(info);
   });
+  // «Входящие» в «Лекциях»: положенный туда документ разбирается сам.
+  const перестатьСмотретьВходящие = watchInbox(документы((текст) => overlay.note(session.status, текст)));
+  // Лекция, оборванная обновлением, перезапуском или выходом, дописывается
+  // сама — через минуту, когда запуск уже не делит с ней машину.
+  const дописатьБрошенные = setTimeout(
+    () =>
+      void recoverAbandonedLectures(настройкиЛекции(), (текст) => {
+        конспектГотов(текст);
+        overlay.note(session.status, текст);
+      }),
+    60_000,
+  );
+  дописатьБрошенные.unref?.();
   // Крупный режим — из настроек, и сразу: его могли включить голосом в прошлый
   // раз, и при запуске плашка обязана быть такой, какой её оставили.
   overlay.setBig(settings().bigMode);
@@ -2493,6 +2767,11 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
       ipcMain.removeAllListeners(AUDIO_BRIDGE_CHANNELS.utterance);
       ipcMain.removeAllListeners(AUDIO_BRIDGE_CHANNELS.speechStarted);
       ipcMain.removeAllListeners(AUDIO_BRIDGE_CHANNELS.error);
+      // Звук лекции — тоже: оставленный обработчик прежнего моста кормил бы
+      // конспект вторым экземпляром каждого куска, и запись лекции, начатой
+      // после перезапуска голоса, выходила вдвое длиннее (найдено 26.10.2026).
+      ipcMain.removeAllListeners(AUDIO_BRIDGE_CHANNELS.lectureAudio);
+      ipcMain.removeAllListeners(AUDIO_BRIDGE_CHANNELS.lectureSource);
       clearInterval(heartbeat);
       clearInterval(progressTimer);
       if (thoughtTimer) clearTimeout(thoughtTimer);
@@ -2511,6 +2790,8 @@ async function handleUtterance(payload: RecordedAudio): Promise<void> {
       // бы поднять свой.
       поколениеМоста += 1;
       отписатьЛекцию();
+      перестатьСмотретьВходящие();
+      clearTimeout(дописатьБрошенные);
       setStudyHearing(null, null);
       учёбаЗаписывает = false;
       abandonLecture();
@@ -3092,17 +3373,17 @@ async function createAudioWindow(): Promise<BrowserWindow> {
   window.webContents.session.setPermissionRequestHandler((_contents, permission, callback) => {
     callback(permission === 'media' || permission === 'display-capture');
   });
-  // Лекция в Zoom: звук компьютера — петлёй вывода (loopback; на Windows).
-  // Картинку экрана окно звука тут же гасит, ему нужен только звук. Другой
-  // платформы петля нет — отдаём экран без звука, и окно честно скажет, что
-  // звука компьютера не получило, и перейдёт на микрофон.
+  // Лекция в Zoom: звук компьютера — петлёй вывода (Windows; macOS с 14.2 —
+  // `systemAudio.ts`). Картинку экрана окно звука тут же гасит, ему нужен
+  // только звук. Где петли нет — отдаём экран без звука, и окно честно скажет,
+  // что звука компьютера не получило, и перейдёт на микрофон.
   window.webContents.session.setDisplayMediaRequestHandler((_request, callback) => {
     desktopCapturer
       .getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } })
       .then((sources) => {
         const screen = sources[0];
         if (!screen) return callback({});
-        callback(process.platform === 'win32' ? { video: screen, audio: 'loopback' } : { video: screen });
+        callback(displayMediaGrant(screen));
       })
       .catch(() => callback({}));
   });

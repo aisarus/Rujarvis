@@ -6,13 +6,16 @@
  * не показывает: читать его — в Obsidian, окно открывает заметку там.
  */
 
+import { existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 
 import { BrowserWindow, ipcMain, shell } from 'electron';
 
 import { obsidianOpenUrl } from '../jarvis/lecture/vault';
+import { tr } from '../jarvis/locale/language';
 import type { StudyService } from '../jarvis/study/service';
+import { currentLook, windowBackground } from './look';
 import { APP_ROOT } from './root';
 
 export const STUDY_CHANNEL = 'jarvis-study';
@@ -20,11 +23,15 @@ export const STUDY_CHANNEL = 'jarvis-study';
 export interface StudyWindowDeps {
   service(): StudyService;
   preparing(): string[];
+  /** Лекция → почему вопросы к ней не заготовились. */
+  failures?(): Record<string, string>;
   prepare(notesFile: string): void;
   /** Заготовить всё незаготовленное; сколько поставлено в очередь. */
   prepareAll?(): number;
   /** Ответ голосом → текст. */
   transcribe?(samples: Float32Array, sampleRate: number): Promise<string>;
+  /** Есть ли сейчас чем расшифровать ответ голосом; нет — кнопки «Голосом» нет. */
+  hearing?(): boolean;
   /** Окно записывает ответ голосом: мост пусть не слушает команды. */
   recording?(on: boolean): void;
   language(): 'ru' | 'en';
@@ -59,6 +66,14 @@ function обработать(канал: string, fn: (...args: unknown[]) => un
   });
 }
 
+/** Лежит ли файл в хранилище Obsidian: у хранилища в корне — папка `.obsidian`. */
+function вХранилищеObsidian(file: string): boolean {
+  for (let папка = path.dirname(file); ; папка = path.dirname(папка)) {
+    if (existsSync(path.join(папка, '.obsidian'))) return true;
+    if (path.dirname(папка) === папка) return false;
+  }
+}
+
 function строка(v: unknown): string {
   if (typeof v !== 'string') throw new Error('ожидалась строка');
   return v;
@@ -73,7 +88,7 @@ function зарегистрировать(): void {
   if (registered) return;
   registered = true;
   обработать('today', () => ({ today: служба().today(), preparing: deps?.preparing() ?? [] }));
-  обработать('course', (name) => служба().course(строка(name)));
+  обработать('course', (name) => ({ ...служба().course(строка(name)), failures: deps?.failures?.() ?? {} }));
   обработать('quizStart', (scope) => {
     const s = (scope ?? {}) as { course?: unknown; lecture?: unknown; topic?: unknown };
     return служба().startQuiz({
@@ -121,14 +136,19 @@ function зарегистрировать(): void {
   );
   обработать('setCourseLanguages', (course, language, notes) => служба().setCourseLanguages(строка(course), строка(language), строка(notes)));
   обработать('deleteCourse', (course) => служба().deleteCourse(строка(course)));
+  обработать('moveLecture', (notesFile, course) => служба().moveLecture(строка(notesFile), строка(course)));
+  обработать('recordings', () => служба().recordings());
+  обработать('deleteRecording', (notesFile) => служба().deleteRecording(строка(notesFile)));
+  обработать('deleteAllRecordings', () => служба().deleteAllRecordings());
   обработать('addCard', (id, index) => служба().addCardFromQuestion(строка(id), число(index)));
   обработать('recording', (on) => deps?.recording?.(Boolean(on)));
+  обработать('hearing', () => deps?.hearing?.() ?? Boolean(deps?.transcribe));
   обработать('transcribe', async (samples, sampleRate) => {
-    if (!deps?.transcribe) throw new Error('ответ голосом недоступен');
+    if (!deps?.transcribe) throw new Error(tr('ответ голосом недоступен', 'answering by voice is unavailable'));
     const звук = samples instanceof Float32Array ? samples : new Float32Array(samples as ArrayBuffer);
-    if (звук.length === 0) throw new Error('пустая запись');
+    if (звук.length === 0) throw new Error(tr('пустая запись', 'empty recording'));
     // Не больше двух минут: ответ на вопрос, а не лекция.
-    if (звук.length / число(sampleRate) > 120) throw new Error('запись длиннее двух минут');
+    if (звук.length / число(sampleRate) > 120) throw new Error(tr('запись длиннее двух минут', 'the recording is longer than two minutes'));
     return (await deps.transcribe(звук, число(sampleRate))).trim();
   });
   // Заметка открывается в Obsidian, звук — адресом файла для проигрывателя
@@ -136,12 +156,18 @@ function зарегистрировать(): void {
   // это заметка и звук, а не что угодно.
   обработать('openNote', async (file) => {
     const f = строка(file);
-    if (!f.endsWith('.md')) throw new Error('это не заметка');
-    await shell.openExternal(obsidianOpenUrl(f));
+    if (!f.endsWith('.md')) throw new Error(tr('это не заметка', 'this is not a note'));
+    // Без Obsidian ссылка obsidian:// не открывала ничего, и «↗» молчала
+    // (аудит 21.10.2026): заметка вне хранилища — программой по умолчанию.
+    if (вХранилищеObsidian(f)) await shell.openExternal(obsidianOpenUrl(f));
+    else {
+      const ошибка = await shell.openPath(f);
+      if (ошибка) throw new Error(ошибка);
+    }
   });
   обработать('audioUrl', (file) => {
     const f = строка(file);
-    if (!/\.(wav|mp3|m4a|ogg|opus|webm)$/iu.test(f)) throw new Error('это не звук');
+    if (!/\.(wav|mp3|m4a|ogg|opus|webm)$/iu.test(f)) throw new Error(tr('это не звук', 'this is not audio'));
     return pathToFileURL(f).href;
   });
 }
@@ -168,7 +194,7 @@ export function openStudyWindow(options: StudyWindowDeps): void {
     minWidth: 720,
     minHeight: 540,
     title: options.language() === 'en' ? 'Study' : 'Учёба',
-    backgroundColor: '#0f1115',
+    backgroundColor: windowBackground(),
     autoHideMenuBar: true,
     show: false,
     icon: path.join(APP_ROOT, 'resources', 'icon.png'),
@@ -183,5 +209,5 @@ export function openStudyWindow(options: StudyWindowDeps): void {
   window.on('closed', () => {
     window = null;
   });
-  void window.loadFile(path.join(APP_ROOT, 'app', 'ui', 'study.html'), { query: { lang: options.language() } });
+  void window.loadFile(path.join(APP_ROOT, 'app', 'ui', 'study.html'), { query: { lang: options.language(), look: currentLook() } });
 }

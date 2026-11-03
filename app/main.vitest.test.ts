@@ -23,7 +23,14 @@ const стенд = vi.hoisted(() => ({
   микрофонПереключен: 0,
   готово: null as null | (() => void),
   подсказка: '',
-  настройкиОкна: null as null | { settings: { update(patch: { language: 'ru' | 'en' }): unknown } },
+  настройкиОкна: null as null | { settings: { update(patch: { language: 'ru' | 'en' }): unknown }; onSettingsChanged(changed: string[]): void },
+  меню: [] as Array<{ label?: string; click?: () => void }>,
+  вышел: 0,
+  лекция: 'off' as string,
+  ответ: 0,
+  вопросов: 0,
+  законченоЛекций: 0,
+  слушательЛекции: null as null | ((state: string) => void),
 }));
 
 /**
@@ -43,7 +50,9 @@ vi.mock('electron', () => {
     setToolTip(текст: string): void {
       стенд.подсказка = текст;
     }
-    setContextMenu(): void {}
+    setContextMenu(меню: Array<{ label?: string; click?: () => void }>): void {
+      стенд.меню = меню;
+    }
     on(): void {}
   }
   return {
@@ -54,7 +63,9 @@ vi.mock('electron', () => {
       setAppUserModelId: () => {},
       getPath: () => os.tmpdir(),
       requestSingleInstanceLock: () => стенд.лок,
-      quit: () => {},
+      quit: () => {
+        стенд.вышел += 1;
+      },
       on: () => {},
       whenReady: () =>
         new Promise<void>((resolve) => {
@@ -65,8 +76,29 @@ vi.mock('electron', () => {
     Tray,
     nativeImage: { createFromPath: () => ({}) },
     shell: { openPath: () => Promise.resolve('') },
+    dialog: {
+      showMessageBox: async () => {
+        стенд.вопросов += 1;
+        return { response: стенд.ответ };
+      },
+    },
   };
 });
+
+vi.mock('./lectureMode', () => ({
+  lectureState: () => стенд.лекция,
+  finishLecture: () => {
+    стенд.законченоЛекций += 1;
+    return Promise.resolve('Конспект готов');
+  },
+  lectureFinishing: () => null,
+  onLectureState: (слушатель: (state: string) => void) => {
+    стенд.слушательЛекции = слушатель;
+    return () => {
+      стенд.слушательЛекции = null;
+    };
+  },
+}));
 
 vi.mock('./voiceBridge', () => ({
   startJarvisVoiceBridge: async () => {
@@ -89,9 +121,10 @@ vi.mock('./voiceBridge', () => ({
 }));
 
 vi.mock('./settingsWindow', () => ({
-  openSettingsWindow: (параметры: { settings: { update(patch: { language: 'ru' | 'en' }): unknown } }) => {
+  openSettingsWindow: (параметры: { settings: { update(patch: { language: 'ru' | 'en' }): unknown }; onSettingsChanged(changed: string[]): void }) => {
     стенд.настройкиОкна = параметры;
   },
+  sendUpdateState: () => {},
   SETTINGS_CHANNEL: 'jarvis-settings',
 }));
 
@@ -139,6 +172,71 @@ describe('главный процесс', () => {
     await запустить(false);
     expect(стенд.трееПоявилось).toBe(0);
     expect(стенд.голосЗапущен).toBe(0);
+  });
+});
+
+/**
+ * Посреди лекции выход, перезапуск и смена настроек обрывали запись, а итог
+ * не дописывался вовсе: тестер 21.10.2026 обновился посреди пары.
+ */
+describe('посреди лекции', () => {
+  const пункт = (начало: string) => взять('меню').find((p) => p.label?.startsWith(начало));
+  const подождать = async (): Promise<void> => {
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 10));
+  };
+
+  beforeEach(async () => {
+    стенд.лекция = 'off';
+    стенд.вышел = 0;
+    стенд.вопросов = 0;
+    стенд.законченоЛекций = 0;
+    await запустить(true);
+  });
+
+  it('без лекции «Выйти» выходит сразу, без вопроса', async () => {
+    пункт('Выйти')?.click?.();
+    await подождать();
+    expect(стенд.вопросов).toBe(0);
+    expect(стенд.вышел).toBe(1);
+  });
+
+  it('«Выйти» спрашивает; «Отмена» — остаёмся, «Закончить конспект и выйти» — сначала итог', async () => {
+    стенд.лекция = 'on';
+    стенд.ответ = 2;
+    пункт('Выйти')?.click?.();
+    await подождать();
+    expect(стенд.вопросов).toBe(1);
+    expect(стенд.вышел).toBe(0);
+
+    стенд.ответ = 0;
+    пункт('Выйти')?.click?.();
+    await подождать();
+    expect(стенд.законченоЛекций).toBe(1);
+    expect(стенд.вышел).toBe(1);
+  });
+
+  it('«Перезапустить голос» спрашивает; «Отмена» — голос не трогается', async () => {
+    стенд.лекция = 'on';
+    стенд.ответ = 1;
+    const было = стенд.голосЗапущен;
+    пункт('Перезапустить')?.click?.();
+    await подождать();
+    expect(стенд.вопросов).toBe(1);
+    expect(стенд.голосЗапущен).toBe(было);
+  });
+
+  it('настройка, которой нужен перезапуск, применяется, когда конспект закончится', async () => {
+    пункт('Настройки')?.click?.();
+    стенд.лекция = 'on';
+    const было = стенд.голосЗапущен;
+    взять('настройкиОкна')?.onSettingsChanged(['language']);
+    await подождать();
+    expect(стенд.голосЗапущен).toBe(было);
+    стенд.лекция = 'off';
+    взять('слушательЛекции')?.('off');
+    await подождать();
+    expect(стенд.голосЗапущен).toBe(было + 1);
   });
 });
 

@@ -12,13 +12,14 @@ import path from 'node:path';
 import { app, shell } from 'electron';
 
 import { lectureLanguagesFor, settingsLanguages } from '../jarvis/lecture/courses';
+import { deleteRecordings, expiredRecordings, listRecordings, RECORDING_KEEP_DAYS } from '../jarvis/lecture/recordings';
 import { lectureFolder } from '../jarvis/lecture/vault';
-import { createClaudeSummarizer } from '../jarvis/lecture/summarize';
+import { createSummarizer } from '../jarvis/lecture/summarize';
 import { tr } from '../jarvis/locale/language';
 import type { JarvisPaths } from '../jarvis/setup/paths';
 import { jarvisOutputDir } from '../jarvis/setup/paths';
 import type { AppSettings } from '../jarvis/setup/settings';
-import { prepareLecture } from '../jarvis/study/prepare';
+import { prepareLecture, prepareMaterial } from '../jarvis/study/prepare';
 import { StudyService, studyRoot } from '../jarvis/study/service';
 import { StudyStore } from '../jarvis/study/store';
 import { lectureState } from './lectureMode';
@@ -32,8 +33,18 @@ interface Настройка {
 let настройка: Настройка | null = null;
 let служба: StudyService | null = null;
 let очередь: Promise<void> = Promise.resolve();
-/** Лекция → её заметка: что в очереди заготовки и к какому курсу относится. */
+/** Лекция или материал → курс: что в очереди заготовки и чей курс сейчас не трогать. */
 const готовятся = new Map<string, string>();
+/**
+ * Лекция → почему вопросы к ней не заготовились. Причина уходила только в
+ * журнал, а окно показывало «Вопросы не заготовлены» без объяснения (аудит
+ * 21.10.2026); теперь карточка лекции говорит её сама.
+ */
+const неВышло = new Map<string, string>();
+
+export function prepareFailures(): Record<string, string> {
+  return Object.fromEntries(неВышло);
+}
 
 export function configureStudy(options: Настройка): void {
   настройка = options;
@@ -60,11 +71,13 @@ export function studyService(): StudyService {
     служба = new StudyService({
       store: хранилище(),
       vaultRoot: папкаЛекций,
-      summarize: createClaudeSummarizer(),
+      summarize: createSummarizer({ log: (строка) => console.log(`[jarvis:study] ${строка}`) }),
       notes: settings().language,
       languages: () => settingsLanguages(settings()),
       trash: (file) => shell.trashItem(file),
       busy: курсЗанят,
+      audioBusy: звукЗанят,
+      recordingsAutoDays: () => (settings().recordingsKeep === 'week' ? RECORDING_KEEP_DAYS : null),
     });
   }
   return служба;
@@ -79,10 +92,52 @@ function курсЗанят(course: string): string | null {
   if (lectureState() !== 'off') {
     return tr('Сейчас идёт конспект — курсы можно менять, когда он закончится.', 'Lecture notes are in progress. Courses can be changed once they finish.');
   }
-  if ([...готовятся.values()].some((заметка) => path.basename(path.dirname(заметка)) === course)) {
+  if ([...готовятся.values()].includes(course)) {
     return tr(`Готовлю вопросы к лекциям курса «${course}» — подождите, пока закончу.`, `Preparing questions for "${course}". Wait until it finishes.`);
   }
   return null;
+}
+
+/**
+ * Звук лекций сейчас не трогать: лекция поднимается или дописывается (файлы
+ * переезжают в папку курса), конспект по файлу читает звук прежней лекции.
+ * Пока лекция просто идёт — можно: её звук ещё без свойств лекции и в списке
+ * записей не виден.
+ */
+function звукЗанят(): string | null {
+  const состояние = lectureState();
+  if (состояние === 'off' || состояние === 'on') return null;
+  return tr('Сейчас дописывается конспект — звук можно удалить, когда он закончится.', 'Lecture notes are being finished. Audio can be deleted once they are done.');
+}
+
+/**
+ * Записи старше недели — прочь, если так оставлено в настройках: через две
+ * минуты после запуска и потом раз в шесть часов. Возвращает, как остановить.
+ */
+export function startRecordingsCleanup(): () => void {
+  const раз = async (): Promise<void> => {
+    if (!настройка || настройка.settings().recordingsKeep !== 'week' || звукЗанят()) return;
+    try {
+      const старые = expiredRecordings(listRecordings(папкаЛекций()), Date.now());
+      if (!старые.length) return;
+      const итог = await deleteRecordings(старые);
+      console.log(
+        `[jarvis:study] звук лекций старше ${RECORDING_KEEP_DAYS} дней удалён: ${итог.deleted}, освобождено ${Math.round(итог.bytes / 1_000_000)} МБ` +
+          (итог.failed ? `; не удалились (заняты): ${итог.failed}` : ''),
+      );
+      sendStudyUpdate();
+    } catch (error) {
+      console.error(`[jarvis:study] старые записи не удалились: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  const первый = setTimeout(() => void раз(), 2 * 60 * 1000);
+  const потом = setInterval(() => void раз(), 6 * 60 * 60 * 1000);
+  первый.unref?.();
+  потом.unref?.();
+  return () => {
+    clearTimeout(первый);
+    clearInterval(потом);
+  };
 }
 
 /** Что сейчас заготавливается — окно показывает «готовлю вопросы…». */
@@ -90,21 +145,33 @@ export function preparingLectures(): string[] {
   return [...готовятся.keys()];
 }
 
-/** Заготовить учёбу по лекции — в очередь, по одной. */
-export function prepareStudyFor(notesFile: string): void {
+/** Разбор документа из конвейера: его курс, язык документа и язык заметок. */
+export interface MaterialStudy {
+  course: string;
+  /** Язык документа — на нём будут вопросы, как на экзамене. */
+  sourceLanguage?: string;
+  notes: 'ru' | 'en';
+}
+
+/** Заготовить учёбу по лекции или разбору документа — в очередь, по одной. */
+export function prepareStudyFor(notesFile: string, material?: MaterialStudy): void {
   if (!настройка) return;
   const лекция = path.basename(notesFile, '.md');
   if (готовятся.has(лекция)) return;
-  готовятся.set(лекция, notesFile);
+  неВышло.delete(лекция);
+  готовятся.set(лекция, material?.course ?? path.basename(path.dirname(notesFile)));
   sendStudyUpdate();
   const s = настройка.settings();
   очередь = очередь.then(async () => {
     const t0 = Date.now();
     try {
-      // Вопросы — на языке лекции курса, разбор — на языке его конспекта.
-      const языки = lectureLanguagesFor(notesFile, settingsLanguages(s));
-      const итог = await prepareLecture(notesFile, хранилище(), {
-        summarize: createClaudeSummarizer(),
+      // Вопросы — на языке лекции курса (у материала — на языке документа),
+      // разбор — на языке конспекта.
+      const языки = material
+        ? { lecture: material.sourceLanguage || settingsLanguages(s).lecture, notes: material.notes }
+        : lectureLanguagesFor(notesFile, settingsLanguages(s));
+      const итог = await (material ? prepareMaterial : prepareLecture)(notesFile, хранилище(), {
+        summarize: createSummarizer({ log: (строка) => console.log(`[jarvis:study] ${строка}`) }),
         lectureLanguage: языки.lecture,
         notes: языки.notes,
         log: (строка) => console.log(`[jarvis:study] ${строка}`),
@@ -115,7 +182,9 @@ export function prepareStudyFor(notesFile: string): void {
           : `[jarvis:study] «${лекция}»: в конспекте нет разделов с материалом — заготавливать нечего`,
       );
     } catch (error) {
-      console.error(`[jarvis:study] «${лекция}» не заготовлена: ${error instanceof Error ? error.message : String(error)}`);
+      const причина = error instanceof Error ? error.message : String(error);
+      console.error(`[jarvis:study] «${лекция}» не заготовлена: ${причина}`);
+      неВышло.set(лекция, причина);
     } finally {
       готовятся.delete(лекция);
       sendStudyUpdate();
@@ -157,13 +226,17 @@ export function showStudy(): void {
   openStudyWindow({
     service: studyService,
     preparing: preparingLectures,
+    failures: prepareFailures,
     prepare: prepareStudyFor,
     prepareAll: prepareAllStudy,
     transcribe: async (samples, sampleRate) => {
-      if (!слух) throw new Error('слух Джарвиса не запущен — ответ голосом недоступен, напишите текстом');
+      if (!слух) throw new Error(tr('слух Джарвиса не запущен — ответ голосом недоступен, напишите текстом', 'Jarvis is not listening, so voice answers are unavailable; type the answer'));
       return слух(samples, sampleRate);
     },
     recording: (on) => приЗаписи?.(on),
+    // У варианта «только конспекты» слуха нет: кнопка «Голосом» записала бы
+    // ответ, который некому расшифровать.
+    hearing: () => слух !== null,
     language: () => настройка?.settings().language ?? 'ru',
   });
 }

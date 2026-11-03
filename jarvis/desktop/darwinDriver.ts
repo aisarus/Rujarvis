@@ -583,19 +583,25 @@ function round(value: number): number {
  *
  * Буфер сохраняется и возвращается обратно. Задержка перед возвратом не
  * украшение: вставку выполняет чужая программа, и вернуть буфер раньше, чем
- * она его прочитает, значит вставить не то.
+ * она его прочитает, значит вставить не то. 0,4 с не хватало: на нагруженном
+ * маке CI окно прочитало буфер позже, и в поле легло прежнее содержимое
+ * буфера вместо текста (CI 26.10.2026, «сторож-буфера-…» в поле). Секунда.
+ *
+ * Возвращается буфер, только если в нём всё ещё наш текст: скопировал
+ * человек что-то своё за эту секунду — его не затираем.
  */
 export function typeScript(text: string): string {
+  const строка = `"${escapeAppleScript(text)}"`;
   return `
 set saved to missing value
 try
   set saved to the clipboard as record
 end try
-set the clipboard to "${escapeAppleScript(text)}"
+set the clipboard to ${строка}
 tell application "System Events" to key code 9 using {command down}
-delay 0.4
+delay 1
 try
-  if saved is not missing value then set the clipboard to saved
+  if saved is not missing value and (the clipboard as text) is ${строка} then set the clipboard to saved
 end try
 return "ok"
 `;

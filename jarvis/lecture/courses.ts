@@ -45,8 +45,8 @@ const СВОЙСТВА = {
 
 /** Слова папок и подписей — на языке конспекта. */
 export const COURSE_WORDS = {
-  ru: { folder: 'Лекции', unsorted: 'Без курса', transcriptSuffix: 'расшифровка', listStart: '%% список лекций ведёт Джарвис %%', listEnd: '%% конец списка %%' },
-  en: { folder: 'Lectures', unsorted: 'Unsorted', transcriptSuffix: 'transcript', listStart: '%% lecture list kept by Jarvis %%', listEnd: '%% end of list %%' },
+  ru: { folder: 'Лекции', unsorted: 'Без курса', inbox: 'Входящие', transcriptSuffix: 'расшифровка', listStart: '%% список лекций ведёт Джарвис %%', listEnd: '%% конец списка %%' },
+  en: { folder: 'Lectures', unsorted: 'Unsorted', inbox: 'Inbox', transcriptSuffix: 'transcript', listStart: '%% lecture list kept by Jarvis %%', listEnd: '%% end of list %%' },
 } as const;
 
 /** Основы слов: регистр, ё и окончания не важны; предлоги и союзы — мимо. */
@@ -222,7 +222,8 @@ function заметкаЛекции(имя: string, папка: string): boolean
  */
 export function listCourses(root: string): string[] {
   if (!existsSync(root)) return [];
-  const неКурсы = new Set<string>([COURSE_WORDS.ru.unsorted, COURSE_WORDS.en.unsorted]);
+  // «Входящие» — папка конвейера документов: туда кладут файлы на разбор.
+  const неКурсы = new Set<string>([COURSE_WORDS.ru.unsorted, COURSE_WORDS.en.unsorted, COURSE_WORDS.ru.inbox, COURSE_WORDS.en.inbox]);
   return readdirSync(root, { withFileTypes: true })
     .filter((e) => e.isDirectory() && !e.name.startsWith('.') && !неКурсы.has(e.name))
     .map((e) => e.name)
@@ -417,6 +418,9 @@ export interface CoursePatch {
   language?: string;
   /** Язык конспекта курса: ru, en; пусто — как в настройках. */
   notesLanguage?: string;
+  /** Лектор и кредиты — их приносит силлабус из конвейера документов. */
+  lecturer?: string;
+  credits?: number;
 }
 
 /**
@@ -426,7 +430,7 @@ export interface CoursePatch {
  */
 export function writeCourseInfo(root: string, course: string, patch: CoursePatch): void {
   const имя = safeName(course, 80);
-  if (!имя) throw new Error('пустое название курса');
+  if (!имя) throw new Error(tr('пустое название курса', 'empty course name'));
   const папка = path.join(root, имя);
   const файл = path.join(папка, `${имя}.md`);
   mkdirSync(папка, { recursive: true });
@@ -442,7 +446,7 @@ export function writeCourseInfo(root: string, course: string, patch: CoursePatch
   if (patch.code !== undefined) поставить(['код', 'code'], patch.code.trim() ? вЯмл(patch.code.trim()) : null);
   if (patch.slots !== undefined) поставить(['расписание', 'schedule'], patch.slots.length > 0 ? вЯмл(formatSchedule(patch.slots)) : null);
   if (patch.exam !== undefined) {
-    if (patch.exam !== null && !/^\d{4}-\d{2}-\d{2}$/u.test(patch.exam)) throw new Error('дата экзамена — ГГГГ-ММ-ДД');
+    if (patch.exam !== null && !/^\d{4}-\d{2}-\d{2}$/u.test(patch.exam)) throw new Error(tr('дата экзамена — ГГГГ-ММ-ДД', 'the exam date is YYYY-MM-DD'));
     поставить(['экзамен', 'exam'], patch.exam);
   }
   if (patch.language !== undefined) {
@@ -455,6 +459,8 @@ export function writeCourseInfo(root: string, course: string, patch: CoursePatch
     if (язык && язык !== 'ru' && язык !== 'en') throw new Error(tr(`конспект пишется по-русски или по-английски, а не «${patch.notesLanguage}»`, `notes are written in Russian or English, not "${patch.notesLanguage}"`));
     поставить(['конспект', 'notes'], язык || null);
   }
+  if (patch.lecturer !== undefined) поставить(['лектор', 'lecturer'], patch.lecturer.trim() ? вЯмл(patch.lecturer.trim()) : null);
+  if (patch.credits !== undefined) поставить(['кредиты', 'credits'], patch.credits > 0 ? String(patch.credits) : null);
   writeFileSync(файл, текст, 'utf8');
 }
 
@@ -517,7 +523,8 @@ export async function renameCourseFolder(root: string, from: string, to: string)
 /** «Без курса» — не курс: так назвать курс нельзя, он пропал бы из списков. */
 export function isUnsortedName(name: string): boolean {
   const имя = name.trim().toLowerCase();
-  return имя === COURSE_WORDS.ru.unsorted.toLowerCase() || имя === COURSE_WORDS.en.unsorted.toLowerCase();
+  // «Входящие» — тоже не курс: папка конвейера документов.
+  return [COURSE_WORDS.ru.unsorted, COURSE_WORDS.en.unsorted, COURSE_WORDS.ru.inbox, COURSE_WORDS.en.inbox].some((слово) => имя === слово.toLowerCase());
 }
 
 /** Курсы для модели: имя и, если есть, название на иврите — лектор говорит на нём. */

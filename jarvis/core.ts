@@ -250,15 +250,20 @@ export function taskTitle(decision: RoutingDecision, utterance: string): string 
   return decision.project ? `${short} (${decision.project})` : short;
 }
 
+/**
+ * Что спросить — без самого вопроса: «Разрешаете?» дописывает тот, кто
+ * спрашивает (`askForApproval` в мосте). Здесь стояло своё «Выполнять?», и
+ * звучало «…Выполнять? Разрешаете?».
+ */
 function describeForApproval(decision: RoutingDecision, utterance: string): string {
   if (currentLanguage() === 'en') {
     const where = decision.project ? `in project ${decision.project}` : 'on this computer';
     const level = decision.risk === 'dangerous' ? 'dangerous' : 'sensitive';
-    return `The request "${utterance.trim()}" ${where} is ${level}. Go ahead?`;
+    return `The request "${utterance.trim()}" ${where} is ${level}.`;
   }
   const what = decision.project ? `в проекте ${decision.project}` : 'на этом компьютере';
-  const level = decision.risk === 'dangerous' ? 'опасное' : 'чувствительное';
-  return `Запрос «${utterance.trim()}» ${what} классифицирован как ${level}. Выполнять?`;
+  const level = decision.risk === 'dangerous' ? 'опасный' : 'чувствительный';
+  return `Запрос «${utterance.trim()}» ${what} — ${level}.`;
 }
 
 export class JarvisCore {

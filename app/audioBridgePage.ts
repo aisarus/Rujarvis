@@ -80,6 +80,7 @@ export function buildAudioBridgeHtml(): string {
 const { ipcRenderer } = require('electron');
 
 const CH = ${JSON.stringify(AUDIO_BRIDGE_CHANNELS)};
+const IS_MAC = ${JSON.stringify(process.platform === 'darwin')};
 const TARGET_SAMPLE_RATE = ${TARGET_SAMPLE_RATE};
 
 // Tuned by ear on a laptop mic: quiet enough to catch a normal speaking voice
@@ -183,10 +184,15 @@ async function startSystemCapture() {
   stopSystemCapture();
   const got = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });
   got.getVideoTracks().forEach(function (track) { track.stop(); });
-  const tracks = got.getAudioTracks();
+  const tracks = got.getAudioTracks().filter(function (track) { return track.readyState === 'live'; });
   if (tracks.length === 0) {
+    // macOS без разрешения отдаёт дорожку уже оконченной и молча: ни ошибки,
+    // ни звука. Человеку — какое разрешение включить.
+    const ended = got.getAudioTracks().length > 0;
     got.getTracks().forEach(function (track) { track.stop(); });
-    throw new Error('система не отдала звук компьютера');
+    throw new Error(ended && IS_MAC
+      ? 'macOS не дала звук компьютера — включите Electron в «Системные настройки → Конфиденциальность и безопасность → Запись экрана и системного звука» и откройте Rujarvis заново'
+      : 'система не отдала звук компьютера');
   }
   systemStream = got;
   systemContext = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
@@ -448,9 +454,8 @@ function onAudio(event) {
 let lastComplaintAt = 0;
 const COMPLAIN_EVERY_MS = 30_000;
 
-async function restartCapture(reason) {
-  if (restarting) return;
-  restarting = true;
+// Отпустить микрофон совсем: устройство закрыто, значок микрофона гаснет.
+async function stopCapture() {
   try {
     if (processor) { processor.onaudioprocess = null; processor.disconnect(); }
     if (source) source.disconnect();
@@ -464,6 +469,12 @@ async function restartCapture(reason) {
   processor = null;
   stream = null;
   resetBuffer();
+}
+
+async function restartCapture(reason) {
+  if (restarting) return;
+  restarting = true;
+  await stopCapture();
 
   try {
     await ensureCapture();
@@ -575,6 +586,13 @@ ipcRenderer.on(CH.lecture, async (_event, payload) => {
   }
   // Лекция из Zoom кончилась — микрофон и так в режиме команд.
   if (!on && wasSystem) return;
+  // Команды не слушаются (вариант «только конспекты») — лекция кончилась,
+  // микрофон отпускаем совсем: держать его открытым между парами незачем, а
+  // на маке горящий значок микрофона — честный вопрос «а меня слушают?».
+  if (!on && !ambient && !pushing) {
+    await stopCapture();
+    return;
+  }
   // Обработка задаётся при взятии микрофона — берём его заново с нужной.
   if (audioContext) await restartCapture(on ? 'режим лекции' : 'лекция кончилась');
   else if (on) {

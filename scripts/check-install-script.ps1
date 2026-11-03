@@ -9,6 +9,12 @@
 
 $ErrorActionPreference = 'Stop'
 
+# Вывод — в UTF-8, как у самого установщика. Иначе перехваченный вывод
+# проверки (из bash, из другой программы) на машине с ивритской или русской
+# системной кодировкой читался как «�஢�ન �㭪権 �ன����» — и выглядел
+# как битая кодировка установщика, хотя сам установщик тут ни при чём.
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+
 $scriptPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'install.ps1'
 $errors = $null
 $tokens = $null
@@ -338,7 +344,10 @@ Assert-That 'cua-driver: 32-битной сборки нет — и не выд�
 # вчера, команду в README не тронул, и установка перестала работать у всех.
 # Поэтому теперь их сторожат ВМЕСТЕ: пока у файла есть BOM, в документации не
 # должно быть ни `| iex`, ни `scriptblock::Create` от скачанной строки.
-$ставитФайлом = @('README.md', 'README.en.md', 'docs/jarvis/install.md')
+# Шапка самого установщика и статья для Хабра — тоже: 20.10.2026 первому
+# тестеру дали команду из шапки install.ps1, а там стоял `| iex`, и установка
+# упала с той же «лексемой "ставит"».
+$ставитФайлом = @('README.md', 'README.en.md', 'docs/jarvis/install.md', 'install.ps1', 'docs/launch/habr.md')
 $сБом = [IO.File]::ReadAllBytes($scriptPath)[0..2] -join ' ' -eq '239 187 191'
 Assert-That 'у install.ps1 есть BOM: без него 5.1 не разберёт кириллицу' $сБом
 
@@ -355,6 +364,24 @@ Assert-That 'у install.ps1 есть BOM: без него 5.1 не разбер�
 $текст = [IO.File]::ReadAllText($scriptPath)
 Assert-That 'install.ps1 кладёт ярлык на рабочий стол' ($текст -match "Join-Path \`$desktopDir 'Rujarvis\.lnk'")
 Assert-That 'папка рабочего стола спрошена у Windows, а не склеена' ($текст -match "GetFolderPath\('Desktop'\)")
+
+# Ярлык по пути с буквами вне кодировки системы. WScript.Shell на таком пути
+# падал («Value does not fall within the expected range») у первого тестера
+# 21.10.2026: Windows на иврите, пользователь «Алексей». Кириллица и иврит
+# вместе не помещаются ни в одну кодовую страницу — проверка честна на любой
+# машине, в том числе на английском раннере CI.
+$ярлыкПапка = Join-Path ([IO.Path]::GetTempPath()) ('rujarvis-lnk-' + [guid]::NewGuid().ToString('N').Substring(0, 6) + '-Алексей-תיקיה')
+New-Item -ItemType Directory -Force -Path $ярлыкПапка | Out-Null
+try {
+    $цельЯрлыка = Join-Path $ярлыкПапка 'electron.exe'
+    Set-Content -LiteralPath $цельЯрлыка -Value 'x'
+    $ярлык = Join-Path $ярлыкПапка 'Rujarvis.lnk'
+    New-Shortcut -Path $ярлык -Target $цельЯрлыка -Arguments "`"$(Join-Path $ярлыкПапка 'main.cjs')`"" -WorkingDirectory $ярлыкПапка -Icon $цельЯрлыка
+    Assert-That 'ярлык с кириллицей и ивритом в пути создан' (Test-Path -LiteralPath $ярлык)
+    Assert-That 'цель ярлыка читается той же, что записана' ([Rujarvis.ShellLink]::Target($ярлык) -eq $цельЯрлыка)
+} finally {
+    Remove-Item -LiteralPath $ярлыкПапка -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 foreach ($док in $ставитФайлом) {
     $путьДок = Join-Path (Split-Path -Parent $PSScriptRoot) $док

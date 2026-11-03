@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { findGpuWhisper, findLectureModel, installLectureModel, LECTURE_MODELS, lectureModelFor, otherLectureModels, serverArgs, sha256, startGpuWhisper } from './gpuWhisper';
+import { findGpuWhisper, findLectureModel, installLectureModel, LECTURE_MODELS, lectureModelFor, otherLectureModels, serverArgs, serverThreads, sha256, startGpuWhisper } from './gpuWhisper';
 
 const папки: string[] = [];
 afterEach(async () => {
@@ -55,6 +55,16 @@ describe('установленное распознавание на видео�
       server: path.join(dir, 'runtime', 'Release', 'whisper-server.exe'),
       model: path.join(dir, модель.file),
     });
+  });
+
+  it('потоки: на видеокарте четыре, мак на Intel — по физическому ядру, не больше восьми', () => {
+    expect(serverThreads({ platform: 'win32', arch: 'x64', cpus: 16 })).toBe(4);
+    expect(serverThreads({ platform: 'darwin', arch: 'arm64', cpus: 8 })).toBe(4);
+    // MacBook Pro 2019: i7 — 6 ядер (12 логических), i9 — 8 (16).
+    expect(serverThreads({ platform: 'darwin', arch: 'x64', cpus: 12 })).toBe(6);
+    expect(serverThreads({ platform: 'darwin', arch: 'x64', cpus: 16 })).toBe(8);
+    expect(serverThreads({ platform: 'darwin', arch: 'x64', cpus: 4 })).toBe(4);
+    expect(serverArgs({ server: 's', model: 'm.bin' }, 1, { platform: 'darwin', arch: 'x64', cpus: 12 })).toEqual(expect.arrayContaining(['-t', '6']));
   });
 
   it('сервер слушает только этот компьютер', () => {
