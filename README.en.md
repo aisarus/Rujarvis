@@ -283,8 +283,8 @@ This is an early version, in closed beta.
 
 - **Notes, live.** The project's owner records their own university classes with it
   on Windows with NVIDIA: lectures in Hebrew, notes in Russian, the laptop's
-  microphone in the lecture hall. The latest run was on 2026-11-03: two classes, the
-  longest 2:24. Study runs on those same lectures. Other language pairs have hardly
+  microphone in the lecture hall. The latest run was on 2026-11-03: three classes, the
+  longest 2:30. Study runs on those same lectures. Other language pairs have hardly
   been run live.
 - **Checking the recording is a model's work, not a guarantee.** On the 2026-11-03
   statistics class the summary put together the right median formula and flagged the

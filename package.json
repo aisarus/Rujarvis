@@ -3,7 +3,7 @@
   "version": "0.3.0",
   "private": true,
   "license": "Apache-2.0",
-  "description": "Voice assistant for Windows in Russian and English, driven by your Claude Code subscription",
+  "description": "Lecture notes for students who study in a foreign language: records, transcribes locally, writes to Obsidian through your own Claude or ChatGPT subscription",
   "homepage": "https://github.com/aisarus/Rujarvis",
   "bugs": "https://github.com/aisarus/Rujarvis/issues",
   "repository": {
