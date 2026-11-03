@@ -14,7 +14,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { splitCourseAndTopic } from './courses';
-import { finalPrompt, NOTES_WORDS, sectionFromReply, sectionPrompt, sectionTitle, withRange, type NotesLanguage } from './session';
+import { finalPrompt, NOTES_WORDS, sectionFromReply, sectionPrompt, timedTranscript, withRange, type NotesLanguage } from './session';
 
 export interface TranscriptChunk {
   /** Секунды от начала лекции. */
@@ -42,6 +42,7 @@ function слов(текст: string): number {
 }
 
 export interface TranscriptSection {
+  /** Куски с метками времени — так, как их видит модель. */
   text: string;
   /** Секунды от начала лекции: первый кусок раздела и начало следующего. */
   from: number;
@@ -51,22 +52,25 @@ export interface TranscriptSection {
 /** Разделы: не чаще раза в `everySec` и не меньше `minWords` слов; остаток — последним. */
 export function groupSections(куски: readonly TranscriptChunk[], everySec = 300, minWords = 120): TranscriptSection[] {
   const разделы: TranscriptSection[] = [];
-  let копится: string[] = [];
+  let копится: TranscriptChunk[] = [];
   let начало = куски[0]?.at ?? 0;
   let от = начало;
   for (const [i, кусок] of куски.entries()) {
-    копится.push(кусок.text);
-    const текст = копится.join(' ');
-    if (кусок.at - начало >= everySec && слов(текст) >= minWords) {
+    копится.push(кусок);
+    if (кусок.at - начало >= everySec && слов(копится.map((к) => к.text).join(' ')) >= minWords) {
       const до = куски[i + 1]?.at ?? кусок.at;
-      разделы.push({ text: текст, from: от, to: до });
+      разделы.push({ text: сМетками(копится), from: от, to: до });
       копится = [];
       начало = кусок.at;
       от = до;
     }
   }
-  if (копится.join(' ').trim()) разделы.push({ text: копится.join(' '), from: от, to: куски[куски.length - 1]?.at ?? от });
+  if (копится.some((к) => к.text.trim())) разделы.push({ text: сМетками(копится), from: от, to: куски[куски.length - 1]?.at ?? от });
   return разделы;
+}
+
+function сМетками(куски: readonly TranscriptChunk[]): string {
+  return timedTranscript(куски.map((к) => ({ текст: к.text, от: к.at * 1000 })));
 }
 
 export interface FinishFromTranscriptOptions {
@@ -110,25 +114,27 @@ export async function finishFromTranscript(options: FinishFromTranscriptOptions)
   // Разделы, написанные вживую, не повторяются: живая сессия режет по тому
   // же правилу, так что первые из них уже в заметке (ревью 29.09.2026 —
   // лекция, закрытая на тридцатой минуте, получала шесть разделов дважды).
+  // Их тексты идут следующим разделам целиком: по ним сверяются числа и формулы.
   const место0 = заметка.indexOf(с.notes);
   const живые = место0 >= 0
-    ? [...заметка.slice(место0).matchAll(/^###\s+(.+)$/gmu)].map((m) => sectionTitle(m[1] ?? ''))
+    ? заметка.slice(место0 + с.notes.length).split(/^(?=###\s)/mu).map((р) => р.trim()).filter((р) => р.startsWith('###'))
     : [];
-  const заголовки: string[] = [...живые];
+  const прежние: string[] = [...живые];
   const разделы: string[] = [];
   for (const [номер, { text: текст, from, to }] of groupSections(куски).entries()) {
     if (номер < живые.length) continue;
     let раздел: string | null;
     try {
-      раздел = sectionFromReply(await options.summarize(sectionPrompt(текст, subject, заголовки, языки)), номер + 1, options.notesLanguage);
+      раздел = sectionFromReply(await options.summarize(sectionPrompt(текст, subject, прежние, языки)), номер + 1, options.notesLanguage);
     } catch (error) {
       const причина = error instanceof Error ? error.message : String(error);
       options.log?.(`раздел ${номер + 1} не собрался: ${причина}`);
       раздел = `### ${с.section} ${номер + 1}\n${с.failed(причина.slice(0, 120))}`;
     }
     if (!раздел) continue;
-    заголовки.push(sectionTitle(раздел.split('\n')[0] ?? '') || `${с.section} ${номер + 1}`);
-    разделы.push(withRange(раздел, from * 1000, to * 1000));
+    const сВременем = withRange(раздел, from * 1000, to * 1000);
+    прежние.push(сВременем);
+    разделы.push(сВременем);
   }
 
   let итог = '';
@@ -136,7 +142,7 @@ export async function finishFromTranscript(options: FinishFromTranscriptOptions)
   let topic: string | undefined;
   try {
     const ответ = splitCourseAndTopic(
-      await (options.summarizeFinal ?? options.summarize)(finalPrompt(куски.map((к) => к.text).join('\n'), subject, языки, options.courses ?? [])),
+      await (options.summarizeFinal ?? options.summarize)(finalPrompt(сМетками(куски), subject, языки, options.courses ?? [])),
     );
     ({ course, topic } = ответ);
     итог = ответ.rest;

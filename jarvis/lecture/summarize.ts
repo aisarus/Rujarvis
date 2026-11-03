@@ -58,11 +58,20 @@ export function withFallback(
  * языке и выбирает курс и тему. Это работа для сильнейшей модели, а лимиты
  * подписки один вызов за лекцию не съест. Разделы — 15–20 вызовов — остаются
  * на Sonnet.
+ *
+ * Срок у итога свой, длиннее, чем у раздела: он сверяет числа и формулы по
+ * всей лекции и пишет пометки. Живой прогон 03.11.2026 — статистика, 1:55:
+ * Opus в одиночку уложился в 171 с из прежних 180, а рядом с другими вызовами
+ * не уложились ни он, ни Sonnet, и итог пропал целиком. Человек этого ответа
+ * не ждёт — лекция уже кончилась, — а потерять итог хуже, чем подождать.
  */
+export const FINAL_TIMEOUT_MS = 420_000;
+
 export function createFinalSummarizer(options: SummarizerOptions & { log?(line: string): void } = {}): (prompt: string) => Promise<string> {
+  const срок = options.timeoutMs ?? FINAL_TIMEOUT_MS;
   return withFallback(
-    createClaudeSummarizer({ ...options, model: 'opus' }),
-    createClaudeSummarizer({ ...options, model: 'sonnet' }),
+    createClaudeSummarizer({ ...options, model: 'opus', timeoutMs: срок }),
+    createClaudeSummarizer({ ...options, model: 'sonnet', timeoutMs: срок }),
     options.log,
   );
 }

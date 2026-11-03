@@ -135,10 +135,119 @@ export function метка(мс: number): string {
   return часы > 0 ? `${часы}:${мм}` : мм;
 }
 
+/**
+ * Куски расшифровки для модели — каждый со своей меткой времени: по ней
+ * пометка о сомнительном числе ведёт к месту в звуке, где его можно переслушать.
+ */
+export function timedTranscript(куски: ReadonlyArray<{ текст: string; от: number }>): string {
+  return куски.map((к) => `[${метка(к.от)}] ${к.текст}`).join('\n');
+}
+
+/**
+ * Формулы — в LaTeX, общее для раздела и итога. Конспект читают в Obsidian,
+ * а он рисует только `$…$`: «L0 + n·(N/2 − F)/f» из статистики 03.11.2026
+ * читается хуже, чем дробь из конспекта по математике того же дня, где
+ * модель сама писала `\dfrac`. Голый `$` в тексте Obsidian склеивает со
+ * следующим в формулу и ломает строку — поэтому о деньгах отдельно. Пример —
+ * нарочно не из статистики: живой прогон проверяет правило, а не пример.
+ *
+ * Заголовок раздела и тема лекции — без формул: их видят не только в
+ * Obsidian. Тему произносит голос, показывает оверлей, она уходит в имя
+ * файла; заголовки как есть показывает окно учёбы.
+ */
+function правилоФормул(notes: NotesLanguage): string[] {
+  if (notes === 'en') {
+    return [
+      'Formulas go in LaTeX, which Obsidian renders: a formula, a substitution or a single symbol inside $…$, including in a list of symbols and in running text ("$v_0 = 5$", not "v0 = 5"); a formula on its own line inside $$…$$; fractions with \\dfrac{…}{…}; letters and subscripts are the course\'s — for example $v = v_0 + \\dfrac{F}{m}\\,t$.',
+      'Words and terms in any language stay outside $…$, and so do the ⚠ marks — right after the formula: $x = 5$ (⚠ 12:05: …).',
+      'No bare dollar sign in text: Obsidian pairs two of them into a formula and breaks the line. Write money as "5 dollars", "5 USD" or \\$5.',
+    ];
+  }
+  return [
+    'Формулы — в LaTeX, его рисует Obsidian: формула, подстановка или отдельный символ — внутри $…$, в том числе в перечне обозначений и в тексте пункта («$v_0 = 5$», а не «v0 = 5»); формула отдельной строкой — внутри $$…$$; дроби — \\dfrac{…}{…}; буквы и индексы — курса, например $v = v_0 + \\dfrac{F}{m}\\,t$.',
+    'Слова и термины на любом языке — вне $…$, и пометки ⚠ тоже — сразу за формулой: $x = 5$ (⚠ 12:05: …).',
+    'Голого знака доллара в тексте не ставь: два таких знака Obsidian склеит в формулу и сломает строку. Деньги — «5 долларов», «5 USD» или \\$5.',
+  ];
+}
+
+/**
+ * Правило проверки — общее для раздела и итога: числа, а за ними формулы,
+ * обозначения, определения и ответы.
+ *
+ * Живой прогон 03.11.2026 (микроэкономика на иврите): Whisper услышал «340»
+ * вместо 3140, «1200» вместо 1250 и разрезал 1890 на «1000, 890», а конспект
+ * молча записал точку A как (1000, 890). По конспекту учатся к экзамену, так
+ * что число правится только тогда, когда его доказывает арифметика самой
+ * лекции, и всегда с пометкой; знания модели доказательством не считаются —
+ * данные задачи берутся только из лекции.
+ *
+ * Тот же день, статистика: конспект записал формулу медианы с n — шириной
+ * класса (в курсе n — число наблюдений, ширина — l), назвал частоту
+ * плотностью и переписал ответ лектора «1 и 3», хотя по расчёту медиану
+ * меняют 1 и 4. Буквы путает распознавание, ошибается и сам лектор, так что
+ * формулы и ответы сверяются ещё и со знанием предмета. Но на экзамене
+ * принимают только формулу и символы курса: знание предмета проверяет смысл,
+ * а не меняет обозначения курса на учебниковые.
+ *
+ * Примеры — нарочно не из этих лекций: иначе живой прогон проверял бы
+ * пример, а не правило.
+ */
+function правилоПроверки(notes: NotesLanguage, где: 'кусок' | 'лекция'): string[] {
+  if (notes === 'en') {
+    const область = где === 'кусок' ? 'in this chunk and in the sections already written' : 'anywhere in the transcript';
+    return [
+      'Numbers need special care. The student studies for exams from these notes, so a wrong number teaches the wrong thing — and recognition gets numbers wrong in particular: it splits one into two ("1000, 450" for 1450), drops a digit ("270" for 2070), swaps in a near one ("1300" for 1350).',
+      `Check every number in a problem statement, calculation or answer against the data and arithmetic stated in this same lecture — ${область} — including how many values the problem has and the result the lecture states for it later:`,
+      '- it agrees — write it as is, with no mark;',
+      "- the lecture's own data and arithmetic prove a different value beyond doubt — write the proven value followed right away by a mark with the time of the line where the misheard number was said: \"(⚠ 12:05: heard 1300, by calculation 1350)\";",
+      '- it does not agree or looks cut off, and the right value cannot be derived from the lecture — keep it as heard and flag the doubt: "(⚠ 12:05: heard 270 — does not agree with …, cannot be checked)";',
+      '- never put in a number that cannot be derived from the lecture itself — not from your own knowledge, not "by sense". This is about the givens; a computed result and a stated answer you check by arithmetic, as below.',
+      '',
+      `Formulas, notation, definitions, solution steps and stated answers need the same care. Do not copy them blindly: recognition mixes up letters and terms, and the lecturer can be wrong too. Check them against the lecture itself — ${область} — and against knowledge of the subject:`,
+      "- notation is the course's: take which letter stands for what, and its case, from the lecture when it is clear and consistent — a small and a capital letter are different symbols, so \"small k\" is k, not K; do not swap in textbook notation — the exam accepts the course's formula and symbols only;",
+      '- it agrees — write it as is, with no mark;',
+      "- what was heard contradicts the subject or the lecture itself, and the right version is beyond doubt — write the right version followed right away by a mark with the time of the line where it was heard: \"(⚠ 12:05: heard 'k is the mass', in the course formula k is the spring constant)\"; this includes a wrong letter or term heard in a substitution or worked example;",
+      '- one quantity is called by two terms that are different things in the subject — keep the right one and mark the other, even if the lecturer said it;',
+      "- a formula was not said in full but all its parts were named — assemble it in the course notation and mark it: \"(⚠ 12:05: the formula was not said in full, assembled from its named parts — check against the slide)\";",
+      "- the lecturer's answer or conclusion fails by calculation — do not write it down as right: write what the calculation gives and mark it: \"(⚠ 12:05: the lecturer said 'answer B', by calculation it is C — check against the slide)\";",
+      '- not sure which is right — keep it as heard and flag the doubt;',
+      '- correct none of this silently: every correction gets a mark.',
+      'The time in a mark is the label of the line where it was said, in full as the transcript has it — past the first hour with the hour: 1:05:07.',
+      'Write nothing about the checking itself beyond these marks.',
+    ];
+  }
+  const область = где === 'кусок' ? 'в этом куске и в уже написанных разделах' : 'во всей расшифровке';
+  return [
+    'Числа — отдельно. По конспекту учатся к экзамену, и неверное число в нём учит неправильному, — а распознавание путает именно числа: режет одно на два («1000, 450» вместо 1450), теряет разряд («270» вместо 2070), подменяет близким («1300» вместо 1350).',
+    `Каждое число в условии, расчёте или ответе сверяй с данными и арифметикой, прозвучавшими в этой же лекции, — ${область}, — в том числе сколько значений в условии задачи и какой итог для неё назван дальше:`,
+    '- сходится — пиши как есть, без пометок;',
+    '- данные и расчёт самой лекции однозначно доказывают другое значение — пиши доказанное, а сразу за ним пометку с меткой строки, где прозвучало услышанное: «(⚠ 12:05: на слух 1300, по расчёту 1350)»;',
+    '- не сходится или выглядит обрезанным, а верное из лекции не вывести — оставь как услышано и пометь сомнение: «(⚠ 12:05: на слух 270 — не сходится с …, проверить нечем)»;',
+    '- никогда не подставляй число, которого нельзя вывести из самой лекции: ни из своих знаний, ни «по смыслу». Это о данных; итог расчёта и названный ответ проверяй арифметикой, как ниже.',
+    '',
+    `Формулы, обозначения, определения, шаги решения и названные ответы — так же строго. Не переписывай их вслепую: распознавание путает буквы и термины, а лектор и сам может ошибиться. Сверяй их с самой лекцией — ${область} — и со знанием предмета:`,
+    '- обозначения — курса: какой буквой что обозначено и в каком регистре, бери из лекции, когда это видно и не противоречит ей самой, — маленькая и большая буква — разные обозначения, «маленькое k» — это k, а не K; учебниковых обозначений вместо них не ставь — на экзамене принимают только формулу и символы курса;',
+    '- сходится — пиши как есть, без пометок;',
+    '- услышанное противоречит предмету или самой лекции, а верное не вызывает сомнений — пиши верное, а сразу за ним пометку с меткой строки, где прозвучало услышанное: «(⚠ 12:05: на слух «k — масса груза», в формуле курса k — жёсткость пружины)»; это касается и не той буквы или не того термина в подстановке или разборе примера;',
+    '- одну величину называют двумя терминами, а в предмете это разные понятия, — оставь верный и пометь другой, даже если так сказал сам лектор;',
+    '- формула прозвучала не целиком, а все её части названы — собери её в обозначениях курса и пометь: «(⚠ 12:05: формула целиком не прозвучала, собрана по названным частям — сверить со слайдом)»;',
+    '- ответ или вывод лектора не сходится с расчётом — не записывай его как верный: пиши, что выходит по расчёту, и пометь: «(⚠ 12:05: лектор сказал «ответ Б», по расчёту выходит В — сверить со слайдом)»;',
+    '- не уверен, что верно, — оставь как услышано и пометь сомнение;',
+    '- молча не правь ничего из этого: каждое исправление — с пометкой.',
+    'Время в пометке — метка той строки, где это прозвучало, целиком, как в расшифровке: после первого часа — с часами, 1:05:07.',
+    'О самой проверке не пиши ничего, кроме этих пометок.',
+  ];
+}
+
+/**
+ * Промпт раздела. `прежние` — тексты уже написанных разделов, а не одни их
+ * названия: условие задачи звучит в одном куске, а ответ — через десять
+ * минут в другом, и сверить число из куска без них не с чем.
+ */
 export function sectionPrompt(
   кусок: string,
   subject: string,
-  заголовки: readonly string[],
+  прежние: readonly string[],
   языки: PromptLanguages = { lecture: 'ru', notes: 'ru' },
 ): string {
   const чужой = языки.lecture !== языки.notes;
@@ -147,10 +256,10 @@ export function sectionPrompt(
     return [
       `You are taking notes on a lecture${чужой ? ` in ${язык}` : ''} for a student who reads English.`,
       `Subject: ${subject || 'not given'}.`,
-      'Below is a new chunk of the verbatim transcript. Recognition is automatic and has errors: restore the meaning, not the letters.',
+      'Below is a new chunk of the verbatim transcript; each line starts with its time [mm:ss]. Recognition is automatic and has errors: restore the meaning, not the letters — except numbers, formulas and notation, see below.',
       '',
       'Write ONE section of notes in English:',
-      '- the first line is a heading: "### " and the topic of this chunk in your own words (for example, "### The demand curve");',
+      '- the first line is a heading: "### " and the topic of this chunk in your own words, with no formulas (for example, "### The demand curve");',
       '- then 3–8 bullet points "- …" with the essentials: definitions, formulas, examples, what the lecturer stressed;',
       чужой
         ? `- terms in English with the lecturer's own word in ${язык} in parentheses;`
@@ -160,7 +269,13 @@ export function sectionPrompt(
       '- course logistics that matter to the student (exam format, deadlines, required reading, office hours) go into a short section "### Course logistics";',
       `If the chunk has neither lecture content nor such logistics (noise, chatter, sound checks), reply with one word: ${NOTES_WORDS.en.skip}`,
       '',
-      `Sections already written: ${заголовки.length > 0 ? заголовки.join('; ') : 'none yet'}.`,
+      ...правилоФормул('en'),
+      '',
+      ...правилоПроверки('en', 'кусок'),
+      '',
+      прежние.length > 0
+        ? `Sections already written — do not repeat them, but check numbers, formulas and notation against them:\n\n${прежние.join('\n\n')}`
+        : 'Sections already written: none yet.',
       '',
       'Transcript:',
       кусок,
@@ -169,10 +284,10 @@ export function sectionPrompt(
   return [
     `Ты конспектируешь лекцию${чужой ? ` на ${язык}` : ''} для студента, который читает по-русски.`,
     `Предмет: ${subject || 'не назван'}.`,
-    'Ниже — новый кусок дословной расшифровки. Распознавание автоматическое, в нём бывают ошибки: восстанавливай смысл, а не буквы.',
+    'Ниже — новый кусок дословной расшифровки, каждая строка начинается со своего времени [мм:сс]. Распознавание автоматическое, в нём бывают ошибки: восстанавливай смысл, а не буквы, — кроме чисел, формул и обозначений, о них ниже.',
     '',
     'Сделай ОДИН раздел конспекта на русском:',
-    '- первая строка — заголовок: «### » и тема этого куска своими словами (например, «### Кривая спроса»);',
+    '- первая строка — заголовок: «### » и тема этого куска своими словами, без формул (например, «### Кривая спроса»);',
     '- дальше 3–8 пунктов «- …» с главным: определения, формулы, примеры, что лектор подчеркнул;',
     чужой ? `- термины — по-русски и в скобках на ${язык}, как их сказал лектор;` : '- термины — как их сказал лектор;',
     '- без вступлений, без пересказа прошлых разделов, без выдуманного;',
@@ -180,7 +295,13 @@ export function sectionPrompt(
     '- организационное, важное студенту (формат экзамена, сроки, обязательная литература, часы приёма), — коротким разделом «### Организационное»;',
     `Если в куске нет ни содержания лекции, ни такого организационного (шум, болтовня, проверка звука) — ответь одним словом: ${NOTES_WORDS.ru.skip}`,
     '',
-    `Уже написанные разделы: ${заголовки.length > 0 ? заголовки.join('; ') : 'ещё нет'}.`,
+    ...правилоФормул('ru'),
+    '',
+    ...правилоПроверки('ru', 'кусок'),
+    '',
+    прежние.length > 0
+      ? `Уже написанные разделы — не повторяй их, но сверяй с ними числа, формулы и обозначения:\n\n${прежние.join('\n\n')}`
+      : 'Уже написанные разделы: ещё нет.',
     '',
     'Расшифровка:',
     кусок,
@@ -197,13 +318,13 @@ export function finalPrompt(
   const язык = названиеЯзыка(языки.lecture, языки.notes);
   if (языки.notes === 'en') {
     return [
-      `Below is the whole transcript of a lecture${чужой ? ` in ${язык}` : ''} (automatic recognition, with errors).`,
+      `Below is the whole transcript of a lecture${чужой ? ` in ${язык}` : ''} (automatic recognition, with errors; each line starts with its time [mm:ss]).`,
       `Subject as the student named it: ${subject || 'not given'}.`,
       `The student's courses: ${курсы.length > 0 ? курсы.join('; ') : 'none yet'}.`,
       '',
       'Start with two lines:',
       "Course: <which of the student's courses this lecture belongs to, exactly as listed; if none fits — a short name for a new course, in English>",
-      'Topic: <the topic of this lecture in 3–6 words, in English>',
+      'Topic: <the topic of this lecture in 3–6 words, in English, with no formulas>',
       '',
       'Then write three parts in English markdown, with no introduction and nothing made up:',
       '## Summary — 3–6 sentences: what the lecture is about and the main conclusion.',
@@ -212,18 +333,22 @@ export function finalPrompt(
         : '## Concepts — 5–15 lines like "- term — one line of explanation".',
       '## Exam questions — 3–7 questions on the lecture material.',
       '',
+      ...правилоФормул('en'),
+      '',
+      ...правилоПроверки('en', 'лекция'),
+      '',
       'Transcript:',
       расшифровка,
     ].join('\n');
   }
   return [
-    `Ниже — вся расшифровка лекции${чужой ? ` на ${язык}` : ''} (распознавание автоматическое, с ошибками).`,
+    `Ниже — вся расшифровка лекции${чужой ? ` на ${язык}` : ''} (распознавание автоматическое, с ошибками; каждая строка начинается со своего времени [мм:сс]).`,
     `Предмет, как его назвал студент: ${subject || 'не назван'}.`,
     `Курсы студента: ${курсы.length > 0 ? курсы.join('; ') : 'пока нет'}.`,
     '',
     'Начни с двух строк:',
     'Предмет: <к какому из курсов студента относится лекция — точно как в списке; если ни один не подходит — короткое название нового курса по-русски, в именительном падеже>',
-    'Тема: <тема этой лекции в 3–6 словах, по-русски>',
+    'Тема: <тема этой лекции в 3–6 словах, по-русски, без формул>',
     '',
     'Дальше напиши на русском три части в markdown, без вступлений и без выдуманного:',
     '## Кратко — 3–6 предложений: о чём лекция и главный вывод.',
@@ -231,6 +356,10 @@ export function finalPrompt(
       ? `## Понятия — 5–15 строк вида «- термин по-русски (термин лектора на ${язык}) — одна строка объяснения».`
       : '## Понятия — 5–15 строк вида «- термин — одна строка объяснения».',
     '## Вопросы к экзамену — 3–7 вопросов по материалу лекции.',
+    '',
+    ...правилоФормул('ru'),
+    '',
+    ...правилоПроверки('ru', 'лекция'),
     '',
     'Расшифровка:',
     расшифровка,
@@ -248,9 +377,18 @@ export function sectionFromReply(ответ: string, номер: number, notes: 
   return текст.startsWith('### ') ? текст : `### ${NOTES_WORDS[notes].section} ${номер}\n${текст}`;
 }
 
-/** Время раздела — в его заголовке: «### Пределы (12:40–17:55)». */
+/**
+ * Время раздела — в его заголовке: «### Пределы (12:40–17:55)». Своё время
+ * модель иногда пишет сама — по образцу прежних разделов, которые видит со
+ * временем (живой прогон 03.11.2026: «(10:41–13:51) (10:41–16:03)»); верное —
+ * только то, что знает код. Время снимается и со второго заголовка, если
+ * модель разбила кусок надвое: там она теряла час — «### Организационное
+ * (10:22–10:41)» посреди второго часа лекции.
+ */
 export function withRange(раздел: string, отМс: number, доМс: number): string {
-  const [первая, ...остальное] = раздел.split('\n');
+  const [первая, ...остальное] = раздел.split('\n').map((строка) =>
+    строка.startsWith('### ') ? строка.replace(/\s*\(\d+(?::\d\d){1,2}\s*[–-]\s*\d+(?::\d\d){1,2}\)\s*$/u, '') : строка,
+  );
   return [`${первая ?? ''} (${метка(отМс)}–${метка(доМс)})`, ...остальное].join('\n');
 }
 
@@ -275,8 +413,9 @@ export class LectureSession {
   private расшифровка: Promise<void> = Promise.resolve();
   private разделы: Promise<void> = Promise.resolve();
   private копится: Array<{ текст: string; от: number; до: number }> = [];
-  private readonly вся: string[] = [];
-  private readonly заголовки: string[] = [];
+  private readonly вся: Array<{ текст: string; от: number }> = [];
+  /** Написанные разделы целиком, со временем: следующим — чтобы сверять числа. */
+  private readonly прежние: string[] = [];
   /** Сколько звука принято, мс: запись сплошная, и это же — место в WAV. */
   private мсЗвука = 0;
   /** Сколько секунд звука ждёт распознавания. */
@@ -372,7 +511,7 @@ export class LectureSession {
     if (!текст) return;
     await appendFile(this.transcriptFile, `**[${метка(когда)}]** ${текст}\n\n`, 'utf8');
     this.копится.push({ текст, от: когда, до: конец });
-    this.вся.push(текст);
+    this.вся.push({ текст, от: когда });
     this.deps.log?.(`кусок ${метка(когда)}: ${слова(текст)} слов`);
     this.maybeSection(false);
   }
@@ -387,22 +526,25 @@ export class LectureSession {
     const до = this.копится[this.копится.length - 1]?.до ?? от;
     if (!всё && (слова(накоплено) < порогСлов || до - this.последнийРаздел < порогВремени)) return;
 
+    const кусок = timedTranscript(this.копится);
     this.копится = [];
     this.последнийРаздел = до;
     const номер = ++this.номерРаздела;
-    const заголовки = [...this.заголовки];
     this.разделы = this.разделы.then(async () => {
       let раздел: string | null;
       try {
-        раздел = sectionFromReply(await this.deps.summarize(sectionPrompt(накоплено, this.subject, заголовки, this.языки)), номер, this.языки.notes);
+        // Прежние берутся здесь, а не при постановке в очередь: к этому
+        // времени предыдущий раздел уже дописан, и его числа нужны этому.
+        раздел = sectionFromReply(await this.deps.summarize(sectionPrompt(кусок, this.subject, [...this.прежние], this.языки)), номер, this.языки.notes);
       } catch (error) {
         const причина = error instanceof Error ? error.message : String(error);
         this.deps.log?.(`раздел ${номер} не собрался: ${причина}`);
         раздел = `### ${this.слова.section} ${номер}\n${this.слова.failed(причина.slice(0, 120))}`;
       }
       if (!раздел) return;
-      this.заголовки.push(sectionTitle(раздел.split('\n')[0] ?? '') || `${this.слова.section} ${номер}`);
-      await appendFile(this.notesFile, `${withRange(раздел, от, до)}\n\n`, 'utf8');
+      const сВременем = withRange(раздел, от, до);
+      this.прежние.push(сВременем);
+      await appendFile(this.notesFile, `${сВременем}\n\n`, 'utf8');
     });
   }
 
@@ -457,10 +599,10 @@ export class LectureSession {
     this.maybeSection(true);
     await this.разделы;
 
-    const расшифровка = this.вся.join('\n');
+    const расшифровка = timedTranscript(this.вся);
     let course: string | undefined;
     let topic: string | undefined;
-    if (расшифровка.trim()) {
+    if (this.вся.length > 0) {
       try {
         const итогом = this.deps.summarizeFinal ?? this.deps.summarize;
         const ответ = splitCourseAndTopic(await итогом(finalPrompt(расшифровка, this.subject, this.языки, курсы)));
@@ -487,8 +629,8 @@ export class LectureSession {
       notesFile: this.notesFile,
       transcriptFile: this.transcriptFile,
       audioFile: this.audioFile,
-      words: слова(расшифровка),
-      sections: this.заголовки.length,
+      words: this.вся.reduce((всего, к) => всего + слова(к.текст), 0),
+      sections: this.прежние.length,
       durationSec: this.мсЗвука / 1000,
       course,
       topic,
