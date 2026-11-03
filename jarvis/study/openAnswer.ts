@@ -7,6 +7,7 @@
  * пара фраз почему.
  */
 
+import { parseModelJson } from './modelJson';
 import type { QuizQuestion } from './types';
 
 export type OpenVerdict = 'correct' | 'partial' | 'wrong';
@@ -37,7 +38,7 @@ export function parseOpenVerdict(reply: string): { verdict: OpenVerdict; feedbac
   const от = блок.indexOf('{');
   const до = блок.lastIndexOf('}');
   if (от < 0 || до <= от) throw new Error('модель не дала вердикта');
-  const raw = JSON.parse(блок.slice(от, до + 1)) as { verdict?: unknown; feedback?: unknown };
+  const raw = parseModelJson(блок.slice(от, до + 1)) as { verdict?: unknown; feedback?: unknown };
   const verdict = raw.verdict === 'correct' || raw.verdict === 'partial' || raw.verdict === 'wrong' ? raw.verdict : null;
   if (!verdict) throw new Error(`непонятный вердикт: ${String(raw.verdict)}`);
   return { verdict, feedback: typeof raw.feedback === 'string' ? raw.feedback.trim() : '' };

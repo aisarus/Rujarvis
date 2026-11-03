@@ -9,13 +9,14 @@
  * - мост из песочницы доходит до службы и обратно («Сегодня» нарисовано);
  * - квиз: ответ — разбор каждого варианта и источник;
  * - звук лекции открывается из файла при защите страницы (CSP);
+ * - формулы из конспекта (`$…$`) видны читаемым текстом, без `$` и `\`;
  * - на странице нет ошибок.
  *
  * Отвечает: прошло / не прошло / нечем мерить (нет ни одного банка — сначала
  * `pnpm jarvis:study-prepare`).
  */
 
-import { cpSync, existsSync, mkdtempSync, readdirSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -30,6 +31,34 @@ import { StudyService, studyRoot } from '../../jarvis/study/service';
 import { StudyStore } from '../../jarvis/study/store';
 
 const ждать = (мс: number): Promise<void> => new Promise((r) => setTimeout(r, мс));
+
+/**
+ * Формулы — в копию банков: настоящие могли быть заготовлены до LaTeX в
+ * конспекте, а проверить надо, что окно покажет заготовленное теперь.
+ * Заодно — курсы с банками и цел ли у них звук: без него «▶» мерить нечем.
+ */
+function формулыВКопию(папка: string): Map<string, boolean> {
+  const звукЦел = new Map<string, boolean>();
+  for (const курс of readdirSync(папка)) {
+    const где = path.join(папка, курс);
+    if (!statSync(где).isDirectory()) continue;
+    for (const имя of readdirSync(где)) {
+      if (!имя.endsWith('.json') || имя === 'progress.json') continue;
+      const файл = path.join(где, имя);
+      const банк = JSON.parse(readFileSync(файл, 'utf8')) as { course?: string; audioFile?: string; questions?: Array<{ prompt: string; options: Array<{ text: string; rationale: string }> }> };
+      if (банк.course) звукЦел.set(банк.course, (звукЦел.get(банк.course) ?? true) && Boolean(банк.audioFile && existsSync(банк.audioFile)));
+      for (const вопрос of банк.questions ?? []) {
+        вопрос.prompt += ' $Me = L_0 + \\dfrac{l}{f(x)}\\left(\\dfrac{n}{2} - F_1\\right)$';
+        for (const вариант of вопрос.options) {
+          вариант.text += ' $x_{m-1}$';
+          вариант.rationale += ' $\\dfrac{n}{2} \\neq n$';
+        }
+      }
+      writeFileSync(файл, JSON.stringify(банк), 'utf8');
+    }
+  }
+  return звукЦел;
+}
 
 app.setPath('userData', mkdtempSync(path.join(os.tmpdir(), 'jarvis-study-check-')));
 // Подставной микрофон Chromium (гудок): ответ голосом проверяется без
@@ -50,6 +79,7 @@ void app.whenReady().then(async () => {
   }
   const копия = mkdtempSync(path.join(os.tmpdir(), 'jarvis-study-copy-'));
   cpSync(настоящие, копия, { recursive: true });
+  const звукЦел = формулыВКопию(копия);
   const vault = lectureFolder(settings.outputDir || jarvisOutputDir(process.env, app.getPath('desktop'), settings.language === 'en' ? 'Jarvis' : 'Джарвис'), settings.language).folder;
   const service = new StudyService({ store: new StudyStore(копия), vaultRoot: () => vault, notes: settings.language, summarize: createSummarizer() });
 
@@ -92,15 +122,23 @@ void app.whenReady().then(async () => {
   if (!/Курсы|Courses/u.test(сегодня)) провалы.push('«Сегодня» не нарисовано — мост не отвечает');
 
   // Квиз по первой заготовленной лекции — через мост, как нажатие кнопки.
-  const курс = service.today().courses.find((c) => c.lectures > 0)?.name;
+  // Курс из одних незаготовленных лекций квиза не откроет: нужен с банком, лучше — с целым звуком.
+  const курсы = service.today().courses.filter((c) => звукЦел.has(c.name));
+  const курс = (курсы.find((c) => звукЦел.get(c.name)) ?? курсы[0])?.name;
   if (курс) {
+    const естьЗвук = звукЦел.get(курс) === true;
     await js(`(${String((name: string) => {
       const card = Array.from(document.querySelectorAll('button.card')).find((b) => (b.textContent ?? '').includes(name)) as HTMLButtonElement | undefined;
       card?.click();
     })})(${JSON.stringify(курс)})`);
-    await ждать(600);
-    await js("[...document.querySelectorAll('button')].find((b) => b.textContent === 'Квиз по курсу' || b.textContent === 'Course quiz')?.click()");
-    await ждать(800);
+    // Дождаться, а не выждать: страница курса с десятком лекций рисуется дольше секунды.
+    const дождаться = async (условие: string): Promise<void> => {
+      for (let i = 0; i < 80 && !(await js<boolean>(условие)); i += 1) await ждать(100);
+    };
+    const кнопкаКвиза = "[...document.querySelectorAll('button')].find((b) => b.textContent === 'Квиз по курсу' || b.textContent === 'Course quiz')";
+    await дождаться(`Boolean(${кнопкаКвиза})`);
+    await js(`${кнопкаКвиза}?.click()`);
+    await дождаться("Boolean(document.querySelector('.option'))");
     const вопрос = await текст();
     await js("document.querySelector('.option')?.click()");
     await ждать(800);
@@ -108,7 +146,15 @@ void app.whenReady().then(async () => {
     const причин = await js<number>("[...document.querySelectorAll('.option .why')].filter((w) => w.style.display !== 'none' && w.textContent).length");
     console.log(`  квиз: ${вопрос.split('\n')[1] ?? ''}; разборов вариантов после ответа: ${причин}`);
     if (причин !== 4) провалы.push(`после ответа видно ${причин} разборов из четырёх`);
-    if (!/▶/u.test(разбор)) провалы.push('нет кнопки «где лектор это сказал»');
+    const вид = разбор.replace(/[⁦⁩]/gu, '');
+    console.log(`  формулы: ${/Me = L₀ \+ \(l\/f\(x\)\)\(n\/2 - F₁\)/u.test(вид) ? 'вопрос читается' : 'вопрос НЕ читается'}; ${/xₘ₋₁/u.test(вид) && /n\/2 ≠ n/u.test(вид) ? 'варианты и разбор читаются' : 'варианты или разбор НЕ читаются'}`);
+    if (!/Me = L₀ \+ \(l\/f\(x\)\)\(n\/2 - F₁\)/u.test(вид)) провалы.push('формула вопроса не стала читаемой');
+    if (!/xₘ₋₁/u.test(вид) || !/n\/2 ≠ n/u.test(вид)) провалы.push('формулы вариантов или разборов не стали читаемыми');
+    if (/\\dfrac|\\neq|x_\{m/u.test(вид)) провалы.push('на странице виден сырой LaTeX');
+    // `--shot=файл` — снимок квиза: посмотреть формулы глазами.
+    const снимок = process.argv.find((a) => a.startsWith('--shot='))?.slice('--shot='.length);
+    if (снимок) writeFileSync(снимок, (await окно.webContents.capturePage()).toPNG());
+    if (естьЗвук && !/▶/u.test(разбор)) провалы.push('нет кнопки «где лектор это сказал»');
 
     // Звук из файла при CSP страницы.
     const звук = await js<string>(`(async () => {
@@ -121,8 +167,8 @@ void app.whenReady().then(async () => {
       a.pause();
       return итог;
     })()`);
-    console.log(`  ${звук}`);
-    if (!звук.startsWith('звук открыт')) провалы.push(звук);
+    console.log(естьЗвук ? `  ${звук}` : '  звук: нечем мерить — у всех курсов часть записей уже удалена');
+    if (естьЗвук && !звук.startsWith('звук открыт')) провалы.push(звук);
 
     // Ответ голосом: следующий вопрос, «Ответить своими словами», 🎤 — полторы секунды — «Готово».
     await js("[...document.querySelectorAll('button')].find((b) => b.textContent === 'Дальше' || b.textContent === 'Next')?.click()");

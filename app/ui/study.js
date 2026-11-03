@@ -144,7 +144,7 @@ function el(tag, props, ...children) {
   }
   for (const c of children.flat()) {
     if (c === null || c === undefined || c === false) continue;
-    node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+    node.append(c instanceof Node ? c : document.createTextNode(readableMath(String(c))));
   }
   return node;
 }
@@ -780,7 +780,7 @@ async function renderQuiz(scope) {
         if (i === fb.correctIndex) b.classList.add('right');
         else if (i === chosen) b.classList.add('wrong');
         const why = b.querySelector('.why');
-        why.textContent = fb.rationales[i] || '';
+        why.textContent = readableMath(fb.rationales[i] || '');
         why.style.display = why.textContent ? 'block' : 'none';
         why.style.color = i === fb.correctIndex ? 'var(--ok)' : i === chosen ? 'var(--bad)' : 'var(--muted)';
       });

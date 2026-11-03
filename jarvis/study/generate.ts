@@ -16,6 +16,7 @@ import path from 'node:path';
 import { parseFrontmatter } from '../lecture/courses';
 import { parseTranscript } from '../lecture/finishFromTranscript';
 import { NOTES_WORDS, notesLanguageOf, sectionTitle, type NotesLanguage } from '../lecture/session';
+import { parseModelJson } from './modelJson';
 import { checkGenerated, parseStamp } from './quality';
 import type { LectureBank, StudyTopic } from './types';
 
@@ -275,6 +276,8 @@ export function studyPrompt(
     `2. cards — карточка на каждое важное понятие этих разделов (только тех, что в них звучат): front — термин${перевод ? ` на ${лекция} и в скобках на ${конспект}` : ''}, back — объяснение в одну-две фразы на ${конспект}.`,
     `3. tasks — только если в лекции есть расчёты, формулы, код или разбор задач: 1–4 задачи в духе лекции. problem — условие, hint — подсказка, steps — решение по шагам, answer — ответ; на ${конспект}, термины как у лектора. Нет такого материала — пустой список.`,
     '',
+    'Формулы — как в конспекте: LaTeX внутри $…$, буквы и индексы курса. В JSON обратный слеш удваивается: "$\\\\dfrac{a}{b}$".',
+    '',
     'Ответь ОДНИМ блоком JSON, без текста вокруг:',
     '```json',
     '{"questions":[{"section":1,"at":"14:05","prompt":"…","promptRu":"…","options":[{"text":"…","ru":"…","why":"…","correct":false},{"text":"…","ru":"…","why":"…","correct":true},{"text":"…","ru":"…","why":"…","correct":false},{"text":"…","ru":"…","why":"…","correct":false}],"explanation":"…","hint":"…","answer":"…"}],',
@@ -293,7 +296,7 @@ export function jsonFromReply(ответ: string): unknown {
   const от = блок.indexOf('{');
   const до = блок.lastIndexOf('}');
   if (от < 0 || до <= от) throw new Error('в ответе модели нет JSON');
-  return JSON.parse(блок.slice(от, до + 1));
+  return parseModelJson(блок.slice(от, до + 1));
 }
 
 export interface GenerateOptions {
