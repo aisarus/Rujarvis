@@ -2,24 +2,92 @@
 
 [Русская версия](README.md)
 
-**A voice assistant for Windows that speaks Russian and English and gets work
-done with the Claude Code subscription you already have.**
+**Lecture notes for students who study in a foreign language.**
 
-You talk to it in plain language — *"close this window"*, *"find why the build
-fails and fix it"*, *«а пока открой Telegram»* — and it decides what the
-request needs: an instant keyboard or window action, an answer, or real work
-done by Claude Code on your screen, in your browser and in your files. Before
-anything that spends money, messages people or can't be undone, it asks you
-out loud.
+Rujarvis records a lecture — in the room through your laptop's microphone, or on
+Zoom through your computer's sound — transcribes it on your computer and writes
+notes in your language into Obsidian: timed sections, a summary, concepts with the
+lecturer's own term, exam questions. A lecture in Hebrew, notes in English. Then
+you can study from that lecture in its Study window.
 
-Rujarvis started as a fork of
-[Interpreter Workstation](https://github.com/openinterpreter/interpreter-workstation)
-and is now a standalone app. It is not affiliated with or endorsed by Open
-Interpreter.
+- **The audio stays with you.** whisper.cpp recognises speech on your computer. For
+  Hebrew it uses the fine-tuned [ivrit.ai](https://huggingface.co/ivrit-ai) model:
+  on open recordings of university lectures, 14% word errors against 35% for plain
+  small. Other languages use the general large-v3-turbo.
+- **Your own subscription writes the notes.** Claude Code (Claude Pro) or Codex
+  (ChatGPT Plus), signed in by you; either one is enough. No API keys, no account
+  with us, no telemetry. Only the text of the transcript and the files you hand in
+  for a walkthrough leave your computer.
+- **It does not trust the recording blindly.** Recognition mixes up numbers and
+  letters, and lecturers make mistakes too. Numbers, formulas, notation and stated
+  answers are checked against the lecture itself and knowledge of the subject, and
+  every correction is visible, with its minute:
+  *(⚠ 1:42:39: the lecturer said "1 and 3", by calculation it is 1 and 4 — check
+  against the slide)*. Formulas are in LaTeX, which Obsidian renders.
+- **A lecture does not get lost.** The audio goes to disk right away. Close the app
+  mid-class and the notes finish themselves on the next start. A recording from your
+  phone or a course video goes through the "From a file…" button.
+- **Then you study.** The Study window: what to review today, a quiz in the language
+  of the lecture with a translation and the lecturer's voice from that minute,
+  flashcards, exam practice, problems.
+- **Course files too.** A syllabus, an article, an assignment: drop the file and get
+  a walkthrough in your language in Obsidian and questions on it in Study.
+
+Notes are in Russian or English. Lectures can be in Hebrew, English, Russian and
+other languages, with settings per course. What has been run live is Hebrew →
+Russian (see [honest status](#honest-status)).
+
+**It is also a voice assistant.** The full edition listens for commands in Russian
+and English: *"close this window"*, *"scroll down"*, *"find why the build fails and
+fix it"*. Simple things happen at once, with no model and no internet. Anything
+bigger is real work by Claude Code on your screen, in your browser and in your
+files. Before anything that spends money, messages people or can't be undone, it
+asks you out loud. Details: [talking to it](#talking-to-it) and
+[what it asks you before doing](#what-it-asks-you-before-doing). The notes-only
+edition installs without any of this.
 
 ## Install
 
-Windows 10/11, one line in PowerShell.
+### What the notes need
+
+- **Windows 10/11 with an NVIDIA graphics card, or a Mac on macOS 13 or later.** On
+  Windows without NVIDIA the installer does not set up recognition, and a lecture is
+  only recorded. A button in settings can install it, but without a graphics card this
+  is untested and probably many times slower than the lecture itself.
+- **A Claude Pro or ChatGPT Plus subscription.** The first-run wizard installs Claude
+  Code or Codex with a button and checks hearing and the model before your first
+  class.
+- **Obsidian, preferably.** Notes land in the open vault, in a `Lectures` folder.
+  Without Obsidian they go to Jarvis's results folder, as the same `.md` files.
+- **Disk space.** A few gigabytes for the app and models, plus about 280 MB for a
+  90-minute class. Audio older than a week is removed by itself; notes and
+  transcripts stay.
+- **For Zoom on a Mac, macOS 14.2 or later.** On older versions a Zoom lecture is
+  recorded through the microphone.
+
+### Notes only
+
+For a student who wants the note-taker, not the voice assistant: no command
+listening, no voice, no hands on the computer. The line is for lectures in Hebrew;
+for another language use its code (`en`, `ru`, …).
+
+Windows, in PowerShell:
+
+```powershell
+$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; & $f -Edition notes -LectureLanguage he -Language en
+```
+
+macOS, in Terminal (with a ChatGPT subscription, add `--codex`):
+
+```bash
+f=/tmp/rujarvis-install.sh; curl -fsSL https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.sh -o "$f" && bash "$f" --notes --lecture-language he --language en
+```
+
+More in [the install guide](docs/jarvis/install.md#только-конспекты) (Russian).
+
+### All of Jarvis
+
+The notes and the voice assistant together. Windows 10/11, one line in PowerShell.
 
 Where to find it: press **Win**, type `PowerShell`, open "Windows PowerShell".
 Administrator rights are not needed. Copy the whole line, paste it (**Ctrl+V**
@@ -86,7 +154,38 @@ and turn on" asks the model for real and refuses one that cannot call tools.
 Only addresses on this computer or your home network are accepted; Jarvis does
 not download models.
 
+## How a lecture goes
+
+The overlay has a **● Lecture notes** button, since you can't give voice commands in a
+lecture hall. It asks where the sound comes from: the room (microphone) or Zoom
+(computer sound). The note opens in Obsidian at once and grows as you watch: the
+transcript chunk by chunk, a section of notes every five minutes. **■ Stop lecture notes**
+writes the summary and files the lecture under its course:
+
+```
+Lectures/
+  Statistics/
+    Statistics.md                        course page
+    2026-11-03 — Measures of center.md   notes
+    2026-11-03 — Measures of center — transcript.md
+    2026-11-03 — Measures of center.wav  audio: play it from any minute
+```
+
+- **The look of the notes** is your choice in settings: a walkthrough, questions
+  first, or the lecture's language alongside (the lecturer's sentences with a
+  translation and a glossary of the lecture).
+- **The course** is guessed from your timetable and the content; if it is wrong, use
+  the "Course: … ▾" button.
+- **If the lecturer is hard to hear**, the overlay says so in the first minutes, not
+  that evening over empty notes. The best insurance is a phone recording from the
+  front row and "From a file…".
+
+Details, in Russian: [lecture notes](docs/jarvis/lecture-notes.md),
+[Study](docs/jarvis/study.md), [course files](docs/jarvis/document-pipeline.md).
+
 ## Talking to it
+
+This is about the full edition.
 
 | Say | What happens |
 | --- | --- |
@@ -169,9 +268,10 @@ Codex sign-ins alone.
 
 ## Privacy
 
-Speech is recognised and synthesised locally. The only things that leave your
-machine are what you send to the Claude Code or Codex CLI you signed in to —
-the same as using them directly — and your audio, only if you opt into
+Speech is recognised and synthesised locally, and lecture audio stays on disk. The
+only things that leave your machine are what you send to the Claude Code or Codex
+CLI you signed in to — the same as using them directly, which for notes means the
+text of the transcript — and your audio, only if you opt into
 recognition off this machine: the cloud (the "Where speech is recognised"
 switch in settings, Speech tab, plus an `ELEVENLABS_API_KEY`; the key alone turns
 nothing on) or your own whisper.cpp server over the network (`JARVIS_GPU_STT`
@@ -179,10 +279,33 @@ pointing somewhere other than `localhost`). There is no telemetry.
 
 ## Honest status
 
-- The app, setup, voice pipeline, red-line hook and both languages are tested
-  on Linux in CI and by hand under a virtual display; the Windows-only parts
-  (desktop driver, app launching, installer) are covered by unit tests but
-  still need a pass on a real Windows machine after this rewrite.
+This is an early version, in closed beta.
+
+- **Notes, live.** The project's owner records their own university classes with it
+  on Windows with NVIDIA: lectures in Hebrew, notes in Russian, the laptop's
+  microphone in the lecture hall. The latest run was on 2026-11-03: two classes, the
+  longest 2:24. Study runs on those same lectures. Other language pairs have hardly
+  been run live.
+- **Checking the recording is a model's work, not a guarantee.** On the 2026-11-03
+  statistics class the summary put together the right median formula and flagged the
+  lecturer's wrong answer. But sections can still carry something unmarked ("frequency
+  (density)"), and the time in a mark is sometimes one line late. No mark does not
+  mean no mistake: check against the slide.
+- **Zoom on Windows** is measured through the output loopback: silence with no sound,
+  signal on a phrase from the speakers.
+- **Codex** is tested live (codex-cli 0.153.4, a ChatGPT subscription): an 8-minute
+  lecture in Hebrew, Study, an open answer, a docx walkthrough. PDFs through Codex are
+  only read on a Mac so far.
+- **Mac.** In CI on Apple Silicon and Intel: the `--notes --codex` install, the
+  note-taker with a fake microphone (`pnpm jarvis:notes-check`, 8 of 8), PDFKit. **Not
+  yet checked on a live Mac:** the microphone and macOS permissions, Zoom sound,
+  recognition speed on a real Intel Mac (CI's virtual machines say nothing about it),
+  a whole PDF walkthrough through Codex. Voice control on a Mac was measured
+  separately; see Install.
+- **The voice assistant.** The app, setup, voice pipeline, red-line hook and both
+  languages are tested in CI on Windows and Linux and by hand under a virtual display;
+  live, it runs on the owner's Windows machine. There has been no run from the first
+  step on clean Windows 10 and 11 yet.
 - Measured by synthesising phrases with the Piper voice and recognising them
   with Whisper `base` (`pnpm jarvis:roundtrip`): Russian 10/12, English 9/12,
   and every stop, silence, pause and continue word recognised in both. A real
@@ -195,8 +318,13 @@ pointing somewhere other than `localhost`). There is no telemetry.
   the small model (Windows — the CUDA build for NVIDIA cards, about 900 MB;
   Mac — `brew install whisper-cpp`, Metal) into the Jarvis folder, and Jarvis
   starts its own server on this machine. Check it with
-  `pnpm jarvis:gpu-stt-check`. Without it, recognition runs on the CPU. Your
-  own server over the network — `JARVIS_GPU_STT`.
+  `pnpm jarvis:gpu-stt-check`. Without it, voice commands are recognised on the CPU
+  and lectures are only recorded. Your own server over the network — `JARVIS_GPU_STT`.
+- The lecture model is installed by the installer or a button in settings, by hand
+  with `pnpm jarvis:lecture-model` (574 MB; ivrit.ai for Hebrew is 1.6 GB before
+  compression). Study's questions are prepared by Claude Code or Codex on your
+  subscription after each lecture. Formulas in the Study window are readable text
+  (`x₀`, `a/b`); Obsidian renders the real fractions.
 
 ## Development
 
@@ -205,13 +333,16 @@ pnpm install
 pnpm build            # esbuild, a few seconds
 pnpm start            # the app
 pnpm typecheck
-pnpm test             # ~1,700 tests
+pnpm test             # ~2,650 tests
 pnpm jarvis:roundtrip -- --en   # voice round-trip with real models
 ```
 
 | Directory | What it does |
 | --- | --- |
-| `app/` | The Electron app: tray, settings and onboarding, voice bridge, overlays |
+| `app/` | The Electron app: tray, settings and onboarding, voice bridge, overlays, the Study window |
+| `jarvis/lecture` | Recording a lecture, sections and summary of the notes, courses, recovery |
+| `jarvis/study` | Preparing questions, quiz, flashcards, exam practice, the knowledge scale |
+| `jarvis/notes`, `jarvis/documents` | Formatting Obsidian notes and walking through course files |
 | `jarvis/backends` | Claude Code / Codex adapters, warm live sessions, fallback chain |
 | `jarvis/router` | Works out what a request needs and which backend takes it |
 | `jarvis/risk` | Risk classes, the red-line policy and the tool-call hook |
@@ -230,8 +361,16 @@ why, not what**. Comments and design notes are mostly in Russian.
 
 - [Install, settings and what stays on disk](docs/jarvis/install.md)
 - [Architecture and the red-line hook](docs/jarvis/architecture.md)
+- [Lecture notes](docs/jarvis/lecture-notes.md) (Russian)
+- [Studying from the notes](docs/jarvis/study.md) (Russian)
+- [Walking through course files](docs/jarvis/document-pipeline.md) (Russian)
 - [Design notes](docs/jarvis/design/) (Russian)
 - [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Support](SUPPORT.md)
+
+Rujarvis started as a fork of
+[Interpreter Workstation](https://github.com/openinterpreter/interpreter-workstation)
+and is now a standalone app. It is not affiliated with or endorsed by Open
+Interpreter.
 
 ## Licence
 
