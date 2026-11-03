@@ -304,8 +304,9 @@ This is an early version, in closed beta.
   separately; see Install.
 - **The voice assistant.** The app, setup, voice pipeline, red-line hook and both
   languages are tested in CI on Windows and Linux and by hand under a virtual display;
-  live, it runs on the owner's Windows machine. There has been no run from the first
-  step on clean Windows 10 and 11 yet.
+  live, it runs on the owner's Windows machine. A first tester went through the whole
+  install on their own Windows; there has been no planned run on clean Windows 10 and
+  11 yet.
 - Measured by synthesising phrases with the Piper voice and recognising them
   with Whisper `base` (`pnpm jarvis:roundtrip`): Russian 10/12, English 9/12,
   and every stop, silence, pause and continue word recognised in both. A real
