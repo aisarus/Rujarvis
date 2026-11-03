@@ -86,6 +86,18 @@ describe('виды конспекта', () => {
     // Минуты записи — только для подписи слов лектора.
     expect(sectionPrompt('кусок', '', [])).toMatch(/Метки «\[мм:сс\]»/u);
   });
+
+  it('правило формул — одно, и таблицу с Mermaid формула не ломает (03.11.2026)', () => {
+    for (const notes of ['ru', 'en'] as const) {
+      const правила = obsidianRules({ notes, foreign: null });
+      expect(правила.filter((п) => /\\dfrac/u.test(п))).toHaveLength(1);
+      expect(правила.join('\n')).not.toMatch(/\$…\$ (в строке|inline)/u);
+      expect(правила.join('\n')).toMatch(/\\mid, \\lvert…\\rvert/u);
+      expect(правила.join('\n')).toMatch(/(Mermaid формул нет|Mermaid labels have no formulas)/u);
+      // Проверка фактуры правит формулы знанием предмета: правило разметки не должно с ней спорить.
+      expect(правила.join('\n')).not.toMatch(/(числа, формулы, примеры|numbers, formulas and examples)/u);
+    }
+  });
 });
 
 describe('слова модели вне заметки', () => {

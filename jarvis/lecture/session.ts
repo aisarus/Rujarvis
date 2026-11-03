@@ -149,33 +149,6 @@ export function timedTranscript(куски: ReadonlyArray<{ текст: string; 
 }
 
 /**
- * Формулы — в LaTeX, общее для раздела и итога. Конспект читают в Obsidian,
- * а он рисует только `$…$`: «L0 + n·(N/2 − F)/f» из статистики 03.11.2026
- * читается хуже, чем дробь из конспекта по математике того же дня, где
- * модель сама писала `\dfrac`. Голый `$` в тексте Obsidian склеивает со
- * следующим в формулу и ломает строку — поэтому о деньгах отдельно. Пример —
- * нарочно не из статистики: живой прогон проверяет правило, а не пример.
- *
- * Заголовок раздела и тема лекции — без формул: их видят не только в
- * Obsidian. Тему произносит голос, показывает оверлей, она уходит в имя
- * файла; заголовки как есть показывает окно учёбы.
- */
-function правилоФормул(notes: NotesLanguage): string[] {
-  if (notes === 'en') {
-    return [
-      'Formulas go in LaTeX, which Obsidian renders: a formula, a substitution or a single symbol inside $…$, including in a list of symbols and in running text ("$v_0 = 5$", not "v0 = 5"); a formula on its own line inside $$…$$; fractions with \\dfrac{…}{…}; letters and subscripts are the course\'s — for example $v = v_0 + \\dfrac{F}{m}\\,t$.',
-      'Words and terms in any language stay outside $…$, and so do the ⚠ marks — right after the formula: $x = 5$ (⚠ 12:05: …).',
-      'No bare dollar sign in text: Obsidian pairs two of them into a formula and breaks the line. Write money as "5 dollars", "5 USD" or \\$5.',
-    ];
-  }
-  return [
-    'Формулы — в LaTeX, его рисует Obsidian: формула, подстановка или отдельный символ — внутри $…$, в том числе в перечне обозначений и в тексте пункта («$v_0 = 5$», а не «v0 = 5»); формула отдельной строкой — внутри $$…$$; дроби — \\dfrac{…}{…}; буквы и индексы — курса, например $v = v_0 + \\dfrac{F}{m}\\,t$.',
-    'Слова и термины на любом языке — вне $…$, и пометки ⚠ тоже — сразу за формулой: $x = 5$ (⚠ 12:05: …).',
-    'Голого знака доллара в тексте не ставь: два таких знака Obsidian склеит в формулу и сломает строку. Деньги — «5 долларов», «5 USD» или \\$5.',
-  ];
-}
-
-/**
  * Правило проверки — общее для раздела и итога: числа, а за ними формулы,
  * обозначения, определения и ответы.
  *
@@ -275,6 +248,10 @@ function языкиЗаметки(языки: PromptLanguages): NoteLanguages {
  * `прежние` — тексты уже написанных разделов, а не одни их названия: условие
  * задачи звучит в одном куске, а ответ — через десять минут в другом, и сверить
  * число из куска без них не с чем.
+ *
+ * Заголовок раздела и тема лекции — без формул: их видят не только в Obsidian.
+ * Тему произносит голос, показывает оверлей, она уходит в имя файла; заголовки
+ * как есть показывает окно учёбы.
  */
 export function sectionPrompt(
   кусок: string,
@@ -300,8 +277,6 @@ export function sectionPrompt(
       '- the chunk is cut by time and may start and end mid-sentence: leave out what is cut off at the edges, do not mark it.',
       `If the chunk has neither lecture content nor course logistics (noise, chatter, sound checks), reply with one word: ${NOTES_WORDS.en.skip}`,
       '',
-      ...правилоФормул('en'),
-      '',
       ...правилоПроверки('en', 'кусок'),
       '',
       прежние.length > 0
@@ -324,8 +299,6 @@ export function sectionPrompt(
     '- без вступлений, без пересказа прошлых разделов, без выдуманного;',
     '- кусок режется по времени и может начинаться и кончаться на полуслове: оборванное по краям просто опусти, не помечай.',
     `Если в куске нет ни содержания лекции, ни организационного (шум, болтовня, проверка звука) — ответь одним словом: ${NOTES_WORDS.ru.skip}`,
-    '',
-    ...правилоФормул('ru'),
     '',
     ...правилоПроверки('ru', 'кусок'),
     '',
@@ -367,8 +340,6 @@ export function finalPrompt(
       'Formatting:',
       ...разметка,
       '',
-      ...правилоФормул('en'),
-      '',
       ...правилоПроверки('en', 'лекция'),
       '',
       'Transcript:',
@@ -390,8 +361,6 @@ export function finalPrompt(
     '',
     'Оформление:',
     ...разметка,
-    '',
-    ...правилоФормул('ru'),
     '',
     ...правилоПроверки('ru', 'лекция'),
     '',
