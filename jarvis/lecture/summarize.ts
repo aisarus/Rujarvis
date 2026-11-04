@@ -33,7 +33,22 @@ export type { Brain };
 export function claudeSummaryArgs(model = 'sonnet'): string[] {
   // В режиме -p разрешения спросить не у кого: всё, что их просит, получает
   // отказ, — а разделу конспекта инструменты и не нужны.
-  return ['-p', '--output-format', 'text', '--model', model, '--strict-mcp-config', '--permission-mode', 'default'];
+  // Скиллы, настройки и описания инструментов загружаются на каждый запуск, а
+  // запусков на лекцию около 28. Замер 04.11.2026 на машине с плагинами: 29 тыс.
+  // токенов служебного против 1,4 тыс. без них — на подписке за 20 долларов одна
+  // лекция съедала половину пятичасового лимита.
+  return [
+    '-p',
+    '--output-format', 'text',
+    '--model', model,
+    '--strict-mcp-config',
+    '--permission-mode', 'default',
+    '--setting-sources', '',
+    '--tools', '',
+    '--disable-slash-commands',
+    '--no-session-persistence',
+    '--system-prompt', 'You write lecture notes exactly as the message asks.',
+  ];
 }
 
 /**
