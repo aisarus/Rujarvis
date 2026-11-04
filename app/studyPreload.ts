@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('study', {
   tidy: () => call('tidy'),
   tidyUndo: () => call('tidyUndo'),
   tidyCancelWait: () => call('tidyCancelWait'),
+  tidyOpenBackups: () => call('tidyOpenBackups'),
   addCard: (id: string, index: number) => call('addCard', id, index),
   recording: (on: boolean) => call('recording', on),
   hearing: () => call('hearing'),

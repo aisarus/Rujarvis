@@ -177,6 +177,14 @@ export function parseFrontmatter(text: string): LectureMeta | null {
   };
 }
 
+/** Снять пометку «формулы уже в LaTeX» — только её строку; в свойствах, а не в тексте заметки. */
+export function withoutFormulasMark(text: string): string {
+  const блок = /^---\r?\n[\s\S]*?\r?\n---/u.exec(text);
+  if (!блок) return text;
+  const без = блок[0].replace(new RegExp(`^(?:${СВОЙСТВА.ru.formulas}|${СВОЙСТВА.en.formulas}):[ \\t]*${FORMULAS_DONE}[ \\t]*\\r?\\n`, 'mu'), '');
+  return `${без}${text.slice(блок[0].length)}`;
+}
+
 /**
  * Поставить пометку «формулы уже в LaTeX», не трогая ни остальные свойства, ни
  * текст: `withFrontmatter` переписал бы блок целиком и потерял бы то, что человек

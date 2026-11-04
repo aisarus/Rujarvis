@@ -145,6 +145,10 @@ function зарегистрировать(): void {
   обработать('tidy', () => служба().tidy());
   обработать('tidyUndo', () => служба().tidyUndo());
   обработать('tidyCancelWait', () => служба().tidyCancelWait());
+  обработать('tidyOpenBackups', async () => {
+    const ошибка = await shell.openPath(служба().tidyBackups());
+    if (ошибка) throw new Error(ошибка);
+  });
   обработать('addCard', (id, index) => служба().addCardFromQuestion(строка(id), число(index)));
   обработать('recording', (on) => deps?.recording?.(Boolean(on)));
   обработать('hearing', () => deps?.hearing?.() ?? Boolean(deps?.transcribe));

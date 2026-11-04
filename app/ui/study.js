@@ -56,7 +56,7 @@ const STRINGS = {
     langHint: 'Лекции этого курса Джарвис расшифровывает на языке лекций, а конспект пишет на языке конспекта.',
     langs: { he: 'иврит', ru: 'русский', en: 'английский', ar: 'арабский', fr: 'французский', de: 'немецкий', es: 'испанский' },
     tidyButton: 'Упорядочить хранилище', tidyHint: 'Граф Obsidian: у каждого курса свой цвет, без расшифровок и одиночных точек. Старые формулы — в LaTeX. Файлы не переезжают, ничего не удаляется, есть отмена.',
-    tidyGo: 'Навести порядок', tidyUndo: 'Вернуть как было', tidyUndoQ: 'Вернуть граф и формулы к тому, что было до нажатия? Заметки, которые вы правили после, останутся как есть.', tidyRunning: 'Навожу порядок…', tidyWaiting: 'Жду, пока вы закроете Obsidian: открытый он затирает настройки графа своими. Джарвис сам его не закрывает.', tidyNoWait: 'Не ждать',
+    tidyGo: 'Навести порядок', tidyUndo: 'Вернуть как было', tidyUndoQ: 'Вернуть формулы и граф к тому, что было до нажатия? Ваши правки в заметках останутся. Настройки графа вернутся целиком, а то, что менялось после, ляжет в копии.', tidyBackups: 'Открыть копии', tidyRunning: 'Навожу порядок…', tidyWaiting: 'Жду, пока вы закроете Obsidian: открытый он затирает настройки графа своими. Джарвис сам его не закрывает.', tidyNoWait: 'Не ждать',
     recTitle: 'Записи лекций: {0} · {1}', recNone: 'Записей лекций на диске нет.',
     recAuto: 'Звук старше {0} дн. удаляется сам — конспект и расшифровка остаются. Меняется в настройках, «Папки и лог».',
     recKeepAll: 'Звук хранится, пока не удалите его сами.',
@@ -113,7 +113,7 @@ const STRINGS = {
     langHint: 'Jarvis transcribes this course\'s lectures in the lecture language and writes the notes in the notes language.',
     langs: { he: 'Hebrew', ru: 'Russian', en: 'English', ar: 'Arabic', fr: 'French', de: 'German', es: 'Spanish' },
     tidyButton: 'Tidy vault', tidyHint: 'Obsidian graph: a colour per course, no transcripts or lone dots. Old formulas become LaTeX. Files stay where they are, nothing is deleted, and you can undo.',
-    tidyGo: 'Tidy now', tidyUndo: 'Undo tidying', tidyUndoQ: 'Put the graph and formulas back as they were before tidying? Notes you edited since stay as they are.', tidyRunning: 'Tidying…', tidyWaiting: 'Waiting for you to close Obsidian: while open it overwrites the graph settings with its own. Jarvis does not close it.', tidyNoWait: 'Stop waiting',
+    tidyGo: 'Tidy now', tidyUndo: 'Undo tidying', tidyUndoQ: 'Put the formulas and graph back as they were before tidying? Your edits in notes stay. The graph settings go back as a whole, and what changed since is kept in a copy.', tidyBackups: 'Open backups', tidyRunning: 'Tidying…', tidyWaiting: 'Waiting for you to close Obsidian: while open it overwrites the graph settings with its own. Jarvis does not close it.', tidyNoWait: 'Stop waiting',
     recTitle: 'Lecture recordings: {0} · {1}', recNone: 'No lecture recordings on disk.',
     recAuto: 'Audio older than {0} days is deleted automatically; the notes and transcript stay. Change it in Settings, "Folders and log".',
     recKeepAll: 'Audio is kept until you delete it.',
@@ -401,7 +401,7 @@ function tidyRow() {
     } else if (state.waiting) {
       box.append(
         el('b', {}, t('tidyButton')),
-        el('div', {}, t('tidyWaiting')),
+        ...(state.lines.length ? lines(state.lines) : [el('div', {}, t('tidyWaiting'))]),
         el('div', { class: 'row' }, el('button', { class: 'btn', onclick: async () => { await call('tidyCancelWait'); await draw(); } }, t('tidyNoWait'))),
       );
     } else {
@@ -409,6 +409,7 @@ function tidyRow() {
         el('div', { class: 'row spread', style: 'flex-wrap:wrap' },
           el('b', {}, t('tidyButton')),
           el('span', { class: 'row' },
+            state.hasBackups ? el('button', { class: 'btn', onclick: () => call('tidyOpenBackups').catch(failed) }, t('tidyBackups')) : null,
             state.canUndo ? el('button', { class: 'btn', onclick: () => confirmRow([el('div', {}, t('tidyUndoQ'))], t('tidyUndo'), () => call('tidyUndo')) }, t('tidyUndo')) : null,
             el('button', { class: 'btn', onclick: press }, t('tidyButton')))),
         el('div', { class: 'small muted' }, t('tidyHint')),

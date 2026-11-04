@@ -176,7 +176,7 @@ void app.whenReady().then(async () => {
 
   // Obsidian «открыт»: формулы идут, файл настроек не тронут, успеха нет.
   await нажать(ДАЛЕЕ);
-  проверить('ждёт, пока закроют Obsidian', await дождаться(`document.querySelector('main').innerText.includes(${JSON.stringify(en ? 'Waiting for you to close Obsidian' : 'Жду, пока вы закроете Obsidian')})`, 30));
+  проверить('ждёт, пока закроют Obsidian', await дождаться(`${en ? '/Waiting for you to close Obsidian|not set up yet/' : '/Жду, пока вы закроете Obsidian|Граф ещё не настроен/'}.test(document.querySelector('main').innerText)`, 30));
   await снять('tidy-3-ждёт');
   // Формулы идут минутами: дальше — только когда работа кончилась.
   проверить('формулы обработаны', await дождаться(`!document.querySelector('main').innerText.includes(${JSON.stringify(en ? 'Tidying…' : 'Навожу порядок…')})`, 1500));
@@ -206,13 +206,28 @@ void app.whenReady().then(async () => {
     const разные = безМетки.map((с, i) => ({ с, был: до[i] ?? '' })).filter(({ с, был }) => с !== был);
     const чисто = безМетки.length === до.length && разные.every(({ с, был }) => с.includes('$') && !был.includes('$'));
     проверить(`${з}: меняются только строки с формулами`, чисто, `строк ${разные.length} из ${до.length}`);
+    // Отдельно от проверки в коде: числа строки те же и в том же порядке.
+    const числа = (строка: string): string[] =>
+      строка
+        .replace(/[⁰¹²³⁴-⁹₀-₉]/gu, (с) => ` ${с.normalize('NFKC')} `)
+        .replace(/\{,\}/gu, ',')
+        .match(/\d+(?:[.,]\d+)*/gu) ?? [];
+    const сменились = разные.filter(({ с, был }) => числа(с).join('|') !== числа(был).join('|'));
+    проверить(`${з}: числа в этих строках те же`, сменились.length === 0, сменились.slice(0, 2).map(({ с, был }) => `${был.slice(0, 80)} → ${с.slice(0, 80)}`).join(' ; '));
     for (const { с, был } of разные.slice(0, 4)) console.log(`      было:  ${был.slice(0, 150)}\n      стало: ${с.slice(0, 170)}`);
   }
 
-  // Второе нажатие — без модели.
+  // Второе нажатие — без модели. Недоказанные строки план называет заранее, и нажимать на него незачем.
   const вызововБыло = вызовов;
+  const недоделано = /не принято|не ответила|rejected|did not answer/u.test(await текст());
   await нажать(КНОПКА);
-  проверить('второе нажатие: всё уже в порядке', await дождаться(`document.querySelector('main').innerText.includes(${JSON.stringify(en ? 'already tidy' : 'Всё уже в порядке')})`, 20));
+  if (недоделано) {
+    проверить('второе нажатие: план называет оставшиеся строки', await дождаться(`Boolean(${кнопка(ДАЛЕЕ)})`, 20));
+    console.log(`  план второго нажатия: ${(await текст()).split('\n').filter((с) => /Формулы:|Formulas:/u.test(с)).join(' | ')}`);
+    await нажать(en ? 'Cancel' : 'Отмена');
+  } else {
+    проверить('второе нажатие: всё уже в порядке', await дождаться(`document.querySelector('main').innerText.includes(${JSON.stringify(en ? 'already tidy' : 'Всё уже в порядке')})`, 20));
+  }
   проверить('второе нажатие без вызовов модели', вызовов === вызововБыло, `вызовов всего ${вызовов}`);
   проверить('второе нажатие ничего не изменило на диске', разница(после, снимок(копия)).length === 0);
   await снять('tidy-5-второе');

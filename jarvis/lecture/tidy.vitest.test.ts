@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GRAPH_FORCES } from '../notes/graphSettings';
 import { StudyService } from '../study/service';
 import { StudyStore } from '../study/store';
-import { parseFrontmatter, renderFrontmatter, withFormulasMark } from './courses';
+import { parseFrontmatter, renderFrontmatter, withFormulasMark, withoutFormulasMark } from './courses';
 import { moveLecture } from './finalize';
 import { VaultTidier, type TidyDeps } from './tidy';
 import { obsidianState, vaultOfFolder, type ObsidianState } from './vault';
@@ -122,7 +122,7 @@ describe('«Упорядочить хранилище»', () => {
     const граф = JSON.parse(await readFile(с.граф, 'utf8'));
     expect(граф['свой-ключ']).toBe(1);
     expect(граф.scale).toBe(0.4);
-    expect(граф.colorGroups.map((г: { query: string }) => г.query)).toEqual(['tag:#важное', 'path:"Лекции/Алгебра"', 'path:"Лекции/Физика"']);
+    expect(граф.colorGroups.map((г: { query: string }) => г.query)).toEqual(['tag:#важное', 'path:"Лекции/Алгебра/"', 'path:"Лекции/Физика/"']);
     expect(граф).toMatchObject({ showOrphans: false, hideUnresolved: true, ...GRAPH_FORCES });
 
     const физика = await readFile(с.физика, 'utf8');
@@ -246,7 +246,7 @@ describe('«Упорядочить хранилище»', () => {
     const было = readFileSync(с.алгебра, 'utf8');
     с.ответ.fn = (prompt) => {
       if (prompt.includes('корень')) throw new Error('лимит подписки');
-      return '1| - скорость $v = s/t$';
+      return '1| - скорость $v = s/t$\n2| - сила $F = m·a$';
     };
     const итог = await с.tidier().run();
     expect(итог.lines.join(' ')).toMatch(/лимит подписки — заметка без изменений/u);
@@ -270,16 +270,54 @@ describe('«Упорядочить хранилище»', () => {
     expect(итог.lines.join(' ')).toMatch(/Остановился: модель не отвечает подряд, осталось заметок: 1/u);
   });
 
-  it('модель поменяла число — строка остаётся, остальное принято, заметка помечена', async () => {
+  it('модель поменяла число — строка остаётся, остальное принято; без пометки, и следующее нажатие спросит только её', async () => {
     const с = await стенд();
     const строкаБыла = '- сила F = m·a';
-    с.ответ.fn = (prompt) => (prompt.includes('скорость') ? '1| - скорость $v = s/t$\n2| - сила $F = 2m·a$' : 'НЕТ');
+    с.ответ.fn = (prompt) => (prompt.includes('скорость') ? '1| - скорость $v = s/t$\n2| - сила $F = 2m·a$' : '1|');
     const итог = await с.tidier().run();
     expect(итог.lines.join(' ')).toMatch(/Строк не принято: 1/u);
     const текст = readFileSync(с.физика, 'utf8');
     expect(текст).toContain(строкаБыла);
     expect(текст).toContain('- скорость $v = s/t$');
-    expect(parseFrontmatter(текст)?.formulas).toBe(true);
+    expect(parseFrontmatter(текст)?.formulas).toBeUndefined();
+
+    const порядок = с.tidier();
+    expect((await порядок.plan()).lines.join(' ')).toMatch(/заметок 1, строк 1 — вызовов модели по вашей подписке: 1/u);
+    с.вызовы.length = 0;
+    с.ответ.fn = () => '1| - сила $F = m·a$';
+    await порядок.run();
+    expect(с.вызовы).toHaveLength(1);
+    expect(с.вызовы[0]).toContain('1| - сила F = m·a');
+    expect(с.вызовы[0]).not.toContain('скорость');
+    expect(parseFrontmatter(readFileSync(с.физика, 'utf8'))?.formulas).toBe(true);
+  });
+
+  it('модель ответила не на все строки — заметка не помечена, и отчёт это говорит', async () => {
+    const с = await стенд();
+    с.ответ.fn = (prompt) => (prompt.includes('скорость') ? '1| - скорость $v = s/t$' : '1|');
+    const итог = await с.tidier().run();
+    expect(итог.lines.join(' ')).toMatch(/Модель не ответила на строк: 1/u);
+    expect(parseFrontmatter(readFileSync(с.физика, 'utf8'))?.formulas).toBeUndefined();
+    // Формул не нашлось и всё проверено: такая заметка помечена, больше не спрашиваем.
+    expect(итог.lines.join(' ')).toMatch(/Формул не нашлось в заметках: 1/u);
+    expect(parseFrontmatter(readFileSync(с.алгебра, 'utf8'))?.formulas).toBe(true);
+  });
+
+  it('запись пошла посреди работы: ни вызова модели, ни записи; отмена — тоже', async () => {
+    const с = await стенд();
+    const было = readFileSync(с.физика, 'utf8');
+    const занято = { причина: null as string | null };
+    const порядок = с.tidier({
+      busy: () => занято.причина,
+      summarize: async () => {
+        занято.причина = 'идёт конспект';
+        return '1| - скорость $v = s/t$\n2| - сила $F = m·a$';
+      },
+    });
+    const итог = await порядок.run();
+    expect(итог.lines.join(' ')).toMatch(/Остановился: идёт конспект/u);
+    expect(readFileSync(с.алгебра, 'utf8')).toBe(readFileSync(с.алгебра, 'utf8'));
+    expect(readFileSync(с.физика, 'utf8')).toBe(было);
   });
 
   it('заметку поправили, пока модель думала — её правка важнее', async () => {
@@ -289,7 +327,7 @@ describe('«Упорядочить хранилище»', () => {
         void writeFile(с.алгебра, 'правка человека\n', 'utf8');
         return '1| - корень $x = 5$';
       }
-      return 'НЕТ';
+      return '1|\n2|';
     };
     // Запись выше асинхронная: дожидаемся её прямо из ответа.
     const исходный = с.ответ.fn;
@@ -305,7 +343,7 @@ describe('«Упорядочить хранилище»', () => {
     expect(readFileSync(с.алгебра, 'utf8')).toBe('правка человека\n');
   });
 
-  it('отмена возвращает заметки и граф; правленое после этого не трогает; можно нажать снова', async () => {
+  it('отмена возвращает заметки и граф; правки человека остаются; можно нажать снова', async () => {
     const с = await стенд();
     const до = { граф: readFileSync(с.граф, 'utf8'), дерево: снимок(с.root) };
     await с.tidier().run();
@@ -319,12 +357,15 @@ describe('«Упорядочить хранилище»', () => {
     const порядок = с.tidier();
     const итог = await порядок.undo();
     expect(итог.canUndo).toBe(false);
-    expect(итог.lines.join(' ')).toMatch(/вернул прежний текст в 1/u);
-    expect(итог.lines.join(' ')).toMatch(/заметку меняли после этого — оставляю/u);
+    expect(итог.lines.join(' ')).toMatch(/вернул прежний текст в 2/u);
     expect(итог.lines.join(' ')).toMatch(/как до первого нажатия/u);
+    expect(итог.lines.join(' ')).toMatch(/То, что менялось после.*лежит в копии/u);
     expect(readFileSync(с.физика, 'utf8')).not.toContain('$');
     expect(parseFrontmatter(readFileSync(с.физика, 'utf8'))?.formulas).toBeUndefined();
-    expect(readFileSync(с.алгебра, 'utf8')).toBe(правка);
+    // Правка человека на месте, а наша строка и пометка сняты.
+    expect(readFileSync(с.алгебра, 'utf8')).toContain('- корень x = 5');
+    expect(readFileSync(с.алгебра, 'utf8')).toContain('моя правка');
+    expect(parseFrontmatter(readFileSync(с.алгебра, 'utf8'))?.formulas).toBeUndefined();
     expect(readFileSync(с.граф, 'utf8')).toBe(до.граф);
     expect(снимок(с.root)[path.relative(с.root, с.физика)]).toBe(до.дерево[path.relative(с.root, с.физика)]);
 
@@ -429,6 +470,8 @@ describe('пометка «формулы уже в LaTeX»', () => {
     expect(withFormulasMark('---\r\ncourse: Physics\r\ndate: 2026-10-13\r\n---\r\n# T\r\n')).toBe('---\r\ncourse: Physics\r\ndate: 2026-10-13\r\nformulas: LaTeX\r\n---\r\n# T\r\n');
     expect(parseFrontmatter(withFormulasMark(ru))?.formulas).toBe(true);
     expect(withFormulasMark('# без свойств\n')).toBe('# без свойств\n');
+    expect(withoutFormulasMark(withFormulasMark(ru))).toBe(ru);
+    expect(withoutFormulasMark('---\r\ncourse: P\r\ndate: 2026-10-13\r\nformulas: LaTeX\r\n---\r\nформулы: LaTeX\r\n')).toBe('---\r\ncourse: P\r\ndate: 2026-10-13\r\n---\r\nформулы: LaTeX\r\n');
   });
 
   it('переживает перенос лекции в другой курс; у необработанной не появляется', async () => {

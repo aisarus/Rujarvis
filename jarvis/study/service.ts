@@ -772,7 +772,7 @@ export class StudyService {
       this.порядок = new VaultTidier({
         root,
         // Рядом с банками учёбы: всё на диске — в одной папке данных Джарвиса.
-        dir: path.join(path.dirname(this.o.store.root), 'tidy'),
+        dir: this.tidyBackups(),
         summarize: this.o.tidySummarize ?? this.o.summarize,
         busy: this.o.vaultBusy,
         obsidian: this.o.obsidian ?? obsidianState,
@@ -800,6 +800,11 @@ export class StudyService {
 
   tidyCancelWait(): TidyState {
     return this.tidier().cancelWait();
+  }
+
+  /** Папка копий: окно открывает её кнопкой, человеку незачем искать путь. */
+  tidyBackups(): string {
+    return path.join(path.dirname(this.o.store.root), 'tidy');
   }
 
   /** Звук лекций на диске: сколько, сколько места и удаляется ли сам. */

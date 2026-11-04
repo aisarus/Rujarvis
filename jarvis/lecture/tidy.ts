@@ -8,30 +8,37 @@
  * неизвестные ключи тоже пропадают; при закрытом виде работающий Obsidian файл
  * подхватывает, но снаружи разницы не видно. Поэтому кнопка не закрывает Obsidian и
  * не обещает успеха: просит закрыть, ждёт и пишет сама, а успех называет, только
- * когда настройки перечитаны с диска.
+ * когда настройки перечитаны с диска. Заметки Obsidian подхватывает и открытый,
+ * даже если человек в этот миг печатает: сохраняется и то и другое (тот же замер).
  *
  * Формулы — единственное, что кнопка меняет в заметках (`formulaLines.ts`).
- * Обработанная заметка получает пометку, и повторное нажатие ничего не стоит; не
- * вышло — заметка без изменений и без пометки. Копии — в папке данных Джарвиса.
+ * Заметка, где всё доказано и на всё отвечено, получает пометку, и нажимать снова
+ * незачем. Строки, которые не прошли проверку, остаются текстом, а заметка без
+ * пометки: следующее нажатие спросит только их, и план назовёт цену заранее.
+ *
+ * Отмена не упирается в первую беду и не закрывается раньше времени: по заметке
+ * помнит, какие строки поменяла, поэтому правки человека, недельная уборка звука и
+ * перенос лекции ей не мешают, а занятый файл остаётся на следующее нажатие.
  *
  * Ничего не удаляется: файл, который отмена убирает с дороги, уходит в копии.
  */
 
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { tr } from '../locale/language';
 import { mergeGraphSettings, type GraphSettings } from '../notes/graphSettings';
-import { COURSE_WORDS, listCourses, listLectures, withFormulasMark } from './courses';
-import { convertNoteFormulas, formulaCalls, formulaCandidates } from './formulaLines';
+import { COURSE_WORDS, listCourses, listLectures, parseFrontmatter, withFormulasMark, withoutFormulasMark } from './courses';
+import { convertNoteFormulas, formulaCalls, formulaCandidates, FormulaStopped, type FormulaChange } from './formulaLines';
 import { vaultOfFolder, type ObsidianState } from './vault';
 
 /**
- * Окружение для вызовов модели: без размышлений. Замена записи формул — механика,
- * а размышления съедают лимит: на заметке по математике (59 строк, 04.11.2026) с ними
- * 170 с и 18 562 токена ответа, без них 51 с и 4 937 токенов при том же итоге. Подмена
- * числа размышлениями тоже не защищена: её ловит проверка в коде.
+ * Окружение для вызовов модели: без размышлений. Замена записи формул — механика, а
+ * размышления съедают лимит: на заметке по математике (59 строк, 04.11.2026) с ними
+ * 170 с и 18 562 токена ответа, без них 51 с и 4 937 токенов при том же итоге.
+ * Ошибок модели это не прибавляет безнаказанно: всё, что она написала, доказывается
+ * равным исходной строке в `formulaLines.ts`, недоказанное остаётся текстом.
  */
 export const FORMULA_MODEL_ENV = { MAX_THINKING_TOKENS: '0' } as const;
 
@@ -39,6 +46,8 @@ export const FORMULA_MODEL_ENV = { MAX_THINKING_TOKENS: '0' } as const;
 const ОТКАЗОВ_ПОДРЯД = 2;
 /** Obsidian закрывается не мгновенно: «закрыт» считается со второй проверки подряд. */
 const ПРОВЕРОК_ЗАКРЫТ = 2;
+/** Имя своего временного файла: оборвалось посреди записи — следующее нажатие уберёт. */
+const ВРЕМЕННЫЙ = '.jarvis-tidy.tmp';
 
 export interface TidyDeps {
   /** Папка «Лекции». */
@@ -67,12 +76,16 @@ export interface TidyReport {
   /** Заметок и строк с формулами в LaTeX. */
   notes: number;
   lines: number;
-  /** Заметок, где модель формул не нашла: помечены, больше не спрашиваем. */
+  /** Заметок, где модель формул не нашла и всё проверено: помечены, больше не спрашиваем. */
   noFormulas: number;
-  /** Строк, которые модель изменила не только в формуле: остались как были. */
+  /** Строк, равенство которых проверка не смогла доказать: остались как были. */
   rejected: number;
+  /** Строк, на которые модель не ответила. */
+  missing: number;
   failed: string[];
   skipped: string[];
+  /** Файл со строками, которые остались текстом, и ответами модели на них. */
+  rejectedFile?: string;
   /** Почему остановились на полпути. */
   stopped?: string;
 }
@@ -89,6 +102,8 @@ export interface TidyState {
   /** Ждём, пока закроют Obsidian: чтобы настроить граф или вернуть прежний. */
   waiting: 'apply' | 'undo' | null;
   canUndo: boolean;
+  /** Копии уже есть: их можно открыть. */
+  hasBackups: boolean;
   lines: string[];
 }
 
@@ -96,24 +111,29 @@ interface Шаг {
   file: string;
   backup: string;
   after: string;
+  /** Что поменялось: по этому отмена работает и в заметке, которую потом правили. */
+  changes: FormulaChange[];
+  /** Отмена с этой заметкой уже разобралась. */
+  done?: boolean;
 }
 
 interface Журнал {
   version: 1;
   at: number;
   steps: Шаг[];
-  undoneAt?: number;
 }
 
 interface КопияГрафа {
   vault: string;
   /** Что лежало в файле до первого нажатия; null — файла не было. */
   raw: string | null;
+  /** Отпечаток того, что записала кнопка: не совпал — настройки потом меняли. */
+  after?: string;
   at: number;
 }
 
-function отпечаток(текст: string): string {
-  return createHash('sha256').update(текст).digest('hex');
+function отпечаток(данные: string | Buffer): string {
+  return createHash('sha256').update(данные).digest('hex');
 }
 
 function разобрать(текст: string): GraphSettings {
@@ -122,18 +142,27 @@ function разобрать(текст: string): GraphSettings {
   return данные as GraphSettings;
 }
 
-/** Записать через временный файл: оборванная запись не должна оставить пол-настроек. */
-function записать(файл: string, текст: string): void {
+/** Записать через временный файл: оборванная запись не должна оставить пол-файла, а отказ — мусор рядом. */
+function записать(файл: string, данные: string | Buffer): void {
   mkdirSync(path.dirname(файл), { recursive: true });
-  const временный = `${файл}.${process.pid}.tmp`;
-  writeFileSync(временный, текст, 'utf8');
-  renameSync(временный, файл);
+  const временный = `${файл}${ВРЕМЕННЫЙ}`;
+  try {
+    writeFileSync(временный, данные);
+    renameSync(временный, файл);
+  } catch (error) {
+    rmSync(временный, { force: true });
+    throw error;
+  }
+}
+
+/** Папки с лекциями: курсы и «Без курса». */
+function папкиЛекций(root: string): string[] {
+  return [...listCourses(root), COURSE_WORDS.ru.unsorted, COURSE_WORDS.en.unsorted];
 }
 
 /** Все заметки лекций: и в курсах, и «Без курса». */
 function заметкиЛекций(root: string): Array<{ course: string; file: string; formulas: boolean }> {
-  const папки = [...listCourses(root), COURSE_WORDS.ru.unsorted, COURSE_WORDS.en.unsorted];
-  return папки.flatMap((курс) => listLectures(root, курс).map((л) => ({ course: курс, file: л.file, formulas: Boolean(л.meta.formulas) })));
+  return папкиЛекций(root).flatMap((курс) => listLectures(root, курс).map((л) => ({ course: курс, file: л.file, formulas: Boolean(л.meta.formulas) })));
 }
 
 /** Необработанные заметки, в которых есть что показать модели. */
@@ -145,6 +174,19 @@ function имяЗаметки(root: string, файл: string): string {
   return path.relative(root, файл).replace(/\.md$/u, '').split(path.sep).join('/');
 }
 
+/** Заметка, в которой есть хоть что-то от этого шага: иначе это другая лекция с тем же именем. */
+function нашаЗаметка(файл: string, шаг: Шаг): boolean {
+  try {
+    const данные = readFileSync(файл);
+    if (отпечаток(данные) === шаг.after) return true;
+    const строки = данные.toString('utf8').split('\n').map((с) => с.replace(/\r$/u, ''));
+    if (шаг.changes.length === 0) return Boolean(parseFrontmatter(строки.join('\n'))?.formulas);
+    return шаг.changes.some((п) => строки.includes(п.after));
+  } catch {
+    return false;
+  }
+}
+
 export class VaultTidier {
   private running = false;
   private progress = '';
@@ -154,6 +196,7 @@ export class VaultTidier {
   private проверяю = false;
   private lines: string[] = [];
   private report: TidyReport | null = null;
+  private непринятые: Array<{ имя: string; line: string; reply: string }> = [];
 
   constructor(private readonly o: TidyDeps) {}
 
@@ -184,6 +227,17 @@ export class VaultTidier {
     const файл = this.файлГрафа as string;
     const было = existsSync(файл) ? разобрать(readFileSync(файл, 'utf8')) : null;
     return mergeGraphSettings(было, this.папкаЛекцийВХранилище, listCourses(this.o.root));
+  }
+
+  /** Прошлый запуск оборвался посреди записи: его временный файл — наш, и в хранилище ему не место. */
+  private убратьВременные(): void {
+    const папки = [path.join(this.vault ?? this.o.root, '.obsidian'), ...папкиЛекций(this.o.root).map((к) => path.join(this.o.root, к))];
+    for (const папка of папки) {
+      if (!existsSync(папка)) continue;
+      for (const имя of readdirSync(папка)) {
+        if (имя.endsWith(ВРЕМЕННЫЙ)) rmSync(path.join(папка, имя), { force: true });
+      }
+    }
   }
 
   async plan(): Promise<TidyPlan> {
@@ -230,10 +284,12 @@ export class VaultTidier {
     if (занято) throw new Error(занято);
     this.перестатьЖдать();
     this.running = true;
-    const report: TidyReport = { graph: { state: 'unchanged' }, notes: 0, lines: 0, noFormulas: 0, rejected: 0, failed: [], skipped: [] };
+    const report: TidyReport = { graph: { state: 'unchanged' }, notes: 0, lines: 0, noFormulas: 0, rejected: 0, missing: 0, failed: [], skipped: [] };
     this.report = report;
     this.lines = [];
+    this.непринятые = [];
     try {
+      this.убратьВременные();
       if (this.vault) {
         report.graph = await this.шагГрафа();
         await this.шагФормул(report);
@@ -241,11 +297,24 @@ export class VaultTidier {
         report.graph = { state: 'no-vault' };
       }
     } finally {
+      this.записатьНепринятые(report);
       this.running = false;
       this.progress = '';
       this.lines = reportLines(report);
     }
     return this.state();
+  }
+
+  /** Какие строки остались текстом и что предлагала модель: файл в копиях, кнопка их открывает. */
+  private записатьНепринятые(report: TidyReport): void {
+    if (this.непринятые.length === 0) return;
+    const файл = path.join(this.o.dir, 'rejected-lines.md');
+    try {
+      записать(файл, this.непринятые.map((н) => `### ${н.имя}\n- было: ${н.line}\n- модель: ${н.reply}\n`).join('\n'));
+      report.rejectedFile = файл;
+    } catch {
+      // Список — подсказка человеку: без него счёт в отчёте всё равно есть.
+    }
   }
 
   /** Вернуть всё как было: заметки сразу, граф — когда Obsidian закрыт. */
@@ -258,9 +327,10 @@ export class VaultTidier {
     this.running = true;
     const lines: string[] = [];
     try {
-      const { restored, skipped } = this.вернутьЗаметки();
+      this.убратьВременные();
+      const { restored, messages } = this.вернутьЗаметки();
       if (restored > 0) lines.push(tr(`Заметки: вернул прежний текст в ${restored}.`, `Notes: restored the earlier text in ${restored}.`));
-      for (const с of skipped) lines.push(с);
+      lines.push(...messages);
       if (existsSync(this.копияГрафа())) {
         const открыт = await this.o.obsidian();
         if (открыт === 'closed') lines.push(this.вернутьГраф());
@@ -292,7 +362,7 @@ export class VaultTidier {
   }
 
   state(): TidyState {
-    return { running: this.running, progress: this.progress, waiting: this.waiting, canUndo: this.естьЧтоВернуть(), lines: this.lines };
+    return { running: this.running, progress: this.progress, waiting: this.waiting, canUndo: this.естьЧтоВернуть(), hasBackups: existsSync(this.o.dir), lines: this.lines };
   }
 
   /** Для окна: перестать проверять Obsidian, когда служба больше не нужна. */
@@ -328,12 +398,12 @@ export class VaultTidier {
     try {
       const слито = this.слитьГраф();
       if (!слито.changed) return { state: 'unchanged' };
-      const копия = this.копияГрафа();
-      if (!existsSync(копия)) {
-        const запись: КопияГрафа = { vault: this.vault as string, raw: existsSync(файл) ? readFileSync(файл, 'utf8') : null, at: this.now };
-        записать(копия, JSON.stringify(запись, null, 1));
-      }
       const текст = `${JSON.stringify(слито.settings, null, 2)}\n`;
+      const копия = this.копияГрафа();
+      const запись: КопияГрафа = existsSync(копия)
+        ? (JSON.parse(readFileSync(копия, 'utf8')) as КопияГрафа)
+        : { vault: this.vault as string, raw: existsSync(файл) ? readFileSync(файл, 'utf8') : null, at: this.now };
+      записать(копия, JSON.stringify({ ...запись, after: отпечаток(текст) }, null, 1));
       записать(файл, текст);
       if (readFileSync(файл, 'utf8') !== текст) return { state: 'failed', reason: tr('файл не совпал с записанным', 'the file does not match what was written') };
       return { state: 'applied', newGroups: слито.newGroups, courses: слито.courses };
@@ -342,23 +412,33 @@ export class VaultTidier {
     }
   }
 
+  /**
+   * Вернуть настройки графа. Копия уходит в сторону только после записи: не вышло
+   * или оборвалось — следующее нажатие начнёт заново.
+   */
   private вернутьГраф(): string {
     const файл = this.файлГрафа;
     const копия = this.копияГрафа();
     if (!файл || !existsSync(копия)) return tr('Граф: возвращать нечего.', 'Graph: nothing to undo.');
     try {
       const запись = JSON.parse(readFileSync(копия, 'utf8')) as КопияГрафа;
-      const снято = copyAside(копия, this.now);
-      if (existsSync(файл)) copyFileSync(файл, `${снято}.replaced.json`);
+      const база = `${копия.replace(/\.json$/u, '')}.${new Date(this.now).toISOString().replace(/[:.]/gu, '-')}`;
+      const сейчас = existsSync(файл) ? readFileSync(файл, 'utf8') : null;
+      // Менялось ли что-то после кнопки: масштаб, свои цвета. Это остаётся в копии, и человек узнаёт где.
+      const менялось = сейчас !== null && сейчас !== запись.raw && запись.after !== undefined && отпечаток(сейчас) !== запись.after;
+      if (сейчас !== null && сейчас !== запись.raw) copyFileSync(файл, `${база}.replaced.json`);
       if (запись.raw === null) {
-        // Файла не было: убираем наш в копии, а не удаляем.
-        if (existsSync(файл)) renameSync(файл, `${снято}.created.json`);
-      } else {
+        // Файла не было: наш уходит в копии, а не удаляется.
+        if (сейчас !== null) renameSync(файл, `${база}.created.json`);
+      } else if (сейчас !== запись.raw) {
         записать(файл, запись.raw);
       }
-      return tr('Граф: настройки как до первого нажатия.', 'Graph: settings as they were before the first press.');
+      renameSync(копия, `${база}.original.json`);
+      return менялось
+        ? tr(`Граф: настройки как до первого нажатия. То, что менялось после (масштаб, свои цвета), лежит в копии: ${база}.replaced.json`, `Graph: settings as they were before the first press. What changed since (zoom, your own colours) is kept in a copy: ${база}.replaced.json`)
+        : tr('Граф: настройки как до первого нажатия.', 'Graph: settings as they were before the first press.');
     } catch (error) {
-      return tr(`Граф вернуть не вышло: ${this.причина(error)}`, `Could not restore the graph: ${this.причина(error)}`);
+      return tr(`Граф вернуть не вышло: ${this.причина(error)}. Копия цела — нажмите ещё раз.`, `Could not restore the graph: ${this.причина(error)}. The copy is intact — press again.`);
     }
   }
 
@@ -427,35 +507,83 @@ export class VaultTidier {
       }
       const имя = имяЗаметки(this.o.root, file);
       this.progress = tr(`Формулы: ${номер + 1} из ${заметки.length} — ${имя}`, `Formulas: ${номер + 1} of ${заметки.length} — ${имя}`);
+      let исходные: Buffer;
+      let текст: string;
       try {
-        const текст = readFileSync(file, 'utf8');
-        if (formulaCandidates(текст).length === 0) continue;
-        const итог = await convertNoteFormulas(текст, this.o.summarize);
-        // Пока модель думала, заметку могли поправить: её правка важнее.
-        if (readFileSync(file, 'utf8') !== текст) {
-          report.skipped.push(tr(`${имя}: заметка изменилась, пока шла работа — не трогаю.`, `${имя}: the note changed meanwhile — left alone.`));
-          continue;
-        }
-        const стало = withFormulasMark(итог.text);
-        журнал ??= this.новыйЖурнал();
-        const backup = path.join(журнал.папка, `${String(журнал.данные.steps.length + 1).padStart(3, '0')} ${path.basename(file)}`);
-        copyFileSync(file, backup);
-        журнал.данные.steps.push({ file, backup, after: отпечаток(стало) });
-        записать(журнал.файл, JSON.stringify(журнал.данные, null, 1));
-        записать(file, стало);
-        отказовПодряд = 0;
-        if (итог.lines > 0) report.notes += 1;
-        else report.noFormulas += 1;
-        report.lines += итог.lines;
-        report.rejected += итог.rejected;
+        исходные = readFileSync(file);
+        текст = исходные.toString('utf8');
       } catch (error) {
+        report.failed.push(tr(`${имя}: ${this.причина(error)} — заметка без изменений.`, `${имя}: ${this.причина(error)} — note unchanged.`));
+        continue;
+      }
+      // Битый байт текстом не пережил бы запись: такую заметку не трогаем совсем.
+      if (!Buffer.from(текст, 'utf8').equals(исходные)) {
+        report.skipped.push(tr(`${имя}: в заметке есть байты не в UTF-8 — не трогаю.`, `${имя}: the note has bytes that are not UTF-8 — left alone.`));
+        continue;
+      }
+      if (formulaCandidates(текст).length === 0) continue;
+
+      let итог;
+      try {
+        итог = await convertNoteFormulas(текст, this.o.summarize, this.o.busy);
+        отказовПодряд = 0;
+      } catch (error) {
+        if (error instanceof FormulaStopped) {
+          report.stopped = error.message;
+          return;
+        }
         отказовПодряд += 1;
         report.failed.push(tr(`${имя}: ${this.причина(error)} — заметка без изменений.`, `${имя}: ${this.причина(error)} — note unchanged.`));
         if (отказовПодряд >= ОТКАЗОВ_ПОДРЯД && номер + 1 < заметки.length) {
           report.stopped = tr(`модель не отвечает подряд, осталось заметок: ${заметки.length - номер - 1}. Их можно обработать следующим нажатием.`, `the model keeps failing, ${заметки.length - номер - 1} notes left. Press again to process them.`);
           return;
         }
+        continue;
       }
+      // Запись пошла, пока модель думала: не пишем ничего.
+      const идёт = this.o.busy?.();
+      if (идёт) {
+        report.stopped = идёт;
+        return;
+      }
+      report.rejected += итог.rejected;
+      report.missing += итог.missing;
+      this.непринятые.push(...итог.refused.map((о) => ({ имя, ...о })));
+      // Что-то не доказано или без ответа — пометки нет: следующее нажатие спросит снова.
+      const всёПроверено = итог.rejected === 0 && итог.missing === 0;
+      const стало = всёПроверено ? withFormulasMark(итог.text) : итог.text;
+      if (стало === текст) continue;
+
+      let шаг: Шаг | null = null;
+      try {
+        // Пока модель думала, заметку могли поправить: её правка важнее.
+        if (!readFileSync(file).equals(исходные)) {
+          report.skipped.push(tr(`${имя}: заметка изменилась, пока шла работа — не трогаю.`, `${имя}: the note changed meanwhile — left alone.`));
+          continue;
+        }
+        журнал ??= this.новыйЖурнал();
+        const backup = path.join(журнал.папка, `${String(журнал.данные.steps.length + 1).padStart(3, '0')} ${path.basename(file)}`);
+        copyFileSync(file, backup);
+        шаг = { file, backup, after: отпечаток(стало), changes: итог.changes };
+        журнал.данные.steps.push(шаг);
+        записать(журнал.файл, JSON.stringify(журнал.данные, null, 1));
+        записать(file, стало);
+      } catch (error) {
+        // Заметка цела, и отмене тут делать нечего. Это файл, модель ни при чём: подряд не считаем.
+        if (журнал && шаг) {
+          журнал.данные.steps = журнал.данные.steps.filter((с) => с !== шаг);
+          try {
+            записать(журнал.файл, JSON.stringify(журнал.данные, null, 1));
+          } catch {
+            // Журнал не записался — отмена увидит, что заметка равна копии, и молча пройдёт мимо.
+          }
+        }
+        report.failed.push(tr(`${имя}: ${this.причина(error)} — заметка без изменений.`, `${имя}: ${this.причина(error)} — note unchanged.`));
+        continue;
+      }
+      if (итог.lines > 0) report.notes += 1;
+      else if (всёПроверено) report.noFormulas += 1;
+      report.lines += итог.lines;
     }
   }
 
@@ -483,46 +611,112 @@ export class VaultTidier {
       });
   }
 
-  private естьЧтоВернуть(): boolean {
-    return existsSync(this.копияГрафа()) || this.журналы().some((ж) => !ж.данные.undoneAt && ж.данные.steps.length > 0);
-  }
-
-  /** Заметки — с новых нажатий к старым. Заметку правили после обработки — её правка остаётся. */
-  private вернутьЗаметки(): { restored: number; skipped: string[] } {
-    let restored = 0;
-    const skipped: string[] = [];
-    for (const журнал of this.журналы()) {
-      if (журнал.данные.undoneAt) continue;
-      for (const шаг of [...журнал.данные.steps].reverse()) {
-        const имя = имяЗаметки(this.o.root, шаг.file);
-        if (!existsSync(шаг.file)) {
-          skipped.push(tr(`${имя}: заметки уже нет на этом месте — копия в ${шаг.backup}.`, `${имя}: the note is no longer there — backup at ${шаг.backup}.`));
-          continue;
-        }
-        if (отпечаток(readFileSync(шаг.file, 'utf8')) !== шаг.after) {
-          skipped.push(tr(`${имя}: заметку меняли после этого — оставляю; копия в ${шаг.backup}.`, `${имя}: the note was edited since — left alone; backup at ${шаг.backup}.`));
-          continue;
-        }
-        копироватьВ(шаг.backup, шаг.file);
-        restored += 1;
-      }
-      журнал.данные.undoneAt = this.now;
-      записать(журнал.файл, JSON.stringify(журнал.данные, null, 1));
+  /** Где заметка сейчас: на месте или, если лекцию перенесли или курс переименовали, в другой папке курса. */
+  private гдеЗаметка(шаг: Шаг): string | null {
+    if (existsSync(шаг.file) && нашаЗаметка(шаг.file, шаг)) return шаг.file;
+    for (const папка of папкиЛекций(this.o.root)) {
+      const файл = path.join(this.o.root, папка, path.basename(шаг.file));
+      if (existsSync(файл) && statSync(файл).isFile() && нашаЗаметка(файл, шаг)) return файл;
     }
-    return { restored, skipped };
+    return existsSync(шаг.file) ? шаг.file : null;
   }
-}
 
-/** Заменить содержимое файла копией — через временный файл рядом. */
-function копироватьВ(копия: string, файл: string): void {
-  записать(файл, readFileSync(копия, 'utf8'));
-}
+  private естьЧтоВернуть(): boolean {
+    if (existsSync(this.копияГрафа())) return true;
+    return this.журналы().some((ж) =>
+      ж.данные.steps.some((шаг) => {
+        if (!шаг.done) return true;
+        // Разобрались, но заметка снова как после кнопки: отмена снова имеет смысл.
+        try {
+          return отпечаток(readFileSync(шаг.file)) === шаг.after;
+        } catch {
+          return false;
+        }
+      }),
+    );
+  }
 
-/** Убрать использованную копию графа: следующее нажатие снимет новую. Возвращает её новое имя без расширения. */
-function copyAside(копия: string, now: number): string {
-  const база = `${копия.replace(/\.json$/u, '')}.${new Date(now).toISOString().replace(/[:.]/gu, '-')}`;
-  renameSync(копия, `${база}.original.json`);
-  return база;
+  /** Заметки — с новых нажатий к старым. Сбой в одной не мешает остальным, и она остаётся на следующий раз. */
+  private вернутьЗаметки(): { restored: number; messages: string[] } {
+    let restored = 0;
+    const messages: string[] = [];
+    for (const журнал of this.журналы()) {
+      let менялся = false;
+      for (const шаг of [...журнал.данные.steps].reverse()) {
+        const занято = this.o.busy?.();
+        if (занято) {
+          messages.push(tr(`Остановился: ${занято} Остальное вернётся следующим нажатием.`, `Stopped: ${занято} The rest is undone by the next press.`));
+          this.сохранитьЖурнал(журнал, менялся, messages);
+          return { restored, messages };
+        }
+        const имя = имяЗаметки(this.o.root, шаг.file);
+        try {
+          const итог = this.вернутьЗаметку(шаг, имя);
+          if (итог.restored) restored += 1;
+          if (итог.message) messages.push(итог.message);
+          if (итог.done && !шаг.done) {
+            шаг.done = true;
+            менялся = true;
+          }
+        } catch (error) {
+          messages.push(tr(`${имя}: не вышло вернуть (${this.причина(error)}). Заметка цела — нажмите ещё раз.`, `${имя}: could not restore (${this.причина(error)}). The note is intact — press again.`));
+        }
+      }
+      this.сохранитьЖурнал(журнал, менялся, messages);
+    }
+    return { restored, messages };
+  }
+
+  private сохранитьЖурнал(журнал: { файл: string; данные: Журнал }, менялся: boolean, messages: string[]): void {
+    if (!менялся) return;
+    try {
+      записать(журнал.файл, JSON.stringify(журнал.данные, null, 1));
+    } catch (error) {
+      messages.push(tr(`Журнал отмены не записался: ${this.причина(error)}.`, `The undo journal was not saved: ${this.причина(error)}.`));
+    }
+  }
+
+  private вернутьЗаметку(шаг: Шаг, имя: string): { restored: boolean; done: boolean; message?: string } {
+    const файл = this.гдеЗаметка(шаг);
+    if (!файл) {
+      if (шаг.done) return { restored: false, done: true };
+      return { restored: false, done: true, message: tr(`${имя}: заметки больше нет — копия в ${шаг.backup}.`, `${имя}: the note is gone — backup at ${шаг.backup}.`) };
+    }
+    const сейчас = readFileSync(файл);
+    if (отпечаток(сейчас) === шаг.after) {
+      // Побайтно из копии: и битые байты, и переводы строк вернутся какими были.
+      записать(файл, readFileSync(шаг.backup));
+      return { restored: true, done: true };
+    }
+    // Уже как в копии: запись оборвалась до заметки или это повторное нажатие.
+    if (сейчас.equals(readFileSync(шаг.backup))) return { restored: false, done: true };
+    if (шаг.done) return { restored: false, done: true };
+
+    // Заметку потом меняли: возвращаем только наши строки, остальное её.
+    const текст = сейчас.toString('utf8');
+    if (!Buffer.from(текст, 'utf8').equals(сейчас)) {
+      return { restored: false, done: true, message: tr(`${имя}: в заметке есть байты не в UTF-8 — оставляю; копия в ${шаг.backup}.`, `${имя}: the note has bytes that are not UTF-8 — left alone; backup at ${шаг.backup}.`) };
+    }
+    const строки = текст.split('\n');
+    let вернул = 0;
+    let осталось = 0;
+    for (const замена of шаг.changes) {
+      const где = строки.findIndex((с) => с.replace(/\r$/u, '') === замена.after);
+      if (где < 0) {
+        осталось += 1;
+        continue;
+      }
+      строки[где] = `${замена.before}${(строки[где] as string).endsWith('\r') ? '\r' : ''}`;
+      вернул += 1;
+    }
+    const стало = withoutFormulasMark(строки.join('\n'));
+    if (стало !== текст) записать(файл, стало);
+    const message =
+      осталось > 0
+        ? tr(`${имя}: строк, которые вы правили сами, осталось ${осталось} — их не трогаю; копия в ${шаг.backup}.`, `${имя}: ${осталось} lines you edited yourself stay as they are; backup at ${шаг.backup}.`)
+        : undefined;
+    return { restored: вернул > 0 || стало !== текст, done: true, message };
+  }
 }
 
 /** Что сказать человеку: что изменилось, что пропущено и что не вышло. */
@@ -563,7 +757,9 @@ export function reportLines(r: TidyReport): string[] {
   }
   if (r.notes > 0) lines.push(tr(`Формулы в LaTeX: заметок ${r.notes}, строк ${r.lines}.`, `Formulas in LaTeX: ${r.notes} notes, ${r.lines} lines.`));
   if (r.noFormulas > 0) lines.push(tr(`Формул не нашлось в заметках: ${r.noFormulas} — они помечены, модель больше не спросим.`, `No formulas found in ${r.noFormulas} notes — marked, the model will not be asked again.`));
-  if (r.rejected > 0) lines.push(tr(`Строк не принято: ${r.rejected} — модель меняла в них не только формулу, они остались как были.`, `Lines rejected: ${r.rejected} — the model changed more than the formula, they stay as they were.`));
+  if (r.rejected > 0) lines.push(tr(`Строк не принято: ${r.rejected} — равенство исходной строке не доказано, они остались как были. Следующее нажатие спросит их снова.`, `Lines rejected: ${r.rejected} — not proven equal to the original, they stay as they were. The next press asks about them again.`));
+  if (r.rejectedFile) lines.push(tr(`Какие именно: ${r.rejectedFile}`, `Which ones: ${r.rejectedFile}`));
+  if (r.missing > 0) lines.push(tr(`Модель не ответила на строк: ${r.missing} — они остались как были. Следующее нажатие спросит их снова.`, `The model did not answer ${r.missing} lines — they stay as they were. The next press asks about them again.`));
   lines.push(...r.skipped, ...r.failed);
   if (r.stopped) lines.push(tr(`Остановился: ${r.stopped}`, `Stopped: ${r.stopped}`));
   return lines;
