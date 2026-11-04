@@ -46,6 +46,8 @@ await Promise.all([
   esbuild.build({ ...common, entryPoints: ['scripts/qa/study-window-check.ts'], outfile: 'dist/qa/study-window-check.cjs' }),
   // Правка курсов в окне учёбы: создать, языки, переименовать, удалить — на временном хранилище.
   esbuild.build({ ...common, entryPoints: ['scripts/qa/study-courses-check.ts'], outfile: 'dist/qa/study-courses-check.cjs' }),
+  // «Упорядочить хранилище» настоящим окном — на копии хранилища.
+  esbuild.build({ ...common, entryPoints: ['scripts/qa/tidy-check.ts'], outfile: 'dist/qa/tidy-check.cjs' }),
   // Вариант «только конспекты»: мост, плашка и окно звука, лекция с подставного микрофона.
   esbuild.build({ ...common, entryPoints: ['scripts/qa/notes-check.ts'], outfile: 'dist/qa/notes-check.cjs' }),
   // Звук компьютера на маке: петля через CoreAudio Tap, разрешение «Запись системного звука».

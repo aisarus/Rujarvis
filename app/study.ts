@@ -20,6 +20,8 @@ import type { JarvisPaths } from '../jarvis/setup/paths';
 import { jarvisOutputDir } from '../jarvis/setup/paths';
 import type { AppSettings } from '../jarvis/setup/settings';
 import { prepareLecture, prepareMaterial } from '../jarvis/study/prepare';
+import { agentEnv } from '../jarvis/backends/subscriptionEnv';
+import { FORMULA_MODEL_ENV } from '../jarvis/lecture/tidy';
 import { StudyService, studyRoot } from '../jarvis/study/service';
 import { StudyStore } from '../jarvis/study/store';
 import { lectureState } from './lectureMode';
@@ -77,6 +79,9 @@ export function studyService(): StudyService {
       trash: (file) => shell.trashItem(file),
       busy: курсЗанят,
       audioBusy: звукЗанят,
+      vaultBusy: хранилищеЗанято,
+      tidySummarize: (prompt) =>
+        createSummarizer({ env: { ...agentEnv(), ...FORMULA_MODEL_ENV }, log: (строка) => console.log(`[jarvis:study] ${строка}`) })(prompt),
       recordingsAutoDays: () => (settings().recordingsKeep === 'week' ? RECORDING_KEEP_DAYS : null),
     });
   }
@@ -96,6 +101,12 @@ function курсЗанят(course: string): string | null {
     return tr(`Готовлю вопросы к лекциям курса «${course}» — подождите, пока закончу.`, `Preparing questions for "${course}". Wait until it finishes.`);
   }
   return null;
+}
+
+/** Порядок в хранилище не наводится, пока лекция идёт или дописывается: заметки ещё пишутся. */
+function хранилищеЗанято(): string | null {
+  if (lectureState() === 'off') return null;
+  return tr('Сейчас идёт или дописывается конспект — порядок можно навести, когда он закончится.', 'Lecture notes are in progress or being finished. Tidy the vault once they are done.');
 }
 
 /**

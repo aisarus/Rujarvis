@@ -55,6 +55,8 @@ const STRINGS = {
     lectureLang: 'Язык лекций:', notesLang: 'Язык конспекта:', asSettings: 'как в настройках — {0}', asSettingsPlain: 'как в настройках',
     langHint: 'Лекции этого курса Джарвис расшифровывает на языке лекций, а конспект пишет на языке конспекта.',
     langs: { he: 'иврит', ru: 'русский', en: 'английский', ar: 'арабский', fr: 'французский', de: 'немецкий', es: 'испанский' },
+    tidyButton: 'Упорядочить хранилище', tidyHint: 'Граф Obsidian: у каждого курса свой цвет, без расшифровок и одиночных точек. Старые формулы — в LaTeX. Файлы не переезжают, ничего не удаляется, есть отмена.',
+    tidyGo: 'Навести порядок', tidyUndo: 'Вернуть как было', tidyUndoQ: 'Вернуть граф и формулы к тому, что было до нажатия? Заметки, которые вы правили после, останутся как есть.', tidyRunning: 'Навожу порядок…', tidyWaiting: 'Жду, пока вы закроете Obsidian: открытый он затирает настройки графа своими. Джарвис сам его не закрывает.', tidyNoWait: 'Не ждать',
     recTitle: 'Записи лекций: {0} · {1}', recNone: 'Записей лекций на диске нет.',
     recAuto: 'Звук старше {0} дн. удаляется сам — конспект и расшифровка остаются. Меняется в настройках, «Папки и лог».',
     recKeepAll: 'Звук хранится, пока не удалите его сами.',
@@ -110,6 +112,8 @@ const STRINGS = {
     lectureLang: 'Lecture language:', notesLang: 'Notes language:', asSettings: 'as in settings — {0}', asSettingsPlain: 'as in settings',
     langHint: 'Jarvis transcribes this course\'s lectures in the lecture language and writes the notes in the notes language.',
     langs: { he: 'Hebrew', ru: 'Russian', en: 'English', ar: 'Arabic', fr: 'French', de: 'German', es: 'Spanish' },
+    tidyButton: 'Tidy vault', tidyHint: 'Obsidian graph: a colour per course, no transcripts or lone dots. Old formulas become LaTeX. Files stay where they are, nothing is deleted, and you can undo.',
+    tidyGo: 'Tidy now', tidyUndo: 'Undo tidying', tidyUndoQ: 'Put the graph and formulas back as they were before tidying? Notes you edited since stay as they are.', tidyRunning: 'Tidying…', tidyWaiting: 'Waiting for you to close Obsidian: while open it overwrites the graph settings with its own. Jarvis does not close it.', tidyNoWait: 'Stop waiting',
     recTitle: 'Lecture recordings: {0} · {1}', recNone: 'No lecture recordings on disk.',
     recAuto: 'Audio older than {0} days is deleted automatically; the notes and transcript stay. Change it in Settings, "Folders and log".',
     recKeepAll: 'Audio is kept until you delete it.',
@@ -312,7 +316,7 @@ async function renderToday() {
   view.append(items, el('h2', {}, t('courses')));
   const grid = el('div', { class: 'grid' });
   for (const c of today.courses) grid.append(courseTile(c));
-  view.append(grid, prepareAllRow(), recordingsRow());
+  view.append(grid, prepareAllRow(), recordingsRow(), tidyRow());
 }
 renderToday.refreshable = true;
 
@@ -331,6 +335,91 @@ function prepareAllRow() {
     }
   } }, t('prepareAll'));
   return el('div', { class: 'row', style: 'margin-top:16px;flex-wrap:wrap' }, btn, note);
+}
+
+// ——— Порядок в хранилище ———
+
+/**
+ * «Упорядочить хранилище». Сначала план — сколько вызовов модели это будет, — потом
+ * работа. Пока наводится порядок или ждём, что закроют Obsidian, ряд сам смотрит
+ * состояние: перерисуется экран — ничего не пропадёт, всё помнит служба.
+ */
+function tidyRow() {
+  const box = el('div', { class: 'card stack', style: 'margin-top:16px' });
+  const lines = (list) => list.map((line) => el('div', { class: 'small', dir: 'auto' }, line));
+  // Сообщение живёт в ряду, а не на экране: опрос перерисует ряд и не сотрёт его.
+  let said = [];
+  const failed = async (error) => {
+    said = [t('error', error.message)];
+    await draw();
+  };
+  const confirmRow = (message, goLabel, go) => {
+    box.textContent = '';
+    const yes = el('button', { class: 'btn primary', onclick: async () => {
+      yes.disabled = true;
+      // Наводить порядок могут минуты: ход показывает опрос, а итог — draw.
+      setTimeout(() => void draw(), 300);
+      said = [];
+      try {
+        await go();
+      } catch (error) {
+        await failed(error);
+        return;
+      }
+      await draw();
+    } }, goLabel);
+    box.append(...message, el('div', { class: 'row' }, yes, el('button', { class: 'btn', onclick: () => draw() }, t('cancel'))));
+  };
+  const press = async () => {
+    said = [];
+    try {
+      const plan = await call('tidyPlan');
+      if (plan.busy || plan.nothing) {
+        said = plan.busy ? [plan.busy] : plan.lines;
+        await draw();
+      } else {
+        confirmRow(lines(plan.lines), t('tidyGo'), () => call('tidy'));
+      }
+    } catch (error) {
+      await failed(error);
+    }
+  };
+  async function draw() {
+    let state;
+    try {
+      state = await call('tidyState');
+    } catch (error) {
+      box.textContent = '';
+      box.append(el('div', { class: 'small error' }, t('error', error.message)));
+      return;
+    }
+    box.textContent = '';
+    if (state.running) {
+      box.append(el('b', {}, t('tidyRunning')), el('div', { class: 'small muted', dir: 'auto' }, state.progress));
+      // Формулы идут минутами: о том, что граф ждёт закрытия Obsidian, надо сказать сразу.
+      if (state.waiting) box.append(el('div', {}, t('tidyWaiting')));
+    } else if (state.waiting) {
+      box.append(
+        el('b', {}, t('tidyButton')),
+        el('div', {}, t('tidyWaiting')),
+        el('div', { class: 'row' }, el('button', { class: 'btn', onclick: async () => { await call('tidyCancelWait'); await draw(); } }, t('tidyNoWait'))),
+      );
+    } else {
+      box.append(
+        el('div', { class: 'row spread', style: 'flex-wrap:wrap' },
+          el('b', {}, t('tidyButton')),
+          el('span', { class: 'row' },
+            state.canUndo ? el('button', { class: 'btn', onclick: () => confirmRow([el('div', {}, t('tidyUndoQ'))], t('tidyUndo'), () => call('tidyUndo')) }, t('tidyUndo')) : null,
+            el('button', { class: 'btn', onclick: press }, t('tidyButton')))),
+        el('div', { class: 'small muted' }, t('tidyHint')),
+        ...lines(said.length ? said : state.lines),
+      );
+    }
+    // Ряд ушёл с экрана — следующий экран заведёт свой.
+    if ((state.running || state.waiting) && box.isConnected) setTimeout(() => { if (box.isConnected) void draw(); }, 1500);
+  }
+  void draw();
+  return box;
 }
 
 // ——— Записи лекций: место на диске ———
@@ -439,7 +528,7 @@ async function renderCourses(message) {
   view.append(form);
   const grid = el('div', { class: 'grid' });
   for (const c of today.courses) grid.append(courseTile(c));
-  view.append(grid, prepareAllRow(), recordingsRow());
+  view.append(grid, prepareAllRow(), recordingsRow(), tidyRow());
 }
 renderCourses.refreshable = false;
 

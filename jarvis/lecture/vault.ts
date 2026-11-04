@@ -11,6 +11,7 @@
  * Джарвиса: конспект не пропадает оттого, что нет приложения.
  */
 
+import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -79,6 +80,38 @@ export function lectureFileBase(subject: string, when: Date, notes: 'ru' | 'en' 
   const время = `${String(when.getHours()).padStart(2, '0')}${String(when.getMinutes()).padStart(2, '0')}`;
   const предмет = subject.replace(/[<>:"/\\|?*\u0000-\u001f]/gu, ' ').replace(/\s+/gu, ' ').trim().slice(0, 60);
   return предмет ? `${дата} ${предмет}` : `${дата} ${время} ${notes === 'en' ? 'Lecture' : 'Лекция'}`;
+}
+
+/** Хранилище Obsidian, в котором лежит папка: ближайшая сверху с `.obsidian`; нет такой — null. */
+export function vaultOfFolder(folder: string, exists: (dir: string) => boolean = existsSync): string | null {
+  for (let папка = folder; ; папка = path.dirname(папка)) {
+    if (exists(path.join(папка, '.obsidian'))) return папка;
+    if (path.dirname(папка) === папка) return null;
+  }
+}
+
+export type ObsidianState = 'running' | 'closed' | 'unknown';
+
+/**
+ * Открыт ли Obsidian. Не вышло спросить систему — `unknown`, а не «закрыт»: по
+ * этому ответу пишут настройки, которые открытый Obsidian затёр бы.
+ */
+export function obsidianState(platform: NodeJS.Platform = process.platform): Promise<ObsidianState> {
+  return new Promise((resolve) => {
+    if (platform === 'win32') {
+      // Сообщение «таких задач нет» — на языке системы, поэтому ищется имя процесса.
+      execFile('tasklist', ['/FI', 'IMAGENAME eq Obsidian.exe', '/FO', 'CSV', '/NH'], { windowsHide: true, timeout: 15_000 }, (error, stdout) => {
+        if (error) resolve('unknown');
+        else resolve(/"obsidian\.exe"/iu.test(stdout) ? 'running' : 'closed');
+      });
+      return;
+    }
+    execFile('pgrep', ['-x', platform === 'darwin' ? 'Obsidian' : 'obsidian'], { timeout: 15_000 }, (error) => {
+      if (!error) resolve('running');
+      // pgrep: 1 — такого процесса нет, остальное — не смог спросить.
+      else resolve(error.code === 1 ? 'closed' : 'unknown');
+    });
+  });
 }
 
 /** Ссылка, которая открывает заметку в Obsidian. */

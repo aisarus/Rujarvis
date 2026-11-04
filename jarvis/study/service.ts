@@ -37,6 +37,8 @@ import {
 } from '../lecture/recordings';
 import { moveLecture } from '../lecture/finalize';
 import { notesLanguageOf, sectionTitle, type NotesLanguage } from '../lecture/session';
+import { VaultTidier, type TidyPlan, type TidyState } from '../lecture/tidy';
+import { obsidianState, type ObsidianState } from '../lecture/vault';
 import { tr } from '../locale/language';
 import { readLectureSource } from './generate';
 import { STATE_PRIORITY, topicKnowledge, type ForgettingRisk, type KnowledgeState } from './knowledge';
@@ -67,6 +69,12 @@ export interface StudyServiceOptions {
   busy?: (course: string) => string | null;
   /** Почему звук лекций сейчас не удалить (лекцию дописывают, перерасшифровывают); можно — null. */
   audioBusy?: () => string | null;
+  /** Почему сейчас нельзя наводить порядок в хранилище: идёт или дописывается лекция; можно — null. */
+  vaultBusy?: () => string | null;
+  /** Модель для формул «Упорядочить хранилище», если ей нужен свой запуск; нет — `summarize`. */
+  tidySummarize?: (prompt: string) => Promise<string>;
+  /** Открыт ли Obsidian: открытый затирает настройки графа. */
+  obsidian?: () => Promise<ObsidianState>;
   /** Через сколько дней звук удаляется сам; null — хранится, пока не удалят. */
   recordingsAutoDays?: () => number | null;
   now?: () => number;
@@ -748,6 +756,50 @@ export class StudyService {
     });
     this.забытьСессии(откуда);
     return { course: итог.course };
+  }
+
+  // ——— Порядок в хранилище ———
+
+  private порядок: VaultTidier | null = null;
+  private порядокДля = '';
+
+  /** Папка лекций может смениться вместе с настройками: тогда и порядок наводится в новой. */
+  private tidier(): VaultTidier {
+    const root = this.o.vaultRoot();
+    if (!this.порядок || this.порядокДля !== root) {
+      this.порядок?.dispose();
+      this.порядокДля = root;
+      this.порядок = new VaultTidier({
+        root,
+        // Рядом с банками учёбы: всё на диске — в одной папке данных Джарвиса.
+        dir: path.join(path.dirname(this.o.store.root), 'tidy'),
+        summarize: this.o.tidySummarize ?? this.o.summarize,
+        busy: this.o.vaultBusy,
+        obsidian: this.o.obsidian ?? obsidianState,
+        now: () => this.now(),
+      });
+    }
+    return this.порядок;
+  }
+
+  tidyState(): TidyState {
+    return this.tidier().state();
+  }
+
+  tidyPlan(): Promise<TidyPlan> {
+    return this.tidier().plan();
+  }
+
+  tidy(): Promise<TidyState> {
+    return this.tidier().run();
+  }
+
+  tidyUndo(): Promise<TidyState> {
+    return this.tidier().undo();
+  }
+
+  tidyCancelWait(): TidyState {
+    return this.tidier().cancelWait();
   }
 
   /** Звук лекций на диске: сколько, сколько места и удаляется ли сам. */

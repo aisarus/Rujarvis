@@ -140,6 +140,11 @@ function зарегистрировать(): void {
   обработать('recordings', () => служба().recordings());
   обработать('deleteRecording', (notesFile) => служба().deleteRecording(строка(notesFile)));
   обработать('deleteAllRecordings', () => служба().deleteAllRecordings());
+  обработать('tidyState', () => служба().tidyState());
+  обработать('tidyPlan', () => служба().tidyPlan());
+  обработать('tidy', () => служба().tidy());
+  обработать('tidyUndo', () => служба().tidyUndo());
+  обработать('tidyCancelWait', () => служба().tidyCancelWait());
   обработать('addCard', (id, index) => служба().addCardFromQuestion(строка(id), число(index)));
   обработать('recording', (on) => deps?.recording?.(Boolean(on)));
   обработать('hearing', () => deps?.hearing?.() ?? Boolean(deps?.transcribe));
