@@ -128,10 +128,20 @@ export async function finalizeLecture(input: FinalizeInput): Promise<FinalizeRes
   const расшифровка = path.join(папка, `${база} — ${с.transcriptFile}.md`);
   const звук = path.join(папка, `${база}.wav`);
 
-  const meta: LectureMeta = { course: курс, number: номер, date, start, topic: input.topic, duration: durationText(input.durationSec) };
+  let текст = await readFile(input.notesFile, 'utf8');
+  // Новая лекция написана уже с формулами в LaTeX; переезжающая несёт свою пометку.
+  const прежние = parseFrontmatter(текст);
+  const meta: LectureMeta = {
+    course: курс,
+    number: номер,
+    date,
+    start,
+    topic: input.topic,
+    duration: durationText(input.durationSec),
+    formulas: прежние ? прежние.formulas : true,
+  };
 
   // Заметка: свойства, заголовок — тема, строка ссылок — на новые имена.
-  let текст = await readFile(input.notesFile, 'utf8');
   текст = withFrontmatter(текст, meta, input.notes);
   текст = текст.replace(/^# .*$/mu, `# ${input.topic ?? курс}`);
   // Звук могли удалить, чтобы не занимал место (`recordings.ts`): тогда и

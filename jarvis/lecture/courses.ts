@@ -35,12 +35,14 @@ export interface LectureMeta {
   topic?: string;
   /** Длительность, «1:28». */
   duration?: string;
+  /** Формулы заметки уже в LaTeX: новая лекция или обработано «Упорядочить хранилище». */
+  formulas?: boolean;
 }
 
 /** Имена свойств — на языке конспекта; читаются оба. */
 const СВОЙСТВА = {
-  ru: { course: 'курс', number: 'лекция', date: 'дата', start: 'начало', topic: 'тема', duration: 'длительность' },
-  en: { course: 'course', number: 'lecture', date: 'date', start: 'start', topic: 'topic', duration: 'duration' },
+  ru: { course: 'курс', number: 'лекция', date: 'дата', start: 'начало', topic: 'тема', duration: 'длительность', formulas: 'формулы' },
+  en: { course: 'course', number: 'lecture', date: 'date', start: 'start', topic: 'topic', duration: 'duration', formulas: 'formulas' },
 } as const;
 
 /** Слова папок и подписей — на языке конспекта. */
@@ -107,6 +109,9 @@ export function guessBySchedule(when: Date, lectures: readonly LectureMeta[], wi
   return первый[0];
 }
 
+/** Значение пометки «формулы уже в LaTeX». */
+const FORMULAS_DONE = 'LaTeX';
+
 function вСтроку(значение: string): string {
   // Двоеточие, решётка или кавычка в начале ломают YAML — такие берём в кавычки.
   return /[:#"'[\]{}]|^\s|\s$/u.test(значение) ? JSON.stringify(значение) : значение;
@@ -120,6 +125,7 @@ export function renderFrontmatter(meta: LectureMeta, notes: NotesLanguage): stri
   if (meta.start) строки.push(`${к.start}: "${meta.start}"`);
   if (meta.topic) строки.push(`${к.topic}: ${вСтроку(meta.topic)}`);
   if (meta.duration) строки.push(`${к.duration}: "${meta.duration}"`);
+  if (meta.formulas) строки.push(`${к.formulas}: ${FORMULAS_DONE}`);
   строки.push('---', '');
   return строки.join('\n');
 }
@@ -167,7 +173,21 @@ export function parseFrontmatter(text: string): LectureMeta | null {
     start: взять('start') || undefined,
     topic: взять('topic') || undefined,
     duration: взять('duration') || undefined,
+    formulas: взять('formulas') === FORMULAS_DONE || undefined,
   };
+}
+
+/**
+ * Поставить пометку «формулы уже в LaTeX», не трогая ни остальные свойства, ни
+ * текст: `withFrontmatter` переписал бы блок целиком и потерял бы то, что человек
+ * дописал в свойства сам.
+ */
+export function withFormulasMark(text: string): string {
+  const блок = /^---(\r?\n)([\s\S]*?)\r?\n---/u.exec(text);
+  if (!блок || parseFrontmatter(text)?.formulas) return text;
+  const [всё, конец = '\n', строки = ''] = блок;
+  const ключ = СВОЙСТВА[frontmatterFields(text)?.has(СВОЙСТВА.ru.course) ? 'ru' : 'en'].formulas;
+  return `---${конец}${строки}${конец}${ключ}: ${FORMULAS_DONE}${конец}---${text.slice(всё.length)}`;
 }
 
 /** Заметка без свойств в начале — те же строки, со свойствами — заменённые. */

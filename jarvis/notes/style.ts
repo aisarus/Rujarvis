@@ -48,8 +48,6 @@ export interface NoteLanguages {
 }
 
 /**
- * Общие правила разметки — для любой заметки Джарвиса в Obsidian.
- *
  * Формулы — в LaTeX: Obsidian рисует только `$…$`, и «L0 + n·(N/2 − F)/f» из
  * статистики 03.11.2026 читается хуже, чем дробь из конспекта по математике
  * того же дня, где модель сама писала `\dfrac`. Голый `$` в тексте Obsidian
@@ -58,6 +56,24 @@ export interface NoteLanguages {
  * Mermaid формул не рисуют. Пример — нарочно не из статистики: живой прогон
  * проверяет правило, а не пример.
  */
+export function formulaRules(notes: Lang): string[] {
+  if (notes === 'en') {
+    return [
+      'Formulas go in LaTeX, which Obsidian renders: a formula, a substitution or a single symbol inside $…$, including in a list of symbols and in running text ("$v_0 = 5$", not "v0 = 5"); a formula on its own line inside $$…$$; fractions with \\dfrac{…}{…}; letters and subscripts are the course\'s — for example $v = v_0 + \\dfrac{F}{m}\\,t$.',
+      'Words and terms in any language stay outside $…$, and so do the ⚠ marks — right after the formula: $x = 5$ (⚠ 12:05: …).',
+      'No bare dollar sign in text: Obsidian pairs two of them into a formula and breaks the line. Write money as "5 dollars", "5 USD" or \\$5.',
+      'Inside a table a formula has no "|" sign, it would split the column: \\mid, \\lvert…\\rvert. Mermaid labels have no formulas.',
+    ];
+  }
+  return [
+    'Формулы — в LaTeX, его рисует Obsidian: формула, подстановка или отдельный символ — внутри $…$, в том числе в перечне обозначений и в тексте пункта («$v_0 = 5$», а не «v0 = 5»); формула отдельной строкой — внутри $$…$$; дроби — \\dfrac{…}{…}; буквы и индексы — курса, например $v = v_0 + \\dfrac{F}{m}\\,t$.',
+    'Слова и термины на любом языке — вне $…$, и пометки ⚠ тоже — сразу за формулой: $x = 5$ (⚠ 12:05: …).',
+    'Голого знака доллара в тексте не ставь: два таких знака Obsidian склеит в формулу и сломает строку. Деньги — «5 долларов», «5 USD» или \\$5.',
+    'В таблице внутри формулы нет знака «|», он разрежет столбец: \\mid, \\lvert…\\rvert. В подписях Mermaid формул нет.',
+  ];
+}
+
+/** Общие правила разметки — для любой заметки Джарвиса в Obsidian. */
 export function obsidianRules({ notes, foreign }: NoteLanguages): string[] {
   if (notes === 'en') {
     return [
@@ -70,10 +86,7 @@ export function obsidianRules({ notes, foreign }: NoteLanguages): string[] {
             `No ${foreign} words in "###" headings and never next to numbers or times on one line: mixed directions get scrambled.`,
           ]
         : []),
-      'Formulas go in LaTeX, which Obsidian renders: a formula, a substitution or a single symbol inside $…$, including in a list of symbols and in running text ("$v_0 = 5$", not "v0 = 5"); a formula on its own line inside $$…$$; fractions with \\dfrac{…}{…}; letters and subscripts are the course\'s — for example $v = v_0 + \\dfrac{F}{m}\\,t$.',
-      'Words and terms in any language stay outside $…$, and so do the ⚠ marks — right after the formula: $x = 5$ (⚠ 12:05: …).',
-      'No bare dollar sign in text: Obsidian pairs two of them into a formula and breaks the line. Write money as "5 dollars", "5 USD" or \\$5.',
-      'Inside a table a formula has no "|" sign, it would split the column: \\mid, \\lvert…\\rvert. Mermaid labels have no formulas.',
+      ...formulaRules('en'),
       'A table when there are calculation steps or a comparison; no more than 6 columns.',
       'Mermaid only when it truly helps, and only these kinds, exactly in this shape:',
       '```mermaid\nxychart-beta\n  title "Title"\n  x-axis "X axis" [0, 50, 100]\n  y-axis "Y axis" 0 --> 260\n  line [250, 200, 150]\n```',
@@ -94,10 +107,7 @@ export function obsidianRules({ notes, foreign }: NoteLanguages): string[] {
           `В заголовках «###» — ни слова на ${foreign}, и никогда рядом с числами и временем в одной строке: разные направления письма перемешаются.`,
         ]
       : []),
-    'Формулы — в LaTeX, его рисует Obsidian: формула, подстановка или отдельный символ — внутри $…$, в том числе в перечне обозначений и в тексте пункта («$v_0 = 5$», а не «v0 = 5»); формула отдельной строкой — внутри $$…$$; дроби — \\dfrac{…}{…}; буквы и индексы — курса, например $v = v_0 + \\dfrac{F}{m}\\,t$.',
-    'Слова и термины на любом языке — вне $…$, и пометки ⚠ тоже — сразу за формулой: $x = 5$ (⚠ 12:05: …).',
-    'Голого знака доллара в тексте не ставь: два таких знака Obsidian склеит в формулу и сломает строку. Деньги — «5 долларов», «5 USD» или \\$5.',
-    'В таблице внутри формулы нет знака «|», он разрежет столбец: \\mid, \\lvert…\\rvert. В подписях Mermaid формул нет.',
+    ...formulaRules('ru'),
     'Таблица — когда есть шаги расчёта или сравнение; не больше 6 столбцов.',
     'Mermaid — только если он правда помогает, и только эти виды, ровно в такой форме:',
     '```mermaid\nxychart-beta\n  title "Название"\n  x-axis "Ось X" [0, 50, 100]\n  y-axis "Ось Y" 0 --> 260\n  line [250, 200, 150]\n```',
