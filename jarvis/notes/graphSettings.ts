@@ -38,9 +38,14 @@ export interface GraphMerge {
   changed: boolean;
 }
 
-/** Запрос цветовой группы курса: `path` считается от корня хранилища. */
+/**
+ * Запрос цветовой группы курса: `path` считается от корня хранилища. Косая черта в
+ * конце обязательна: `path` ищет подстроку, и без неё «История» красила бы и
+ * «История человечества» (проверено в настоящем Obsidian 04.11.2026, с чертой цвета
+ * разные).
+ */
 function запросКурса(папкаЛекций: string, курс: string): string {
-  return `path:"${папкаЛекций ? `${папкаЛекций}/` : ''}${курс}"`;
+  return `path:"${папкаЛекций ? `${папкаЛекций}/` : ''}${курс}/"`;
 }
 
 /** Тот же ли это запрос: кавычки и косая черта в конце ничего не меняют. */
@@ -83,7 +88,11 @@ function фильтр(было: unknown): string {
 /** Слить настройки. `existing` — разобранный `graph.json` или null, если файла нет. */
 export function mergeGraphSettings(existing: GraphSettings | null, папкаЛекций: string, курсы: readonly string[]): GraphMerge {
   const было = existing ?? {};
-  const colorGroups = [...группы(было.colorGroups)];
+  // Запись без косой черты — наша прежняя, а не человека: чиним её, цвет курса остаётся.
+  const colorGroups = группы(было.colorGroups).map((г) => {
+    const курс = курсы.find((к) => г?.query === запросКурса(папкаЛекций, к).replace(/\/"$/u, '"'));
+    return курс ? { ...г, query: запросКурса(папкаЛекций, курс) } : г;
+  });
   const известны = new Set(colorGroups.map((г) => суть(String(г?.query ?? ''))));
   const заняты = new Set(colorGroups.map((г) => г?.color?.rgb).filter((цвет): цвет is number => typeof цвет === 'number'));
   let newGroups = 0;

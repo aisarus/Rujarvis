@@ -10,7 +10,7 @@ describe('настройки графа Obsidian', () => {
     expect(changed).toBe(true);
     expect(newGroups).toBe(2);
     expect(courses).toBe(2);
-    expect(группы(settings).map((г) => г.query)).toEqual(['path:"Лекции/Алгебра"', 'path:"Лекции/Физика"']);
+    expect(группы(settings).map((г) => г.query)).toEqual(['path:"Лекции/Алгебра/"', 'path:"Лекции/Физика/"']);
     expect(new Set(группы(settings).map((г) => г.color.rgb)).size).toBe(2);
     expect(settings.search).toBe('-file:"— расшифровка" -file:"— transcript"');
     expect(settings).toMatchObject({ hideUnresolved: true, showOrphans: false, ...GRAPH_FORCES });
@@ -46,6 +46,17 @@ describe('настройки графа Obsidian', () => {
     expect(new Set(группы(потом.settings).map((г) => г.color.rgb)).size).toBe(3);
   });
 
+  it('наша прежняя запись без косой черты чинится, и цвет остаётся: «История» не красит «Историю человечества»', () => {
+    const было = { colorGroups: [{ query: 'path:"Лекции/История"', color: { a: 1, rgb: 5 } }, { query: 'path:Лекции/Свой', color: { a: 1, rgb: 6 } }] };
+    const { settings, newGroups, changed } = mergeGraphSettings(было, 'Лекции', ['История', 'История человечества', 'Свой']);
+    expect(changed).toBe(true);
+    expect(newGroups).toBe(1);
+    expect(группы(settings)[0]).toEqual({ query: 'path:"Лекции/История/"', color: { a: 1, rgb: 5 } });
+    // Запись человека, хоть и про тот же курс, остаётся какой была.
+    expect(группы(settings)[1]?.query).toBe('path:Лекции/Свой');
+    expect(группы(settings)[2]?.query).toBe('path:"Лекции/История человечества/"');
+  });
+
   it('запрос того же курса в другой записи — та же группа, второй не заводится', () => {
     const было = { colorGroups: [{ query: 'path:Лекции/Физика/', color: { a: 1, rgb: 5 } }] };
     const { settings, newGroups } = mergeGraphSettings(было, 'Лекции', ['Физика']);
@@ -57,6 +68,6 @@ describe('настройки графа Obsidian', () => {
     const курсы = Array.from({ length: 30 }, (_, i) => `Курс ${String(i).padStart(2, '0')}`);
     const { settings } = mergeGraphSettings(null, '', курсы);
     expect(new Set(группы(settings).map((г) => г.color.rgb)).size).toBe(30);
-    expect(группы(settings)[0]?.query).toBe('path:"Курс 00"');
+    expect(группы(settings)[0]?.query).toBe('path:"Курс 00/"');
   });
 });
