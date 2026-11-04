@@ -349,16 +349,25 @@ function tidyRow() {
   const lines = (list) => list.map((line) => el('div', { class: 'small', dir: 'auto' }, line));
   // Сообщение живёт в ряду, а не на экране: опрос перерисует ряд и не сотрёт его.
   let said = [];
+  // Запоздавший опрос не должен стереть то, что уже на экране: открытое подтверждение.
+  let poll = null;
+  let drawing = 0;
+  const stopDrawing = () => {
+    drawing += 1;
+    if (poll) clearTimeout(poll);
+    poll = null;
+  };
   const failed = async (error) => {
     said = [t('error', error.message)];
     await draw();
   };
   const confirmRow = (message, goLabel, go) => {
+    stopDrawing();
     box.textContent = '';
     const yes = el('button', { class: 'btn primary', onclick: async () => {
       yes.disabled = true;
       // Наводить порядок могут минуты: ход показывает опрос, а итог — draw.
-      setTimeout(() => void draw(), 300);
+      poll = setTimeout(() => void draw(), 300);
       said = [];
       try {
         await go();
@@ -385,14 +394,18 @@ function tidyRow() {
     }
   };
   async function draw() {
+    stopDrawing();
+    const mine = drawing;
     let state;
     try {
       state = await call('tidyState');
     } catch (error) {
+      if (mine !== drawing) return;
       box.textContent = '';
       box.append(el('div', { class: 'small error' }, t('error', error.message)));
       return;
     }
+    if (mine !== drawing) return;
     box.textContent = '';
     if (state.running) {
       box.append(el('b', {}, t('tidyRunning')), el('div', { class: 'small muted', dir: 'auto' }, state.progress));
@@ -417,7 +430,7 @@ function tidyRow() {
       );
     }
     // Ряд ушёл с экрана — следующий экран заведёт свой.
-    if ((state.running || state.waiting) && box.isConnected) setTimeout(() => { if (box.isConnected) void draw(); }, 1500);
+    if ((state.running || state.waiting) && box.isConnected) poll = setTimeout(() => { if (box.isConnected) void draw(); }, 1500);
   }
   void draw();
   return box;
