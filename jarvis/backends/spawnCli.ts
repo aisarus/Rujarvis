@@ -31,6 +31,9 @@ export function needsShell(command: string): boolean {
 
 /** Обернуть в кавычки то, что без них развалится на пробеле. */
 function quote(value: string): string {
+  // Пустое значение ключа (`--tools ""`) без кавычек просто исчезало из строки,
+  // и ключ съедал следующий за ним.
+  if (value === '') return '""';
   if (!/[\s&|<>^]/u.test(value)) return value;
   // Внутренние кавычки удваиваются — так их понимает cmd.exe.
   return `"${value.split('"').join('""')}"`;

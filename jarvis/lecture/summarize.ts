@@ -30,7 +30,7 @@ import type { Brain } from '../setup/settings';
 
 export type { Brain };
 
-export function claudeSummaryArgs(model = 'sonnet'): string[] {
+export function claudeSummaryArgs(model = 'sonnet', effort?: string): string[] {
   // В режиме -p разрешения спросить не у кого: всё, что их просит, получает
   // отказ, — а разделу конспекта инструменты и не нужны.
   // Скиллы, настройки и описания инструментов загружаются на каждый запуск, а
@@ -48,6 +48,7 @@ export function claudeSummaryArgs(model = 'sonnet'): string[] {
     '--disable-slash-commands',
     '--no-session-persistence',
     '--system-prompt', 'You write lecture notes exactly as the message asks.',
+    ...(effort ? ['--effort', effort] : []),
   ];
 }
 
@@ -80,9 +81,19 @@ export interface SummarizerOptions {
   command?: string;
   args?: string[];
   model?: string;
+  effort?: string;
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
 }
+
+/**
+ * Усилие Claude там, где вызовов много: разделы и заготовка учёбы.
+ *
+ * Замер 04.11.2026, тот же кусок статистики на Sonnet: без ключа 7733 токена
+ * ответа, с medium 1424, текста в ответе поровну — остальное размышления. Обозначения
+ * в разделе при этом хуже, поэтому точность держит итог: он идёт без этого ключа.
+ */
+const УСИЛИЕ_РАЗДЕЛА = 'medium';
 
 let выборМозга: () => Brain = () => 'auto';
 
@@ -184,7 +195,7 @@ export function createSummarizer(options: SummarizerOptions & { final?: boolean;
         const ответ =
           мозг === 'codex'
             ? await createCodexSummarizer({ timeoutMs: options.timeoutMs, env: options.env, effort: options.final ? undefined : 'low' })(prompt)
-            : await (options.final ? createClaudeFinalSummarizer(options) : createClaudeSummarizer(options))(prompt);
+            : await (options.final ? createClaudeFinalSummarizer(options) : createClaudeSummarizer({ effort: УСИЛИЕ_РАЗДЕЛА, ...options }))(prompt);
         rememberBrainOutcome(мозг, null);
         return ответ;
       } catch (error) {
@@ -281,7 +292,7 @@ export function createClaudeSummarizer(options: SummarizerOptions = {}): (prompt
   return async (prompt: string): Promise<string> => {
     const command = options.command ?? resolveCli('claude');
     if (!command) throw new Error(tr('Claude Code не найден — раздел конспекта собрать нечем', 'Claude Code was not found — nothing to write the section with'));
-    const { code, stdout, stderr } = await runCli(command, options.args ?? claudeSummaryArgs(options.model), prompt, {
+    const { code, stdout, stderr } = await runCli(command, options.args ?? claudeSummaryArgs(options.model, options.effort), prompt, {
       // Нейтральная папка: в папке проекта CLI прочитал бы чужие правила.
       cwd: os.tmpdir(),
       timeoutMs: options.timeoutMs ?? 180_000,
