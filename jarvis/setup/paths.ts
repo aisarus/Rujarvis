@@ -35,6 +35,18 @@ export function jarvisHome(env: Env = process.env, platform: NodeJS.Platform = p
   return path.join(env.XDG_DATA_HOME?.trim() || path.join(home, '.local', 'share'), 'rujarvis');
 }
 
+/**
+ * Папка Джарвиса из ключа запуска `--jarvis-home=<папка>`: так ярлык установки
+ * в свою папку (`-InstallRoot`) говорит программе, где её данные. Нет ключа — null.
+ */
+export function homeFromArgs(argv: readonly string[]): string | null {
+  for (const ключ of argv) {
+    const значение = /^--jarvis-home=(.+)$/u.exec(ключ)?.[1]?.trim().replace(/^"(.*)"$/u, '$1');
+    if (значение) return значение;
+  }
+  return null;
+}
+
 export interface JarvisPaths {
   home: string;
   source: string;

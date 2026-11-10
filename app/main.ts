@@ -7,6 +7,9 @@
  * начинает слушать.
  */
 
+// Первым: папка Джарвиса из ключа ярлыка — до того, как кто-нибудь посчитает пути.
+import './homeArg';
+
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 

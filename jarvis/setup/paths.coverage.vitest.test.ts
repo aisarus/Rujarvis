@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { jarvisHome } from './paths';
+import { homeFromArgs, jarvisHome } from './paths';
 
 /**
  * Домашнюю папку Джарвиса собирают в одном месте, а не где придётся.
@@ -88,5 +88,19 @@ describe('домашняя папка собирается только в paths
     for (const платформа of ['win32', 'darwin', 'linux'] as const) {
       expect(jarvisHome({ JARVIS_HOME: '/ушли/сюда' }, платформа)).toBe(path.resolve('/ушли/сюда'));
     }
+  });
+});
+
+describe('папка Джарвиса из ключа ярлыка', () => {
+  it('--jarvis-home=<папка>: с кавычками и без, с пробелами и кириллицей; нет ключа — null', () => {
+    expect(homeFromArgs(['electron.exe', 'main.cjs', '--jarvis-home=D:\\Джарвис 2'])).toBe('D:\\Джарвис 2');
+    expect(homeFromArgs(['electron.exe', 'main.cjs', '--jarvis-home="D:\\Jarvis"'])).toBe('D:\\Jarvis');
+    expect(homeFromArgs(['electron.exe', 'main.cjs'])).toBeNull();
+    expect(homeFromArgs(['electron.exe', '--jarvis-home='])).toBeNull();
+  });
+
+  it('ключ переносит папку целиком — как JARVIS_HOME', () => {
+    const дом = homeFromArgs(['--jarvis-home=D:\\Jarvis']);
+    expect(jarvisHome({ JARVIS_HOME: дом ?? undefined, LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' }, 'win32')).toBe(path.resolve('D:\\Jarvis'));
   });
 });

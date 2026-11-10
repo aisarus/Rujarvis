@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { checkForUpdate, isInstalledCopy, runGit, startUpdate, windowsUpdateScript, type Git } from './update';
+import { checkForUpdate, isInstalledCopy, latestReleaseTag, macUpdateScript, parseReleaseTag, runGit, startUpdate, windowsUpdateScript, type Git } from './update';
 
 const папки: string[] = [];
 afterEach(() => {
@@ -102,6 +102,88 @@ describe('проверка новой версии', () => {
     git(src, 'config', 'commit.gpgsign', 'false');
     коммит(src, 'Своя правка');
     expect((await checkForUpdate(runGit(src))).state).toBe('current');
+  });
+});
+
+describe('обновление — на выпуск, а не на вершину main', () => {
+  /** Клон на теге: так ставит установщик, когда выпуски есть. */
+  function клонВыпуска(from: string, tag: string): string {
+    const dir = path.join(временная('jarvis-src-'), 'src');
+    const адрес = from.replace(/\\/gu, '/');
+    execFileSync('git', ['clone', '-q', '--depth', '1', '--branch', tag, `file://${адрес.startsWith('/') ? '' : '/'}${адрес}`, dir], { windowsHide: true, stdio: 'ignore' });
+    return dir;
+  }
+
+  it('теги выпусков: старший — по числам, а не по алфавиту; предвыпуски и чужие теги не в счёт', () => {
+    expect(parseReleaseTag('v0.3.0')).toEqual([0, 3, 0]);
+    expect(parseReleaseTag('v0.4.0-rc1')).toBeNull();
+    expect(parseReleaseTag('nightly')).toBeNull();
+    const вывод = ['a1\trefs/tags/v0.9.0', 'a2\trefs/tags/v0.10.0', 'a3\trefs/tags/v0.10.1-rc1', 'a4\trefs/tags/nightly', 'a5\trefs/tags/v0.2.14'].join('\n');
+    expect(latestReleaseTag(вывод)).toBe('v0.10.0');
+    expect(latestReleaseTag('')).toBeNull();
+  });
+
+  it('установка на выпуске не видит новых коммитов в main, пока не вышел следующий выпуск', async () => {
+    const гитхаб = origin();
+    git(гитхаб, 'tag', 'v0.3.0');
+    const src = клонВыпуска(гитхаб, 'v0.3.0');
+    expect(await checkForUpdate(runGit(src))).toEqual({ state: 'current', branch: 'main', tag: 'v0.3.0' });
+
+    // В main влили работу, которую ещё никто не проверил: людям она не предлагается.
+    коммит(гитхаб, 'Сырая правка');
+    expect((await checkForUpdate(runGit(src))).state).toBe('current');
+
+    коммит(гитхаб, 'Правка для выпуска');
+    git(гитхаб, 'tag', 'v0.4.0');
+    коммит(гитхаб, 'Ещё одна сырая');
+    const итог = await checkForUpdate(runGit(src));
+    expect(итог).toMatchObject({ state: 'available', branch: 'main', tag: 'v0.4.0', more: false });
+    if (итог.state !== 'available') throw new Error('ждали новый выпуск');
+    expect(итог.latest).toBe(git(гитхаб, 'rev-parse', 'v0.4.0').trim());
+    // В списке изменений — то, что вошло в выпуск, и ничего после него.
+    expect(итог.changes).toEqual(['Правка для выпуска', 'Сырая правка']);
+  });
+
+  it('прежняя установка с вершины main переходит на выпуск, когда он её догнал, — и не откатывается на выпуск старее себя', async () => {
+    const гитхаб = origin();
+    git(гитхаб, 'tag', 'v0.3.0');
+    // Коммиты — с разницей во времени: в неглубоком клоне родство не видно, сверяется время.
+    const позже = { ...process.env, GIT_COMMITTER_DATE: '2030-01-01T00:00:00Z', GIT_AUTHOR_DATE: '2030-01-01T00:00:00Z' };
+    execFileSync('git', ['-C', гитхаб, 'commit', '-q', '--allow-empty', '-m', 'Вершина main'], { env: позже, windowsHide: true });
+    const src = клон(гитхаб);
+    // Стоит на вершине main, которая новее единственного выпуска: назад не зовём.
+    expect((await checkForUpdate(runGit(src))).state).toBe('current');
+
+    const ещёПозже = { ...process.env, GIT_COMMITTER_DATE: '2031-01-01T00:00:00Z', GIT_AUTHOR_DATE: '2031-01-01T00:00:00Z' };
+    execFileSync('git', ['-C', гитхаб, 'commit', '-q', '--allow-empty', '-m', 'Вошло в выпуск'], { env: ещёПозже, windowsHide: true });
+    git(гитхаб, 'tag', 'v0.4.0');
+    expect(await checkForUpdate(runGit(src))).toMatchObject({ state: 'available', tag: 'v0.4.0', changes: ['Вошло в выпуск'] });
+  });
+
+  it('своя ветка (-Branch) следует за веткой, выпуски ей не указ', async () => {
+    const гитхаб = origin();
+    git(гитхаб, 'tag', 'v0.3.0');
+    git(гитхаб, 'checkout', '-q', '-b', 'проба');
+    коммит(гитхаб, 'Проба');
+    const dir = path.join(временная('jarvis-src-'), 'src');
+    const адрес = гитхаб.replace(/\\/gu, '/');
+    execFileSync('git', ['clone', '-q', '--depth', '1', '--branch', 'проба', `file://${адрес.startsWith('/') ? '' : '/'}${адрес}`, dir], { windowsHide: true });
+    expect(await checkForUpdate(runGit(dir))).toEqual({ state: 'current', branch: 'проба' });
+    коммит(гитхаб, 'Проба 2');
+    const итог = await checkForUpdate(runGit(dir));
+    expect(итог).toMatchObject({ state: 'available', branch: 'проба', changes: ['Проба 2'] });
+    expect(итог).not.toHaveProperty('tag');
+  });
+
+  it('окно обновления зовёт установщик с выпуском, а не с веткой', () => {
+    const win = windowsUpdateScript({ pid: 1, home: 'C:\\h', logs: 'C:\\l', branch: 'main', tag: 'v0.4.0', language: 'ru' }, 'C:\\i.ps1');
+    expect(win).toContain("-Version 'v0.4.0'");
+    expect(win).not.toContain('-Branch');
+    const mac = macUpdateScript({ pid: 1, home: '/h', logs: '/l', branch: 'main', tag: 'v0.4.0', language: 'ru' }, '/i.sh');
+    expect(mac).toContain("'--version' 'v0.4.0'");
+    expect(mac).not.toContain('--branch');
+    // Без выпуска — как раньше, ветка.
+    expect(windowsUpdateScript({ pid: 1, home: 'C:\\h', logs: 'C:\\l', branch: 'проба', language: 'ru' }, 'C:\\i.ps1')).toContain("-Branch 'проба'");
   });
 });
 

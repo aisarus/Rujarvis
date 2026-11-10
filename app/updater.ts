@@ -152,6 +152,7 @@ export async function runUpdateNow(): Promise<{ ok: true } | { ok: false; messag
       logs: настройка.paths.logs,
       sourceDir: APP_ROOT,
       branch: итог.branch,
+      tag: итог.tag,
       language: s.language === 'en' ? 'en' : 'ru',
       whisperModel: s.whisperModel,
     });

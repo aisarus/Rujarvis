@@ -7,8 +7,9 @@
  * полузаписанного.
  */
 
+import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, rename, rm, stat } from 'node:fs/promises';
+import { mkdir, rename, rm, stat, statfs } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { finished, pipeline } from 'node:stream/promises';
@@ -34,6 +35,14 @@ export interface ArchiveInstall {
   rootDirName: string;
   /** Размер архива, если сервер его не назовёт. */
   expectedBytes: number;
+  /**
+   * SHA-256 архива, как его объявил издатель. Задана — скачанное сверяется до
+   * распаковки: совпавший размер не говорит, что файл тот самый, а не битый
+   * или подменённый по дороге. Не сошлась — архив стирается, модель не ставится.
+   */
+  sha256?: string;
+  /** Сколько свободного места на диске с этой папкой, байт; null — узнать нечем. Подменяется в проверках. */
+  freeBytes?(dir: string): Promise<number | null>;
   isInstalled(): Promise<boolean>;
   onProgress?(progress: ModelInstallProgress): void;
   signal?: AbortSignal;
@@ -273,8 +282,49 @@ async function попытка(
 /** Что нужно загрузке одного файла — без распаковки. */
 export type DownloadOptions = Pick<
   ArchiveInstall,
-  'url' | 'expectedBytes' | 'onProgress' | 'signal' | 'fetchImpl' | 'stallMs' | 'retryDelayMs'
+  'url' | 'expectedBytes' | 'onProgress' | 'signal' | 'fetchImpl' | 'stallMs' | 'retryDelayMs' | 'freeBytes'
 >;
+
+/** Свободное место на диске, где лежит папка; система не ответила — null. */
+async function свободно(dir: string): Promise<number | null> {
+  try {
+    const диск = await statfs(dir);
+    return Number(диск.bavail) * Number(диск.bsize);
+  } catch {
+    return null;
+  }
+}
+
+function гигабайт(байт: number): string {
+  return (байт / 1024 ** 3).toFixed(1);
+}
+
+/**
+ * Хватит ли места — до загрузки, а не на девяностом проценте.
+ *
+ * Модель — до двух гигабайт архива и столько же распакованного. Кончалось
+ * место посреди загрузки — человек полчаса ждал, а потом видел «ошибку записи»
+ * без слова о диске. Узнать свободное место нечем — не гадаем и качаем.
+ */
+export async function assertFreeSpace(dir: string, needBytes: number, freeBytes: (dir: string) => Promise<number | null> = свободно): Promise<void> {
+  const есть = await freeBytes(dir);
+  if (есть === null || есть >= needBytes) return;
+  throw new Error(
+    tr(
+      `Не хватает места на диске: нужно ${гигабайт(needBytes)} ГБ, свободно ${гигабайт(есть)} ГБ. Освободите место и повторите.`,
+      `Not enough disk space: ${гигабайт(needBytes)} GB needed, ${гигабайт(есть)} GB free. Free some space and try again.`,
+    ),
+  );
+}
+
+/** Запас сверх размера файла: метаданные, соседние записи. */
+const ЗАПАС_МЕСТА = 200 * 1024 * 1024;
+
+async function sha256(file: string): Promise<string> {
+  const хеш = createHash('sha256');
+  for await (const кусок of createReadStream(file)) хеш.update(кусок as Buffer);
+  return хеш.digest('hex');
+}
 
 /**
  * Скачать один файл с докачкой, повтором и сроком на зависание.
@@ -283,6 +333,9 @@ export type DownloadOptions = Pick<
  * файл модели, и учить обрыв связи второй раз незачем.
  */
 export async function downloadFile(options: DownloadOptions, target: string): Promise<void> {
+  const папка = path.dirname(target);
+  await mkdir(папка, { recursive: true });
+  await assertFreeSpace(папка, Math.max(0, options.expectedBytes - (await размер(target))) + ЗАПАС_МЕСТА, options.freeBytes);
   await download(options, target);
 }
 
@@ -367,7 +420,27 @@ export async function installArchive(options: ArchiveInstall): Promise<string> {
   // своё дело сделало или оказалось испорченным — см. ниже.
   let архивЦел = false;
   try {
+    // Остаток архива и распакованная модель — она примерно с архив: модели
+    // уже сжаты, bzip2 их почти не уменьшает.
+    const осталось = Math.max(0, options.expectedBytes - (await размер(archivePath)));
+    await assertFreeSpace(options.installRoot, осталось + options.expectedBytes + ЗАПАС_МЕСТА, options.freeBytes);
+
     await download(options, archivePath);
+
+    if (options.sha256) {
+      options.onProgress?.({ stage: 'verifying' });
+      const сумма = await sha256(archivePath);
+      if (сумма !== options.sha256.toLowerCase()) {
+        // Докачивать к такому нельзя, распаковывать — тем более.
+        await rm(archivePath, { force: true }).catch(() => undefined);
+        throw new Error(
+          tr(
+            `Скачанная модель не та: контрольная сумма не сошлась (${сумма.slice(0, 12)}… вместо ${options.sha256.slice(0, 12)}…). Файл стёрт — повторите загрузку.`,
+            `The downloaded model is not the right file: checksum mismatch (${сумма.slice(0, 12)}… instead of ${options.sha256.slice(0, 12)}…). The file was deleted — download it again.`,
+          ),
+        );
+      }
+    }
     архивЦел = true;
 
     options.onProgress?.({ stage: 'extracting' });

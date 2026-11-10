@@ -17,6 +17,7 @@ import path from 'node:path';
 
 import { app } from 'electron';
 
+import { homeFromArgs } from '../jarvis/setup/paths';
 import type { Look } from '../jarvis/setup/settings';
 import type { VoiceStatus } from '../jarvis/voice/session';
 import { currentLanguage, tr } from '../jarvis/locale/language';
@@ -980,7 +981,7 @@ function openWindow(pagePath: string, размерРежима: () => Разме
       appId: APP_USER_MODEL_ID,
       appIconPath: path.join(APP_ROOT, 'resources', 'icon.ico'),
       appIconIndex: 0,
-      relaunchCommand: `"${process.execPath}" "${path.join(APP_ROOT, 'dist', 'app', 'main.cjs')}"`,
+      relaunchCommand: `"${process.execPath}" "${path.join(APP_ROOT, 'dist', 'app', 'main.cjs')}"${homeFromArgs(process.argv) ? ` --jarvis-home="${homeFromArgs(process.argv)}"` : ''}`,
       relaunchDisplayName: 'Rujarvis',
     });
   }
