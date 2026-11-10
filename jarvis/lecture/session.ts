@@ -21,12 +21,14 @@
  * Code по подписке, проверки — подделки.
  */
 
-import { closeSync, openSync, statSync, writeSync } from 'node:fs';
-import { appendFile, mkdir, open, readFile, writeFile } from 'node:fs/promises';
+import { closeSync, openSync, statSync, writeFileSync, writeSync } from 'node:fs';
+import { appendFile, mkdir, open, readFile, stat, truncate, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { finalStyleRules, fromSummary, obsidianRules, sectionStyleRules, tidyNoteMarkdown, type NoteLanguages, type NotesStyle } from '../notes/style';
+import { writeFileAtomic } from './atomicWrite';
 import { splitCourseAndTopic } from './courses';
+import { gapLine, gapsSeconds, mergeGaps, transcribeRange, type Gap } from './retranscribe';
 import { lectureFileBase } from './vault';
 
 /** На каком языке пишется конспект — язык интерфейса. */
@@ -48,6 +50,12 @@ export interface LectureDeps {
   /** И не меньше стольких новых слов расшифровки. */
   sectionMinWords?: number;
   log?(line: string): void;
+  /**
+   * Беда, о которой человек должен узнать сразу, а не вечером над пустой
+   * заметкой: звук не пишется на диск или куски не распознаются. `problem` —
+   * причина; null — прошло.
+   */
+  trouble?(what: 'audio' | 'transcribe', problem: string | null): void;
 }
 
 export interface LectureResult {
@@ -61,7 +69,25 @@ export interface LectureResult {
   /** Курс и тема — как их назвала модель в итоге; итога нет — нет и их. */
   course?: string;
   topic?: string;
+  /** Итог написан. Нет при непустой расшифровке — конспект не дописан. */
+  summary: boolean;
+  /** Почему итога нет — словами модели или CLI (кончился лимит, нет сети). */
+  summaryError?: string;
+  /** Сколько разделов осталось заглушками «Раздел не собрался». */
+  failedSections: number;
+  /** Сколько секунд звука записано, но не распознано: дыры в расшифровке. */
+  untranscribedSec: number;
+  /** Сколько секунд звука не легло на диск (кончилось место): в записи на их месте тишина. */
+  audioLostSec: number;
 }
+
+/** Конспект не дописан: есть что переделать при следующем запуске. */
+export function lectureIncomplete(итог: Pick<LectureResult, 'words' | 'summary' | 'failedSections' | 'untranscribedSec'>): boolean {
+  return итог.failedSections > 0 || итог.untranscribedSec > 0 || (итог.words > 0 && !итог.summary);
+}
+
+/** Заглушка раздела, который модель не написала, — на любом из двух языков. */
+export const FAILED_SECTION = /^> (?:Раздел не собрался|This section failed) \(.*$/mu;
 
 /** Слова самой заметки: заголовки и подписи — на языке конспекта. */
 export const NOTES_WORDS = {
@@ -458,7 +484,19 @@ export class LectureSession {
   /** Где кончился прошлый раздел, мс звука. */
   private последнийРаздел = 0;
   private номерРаздела = 0;
-  private байтЗвука = 0;
+  /** Сколько байт звука принято: столько должно лежать в файле за заголовком. */
+  private принятоБайт = 0;
+  /** Запись звука на диск сорвалась и ещё не наладилась. */
+  private сбойЗвука = false;
+  /** Сколько байт звука не легло на диск: на их месте в записи тишина. */
+  private потеряноБайт = 0;
+  /** Куски, которые не распознались: звук в записи есть, текста нет. */
+  private дыры: Gap[] = [];
+  private бедаРаспознавания = false;
+  /** Расшифровку на диске пора переписать целиком: строка не дописалась или дыру добрали. */
+  private переписать = false;
+  private несобранных = 0;
+  private шапка = '';
   private частотаЗвука = 16_000;
   private закончена = false;
   private readonly языки: PromptLanguages;
@@ -499,7 +537,8 @@ export class LectureSession {
       ].join('\n'),
       'utf8',
     );
-    await writeFile(this.transcriptFile, `# ${с.transcript} — ${предмет}\n\n${с.notesLink}: [[${base}]]\n\n`, 'utf8');
+    this.шапка = `# ${с.transcript} — ${предмет}\n\n${с.notesLink}: [[${base}]]\n\n`;
+    await writeFile(this.transcriptFile, this.шапка, 'utf8');
     await writeFile(this.audioFile, wavHeader(0, this.частотаЗвука));
   }
 
@@ -523,12 +562,7 @@ export class LectureSession {
     // и закрой человек Джарвис в это время — нераспознанный звук пропал бы
     // вместе с памятью. Запись от скорости распознавания не зависит.
     const pcm = pcm16(samples);
-    this.запись = this.запись
-      .then(async () => {
-        await appendFile(this.audioFile, pcm);
-        this.байтЗвука += pcm.length;
-      })
-      .catch((error: unknown) => this.deps.log?.(`звук куска ${метка(когда)} не записан: ${error instanceof Error ? error.message : String(error)}`));
+    this.запись = this.запись.then(() => this.дописатьЗвук(pcm, когда));
     this.вОчереди += секунд;
     // Упавший кусок не должен останавливать очередь: цепочка обещаний после
     // отказа пропускала бы все следующие куски до конца лекции.
@@ -543,20 +577,139 @@ export class LectureSession {
     });
   }
 
+  /**
+   * Звук куска — в файл, и ровно на своё место.
+   *
+   * Метка времени куска — его место в записи. Не записался кусок (кончилось
+   * место на диске) — и всё, что записалось после, съехало бы раньше своих
+   * меток: «▶ с этой минуты» играл бы другую минуту, а дыры добирались бы не
+   * из того звука. Поэтому перед следующей удачной записью недостающее
+   * добивается тишиной, а человеку о беде говорится сразу.
+   */
+  private async дописатьЗвук(pcm: Buffer, когда: number): Promise<void> {
+    try {
+      if (this.сбойЗвука) await this.выровнятьЗвук();
+      await appendFile(this.audioFile, pcm);
+      if (this.сбойЗвука) {
+        this.сбойЗвука = false;
+        this.deps.log?.(`звук снова пишется, с ${метка(когда)}`);
+        this.deps.trouble?.('audio', null);
+      }
+    } catch (error) {
+      const причина = error instanceof Error ? error.message : String(error);
+      this.deps.log?.(`звук куска ${метка(когда)} не записан: ${причина}`);
+      if (!this.сбойЗвука) {
+        this.сбойЗвука = true;
+        this.deps.trouble?.('audio', причина);
+      }
+    } finally {
+      this.принятоБайт += pcm.length;
+    }
+  }
+
+  /** Файл короче принятого звука — добить тишиной; длиннее (обрывок куска) — обрезать. */
+  private async выровнятьЗвук(): Promise<void> {
+    const есть = Math.max(0, (await stat(this.audioFile)).size - 44);
+    if (есть > this.принятоБайт) {
+      await truncate(this.audioFile, 44 + this.принятоБайт);
+      return;
+    }
+    let долг = this.принятоБайт - есть;
+    while (долг > 0) {
+      const часть = Math.min(долг, 1 << 20);
+      await appendFile(this.audioFile, Buffer.alloc(часть));
+      долг -= часть;
+      this.потеряноБайт += часть;
+    }
+  }
+
   private async кусок(samples: Float32Array, sampleRate: number, когда: number, конец: number): Promise<void> {
     let текст = '';
     try {
       текст = (await this.deps.transcribe(samples, sampleRate)).trim();
     } catch (error) {
-      this.deps.log?.(`кусок не распознан: ${error instanceof Error ? error.message : String(error)}`);
+      await this.дыра({ from: когда, to: конец }, error instanceof Error ? error.message : String(error));
       return;
     }
+    if (this.бедаРаспознавания) {
+      this.бедаРаспознавания = false;
+      this.deps.trouble?.('transcribe', null);
+    }
     if (!текст) return;
-    await appendFile(this.transcriptFile, `**[${метка(когда)}]** ${текст}\n\n`, 'utf8');
-    this.копится.push({ текст, от: когда, до: конец });
-    this.вся.push({ текст, от: когда });
+    this.принять(текст, когда, конец);
+    try {
+      await appendFile(this.transcriptFile, `**[${метка(когда)}]** ${текст}\n\n`, 'utf8');
+    } catch (error) {
+      // Текст распознан и лежит в памяти: расшифровка перепишется целиком в конце.
+      this.переписать = true;
+      this.deps.log?.(`строка расшифровки ${метка(когда)} не записана: ${error instanceof Error ? error.message : String(error)}`);
+    }
     this.deps.log?.(`кусок ${метка(когда)}: ${слова(текст)} слов`);
     this.maybeSection(false);
+  }
+
+  private принять(текст: string, когда: number, конец: number): void {
+    this.копится.push({ текст, от: когда, до: конец });
+    this.вся.push({ текст, от: когда });
+  }
+
+  /**
+   * Кусок не распознался. Звук его в записи есть — значит, дыру можно добрать;
+   * пометка в расшифровке переживает и закрытие Джарвиса, и перезагрузку.
+   */
+  private async дыра(дыра: Gap, причина: string): Promise<void> {
+    this.дыры.push(дыра);
+    this.deps.log?.(`кусок ${метка(дыра.from)} не распознан: ${причина}`);
+    if (!this.бедаРаспознавания) {
+      this.бедаРаспознавания = true;
+      this.deps.trouble?.('transcribe', причина);
+    }
+    try {
+      await appendFile(this.transcriptFile, `${gapLine(дыра)}\n\n`, 'utf8');
+    } catch {
+      this.переписать = true;
+    }
+  }
+
+  /** Расшифровка целиком: шапка, строки по времени и пометки о дырах, которые остались. */
+  private текстРасшифровки(): string {
+    const строки = [
+      ...this.вся.map((к) => ({ от: к.от, строка: `**[${метка(к.от)}]** ${к.текст}` })),
+      ...mergeGaps(this.дыры).map((д) => ({ от: д.from, строка: gapLine(д) })),
+    ].sort((a, b) => a.от - b.от);
+    return `${this.шапка}${строки.map((с) => `${с.строка}\n\n`).join('')}`;
+  }
+
+  /**
+   * Дыры — ещё раз, из записи: сервер распознавания к концу лекции мог
+   * подняться заново. Что не вышло и теперь — остаётся пометкой в расшифровке.
+   */
+  private async добратьДыры(): Promise<void> {
+    if (this.дыры.length > 0) {
+      const остались: Gap[] = [];
+      for (const дыра of mergeGaps(this.дыры)) {
+        try {
+          const { lines, failed } = await transcribeRange(this.audioFile, дыра, this.deps.transcribe);
+          for (const [i, строка] of lines.entries()) this.принять(строка.text, строка.at, lines[i + 1]?.at ?? дыра.to);
+          остались.push(...failed);
+          if (lines.length > 0) this.deps.log?.(`дыра ${метка(дыра.from)}–${метка(дыра.to)} добрана: кусков ${lines.length}`);
+        } catch (error) {
+          остались.push(дыра);
+          this.deps.log?.(`дыра ${метка(дыра.from)} не добрана: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      this.дыры = остались;
+      this.вся.sort((a, b) => a.от - b.от);
+      this.копится.sort((a, b) => a.от - b.от);
+      this.переписать = true;
+    }
+    if (!this.переписать) return;
+    try {
+      await writeFileAtomic(this.transcriptFile, this.текстРасшифровки());
+      this.переписать = false;
+    } catch (error) {
+      this.deps.log?.(`расшифровка не переписана: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /** Раздел, когда накопилось достаточно и прошло достаточно; `всё` — при завершении. */
@@ -582,7 +735,9 @@ export class LectureSession {
       } catch (error) {
         const причина = error instanceof Error ? error.message : String(error);
         this.deps.log?.(`раздел ${номер} не собрался: ${причина}`);
-        раздел = `### ${this.слова.section} ${номер}\n${this.слова.failed(причина.slice(0, 120))}`;
+        this.несобранных += 1;
+        // Причина — одной строкой: по этой строке заглушку потом находят и переделывают.
+        раздел = `### ${this.слова.section} ${номер}\n${this.слова.failed(причина.replace(/\s+/gu, ' ').slice(0, 120))}`;
       }
       if (!раздел) return;
       const сВременем = withRange(раздел, от, до);
@@ -606,6 +761,14 @@ export class LectureSession {
     // И ещё раз, когда очередь допишет уже принятые куски: иначе их звук
     // оказался бы за объявленным размером и не проигрывался бы.
     void this.запись.finally(() => this.заголовокПоРазмеру());
+    if (this.переписать) {
+      try {
+        writeFileSync(this.transcriptFile, this.текстРасшифровки(), 'utf8');
+        this.переписать = false;
+      } catch {
+        // Диск всё ещё не пишет — звук цел, расшифровку доберёт следующий запуск.
+      }
+    }
   }
 
   /**
@@ -644,12 +807,16 @@ export class LectureSession {
   async finish(курсы: readonly string[] = []): Promise<LectureResult> {
     this.закончена = true;
     await this.расшифровка;
+    await this.запись;
+    await this.добратьДыры();
     this.maybeSection(true);
     await this.разделы;
 
     const расшифровка = timedTranscript(this.вся);
     let course: string | undefined;
     let topic: string | undefined;
+    let summary = false;
+    let summaryError: string | undefined;
     if (this.вся.length > 0) {
       try {
         const итогом = this.deps.summarizeFinal ?? this.deps.summarize;
@@ -660,20 +827,28 @@ export class LectureSession {
           const заметка = await readFile(this.notesFile, 'utf8');
           const место = заметка.indexOf(this.слова.notes);
           const новая = место >= 0 ? `${заметка.slice(0, место)}${итог}\n\n${заметка.slice(место)}` : `${заметка}\n${итог}\n`;
-          await writeFile(this.notesFile, новая, 'utf8');
+          await writeFileAtomic(this.notesFile, новая);
+          summary = true;
+        } else {
+          summaryError = 'модель ответила пусто';
         }
       } catch (error) {
-        this.deps.log?.(`итог не собрался: ${error instanceof Error ? error.message : String(error)}`);
+        summaryError = (error instanceof Error ? error.message : String(error)).replace(/\s+/gu, ' ').slice(0, 200);
+        this.deps.log?.(`итог не собрался: ${summaryError}`);
       }
     }
 
-    await this.запись;
+    // Запись могла кончиться сбоем: хвост добивается тишиной, если диск уже пишет.
+    if (this.сбойЗвука) await this.выровнятьЗвук().catch(() => undefined);
+    // Размер — по самому файлу: после сбоя записи счёт принятого с ним расходится.
+    const данные = Math.max(0, (await stat(this.audioFile)).size - 44);
     const файл = await open(this.audioFile, 'r+');
     try {
-      await файл.write(wavHeader(this.байтЗвука, this.частотаЗвука), 0, 44, 0);
+      await файл.write(wavHeader(данные, this.частотаЗвука), 0, 44, 0);
     } finally {
       await файл.close();
     }
+    const байтВСекунде = this.частотаЗвука * 2;
     return {
       notesFile: this.notesFile,
       transcriptFile: this.transcriptFile,
@@ -683,6 +858,11 @@ export class LectureSession {
       durationSec: this.мсЗвука / 1000,
       course,
       topic,
+      summary,
+      ...(summaryError ? { summaryError } : {}),
+      failedSections: this.несобранных,
+      untranscribedSec: gapsSeconds(this.дыры),
+      audioLostSec: (this.потеряноБайт + Math.max(0, this.принятоБайт - данные)) / байтВСекунде,
     };
   }
 }

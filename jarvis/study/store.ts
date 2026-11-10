@@ -133,9 +133,24 @@ export class StudyStore {
   }
 
   progress(course: string): CourseProgress {
-    const p = прочитать<CourseProgress>(path.join(this.courseDir(course), ПРОГРЕСС));
-    if (!p || p.version !== 1) return emptyProgress();
-    return { ...emptyProgress(), ...p };
+    const файл = path.join(this.courseDir(course), ПРОГРЕСС);
+    const p = прочитать<CourseProgress>(файл);
+    if (p && p.version === 1) return { ...emptyProgress(), ...p };
+    // Файл есть, а прочитать его нельзя (оборванная запись, сбой диска, правка
+    // руками). Вернуть пустой прогресс и молча сохранить его поверх — значит
+    // стереть семестр ответов: первое же `updateProgress` так и делало. Файл
+    // откладывается в сторону — из него прогресс ещё можно достать.
+    if (existsSync(файл)) {
+      const отложенный = `${файл}.broken-${new Date().toISOString().replace(/[:.]/gu, '-')}`;
+      try {
+        renameSync(файл, отложенный);
+        console.error(`[jarvis:study] прогресс курса «${course}» не читается — отложен в ${path.basename(отложенный)}, начат новый`);
+      } catch (error) {
+        // Отложить не вышло — тогда и писать поверх нельзя.
+        throw new Error(`прогресс курса «${course}» не читается и не откладывается: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    return emptyProgress();
   }
 
   saveProgress(course: string, progress: CourseProgress): void {

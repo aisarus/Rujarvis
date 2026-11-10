@@ -17,11 +17,12 @@
  * это «истории». Поэтому курсы сравниваются по основам слов, а не по буквам.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { rename } from 'node:fs/promises';
 import path from 'node:path';
 
 import { tr } from '../locale/language';
+import { writeFileAtomicSync } from './atomicWrite';
 import type { NotesLanguage } from './session';
 
 export interface LectureMeta {
@@ -62,18 +63,47 @@ export function courseStems(name: string): string[] {
     .map((слово) => слово.slice(0, 5));
 }
 
+function словаКурса(name: string): string[] {
+  return name
+    .toLowerCase()
+    .replace(/ё/gu, 'е')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/u)
+    .filter(Boolean);
+}
+
 /**
- * Какой из известных курсов назван. Совпасть должны почти все основы:
- * «история» — не «история древнего мира».
+ * Метки, которыми различаются части одного предмета: номер («Математика 2»),
+ * римская цифра («Physics II»), одиночная буква иврита («מתמטיקה ב»).
+ * Основы их не видят — слова короче трёх букв туда не попадают, — и без
+ * отдельной сверки «Математика 2» записывалась в «Математику 1».
+ */
+export function courseMarks(name: string): string[] {
+  return словаКурса(name)
+    .filter((слово) => /\p{N}/u.test(слово) || /^(?:i{1,3}|iv|vi{0,3}|ix|x)$/u.test(слово) || /^[א-ת]$/u.test(слово))
+    .sort();
+}
+
+/**
+ * Какой из известных курсов назван. Точное имя важнее всего; дальше совпасть
+ * должны почти все основы — «история» — не «история древнего мира» — и все
+ * метки части: номер или буква.
  */
 export function matchCourse(name: string, courses: readonly string[]): string | null {
+  const дословно = словаКурса(name).join(' ');
+  if (дословно) {
+    const точный = courses.find((курс) => словаКурса(курс).join(' ') === дословно);
+    if (точный) return точный;
+  }
   const искомое = courseStems(name);
   if (искомое.length === 0) return null;
+  const метки = courseMarks(name).join(' ');
   let лучший: string | null = null;
   let счёт = 0;
   for (const курс of courses) {
     const основы = courseStems(курс);
     if (основы.length === 0) continue;
+    if (courseMarks(курс).join(' ') !== метки) continue;
     const общих = искомое.filter((о) => основы.includes(о)).length;
     const доля = общих / Math.max(искомое.length, основы.length);
     if (доля > счёт) {
@@ -198,10 +228,33 @@ export function withFormulasMark(text: string): string {
   return `---${конец}${строки}${конец}${ключ}: ${FORMULAS_DONE}${конец}---${text.slice(всё.length)}`;
 }
 
-/** Заметка без свойств в начале — те же строки, со свойствами — заменённые. */
+/**
+ * Свойства, которые человек дописал в заметку сам (теги, преподаватель,
+ * ссылки), — строками как есть. Свои свойства лекции Джарвис пишет заново, а
+ * чужие обязан вернуть: перенос лекции в другой курс стирал их все.
+ * Многострочное значение (список тегов) идёт вместе со своим ключом.
+ */
+function чужиеСвойства(text: string): string[] {
+  const блок = /^---\r?\n([\s\S]*?)\r?\n---/u.exec(text);
+  if (!блок) return [];
+  const свои = new Set<string>([...Object.values(СВОЙСТВА.ru), ...Object.values(СВОЙСТВА.en)]);
+  const чужие: string[] = [];
+  let берём = false;
+  for (const строка of (блок[1] ?? '').split(/\r?\n/u)) {
+    const ключ = /^([^\s:#-][^:]*):/u.exec(строка);
+    if (ключ) берём = !свои.has((ключ[1] ?? '').trim().toLowerCase());
+    if (берём && строка.trim()) чужие.push(строка);
+  }
+  return чужие;
+}
+
+/** Заметка без свойств в начале — те же строки; со свойствами — свои заменены, дописанные человеком остались. */
 export function withFrontmatter(text: string, meta: LectureMeta, notes: NotesLanguage): string {
+  const чужие = чужиеСвойства(text);
   const без = text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/u, '');
-  return `${renderFrontmatter(meta, notes)}${без.replace(/^\s+/u, '')}`;
+  const свойства = renderFrontmatter(meta, notes);
+  const сЧужими = чужие.length > 0 ? свойства.replace(/---\n$/u, `${чужие.join('\n')}\n---\n`) : свойства;
+  return `${сЧужими}${без.replace(/^\s+/u, '')}`;
 }
 
 /** То, что Windows не пускает в имена, и лишние пробелы. */
@@ -489,7 +542,7 @@ export function writeCourseInfo(root: string, course: string, patch: CoursePatch
   }
   if (patch.lecturer !== undefined) поставить(['лектор', 'lecturer'], patch.lecturer.trim() ? вЯмл(patch.lecturer.trim()) : null);
   if (patch.credits !== undefined) поставить(['кредиты', 'credits'], patch.credits > 0 ? String(patch.credits) : null);
-  writeFileSync(файл, текст, 'utf8');
+  writeFileAtomicSync(файл, текст);
 }
 
 function безСпецЗнаков(текст: string): string {
@@ -544,7 +597,7 @@ export async function renameCourseFolder(root: string, from: string, to: string)
     if (свойства && свойство.test(свойства[0])) {
       новый = новый.replace(свойства[0], свойства[0].replace(свойство, (_всё, ключ: string) => `${ключ}: ${вЯмл(to)}`));
     }
-    if (новый !== текст) writeFileSync(файл, новый, 'utf8');
+    if (новый !== текст) writeFileAtomicSync(файл, новый);
   }
 }
 

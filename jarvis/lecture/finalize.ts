@@ -14,9 +14,10 @@
  */
 
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename } from 'node:fs/promises';
 import path from 'node:path';
 
+import { writeFileAtomic } from './atomicWrite';
 import {
   COURSE_WORDS,
   coursePage,
@@ -80,18 +81,41 @@ function свободнаяБаза(папка: string, база: string, сво
   for (let n = 2; ; n += 1) if (!занято(`${база} (${n})`)) return `${база} (${n})`;
 }
 
-/** Переименовать, если есть что и куда; Windows иногда держит файл секунду после записи. */
-async function переложить(от: string, куда: string): Promise<void> {
-  if (path.resolve(от) === path.resolve(куда) || !existsSync(от)) return;
+/** Переименовать, если есть что и куда; Windows иногда держит файл секунду после записи. Переложено — true. */
+async function переложить(от: string, куда: string): Promise<boolean> {
+  if (path.resolve(от) === path.resolve(куда) || !existsSync(от)) return false;
   for (let попытка = 0; ; попытка += 1) {
     try {
       await rename(от, куда);
-      return;
+      return true;
     } catch (error) {
       const код = (error as NodeJS.ErrnoException).code;
       if (попытка >= 4 || (код !== 'EPERM' && код !== 'EBUSY' && код !== 'EACCES')) throw error;
       await new Promise((r) => setTimeout(r, 500 * (попытка + 1)));
     }
+  }
+}
+
+/**
+ * Три файла лекции переезжают вместе или не переезжает ни один.
+ *
+ * Звук в полтора часа держит проигрыватель или антивирус — и переименование
+ * не выходит. Раньше к этому времени заметка уже была переписана под новые
+ * имена, а часть файлов уже лежала в папке курса: лекция оказывалась
+ * наполовину разложенной, со ссылками в никуда. Теперь переехавшее
+ * возвращается назад, а заметка до удачного переезда не трогается.
+ */
+async function переложитьВсе(пары: ReadonlyArray<readonly [string, string]>): Promise<void> {
+  const сделано: Array<readonly [string, string]> = [];
+  try {
+    for (const [от, куда] of пары) {
+      if (await переложить(от, куда)) сделано.push([от, куда]);
+    }
+  } catch (error) {
+    for (const [от, куда] of сделано.reverse()) {
+      await rename(куда, от).catch(() => undefined);
+    }
+    throw error;
   }
 }
 
@@ -152,18 +176,25 @@ export async function finalizeLecture(input: FinalizeInput): Promise<FinalizeRes
   // раз, получила бы их два.
   текст = текст.replace(/^!\[\[[^\]]*\.wav\]\][ \t]*\r?\n?/gmu, '');
   текст = текст.replace(new RegExp(`^${с.transcript}: .*$`, 'mu'), ссылки).replace(/\n{3,}/gu, '\n\n');
-  await writeFile(input.notesFile, текст, 'utf8');
 
+  let р: string | null = null;
   if (existsSync(input.transcriptFile)) {
-    let р = await readFile(input.transcriptFile, 'utf8');
+    р = await readFile(input.transcriptFile, 'utf8');
     р = р.replace(/^# .*$/mu, `# ${с.transcript} — ${input.topic ?? курс}`);
     р = р.replace(new RegExp(`^${с.notesLink}: \\[\\[.*\\]\\]$`, 'mu'), `${с.notesLink}: [[${база}]]`);
-    await writeFile(input.transcriptFile, р, 'utf8');
   }
 
-  await переложить(input.audioFile, звук);
-  await переложить(input.transcriptFile, расшифровка);
-  await переложить(input.notesFile, заметка);
+  // Сначала переезд — он может не выйти, и тогда не тронуто ничего. Звук
+  // первым: его чаще всего и держат. Потом — новые тексты на новых местах;
+  // свойства лекции появляются в заметке последними, и оборвись дело до них,
+  // лекция осталась бы «брошенной» — следующий запуск разложит её заново.
+  await переложитьВсе([
+    [input.audioFile, звук],
+    [input.transcriptFile, расшифровка],
+    [input.notesFile, заметка],
+  ]);
+  if (р !== null) await writeFileAtomic(расшифровка, р);
+  await writeFileAtomic(заметка, текст);
 
   // Страница курса — список всех его лекций, включая эту. Лекция переехала из
   // другого курса — у того страница тоже обновляется, иначе в ней висела бы
@@ -180,7 +211,7 @@ export async function finalizeLecture(input: FinalizeInput): Promise<FinalizeRes
 async function обновитьСтраницу(root: string, курс: string, notes: NotesLanguage): Promise<void> {
   const страница = path.join(root, курс, `${курс}.md`);
   const было = existsSync(страница) ? await readFile(страница, 'utf8') : null;
-  await writeFile(страница, coursePage(было, курс, listLectures(root, курс), notes), 'utf8');
+  await writeFileAtomic(страница, coursePage(было, курс, listLectures(root, курс), notes));
 }
 
 /**

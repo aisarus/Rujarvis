@@ -51,11 +51,11 @@ import {
   type LectureLanguages,
 } from '../jarvis/lecture/courses';
 import { finalizeLecture, moveLecture } from '../jarvis/lecture/finalize';
-import { findAbandonedLectures, recoverLecture } from '../jarvis/lecture/recover';
+import { completeLecture, findAbandonedLectures, findIncompleteLectures, recoverLecture, type Hearing } from '../jarvis/lecture/recover';
 import { HearingMonitor, isSilentChunk } from '../jarvis/lecture/hearing';
 import { mediaSeconds } from '../jarvis/lecture/mediaSlices';
 import { LectureRecorder } from '../jarvis/lecture/recorder';
-import { LectureSession, NOTES_WORDS, type NotesLanguage } from '../jarvis/lecture/session';
+import { lectureIncomplete, LectureSession, NOTES_WORDS, type LectureDeps, type NotesLanguage } from '../jarvis/lecture/session';
 import { createFinalSummarizer, createSummarizer } from '../jarvis/lecture/summarize';
 import { lectureFolder, obsidianOpenUrl } from '../jarvis/lecture/vault';
 import type { NotesStyle } from '../jarvis/notes/style';
@@ -69,7 +69,7 @@ const ПОРТ_ЛЕКЦИИ = WHISPER_SERVER_PORT + 1;
 
 interface Лекция {
   session: LectureSession;
-  сервер: Promise<GpuWhisperServer | null>;
+  уши: Слух;
   recorder: LectureRecorder;
   root: string;
   notes: NotesLanguage;
@@ -218,11 +218,14 @@ export async function startLecture(subject: string | undefined, options: Lecture
 }
 
 interface Слух {
-  сервер: Promise<GpuWhisperServer | null>;
   модель: string | null;
   /** Слушает общая модель, а не модель для лекций. */
   общая: boolean;
   распознать(samples: Float32Array, sampleRate: number): Promise<ConfidentResult>;
+  /** Погасить свой сервер; после этого слух не перезапускается. */
+  stop(): Promise<void>;
+  /** Свой сервер упал и поднимается заново (`down`), поднялся (`up`) или не поднялся (`failed`). */
+  приПерезапуске?: (что: 'down' | 'up' | 'failed') => void;
 }
 
 /**
@@ -244,7 +247,7 @@ async function поднятьСлух(options: LectureStartOptions, язык: st
   // конспекты» его не поднимает) — свой сервер с общей моделью: хуже модели
   // для лекций, но лучше, чем «расшифровать нечем».
   const модель = своя ?? (files && !options.mainEndpoint() ? files.model : null);
-  const сервер: Promise<GpuWhisperServer | null> =
+  const поднять = (): Promise<GpuWhisperServer | null> =>
     files && модель
       ? startGpuWhisper(
           { server: files.server, model: модель },
@@ -259,24 +262,68 @@ async function поднятьСлух(options: LectureStartOptions, язык: st
           return null;
         })
       : Promise.resolve(null);
-  return {
-    сервер,
+  let сервер = поднять();
+  let погашен = false;
+  let перезапуск: Promise<void> | null = null;
+  const разок = async (samples: Float32Array, sampleRate: number): Promise<ConfidentResult> => {
+    const свой = await сервер;
+    const endpoint = свой?.endpoint ?? options.mainEndpoint();
+    if (!endpoint) {
+      throw new Error(
+        tr(
+          'распознавать нечем: не установлено распознавание лекций (Настройки → Речь → «Распознавание лекций»)',
+          'nothing to transcribe with: lecture recognition is not installed (Settings → Speech → "Lecture recognition")',
+        ),
+      );
+    }
+    return createGpuTranscriber({ endpoint, language: язык, timeoutMs: 120_000, withConfidence: true }).transcribe(samples, sampleRate);
+  };
+  const слух: Слух = {
     модель,
     общая: !своя,
+    /**
+     * Свой сервер упал посреди лекции (кончилась видеопамять, драйвер) — раньше
+     * до конца пары не распознавался ни один кусок, а на плашке было тихо.
+     * Теперь сервер поднимается заново, кусок пробуется ещё раз, а человек
+     * видит, что случилось. Жив и отвечает — значит, ошибка не его: дальше.
+     */
     распознать: async (samples, sampleRate) => {
-      const свой = await сервер;
-      const endpoint = свой?.endpoint ?? options.mainEndpoint();
-      if (!endpoint) {
-        throw new Error(
-          tr(
-            'распознавать нечем: не установлено распознавание лекций (Настройки → Речь → «Распознавание лекций»)',
-            'nothing to transcribe with: lecture recognition is not installed (Settings → Speech → "Lecture recognition")',
-          ),
-        );
+      try {
+        return await разок(samples, sampleRate);
+      } catch (error) {
+        const свой = await сервер;
+        if (погашен || !свой || (await isWhisperServerReady(свой.endpoint))) throw error;
+        перезапуск ??= (async () => {
+          console.error(`[jarvis:lecture] сервер лекции не отвечает (${error instanceof Error ? error.message : String(error)}) — поднимаю заново`);
+          слух.приПерезапуске?.('down');
+          свой.stop();
+          сервер = поднять();
+          const новый = await сервер;
+          if (погашен) новый?.stop();
+          слух.приПерезапуске?.(новый ? 'up' : 'failed');
+        })().finally(() => {
+          перезапуск = null;
+        });
+        await перезапуск;
+        return await разок(samples, sampleRate);
       }
-      return createGpuTranscriber({ endpoint, language: язык, timeoutMs: 120_000, withConfidence: true }).transcribe(samples, sampleRate);
+    },
+    stop: async () => {
+      погашен = true;
+      await перезапуск?.catch(() => undefined);
+      (await сервер)?.stop();
     },
   };
+  return слух;
+}
+
+/** Слух, которым дописываются прерванные лекции: живая лекция его гасит — порт и видеопамять нужны ей. */
+let слухДописывания: Слух | null = null;
+
+async function погаситьСлухДописывания(): Promise<void> {
+  const был = слухДописывания;
+  слухДописывания = null;
+  await был?.stop();
 }
 
 /**
@@ -309,6 +356,7 @@ async function начатьЛекцию(subject: string | undefined, options: Le
   // социологии» — это ещё не имя папки.
   const курс = subject ? matchCourse(subject, курсы) : угадатьКурс(root, когда);
   const языки = языкиКурса(root, курс, options);
+  await погаситьСлухДописывания();
   const слух = await поднятьСлух(options, языки.lecture);
 
   const монитор = new HearingMonitor();
@@ -363,12 +411,50 @@ async function начатьЛекцию(subject: string | undefined, options: Le
     оповестить();
   };
 
+  // Беда с записью или распознаванием — строкой на плашке сразу: в аудитории
+  // Джарвис молчит, а журнала из окон не видно.
+  const беда: LectureDeps['trouble'] = (что, причина) => {
+    const л = лекция.value;
+    if (!л || идёт !== л) return;
+    if (что === 'audio') {
+      л.строка = причина
+        ? tr(
+            `Звук лекции не пишется на диск: ${причина.slice(0, 120)}. Освободите место — запись продолжится сама; расшифровка идёт.`,
+            `The lecture audio is not being saved: ${причина.slice(0, 120)}. Free some disk space — recording resumes by itself; the transcript goes on.`,
+          )
+        : tr('Звук лекции снова пишется на диск.', 'The lecture audio is being saved again.');
+    } else {
+      л.строка = причина
+        ? tr(
+            'Распознавание не отвечает. Звук пишется целиком — нераспознанное доберу из записи.',
+            'Recognition is not responding. The audio is recorded in full — I will transcribe the missed part from the recording.',
+          )
+        : tr('Распознавание снова работает.', 'Recognition works again.');
+    }
+    оповестить();
+  };
+  слух.приПерезапуске = (что) => {
+    const л = лекция.value;
+    if (!л || идёт !== л) return;
+    л.строка =
+      что === 'down'
+        ? tr('Распознавание упало — перезапускаю. Звук пишется целиком.', 'Recognition crashed — restarting it. The audio is recorded in full.')
+        : что === 'up'
+          ? tr('Распознавание перезапущено.', 'Recognition restarted.')
+          : tr(
+              'Распознавание не поднялось. Звук пишется целиком — конспект допишу из записи.',
+              'Recognition did not come back. The audio is recorded in full — I will finish the notes from the recording.',
+            );
+    оповестить();
+  };
+
   const folder = курс ? path.join(root, курс) : root;
   const session = new LectureSession(
     folder,
     subject ?? '',
     {
       transcribe,
+      trouble: беда,
       summarize: createSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
       summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
       lectureLanguage: языки.lecture,
@@ -387,7 +473,7 @@ async function начатьЛекцию(subject: string | undefined, options: Le
   const нечем = !слух.модель && !options.mainEndpoint();
   лекция.value = {
     session,
-    сервер: слух.сервер,
+    уши: слух,
     recorder,
     root,
     notes: языки.notes,
@@ -466,6 +552,27 @@ export function onLectureFiled(handler: ((notesFile: string) => void) | null): v
   приРазложенной = handler;
 }
 
+function минут(секунд: number): string {
+  const мин = Math.round(секунд / 60);
+  return мин >= 1 ? tr(`${мин} мин`, `${мин} min`) : tr(`${Math.round(секунд)} с`, `${Math.round(секунд)} s`);
+}
+
+/** Чего не хватает конспекту — словами для человека, с причиной от модели. */
+function недописано(итог: {
+  words: number;
+  summary: boolean;
+  summaryError?: string;
+  failedSections: number;
+  untranscribedSec: number;
+}): string {
+  const части: string[] = [];
+  if (итог.untranscribedSec > 0) части.push(tr(`не распознано ${минут(итог.untranscribedSec)} звука`, `${минут(итог.untranscribedSec)} of audio not transcribed`));
+  if (итог.failedSections > 0) части.push(tr(`не собралось разделов — ${итог.failedSections}`, `${итог.failedSections} sections failed`));
+  if (итог.words > 0 && !итог.summary) части.push(tr('нет итога', 'no summary'));
+  const причина = итог.summaryError ? tr(` (${итог.summaryError.slice(0, 140)})`, ` (${итог.summaryError.slice(0, 140)})`) : '';
+  return `${части.join(', ')}${причина}`;
+}
+
 /** Разложить по курсу и сказать, что вышло. */
 async function разложить(
   л: { root: string; notes: NotesLanguage; курс: string | null; when: Date },
@@ -487,6 +594,27 @@ async function разложить(
       ...extra,
     });
     последняя = { notesFile: место.notesFile, root: л.root, notes: л.notes };
+    const тема = итог.topic ? tr(`«${итог.topic}» — `, `"${итог.topic}" — `) : '';
+    const потерян =
+      итог.audioLostSec >= 1
+        ? tr(
+            ` На диск не легло ${минут(итог.audioLostSec)} звука — не хватило места; в записи там тишина.`,
+            ` ${минут(итог.audioLostSec)} of audio did not reach the disk — it was full; the recording has silence there.`,
+          )
+        : '';
+    if (lectureIncomplete(итог)) {
+      // «Конспект готов» здесь было бы неправдой: лимит подписки кончился или
+      // распознавание упало — записано всё, а дописано не всё. Учёба по такому
+      // конспекту не заготавливается; допишется — тогда.
+      const чего = недописано(итог);
+      console.error(`[jarvis:lecture] конспект не дописан: курс «${место.course}», лекция ${место.number}; ${чего}`);
+      return (
+        tr(
+          `Лекция записана и разложена (${тема}${место.course}, лекция ${место.number}), но конспект не дописан: ${чего}. Запись и расшифровка целы — допишу сам при следующем запуске Джарвиса.`,
+          `The lecture is recorded and filed (${тема}${место.course}, lecture ${место.number}), but the notes are not finished: ${чего}. The recording and transcript are safe — I will finish them the next time Jarvis starts.`,
+        ) + потерян
+      );
+    }
     // Учёба по лекции — в фоне: заготовка — минуты модели, а конспект уже готов.
     try {
       приРазложенной?.(место.notesFile);
@@ -494,10 +622,11 @@ async function разложить(
       console.error(`[jarvis:lecture] заготовка учёбы не запустилась: ${error instanceof Error ? error.message : String(error)}`);
     }
     console.log(`[jarvis:lecture] конспект готов: курс «${место.course}», лекция ${место.number}, ${итог.sections} разделов, ${итог.words} слов`);
-    const тема = итог.topic ? tr(`«${итог.topic}» — `, `"${итог.topic}" — `) : '';
-    return tr(
-      `Конспект готов: ${тема}${место.course}, лекция ${место.number}, разделов — ${итог.sections}.`,
-      `Notes are ready: ${тема}${место.course}, lecture ${место.number}, ${итог.sections} sections.`,
+    return (
+      tr(
+        `Конспект готов: ${тема}${место.course}, лекция ${место.number}, разделов — ${итог.sections}.`,
+        `Notes are ready: ${тема}${место.course}, lecture ${место.number}, ${итог.sections} sections.`,
+      ) + потерян
     );
   } catch (error) {
     последняя = null;
@@ -534,7 +663,7 @@ export function finishLecture(): Promise<string> | null {
       return await разложить({ ...была, when: была.session.startedAt }, итог);
     } finally {
       clearInterval(пульс);
-      (await была.сервер)?.stop();
+      await была.уши.stop();
       дописывается = null;
       дописываемая = null;
       оповестить();
@@ -565,39 +694,111 @@ export async function recoverAbandonedLectures(options: LectureStartOptions, с�
       await new Promise((r) => setTimeout(r, 120_000).unref?.());
     }
     const { folder: root } = lectureFolder(options.outputDir, options.notesLanguage);
+    const чем = {
+      root,
+      languages: { lecture: options.lectureLanguage, notes: options.notesLanguage },
+      notesStyle: options.notesStyle,
+      summarize: createSummarizer({ log: (строка: string) => console.log(`[jarvis:lecture] ${строка}`) }),
+      summarizeFinal: createFinalSummarizer({ log: (строка: string) => console.log(`[jarvis:lecture] ${строка}`) }),
+      hearing: (язык: string) => слухДляДописывания(options, язык),
+      log: (строка: string) => console.log(`[jarvis:lecture] ${строка}`),
+    };
+    const учёба = (notesFile: string): void => {
+      try {
+        приРазложенной?.(notesFile);
+      } catch (error) {
+        console.error(`[jarvis:lecture] заготовка учёбы не запустилась: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    };
     const брошенные = findAbandonedLectures(root, new Set(идёт ? [идёт.session.notesFile] : []));
-    if (!брошенные.length) return;
-    console.log(`[jarvis:lecture] брошенных лекций: ${брошенные.length} — дописываю`);
+    if (брошенные.length) console.log(`[jarvis:lecture] брошенных лекций: ${брошенные.length} — дописываю`);
+    const толькоЧто = new Set<string>();
     for (const заметка of брошенные) {
       try {
-        const место = await recoverLecture(заметка, {
-          root,
-          languages: { lecture: options.lectureLanguage, notes: options.notesLanguage },
-          notesStyle: options.notesStyle,
-          summarize: createSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
-          summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
-          log: (строка) => console.log(`[jarvis:lecture] ${строка}`),
-        });
+        const место = await recoverLecture(заметка, чем);
+        толькоЧто.add(path.resolve(место.notesFile));
         последняя = { notesFile: место.notesFile, root, notes: options.notesLanguage };
-        try {
-          приРазложенной?.(место.notesFile);
-        } catch (error) {
-          console.error(`[jarvis:lecture] заготовка учёбы не запустилась: ${error instanceof Error ? error.message : String(error)}`);
+        console.log(`[jarvis:lecture] брошенная лекция ${место.complete ? 'дописана' : 'разложена, но не дописана'}: курс «${место.course}», лекция ${место.number}, разделов ${место.sections}`);
+        if (место.complete) {
+          учёба(место.notesFile);
+          сообщить(
+            tr(
+              `Дописал лекцию, которую прервали: ${место.course}, лекция ${место.number}.`,
+              `Finished a lecture that was interrupted: ${место.course}, lecture ${место.number}.`,
+            ),
+          );
+        } else {
+          сообщить(
+            tr(
+              `Лекцию, которую прервали, разложил (${место.course}, лекция ${место.number}), но конспект дописан не весь${место.summaryError ? `: ${место.summaryError.slice(0, 140)}` : ''}. Попробую ещё раз при следующем запуске.`,
+              `Filed the interrupted lecture (${место.course}, lecture ${место.number}), but its notes are not finished${место.summaryError ? `: ${место.summaryError.slice(0, 140)}` : ''}. I will try again the next time Jarvis starts.`,
+            ),
+          );
         }
-        console.log(`[jarvis:lecture] брошенная лекция дописана: курс «${место.course}», лекция ${место.number}, разделов ${место.sections}`);
-        сообщить(
-          tr(
-            `Дописал лекцию, которую прервали: ${место.course}, лекция ${место.number}.`,
-            `Finished a lecture that was interrupted: ${место.course}, lecture ${место.number}.`,
-          ),
-        );
       } catch (error) {
         console.error(`[jarvis:lecture] брошенная лекция не дописалась (${path.basename(заметка)}): ${error instanceof Error ? error.message : String(error)}`);
       }
     }
+
+    // Разложенные, но недописанные: лимит подписки кончился посреди лекции,
+    // распознавание упало. Лекция, которая пишется прямо сейчас, сюда не
+    // попадает — у неё ещё нет свойств; только что разложенная выше — тоже.
+    const недописанные = findIncompleteLectures(root).filter((ф) => !толькоЧто.has(path.resolve(ф)));
+    if (недописанные.length) console.log(`[jarvis:lecture] недописанных лекций: ${недописанные.length} — дописываю`);
+    for (const заметка of недописанные) {
+      try {
+        const место = await completeLecture(заметка, чем);
+        if (последняя && path.resolve(последняя.notesFile) === path.resolve(заметка)) последняя = { ...последняя, notesFile: место.notesFile };
+        console.log(`[jarvis:lecture] недописанная лекция (${path.basename(место.notesFile)}): ${место.complete ? 'дописана' : 'всё ещё не дописана'}`);
+        if (!место.complete) continue;
+        учёба(место.notesFile);
+        сообщить(
+          tr(
+            `Дописал конспект, который не собрался в прошлый раз: ${место.course}, ${path.basename(место.notesFile, '.md')}.`,
+            `Finished the notes that failed last time: ${место.course}, ${path.basename(место.notesFile, '.md')}.`,
+          ),
+        );
+      } catch (error) {
+        console.error(`[jarvis:lecture] недописанная лекция не дописалась (${path.basename(заметка)}): ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
   } finally {
+    await погаситьСлухДописывания();
     восстанавливаю = false;
   }
+}
+
+/**
+ * Слух для дописывания прерванных лекций. Идёт, поднимается или дописывается
+ * живая лекция — слуха нет: порт сервера и видеопамять нужны ей, а прерванная
+ * подождёт следующего запуска. Началась лекция, пока шло дописывание, — слух
+ * гасится, остаток остаётся пометкой в расшифровке.
+ */
+async function слухДляДописывания(options: LectureStartOptions, язык: string): Promise<Hearing | null> {
+  if (lectureState() !== 'off') return null;
+  if (!gpuДоступен(options) && !options.mainEndpoint()) return null;
+  const слух = await поднятьСлух(options, язык);
+  if (lectureState() !== 'off') {
+    await слух.stop();
+    return null;
+  }
+  слухДописывания = слух;
+  return {
+    transcribe: async (samples, rate) => {
+      if (слухДописывания !== слух) throw new Error('дописывание уступило живой лекции');
+      if (isSilentChunk(chunkLevel(samples, rate))) return '';
+      return (await слух.распознать(samples, rate)).text;
+    },
+    close: async () => {
+      if (слухДописывания === слух) слухДописывания = null;
+      await слух.stop();
+    },
+  };
+}
+
+/** Есть ли чем распознавать самим: сервер whisper в папке Джарвиса. */
+function gpuДоступен(options: LectureStartOptions): boolean {
+  return existsSync(gpuWhisperDir(options.home));
 }
 
 /**
@@ -610,7 +811,8 @@ export function abandonLecture(): void {
   идёт = null;
   была?.recorder.flush();
   была?.session.abandon();
-  void была?.сервер.then((сервер) => сервер?.stop());
+  void была?.уши.stop();
+  void погаситьСлухДописывания();
   if (была) оповестить();
 }
 
@@ -668,6 +870,7 @@ export async function lectureFromFile(file: string, options: LectureFileOptions)
     const языки = языкиКурса(root, курсСразу, options);
     console.log(`[jarvis:lecture] файл: курс ${курсСразу ? `«${курсСразу}»` : 'решится в конце'}; язык лекции: ${языки.lecture}, конспекта: ${языки.notes}`);
 
+    await погаситьСлухДописывания();
     слух = await поднятьСлух(options, языки.lecture);
     const распознать = слух.распознать;
     let раскрыто = 0;
@@ -740,7 +943,21 @@ export async function lectureFromFile(file: string, options: LectureFileOptions)
       файлом.строка = tr('Раскладываю по курсу…', 'Filing into the course…');
       оповестить();
     }
-    if (своя) {
+    // Прежняя лекция уходит в Корзину, только когда новая распозналась вся:
+    // раньше она уходила в любом случае — и после сбоя распознавания на месте
+    // хорошего конспекта оставался пустой.
+    const цела = !сломалось && итог.words > 0 && итог.untranscribedSec === 0;
+    if (итог.words === 0) {
+      session.abandon();
+      for (const пустой of [итог.notesFile, итог.transcriptFile, итог.audioFile]) {
+        if (existsSync(пустой)) await options.trash(пустой).catch(() => undefined);
+      }
+      const почему = сломалось ?? (итог.untranscribedSec > 0 ? tr('распознавание не ответило', 'recognition did not respond') : tr('в записи не нашлось речи', 'no speech found in the recording'));
+      return своя
+        ? tr(`Не распознал ни слова (${почему}) — прежняя лекция осталась как была.`, `Could not transcribe a single word (${почему}) — the previous lecture is left as it was.`)
+        : tr(`Не распознал ни слова: ${почему}. Файл не тронут.`, `Could not transcribe a single word: ${почему}. The file is untouched.`);
+    }
+    if (своя && цела) {
       // Расшифровка — на языке прежнего конспекта, а он мог быть и другим.
       const расшифровки = (['ru', 'en'] as const).map((я) => `${база} — ${NOTES_WORDS[я].transcriptFile}.md`);
       for (const старый of [своя, ...расшифровки, file]) {
@@ -750,13 +967,16 @@ export async function lectureFromFile(file: string, options: LectureFileOptions)
     const ответ = await разложить(
       { root, notes: языки.notes, курс, when: когда },
       итог,
-      своя ? { number: метаСвоей?.number } : { replaceSameDay: true, trash: options.trash },
+      !цела ? {} : своя ? { number: метаСвоей?.number } : { replaceSameDay: true, trash: options.trash },
     );
+    const неЗаменил = цела
+      ? ''
+      : ` ${tr('Прежнюю лекцию этого дня не трогал: новая распознана не вся.', 'I left the earlier lecture of that day alone: the new one is not fully transcribed.')}`;
     return сломалось
-      ? `${ответ} ${tr(`Файл раскрылся не весь (${Math.round(раскрыто / 60)} мин): ${сломалось}`, `Only part of the file opened (${Math.round(раскрыто / 60)} min): ${сломалось}`)}`
-      : ответ;
+      ? `${ответ}${неЗаменил} ${tr(`Файл раскрылся не весь (${Math.round(раскрыто / 60)} мин): ${сломалось}`, `Only part of the file opened (${Math.round(раскрыто / 60)} min): ${сломалось}`)}`
+      : `${ответ}${неЗаменил}`;
   } finally {
-    (await слух?.сервер)?.stop();
+    await слух?.stop();
     файлом = null;
     оповестить();
   }
