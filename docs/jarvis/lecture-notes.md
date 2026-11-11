@@ -350,7 +350,7 @@ opus, webm, flac, mp4, mov, mkv.
 настройки:
 
 ```powershell
-$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; & $f -LectureLanguage he
+$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; powershell -NoProfile -ExecutionPolicy Bypass -File $f -LectureLanguage he
 ```
 
 **Без установщика — кнопкой**: настройки → «Речь» → «Распознавание лекций»

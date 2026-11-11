@@ -74,7 +74,7 @@ for another language use its code (`en`, `ru`, …).
 Windows, in PowerShell:
 
 ```powershell
-$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; & $f -Edition notes -LectureLanguage he -Language en
+$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; powershell -NoProfile -ExecutionPolicy Bypass -File $f -Edition notes -LectureLanguage he -Language en
 ```
 
 macOS, in Terminal (with a ChatGPT subscription, add `--codex`):
@@ -94,13 +94,13 @@ Administrator rights are not needed. Copy the whole line, paste it (**Ctrl+V**
 or right-click) and press Enter.
 
 ```powershell
-$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; & $f
+$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; powershell -NoProfile -ExecutionPolicy Bypass -File $f
 ```
 
 English by default instead of Russian:
 
 ```powershell
-$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; & $f -Language en
+$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; powershell -NoProfile -ExecutionPolicy Bypass -File $f -Language en
 ```
 
 The installer puts Git and Node.js in place if they are missing, builds the

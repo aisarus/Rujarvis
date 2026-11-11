@@ -5,7 +5,7 @@
 .DESCRIPTION
     Одна строка в PowerShell, из любой папки:
 
-        $f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; & $f
+        $f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; powershell -NoProfile -ExecutionPolicy Bypass -File $f
 
     Именно файлом, а не строкой через `iex`: у этого файла есть BOM (без него
     Windows PowerShell 5.1 не разберёт кириллицу), а строка с BOM в начале

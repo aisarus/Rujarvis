@@ -3,13 +3,13 @@
 ## Windows — одной командой
 
 ```powershell
-$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; & $f
+$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; powershell -NoProfile -ExecutionPolicy Bypass -File $f
 ```
 
 С параметрами:
 
 ```powershell
-$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; & $f -Language en -Autostart
+$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; powershell -NoProfile -ExecutionPolicy Bypass -File $f -Language en -Autostart
 ```
 
 Скрипт сначала скачивается в файл, а не выполняется из строки. Причина
@@ -18,6 +18,11 @@ $f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/ais
 СТРОКОЙ, и BOM попадает в её начало — открывающий комментарий перестаёт
 распознаваться, и установка падает с «Непредвиденная лексема». Через файл BOM
 работает как задуман, и параметры пишутся обычным способом.
+
+Запуск идёт через `powershell -ExecutionPolicy Bypass`: на новой Windows сценарии
+запрещены по умолчанию, и прямой вызов `& $f` падает с «выполнение сценариев
+отключено». Разрешение действует только на этот запуск, настройки системы не
+меняются.
 
 | Параметр | Что делает |
 | --- | --- |

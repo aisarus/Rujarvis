@@ -71,7 +71,7 @@ Rujarvis записывает лекцию — в аудитории с микр
 Windows, в PowerShell:
 
 ```powershell
-$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; & $f -Edition notes -LectureLanguage he
+$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; powershell -NoProfile -ExecutionPolicy Bypass -File $f -Edition notes -LectureLanguage he
 ```
 
 macOS, в Терминале (с подпиской ChatGPT добавьте `--codex`):
@@ -93,13 +93,13 @@ PowerShell». Права администратора не нужны. Скоп�
 (**Ctrl+V** или правой кнопкой) и нажмите Enter.
 
 ```powershell
-$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; & $f
+$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; powershell -NoProfile -ExecutionPolicy Bypass -File $f
 ```
 
 Английский по умолчанию:
 
 ```powershell
-$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; & $f -Language en
+$f = "$env:TEMP\rujarvis-install.ps1"; irm https://raw.githubusercontent.com/aisarus/Rujarvis/main/install.ps1 -OutFile $f; powershell -NoProfile -ExecutionPolicy Bypass -File $f -Language en
 ```
 
 Скрипт сначала скачивается в файл, а не выполняется из строки. Причина
