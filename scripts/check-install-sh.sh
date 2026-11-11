@@ -51,7 +51,8 @@ check 'мажор из одного числа' "$([ "$(major_of '24')" = '24' ]
 # --- разбор ключей -----------------------------------------------------------
 
 check 'по умолчанию русский' "$([ "$LANGUAGE" = 'ru' ] && printf 'да')"
-check 'по умолчанию ветка main' "$([ "$BRANCH" = 'main' ] && printf 'да')"
+# Без ключей ставится последний выпуск: ни ветка, ни выпуск не названы.
+check 'по умолчанию — выпуск, ветка не задана' "$([ -z "$BRANCH" ] && [ -z "$VERSION" ] && printf 'да')"
 check 'по умолчанию без автозапуска' "$([ "$AUTOSTART" = '0' ] && printf 'да')"
 check 'по умолчанию запускает после установки' "$([ "$LAUNCH" = '1' ] && printf 'да')"
 
@@ -67,6 +68,48 @@ check 'чужой язык отклоняется' "$([ $? -ne 0 ] && printf 'д
 
 ( parse_args --выдумка ) >/dev/null 2>&1
 check 'неизвестный ключ отклоняется' "$([ $? -ne 0 ] && printf 'да')"
+
+( parse_args --version v1.2.3; [ "$VERSION" = 'v1.2.3' ] && [ -z "$BRANCH" ] ) >/dev/null 2>&1
+check 'выпуск называется ключом --version' "$([ $? -eq 0 ] && printf 'да')"
+
+( parse_args --version 1.2 ) >/dev/null 2>&1
+check 'выпуск не вида v1.2.3 отклоняется' "$([ $? -ne 0 ] && printf 'да')"
+
+# Шапка файла — комментарии: строка без # выполнялась бы как команда.
+check 'в шапке нет строк без #' "$(sed -n '2,/^set -euo/p' "$SCRIPT" | grep -v -E '^(#|set -euo|$)' | grep -q . || printf 'да')"
+
+# --- папка исходников: обрубок нашего клона убирается, чужое — нет -----------
+# Своя папка установки может указать туда, где у человека уже лежит свой `src`.
+
+src_probe="$(mktemp -d)"
+git_quiet() { git "$@" >/dev/null 2>&1; }
+
+( previous_source "$src_probe/none" >/dev/null; [ -z "$PREVIOUS_COMMIT" ] )
+check 'нет папки исходников — ставить заново' "$([ $? -eq 0 ] && printf 'да')"
+
+mkdir "$src_probe/empty"
+( previous_source "$src_probe/empty" >/dev/null; [ -z "$PREVIOUS_COMMIT" ] && [ ! -e "$src_probe/empty" ] )
+check 'пустая папка исходников убирается' "$([ $? -eq 0 ] && printf 'да')"
+
+git_quiet init -q "$src_probe/stub"; git_quiet -C "$src_probe/stub" remote add origin "$REPO_URL"
+( previous_source "$src_probe/stub" >/dev/null; [ -z "$PREVIOUS_COMMIT" ] && [ ! -e "$src_probe/stub" ] )
+check 'обрубок нашего клона (.git без коммитов) убирается' "$([ $? -eq 0 ] && printf 'да')"
+
+git_quiet init -q "$src_probe/alien"; git_quiet -C "$src_probe/alien" remote add origin 'https://example.com/someone/else.git'
+( previous_source "$src_probe/alien" ) >/dev/null 2>&1
+check 'чужой пустой репозиторий не удаляется, установка останавливается' "$([ $? -ne 0 ] && [ -d "$src_probe/alien/.git" ] && printf 'да')"
+
+mkdir "$src_probe/own"; printf 'не трогать\n' > "$src_probe/own/thesis.txt"
+( previous_source "$src_probe/own" ) >/dev/null 2>&1
+check 'папка с файлами человека не удаляется, установка останавливается' "$([ $? -ne 0 ] && [ -f "$src_probe/own/thesis.txt" ] && printf 'да')"
+
+git_quiet init -q "$src_probe/installed"
+git_quiet -C "$src_probe/installed" -c user.name=check -c user.email=check@example.com commit -q --allow-empty -m probe
+installed_head="$(git -C "$src_probe/installed" rev-parse HEAD)"
+check 'целая установка отдаёт свой коммит и остаётся на месте' \
+  "$( ( previous_source "$src_probe/installed" >/dev/null; [ "$PREVIOUS_COMMIT" = "$installed_head" ] && [ -d "$src_probe/installed/.git" ] ) && printf 'да')"
+
+rm -rf "$src_probe"
 
 check 'подсказка перечисляет ключи' \
   "$(usage 2>/dev/null | grep -q -- '--autostart' && usage 2>/dev/null | grep -q -- '--notes' && printf 'да')"

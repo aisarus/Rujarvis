@@ -798,6 +798,47 @@ function Get-GitOutput {
     }
 }
 
+<#
+    Что лежит в папке исходников: коммит прежней установки или $null — ставить
+    заново.
+
+    Оборванная установка: окно закрыли посреди `git clone`, и в папке остался
+    обрубок. Повторный запуск раньше падал на нём («destination path already
+    exists» или «fetch»), и человеку оставалось удалять папку руками. В `src`
+    лежат только исходники и сборка — данные, модели и настройки в соседних
+    папках, — так что обрубок можно убрать и начать заново.
+
+    Но только обрубок нашего клона: пустую папку или .git без единого коммита,
+    заведённый на наш репозиторий. Своя папка (-InstallRoot) может оказаться
+    местом, где у человека уже лежит свой `src`, — его не удаляем, а
+    останавливаемся и говорим об этом.
+#>
+function Resolve-PreviousSource {
+    param(
+        [Parameter(Mandatory)] [string] $SourceDir,
+        [Parameter(Mandatory)] [string] $RepoUrl
+    )
+    if (-not (Test-Path -LiteralPath $SourceDir)) { return $null }
+    $gitDir = Join-Path $SourceDir '.git'
+    $origin = $null
+    if (Test-Path -LiteralPath $gitDir) {
+        # `--git-dir`, а не `-C`: с пустым .git git пошёл бы искать репозиторий выше по
+        # папкам — и нашёл бы чужой (у человека, чья домашняя папка сама под git,
+        # так и вышло на проверке): обрубок сошёл бы за целую установку.
+        $commit = Get-GitOutput -Arguments @('--git-dir', $gitDir, 'rev-parse', '--verify', '--quiet', 'HEAD')
+        if ($commit) { return $commit }
+        $origin = Get-GitOutput -Arguments @('--git-dir', $gitDir, 'config', '--get', 'remote.origin.url')
+    }
+    $isDir = Test-Path -LiteralPath $SourceDir -PathType Container
+    $empty = $isDir -and -not (Get-ChildItem -LiteralPath $SourceDir -Force -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if ($isDir -and ($empty -or ($origin -eq $RepoUrl))) {
+        Write-Note "В $SourceDir — оборванная прошлая установка. Убираю и скачиваю заново."
+        Remove-Item -LiteralPath $SourceDir -Recurse -Force
+        return $null
+    }
+    throw "В $SourceDir уже лежат файлы, и это не установка Джарвиса. Укажите другую папку через -InstallRoot или уберите эту сами."
+}
+
 Write-Step 'Получаю исходники'
 
 # Что ставим: названный выпуск, названная ветка или — по умолчанию — последний выпуск.
@@ -812,25 +853,7 @@ elseif (-not $Branch) {
 }
 $What = $(if ($Ref) { "выпуск $Ref" } else { "ветка $Branch" })
 
-# Оборванная установка: окно закрыли посреди `git clone`, и в папке остался
-# обрубок — без .git или с .git, в котором нет ни одного коммита. Повторный
-# запуск раньше падал на нём («destination path already exists» или «fetch»),
-# и человеку оставалось удалять папку руками. В `src` лежат только исходники
-# и сборка — данные, модели и настройки в соседних папках, — так что обрубок
-# можно убрать и начать заново.
-$PreviousCommit = $null
-if (Test-Path $SourceDir) {
-    if (Test-Path (Join-Path $SourceDir '.git')) {
-        # `--git-dir`, а не `-C`: с пустым .git git пошёл бы искать репозиторий выше по
-        # папкам — и нашёл бы чужой (у человека, чья домашняя папка сама под git,
-        # так и вышло на проверке): обрубок сошёл бы за целую установку.
-        $PreviousCommit = Get-GitOutput -Arguments @('--git-dir', (Join-Path $SourceDir '.git'), 'rev-parse', '--verify', '--quiet', 'HEAD')
-    }
-    if (-not $PreviousCommit) {
-        Write-Note "В $SourceDir — оборванная прошлая установка. Убираю и скачиваю заново."
-        Remove-Item -LiteralPath $SourceDir -Recurse -Force
-    }
-}
+$PreviousCommit = Resolve-PreviousSource -SourceDir $SourceDir -RepoUrl $RepoUrl
 $PreviousBranch = $null
 if ($PreviousCommit) {
     $PreviousBranch = Get-GitOutput -Arguments @('-C', $SourceDir, 'symbolic-ref', '--quiet', '--short', 'HEAD')

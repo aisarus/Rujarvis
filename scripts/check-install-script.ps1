@@ -474,6 +474,59 @@ else {
     $skipped += 5
 }
 
+# --- Папка исходников: обрубок нашего клона убирается, чужое — нет ----------
+# Своя -InstallRoot может указать туда, где у человека уже есть `src` со
+# своими файлами. Установщик удалял любую папку без коммита в HEAD.
+
+function Invoke-GitQuiet {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & git @args 2>&1 | Out-Null } finally { $ErrorActionPreference = $prev }
+}
+
+$srcProbe = Join-Path ([System.IO.Path]::GetTempPath()) ("rujarvis-src-" + [guid]::NewGuid())
+New-Item -ItemType Directory -Path $srcProbe -Force | Out-Null
+$ourUrl = 'https://github.com/aisarus/Rujarvis.git'
+try {
+    $none = Join-Path $srcProbe 'none'
+    Assert-That 'нет папки исходников — ставить заново' ($null -eq (Resolve-PreviousSource -SourceDir $none -RepoUrl $ourUrl))
+
+    $empty = Join-Path $srcProbe 'empty'
+    New-Item -ItemType Directory -Path $empty | Out-Null
+    $r = Resolve-PreviousSource -SourceDir $empty -RepoUrl $ourUrl
+    Assert-That 'пустая папка исходников убирается' (($null -eq $r) -and -not (Test-Path $empty))
+
+    $stub = Join-Path $srcProbe 'stub'
+    Invoke-GitQuiet init -q $stub
+    Invoke-GitQuiet -C $stub remote add origin $ourUrl
+    $r = Resolve-PreviousSource -SourceDir $stub -RepoUrl $ourUrl
+    Assert-That 'обрубок нашего клона (.git без коммитов) убирается' (($null -eq $r) -and -not (Test-Path $stub))
+
+    $alien = Join-Path $srcProbe 'alien'
+    Invoke-GitQuiet init -q $alien
+    Invoke-GitQuiet -C $alien remote add origin 'https://example.com/someone/else.git'
+    $threw = $false
+    try { Resolve-PreviousSource -SourceDir $alien -RepoUrl $ourUrl | Out-Null } catch { $threw = $true }
+    Assert-That 'чужой пустой репозиторий не удаляется, установка останавливается' ($threw -and (Test-Path (Join-Path $alien '.git')))
+
+    $own = Join-Path $srcProbe 'own'
+    New-Item -ItemType Directory -Path $own | Out-Null
+    Set-Content -LiteralPath (Join-Path $own 'thesis.txt') -Value 'не трогать'
+    $threw = $false
+    try { Resolve-PreviousSource -SourceDir $own -RepoUrl $ourUrl | Out-Null } catch { $threw = $true }
+    Assert-That 'папка с файлами человека не удаляется, установка останавливается' ($threw -and (Test-Path (Join-Path $own 'thesis.txt')))
+
+    $installed = Join-Path $srcProbe 'installed'
+    Invoke-GitQuiet init -q $installed
+    Invoke-GitQuiet -C $installed -c user.name=check -c user.email=check@example.com commit -q --allow-empty -m 'probe'
+    $head = (& git -C $installed rev-parse HEAD)
+    $r = Resolve-PreviousSource -SourceDir $installed -RepoUrl $ourUrl
+    Assert-That 'целая установка отдаёт свой коммит и остаётся на месте' (($r -eq $head) -and (Test-Path (Join-Path $installed '.git')))
+}
+finally {
+    Remove-Item -LiteralPath $srcProbe -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 if ($failures -gt 0) {
     Write-Host "Провалено проверок: $failures" -ForegroundColor Red
     exit 1

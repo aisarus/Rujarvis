@@ -12,7 +12,7 @@
 # Ключи:
 #   --language ru|en        язык голоса и интерфейса (по умолчанию ru)
 #   --version <выпуск>      какой выпуск ставить: тег вида v0.3.0 (по умолчанию — последний)
-  --branch <ветка>        ветка для разработки и проб: ставится её вершина, а не выпуск
+#   --branch <ветка>        ветка для разработки и проб: ставится её вершина, а не выпуск
 #   --whisper-model <имя>   модель распознавания
 #   --notes                 только конспекты: без голосовых команд и рук на компьютере
 #   --lecture-language <код> язык лекций (he, ru, en…) — для модели лекций
@@ -173,6 +173,36 @@ stop_running_jarvis() {
   return 0
 }
 
+# Что лежит в папке исходников: коммит прежней установки — в PREVIOUS_COMMIT,
+# пусто — ставить заново.
+#
+# Оборванная установка: окно закрыли посреди `git clone`, и в папке остался
+# обрубок. Повторный запуск падал на нём, и человеку оставалось удалять папку
+# руками. В `src` лежат только исходники и сборка — данные, модели и настройки
+# в соседних папках, — так что обрубок можно убрать и начать заново.
+#
+# Но только обрубок нашего клона: пустую папку или .git без единого коммита,
+# заведённый на наш репозиторий. Своя папка установки может оказаться местом,
+# где у человека уже лежит свой `src`, — его не удаляем, а останавливаемся.
+previous_source() {
+  local dir="$1" origin=""
+  PREVIOUS_COMMIT=""
+  if [ ! -e "$dir" ]; then return 0; fi
+  if [ -d "$dir/.git" ]; then
+    # `--git-dir`, а не `-C`: с пустым .git git пошёл бы искать репозиторий выше
+    # по папкам и нашёл бы чужой — обрубок сошёл бы за целую установку.
+    PREVIOUS_COMMIT="$(git --git-dir "$dir/.git" rev-parse --verify --quiet HEAD 2>/dev/null || true)"
+    if [ -n "$PREVIOUS_COMMIT" ]; then return 0; fi
+    origin="$(git --git-dir "$dir/.git" config --get remote.origin.url 2>/dev/null || true)"
+  fi
+  if [ -d "$dir" ] && { [ -z "$(ls -A "$dir" 2>/dev/null)" ] || [ "$origin" = "$REPO_URL" ]; }; then
+    note "В $dir — оборванная прошлая установка. Убираю и скачиваю заново."
+    rm -rf "$dir"
+    return 0
+  fi
+  die "В $dir уже лежат файлы, и это не установка Джарвиса. Укажите другую папку установки или уберите эту сами."
+}
+
 # Отсюда начинается сама установка. Проверке дальше не нужно: она берёт
 # помощников выше и зовёт их сама. Без этой двери тест запустил бы установку.
 if [ "${RUJARVIS_INSTALL_TEST:-}" = "1" ]; then
@@ -311,25 +341,10 @@ elif [ -z "$BRANCH" ]; then
 fi
 if [ -n "$REF" ]; then WHAT="выпуск $REF"; else WHAT="ветка $BRANCH"; fi
 
-# Оборванная установка: окно закрыли посреди `git clone`, и в папке остался
-# обрубок — без .git или с .git, в котором нет ни одного коммита. Повторный
-# запуск падал на нём, и человеку оставалось удалять папку руками. В `src`
-# лежат только исходники и сборка — данные, модели и настройки в соседних
-# папках, — так что обрубок можно убрать и начать заново.
-PREVIOUS_COMMIT=""
 PREVIOUS_BRANCH=""
-if [ -e "$SOURCE_DIR" ]; then
-  if [ -d "$SOURCE_DIR/.git" ]; then
-    # `--git-dir`, а не `-C`: с пустым .git git пошёл бы искать репозиторий выше
-    # по папкам и нашёл бы чужой — обрубок сошёл бы за целую установку.
-    PREVIOUS_COMMIT="$(git --git-dir "$SOURCE_DIR/.git" rev-parse --verify --quiet HEAD 2>/dev/null || true)"
-  fi
-  if [ -z "$PREVIOUS_COMMIT" ]; then
-    note "В $SOURCE_DIR — оборванная прошлая установка. Убираю и скачиваю заново."
-    rm -rf "$SOURCE_DIR"
-  else
-    PREVIOUS_BRANCH="$(git -C "$SOURCE_DIR" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
-  fi
+previous_source "$SOURCE_DIR"
+if [ -n "$PREVIOUS_COMMIT" ]; then
+  PREVIOUS_BRANCH="$(git -C "$SOURCE_DIR" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
 fi
 
 if [ -n "$PREVIOUS_COMMIT" ]; then
