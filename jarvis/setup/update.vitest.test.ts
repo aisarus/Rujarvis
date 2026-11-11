@@ -160,6 +160,20 @@ describe('обновление — на выпуск, а не на вершин�
     expect(await checkForUpdate(runGit(src))).toMatchObject({ state: 'available', tag: 'v0.4.0', changes: ['Вошло в выпуск'] });
   });
 
+  it('выпуск, выросший из установки, — обновление, даже если коммиты одной секунды', async () => {
+    // На быстрой машине CI выпуск и установка ложились в одну секунду, и
+    // сверка по времени называла выпуск «не новее»: тест выше падал на Linux
+    // и macOS (11.11.2026). Здесь та же секунда — нарочно.
+    const тот = { ...process.env, GIT_COMMITTER_DATE: '2030-01-01T00:00:00Z', GIT_AUTHOR_DATE: '2030-01-01T00:00:00Z' };
+    const гитхаб = origin();
+    execFileSync('git', ['-C', гитхаб, 'commit', '-q', '--allow-empty', '-m', 'Выпуск 0.3'], { env: тот, windowsHide: true });
+    git(гитхаб, 'tag', 'v0.3.0');
+    const src = клонВыпуска(гитхаб, 'v0.3.0');
+    execFileSync('git', ['-C', гитхаб, 'commit', '-q', '--allow-empty', '-m', 'Выпуск 0.4'], { env: тот, windowsHide: true });
+    git(гитхаб, 'tag', 'v0.4.0');
+    expect(await checkForUpdate(runGit(src))).toMatchObject({ state: 'available', tag: 'v0.4.0', changes: ['Выпуск 0.4'] });
+  });
+
   it('своя ветка (-Branch) следует за веткой, выпуски ей не указ', async () => {
     const гитхаб = origin();
     git(гитхаб, 'tag', 'v0.3.0');

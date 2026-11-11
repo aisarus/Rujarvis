@@ -178,10 +178,15 @@ async function сравнитьСВыпуском(git: Git, tag: string): Promis
     ]);
     if (мой === свежий) return { state: 'current', branch: RELEASE_BRANCH, tag };
     // Установка новее выпуска (стояла на вершине `main` до первых выпусков) —
-    // назад не обновляемся. В неглубоком клоне родство коммитов бывает не
-    // видно, поэтому сверяется и время: выпуск не новее своего — значит, не обновление.
-    const позади = await git(['merge-base', '--is-ancestor', `refs/tags/${tag}`, 'HEAD']).then(() => true, () => false);
-    if (позади || (await время(`refs/tags/${tag}^{commit}`)) <= (await время('HEAD'))) return { state: 'current', branch: RELEASE_BRANCH };
+    // назад не обновляемся. Родство решает, когда оно видно: выпуск позади —
+    // не обновление, установка позади выпуска — обновление, как бы ни легло
+    // время (коммиты одной секунды неотличимы, и на быстрой машине CI выпуск
+    // «не новее» установки, хотя вырос из неё). В неглубоком клоне родство
+    // бывает не видно ни в какую сторону — тогда сверяется время.
+    const предок = (а: string, б: string): Promise<boolean> => git(['merge-base', '--is-ancestor', а, б]).then(() => true, () => false);
+    if (await предок(`refs/tags/${tag}`, 'HEAD')) return { state: 'current', branch: RELEASE_BRANCH };
+    const вырос = await предок('HEAD', `refs/tags/${tag}`);
+    if (!вырос && (await время(`refs/tags/${tag}^{commit}`)) <= (await время('HEAD'))) return { state: 'current', branch: RELEASE_BRANCH };
     const строки = (await git(['log', '--no-merges', `-n${ПОКАЗАТЬ + 1}`, '--format=%s', `HEAD..refs/tags/${tag}`]))
       .split(/\r?\n/u)
       .map((s) => s.trim())
