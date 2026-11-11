@@ -522,7 +522,7 @@ describe('Джарвиса закрыли посреди лекции', () => {
     });
 
     // 14 кусков по 40 с = 8:40: раздел на пятой минуте и остаток.
-    expect(итог).toEqual({ sections: 2, summary: true });
+    expect(итог).toMatchObject({ sections: 2, summary: true, complete: true, failedSections: 0 });
     const текст = await readFile(заметка, 'utf8');
     expect(текст.indexOf('## Кратко')).toBeLessThan(текст.indexOf('## Конспект'));
     expect(текст.indexOf('## Конспект')).toBeLessThan(текст.indexOf('### Тема 1'));

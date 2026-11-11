@@ -8,6 +8,8 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const папка = vi.hoisted(() => ({ путь: '' }));
+/** Чем модель отказывает; null — отвечает. */
+const поломка = vi.hoisted(() => ({ модель: null as string | null }));
 
 vi.mock('electron', () => ({ shell: { openExternal: vi.fn(async () => undefined) } }));
 // Настоящий obsidian.json владельца указывает на его заметки: проверка туда не пишет.
@@ -18,18 +20,23 @@ vi.mock('../jarvis/lecture/vault', async (importOriginal) => ({
 
 // Модель конспекта понарошку: курс, тема и итог — без настоящего Claude Code.
 vi.mock('../jarvis/lecture/summarize', () => {
-  const модель = () => async (prompt: string) =>
-    prompt.includes('[!abstract]') ? 'Предмет: История\nТема: Аграрная революция\n\n## Кратко\nО земледелии.' : '### Земледелие\n- пункт';
+  const модель = () => async (prompt: string) => {
+    if (поломка.модель) throw new Error(поломка.модель);
+    return prompt.includes('[!abstract]') ? 'Предмет: История\nТема: Аграрная революция\n\n## Кратко\nО земледелии.' : '### Земледелие\n- пункт';
+  };
   return { createClaudeSummarizer: модель, createFinalSummarizer: модель, createSummarizer: модель };
 });
 
-const { feedLecture, finishLecture, latestNotesFile, lectureActive, lectureFromFile, lectureInfo, lectureState, onLectureState, recoverAbandonedLectures, startLecture } = await import('./lectureMode');
+const { feedLecture, finishLecture, latestNotesFile, lectureActive, lectureFromFile, lectureInfo, lectureState, onLectureFiled, onLectureState, recoverAbandonedLectures, startLecture } =
+  await import('./lectureMode');
 const { LectureSession } = await import('../jarvis/lecture/session');
 const { parseFrontmatter, renderFrontmatter } = await import('../jarvis/lecture/courses');
 const { encodeWav16 } = await import('../jarvis/voice/wav');
 const { readWavParts } = await import('../jarvis/lecture/mediaSlices');
 
 afterEach(async () => {
+  поломка.модель = null;
+  onLectureFiled(null);
   await finishLecture();
   if (папка.путь) await rm(папка.путь, { recursive: true, force: true });
 });
@@ -233,6 +240,91 @@ async function слухСЯзыком(): Promise<{ адрес: string; язык�
   const { port } = сервер.address() as AddressInfo;
   return { адрес: `http://127.0.0.1:${port}`, языки, закрыть: () => new Promise((r) => сервер.close(() => r())) };
 }
+
+describe('лекция не пропадает (ревью 10.11.2026)', () => {
+  it('кончился лимит подписки: «готов» не говорится, учёба не заготавливается; следующий запуск дописывает', async () => {
+    папка.путь = await mkdtemp(path.join(tmpdir(), 'jarvis-lecture-limit-'));
+    const слух = await поддельныйСлух();
+    const options = { home: папка.путь, outputDir: папка.путь, lectureLanguage: 'he', notesLanguage: 'ru' as const, mainEndpoint: () => слух.адрес };
+    const учёба: string[] = [];
+    onLectureFiled((файл) => учёба.push(файл));
+    try {
+      await mkdir(path.join(папка.путь, 'История'), { recursive: true });
+      await startLecture('История', options);
+      feedLecture(речь(6), 16_000);
+      поломка.модель = "You've hit your limit · resets 9pm";
+      const ответ = await finishLecture();
+      expect(ответ).toMatch(/записана и разложена/u);
+      expect(ответ).toMatch(/конспект не дописан: не собралось разделов — 1, нет итога \(You've hit your limit/u);
+      expect(ответ).not.toMatch(/Конспект готов/u);
+      expect(учёба).toEqual([]);
+      const курс = path.join(папка.путь, 'История');
+      const недописанная = (await readdir(курс)).find((f) => f.endsWith('.md') && !f.startsWith('История') && !f.includes(' — расшифровка'));
+      expect(await readFile(path.join(курс, недописанная as string), 'utf8')).toContain('Раздел не собрался');
+
+      // Лимит не вернулся — запуск ничего не портит и не хвалится.
+      const сказано: string[] = [];
+      await recoverAbandonedLectures(options, (текст) => сказано.push(текст));
+      expect(сказано).toEqual([]);
+      expect(учёба).toEqual([]);
+
+      поломка.модель = null;
+      await recoverAbandonedLectures(options, (текст) => сказано.push(текст));
+      expect(сказано).toHaveLength(1);
+      expect(сказано[0]).toMatch(/Дописал конспект, который не собрался в прошлый раз: История/u);
+      expect(учёба).toHaveLength(1);
+      const текст = await readFile(учёба[0] as string, 'utf8');
+      expect(текст).not.toContain('Раздел не собрался');
+      expect(текст).toContain('### Земледелие (00:00–00:06)');
+      expect(текст).toContain('## Кратко');
+      expect(parseFrontmatter(текст)).toMatchObject({ course: 'История', number: 1, topic: 'Аграрная революция' });
+      // Третий запуск — дописывать нечего.
+      await recoverAbandonedLectures(options, (ещё) => сказано.push(ещё));
+      expect(сказано).toHaveLength(1);
+    } finally {
+      await слух.закрыть();
+    }
+  });
+
+  it('«Из файла…» по своей лекции, а распознавание не отвечает — прежняя лекция не уходит в Корзину', async () => {
+    папка.путь = await mkdtemp(path.join(tmpdir(), 'jarvis-lecture-keep-'));
+    const слух = await поддельныйСлух();
+    let адрес: string = слух.адрес;
+    const вКорзине: string[] = [];
+    const корзина = path.join(папка.путь, '.корзина');
+    await mkdir(корзина);
+    const options = {
+      home: папка.путь,
+      outputDir: папка.путь,
+      lectureLanguage: 'he',
+      notesLanguage: 'ru' as const,
+      mainEndpoint: () => адрес,
+      decode: (file: string, onPart: (samples: Float32Array, rate: number) => void) => readWavParts(file, onPart, 10).then(() => undefined),
+      trash: async (file: string) => {
+        вКорзине.push(path.basename(file));
+        await rename(file, path.join(корзина, path.basename(file)));
+      },
+    };
+    const запись = path.join(папка.путь, 'Запись.wav');
+    await writeFile(запись, encodeWav16(речь(40), 16_000));
+    expect(await lectureFromFile(запись, options)).toMatch(/Конспект готов/u);
+    await слух.закрыть();
+    const курс = path.join(папка.путь, 'История');
+    const было = (await readdir(курс)).sort();
+    const заметка = path.join(курс, было.find((f) => f.endsWith(' — Аграрная революция.md')) as string);
+    const текстБыл = await readFile(заметка, 'utf8');
+
+    // Сервер распознавания умер: порт закрыт, ни один кусок не распознаётся.
+    адрес = 'http://127.0.0.1:9';
+    const ответ = await lectureFromFile(заметка.replace(/\.md$/u, '.wav'), options);
+    expect(ответ).toMatch(/прежняя лекция осталась как была/u);
+    // В Корзине — только пустые заготовки новой попытки, а лекция на месте и не тронута.
+    expect(вКорзине.some((имя) => было.includes(имя))).toBe(false);
+    expect((await readdir(курс)).sort()).toEqual(было);
+    expect(await readFile(заметка, 'utf8')).toBe(текстБыл);
+    expect((await readdir(папка.путь)).filter((f) => f.endsWith('.md'))).toEqual([]);
+  });
+});
 
 describe('язык курса', () => {
   /** Курс со своими языками на странице — как его сохраняет окно «Учёба». */

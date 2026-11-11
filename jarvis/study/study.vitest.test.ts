@@ -593,3 +593,38 @@ describe('служба учёбы: сегодня, квиз, карточки, �
     expect(JSON.parse(await readFile(path.join(store.root, 'Микро', 'progress.json'), 'utf8')).version).toBe(1);
   });
 });
+
+describe('прогресс курса на диске', () => {
+  it('нечитаемый progress.json не затирается пустым: откладывается в сторону, новый начинается с нуля', async () => {
+    const data = await временная();
+    const store = new StudyStore(path.join(data, 'study'));
+    store.updateProgress('Микро', (p) => {
+      p.cards.к1 = { due: 1, interval: 3, streak: 2 } as never;
+    });
+    const файл = path.join(store.courseDir('Микро'), 'progress.json');
+    expect(Object.keys(store.progress('Микро').cards)).toEqual(['к1']);
+
+    // Оборванная запись: половина JSON.
+    const обрывок = (await readFile(файл, 'utf8')).slice(0, 20);
+    await writeFile(файл, обрывок, 'utf8');
+    expect(store.progress('Микро').cards).toEqual({});
+    // Первое же сохранение раньше стирало семестр ответов — теперь обрывок лежит рядом.
+    store.updateProgress('Микро', (p) => {
+      p.cards.к2 = { due: 2, interval: 1, streak: 0 } as never;
+    });
+    const имена = await readdir(store.courseDir('Микро'));
+    const отложенный = имена.find((имя) => имя.startsWith('progress.json.broken-'));
+    expect(отложенный).toBeDefined();
+    expect(await readFile(path.join(store.courseDir('Микро'), отложенный ?? ''), 'utf8')).toBe(обрывок);
+    expect(Object.keys(store.progress('Микро').cards)).toEqual(['к2']);
+    // Отложенный файл — не банк лекции.
+    expect(store.banks('Микро')).toEqual([]);
+  });
+
+  it('прогресса ещё нет — пустой, и ничего не откладывается', async () => {
+    const data = await временная();
+    const store = new StudyStore(path.join(data, 'study'));
+    expect(store.progress('Новый курс').cards).toEqual({});
+    expect(existsSync(store.courseDir('Новый курс'))).toBe(false);
+  });
+});

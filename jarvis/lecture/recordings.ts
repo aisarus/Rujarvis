@@ -17,10 +17,12 @@
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 
+import { writeFileAtomic } from './atomicWrite';
 import { COURSE_WORDS, parseFrontmatter } from './courses';
+import { parseGaps } from './retranscribe';
 import { NOTES_WORDS, type NotesLanguage } from './session';
 
 /** Записи старше этого удаляются сами, если в настройках так и оставлено. */
@@ -37,8 +39,11 @@ export interface Recording {
   bytes: number;
   /** Когда запись легла на диск, мс. */
   modifiedMs: number;
-  /** Почему звук нужен: расшифровки нет или в ней ни слова. Нет — можно удалять. */
-  keep?: 'no-transcript' | 'empty-transcript';
+  /**
+   * Почему звук нужен: расшифровки нет, в ней ни слова или в ней дыры — часть
+   * звука не распознана, и добрать её можно только из записи. Нет — можно удалять.
+   */
+  keep?: 'no-transcript' | 'empty-transcript' | 'untranscribed';
 }
 
 export interface RecordingsSummary {
@@ -69,7 +74,8 @@ export function recordingOf(notesFile: string): Recording | null {
     if (!existsSync(audioFile) || !parseFrontmatter(readFileSync(notesFile, 'utf8'))) return null;
     const звук = statSync(audioFile);
     const р = расшифровкаК(база);
-    const keep = !р ? 'no-transcript' : РЕЧЬ.test(readFileSync(р.file, 'utf8')) ? undefined : 'empty-transcript';
+    const расшифровка = р ? readFileSync(р.file, 'utf8') : '';
+    const keep = !р ? 'no-transcript' : !РЕЧЬ.test(расшифровка) ? 'empty-transcript' : parseGaps(расшифровка).length > 0 ? 'untranscribed' : undefined;
     return {
       course: path.basename(path.dirname(notesFile)),
       lecture: path.basename(notesFile, '.md'),
@@ -129,7 +135,10 @@ function дата(when: Date, notes: NotesLanguage): string {
  * никуда.
  */
 export async function deleteRecording(record: Recording, now: Date = new Date()): Promise<void> {
-  if (record.keep) throw new Error(`звук лекции «${record.lecture}» нужен: ${record.keep === 'no-transcript' ? 'расшифровки нет' : 'расшифровка пустая'}`);
+  if (record.keep) {
+    const почему = { 'no-transcript': 'расшифровки нет', 'empty-transcript': 'расшифровка пустая', untranscribed: 'часть звука не распознана' }[record.keep];
+    throw new Error(`звук лекции «${record.lecture}» нужен: ${почему}`);
+  }
   await rm(record.audioFile, { force: true });
   const notes = расшифровкаК(path.join(path.dirname(record.notesFile), record.lecture))?.notes ?? 'ru';
   const строка =
@@ -140,7 +149,7 @@ export async function deleteRecording(record: Recording, now: Date = new Date())
     const текст = await readFile(record.notesFile, 'utf8');
     const имя = path.basename(record.audioFile).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
     const стало = текст.replace(new RegExp(`^!\\[\\[${имя}\\]\\][ \\t]*$`, 'mu'), строка);
-    if (стало !== текст) await writeFile(record.notesFile, стало, 'utf8');
+    if (стало !== текст) await writeFileAtomic(record.notesFile, стало);
   } catch {
     // Заметку не поправили — звук всё равно удалён, а ссылка просто ведёт в никуда.
   }

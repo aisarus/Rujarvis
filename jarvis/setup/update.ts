@@ -48,8 +48,9 @@ export interface Version {
 }
 
 export type UpdateCheck =
-  | { state: 'current'; branch: string }
-  | { state: 'available'; branch: string; latest: string; changes: string[]; more: boolean }
+  | { state: 'current'; branch: string; tag?: string }
+  /** `tag` — выпуск, на который обновляемся; нет — вершина ветки (установка с `-Branch`). */
+  | { state: 'available'; branch: string; latest: string; changes: string[]; more: boolean; tag?: string }
   /** Проверить нечем или не вышло — ни «есть», ни «нет», а честное «не знаю». */
   | { state: 'unknown'; reason: string };
 
@@ -73,13 +74,49 @@ export async function currentVersion(git: Git): Promise<Version> {
   return { sha, short, date, subject: тема.join('\t') };
 }
 
+/** Ветка, с которой делаются выпуски: установка на ней получает выпуски, а не каждый коммит. */
+export const RELEASE_BRANCH = 'main';
+
+/** Тег выпуска — `v1.2.3`. Предвыпуски (`v1.2.3-rc1`) людям сами не ставятся. */
+export function parseReleaseTag(tag: string): [number, number, number] | null {
+  const m = /^v(\d+)\.(\d+)\.(\d+)$/u.exec(tag.trim());
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+function сравнитьВерсии(a: readonly number[], b: readonly number[]): number {
+  for (let i = 0; i < 3; i += 1) {
+    const разница = (a[i] ?? 0) - (b[i] ?? 0);
+    if (разница !== 0) return разница;
+  }
+  return 0;
+}
+
+/** Старший выпуск из вывода `git ls-remote --tags --refs`; выпусков нет — null. */
+export function latestReleaseTag(lsRemote: string): string | null {
+  let лучший: { tag: string; версия: [number, number, number] } | null = null;
+  for (const строка of lsRemote.split(/\r?\n/u)) {
+    const tag = /refs\/tags\/(\S+)$/u.exec(строка.trim())?.[1];
+    const версия = tag ? parseReleaseTag(tag) : null;
+    if (!tag || !версия) continue;
+    const старше = !лучший || сравнитьВерсии(версия, лучший.версия) > 0;
+    if (старше) лучший = { tag, версия };
+  }
+  return лучший?.tag ?? null;
+}
+
 /**
  * Есть ли новая версия на GitHub.
  *
- * Ветка — та, на которой стоит установка (установщик ставит `main`, но
- * умеет и другую через `-Branch`). Refspec — тот же, что у установщика: клон
- * сделан с `--depth 1 --branch`, и простой `fetch` не завёл бы
- * `origin/<ветка>`.
+ * Версия — это выпуск: тег `v1.2.3`. Раньше обновлением считался любой новый
+ * коммит в `main`, и человек получал работу, которую только что влили и никто
+ * не проверил вживую; сломанный коммит ломал всех, кто нажал «Обновить» в тот
+ * же час. Теперь установка стоит на теге и переходит только на следующий тег.
+ *
+ * Выпусков ещё нет — как раньше, вершина ветки. Установка со своей веткой
+ * (`-Branch`, не `main`) — выбор разработчика: она следует за веткой.
+ *
+ * Refspec — тот же, что у установщика: клон сделан с `--depth 1 --branch`, и
+ * простой `fetch` не завёл бы `origin/<ветка>`.
  */
 export async function checkForUpdate(git: Git): Promise<UpdateCheck> {
   let branch: string;
@@ -88,8 +125,19 @@ export async function checkForUpdate(git: Git): Promise<UpdateCheck> {
   } catch (error) {
     return { state: 'unknown', reason: `${tr('не прочитал версию', 'could not read the version')}: ${сообщение(error)}` };
   }
-  if (!branch || branch === 'HEAD') {
-    return { state: 'unknown', reason: tr('исходники не на ветке — обновлять нечего', 'the sources are not on a branch — nothing to update') };
+  // На теге HEAD «оторван» — так и стоит установка на выпуске.
+  const наВетке = Boolean(branch) && branch !== 'HEAD';
+  if (!наВетке || branch === RELEASE_BRANCH) {
+    let выпуск: string | null;
+    try {
+      выпуск = latestReleaseTag(await git(['ls-remote', '--tags', '--refs', 'origin', 'v*'], { timeoutMs: 90_000 }));
+    } catch (error) {
+      return { state: 'unknown', reason: `${tr('GitHub не ответил', 'GitHub did not answer')}: ${сообщение(error)}` };
+    }
+    if (выпуск) return сравнитьСВыпуском(git, выпуск);
+    if (!наВетке) {
+      return { state: 'unknown', reason: tr('исходники не на ветке — обновлять нечего', 'the sources are not on a branch — nothing to update') };
+    }
   }
   try {
     await git(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`], { timeoutMs: 90_000 });
@@ -116,6 +164,34 @@ export async function checkForUpdate(git: Git): Promise<UpdateCheck> {
   }
 }
 
+async function сравнитьСВыпуском(git: Git, tag: string): Promise<UpdateCheck> {
+  try {
+    await git(['fetch', '--quiet', '--no-tags', 'origin', `+refs/tags/${tag}:refs/tags/${tag}`], { timeoutMs: 90_000 });
+  } catch (error) {
+    return { state: 'unknown', reason: `${tr('GitHub не ответил', 'GitHub did not answer')}: ${сообщение(error)}` };
+  }
+  try {
+    const время = (ссылка: string): Promise<number> => git(['log', '-1', '--format=%ct', ссылка]).then((s) => Number(s.trim()));
+    const [мой, свежий] = await Promise.all([
+      git(['rev-parse', 'HEAD']).then((s) => s.trim()),
+      git(['rev-parse', `refs/tags/${tag}^{commit}`]).then((s) => s.trim()),
+    ]);
+    if (мой === свежий) return { state: 'current', branch: RELEASE_BRANCH, tag };
+    // Установка новее выпуска (стояла на вершине `main` до первых выпусков) —
+    // назад не обновляемся. В неглубоком клоне родство коммитов бывает не
+    // видно, поэтому сверяется и время: выпуск не новее своего — значит, не обновление.
+    const позади = await git(['merge-base', '--is-ancestor', `refs/tags/${tag}`, 'HEAD']).then(() => true, () => false);
+    if (позади || (await время(`refs/tags/${tag}^{commit}`)) <= (await время('HEAD'))) return { state: 'current', branch: RELEASE_BRANCH };
+    const строки = (await git(['log', '--no-merges', `-n${ПОКАЗАТЬ + 1}`, '--format=%s', `HEAD..refs/tags/${tag}`]))
+      .split(/\r?\n/u)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return { state: 'available', branch: RELEASE_BRANCH, tag, latest: свежий, changes: строки.slice(0, ПОКАЗАТЬ), more: строки.length > ПОКАЗАТЬ };
+  } catch (error) {
+    return { state: 'unknown', reason: `${tr('не сравнил версии', 'could not compare versions')}: ${сообщение(error)}` };
+  }
+}
+
 function сообщение(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).split(/\r?\n/u)[0]?.slice(0, 200) ?? '';
 }
@@ -129,6 +205,8 @@ export interface UpdateLaunch {
   home: string;
   logs: string;
   branch: string;
+  /** Выпуск, на который обновляемся; нет — вершина ветки `branch`. */
+  tag?: string;
   language: 'ru' | 'en';
   /** Модель распознавания из настроек: установщик не должен сменить её на «рекомендованную». */
   whisperModel?: string;
@@ -156,7 +234,7 @@ function sh(значение: string): string {
  */
 export function windowsUpdateScript(o: UpdateLaunch, installer: string): string {
   const журнал = path.win32.join(o.logs, 'update.log');
-  const параметры = [`-Language ${пс(o.language)}`, `-InstallRoot ${пс(o.home)}`, `-Branch ${пс(o.branch)}`];
+  const параметры = [`-Language ${пс(o.language)}`, `-InstallRoot ${пс(o.home)}`, o.tag ? `-Version ${пс(o.tag)}` : `-Branch ${пс(o.branch)}`];
   if (o.whisperModel && МОДЕЛИ_УСТАНОВЩИКА.has(o.whisperModel)) параметры.push(`-WhisperModel ${пс(o.whisperModel)}`);
   return [
     '# Rujarvis: обновление. Файл пишет сама программа перед каждым обновлением.',
@@ -190,7 +268,7 @@ export function windowsUpdateScript(o: UpdateLaunch, installer: string): string 
 /** Сценарий окна обновления на маке: тот же порядок, файл `.command` открывает Терминал. */
 export function macUpdateScript(o: UpdateLaunch, installer: string): string {
   const журнал = path.posix.join(o.logs, 'update.log');
-  const параметры = ['--language', o.language, '--branch', o.branch];
+  const параметры = ['--language', o.language, ...(o.tag ? ['--version', o.tag] : ['--branch', o.branch])];
   if (o.whisperModel && МОДЕЛИ_УСТАНОВЩИКА.has(o.whisperModel)) параметры.push('--whisper-model', o.whisperModel);
   return [
     '#!/bin/bash',
@@ -220,18 +298,18 @@ export interface StartUpdateOptions extends UpdateLaunch {
 }
 
 /**
- * Достать свежий установщик из только что скачанной ветки — байтами, как
- * есть: PowerShell 5.1 читает файл без BOM в кодировке системы, и русские
- * строки установщика превратились бы в мусор.
+ * Достать свежий установщик из только что скачанного выпуска или ветки —
+ * байтами, как есть: PowerShell 5.1 читает файл без BOM в кодировке системы,
+ * и русские строки установщика превратились бы в мусор.
  */
-function достатьУстановщик(sourceDir: string, branch: string, file: string, куда: string): Promise<void> {
+function достатьУстановщик(sourceDir: string, ссылка: string, file: string, куда: string): Promise<void> {
   return new Promise((resolve, reject) => {
     execFile(
       'git',
-      ['-C', sourceDir, 'show', `origin/${branch}:${file}`],
+      ['-C', sourceDir, 'show', `${ссылка}:${file}`],
       { encoding: 'buffer', windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout: 30_000 },
       (error, stdout) => {
-        if (error) return reject(new Error(`${tr('нет установщика в ветке', 'no installer in the branch')} ${branch}: ${сообщение(error)}`));
+        if (error) return reject(new Error(`${tr('нет установщика в', 'no installer in')} ${ссылка}: ${сообщение(error)}`));
         writeFileSync(куда, stdout);
         resolve();
       },
@@ -259,10 +337,11 @@ export async function startUpdate(o: StartUpdateOptions): Promise<void> {
   const папка = path.join(o.home, 'update');
   mkdirSync(папка, { recursive: true });
   mkdirSync(o.logs, { recursive: true });
+  const ссылка = o.tag ? `refs/tags/${o.tag}` : `origin/${o.branch}`;
 
   if (platform === 'win32') {
     const установщик = path.win32.join(папка, 'install.ps1');
-    await достатьУстановщик(o.sourceDir, o.branch, 'install.ps1', установщик);
+    await достатьУстановщик(o.sourceDir, ссылка, 'install.ps1', установщик);
     const сценарий = path.win32.join(папка, 'update.ps1');
     // BOM: PowerShell 5.1 без него читает файл в кодировке системы.
     writeFileSync(сценарий, `﻿${windowsUpdateScript(o, установщик)}`, 'utf8');
@@ -282,7 +361,7 @@ export async function startUpdate(o: StartUpdateOptions): Promise<void> {
 
   if (platform === 'darwin') {
     const установщик = path.posix.join(папка, 'install.sh');
-    await достатьУстановщик(o.sourceDir, o.branch, 'install.sh', установщик);
+    await достатьУстановщик(o.sourceDir, ссылка, 'install.sh', установщик);
     const сценарий = path.posix.join(папка, 'update.command');
     writeFileSync(сценарий, macUpdateScript(o, установщик), 'utf8');
     chmodSync(сценарий, 0o755);

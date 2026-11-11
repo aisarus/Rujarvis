@@ -11,7 +11,8 @@
 #
 # Ключи:
 #   --language ru|en        язык голоса и интерфейса (по умолчанию ru)
-#   --branch <ветка>        какую ветку ставить (по умолчанию main)
+#   --version <выпуск>      какой выпуск ставить: тег вида v0.3.0 (по умолчанию — последний)
+  --branch <ветка>        ветка для разработки и проб: ставится её вершина, а не выпуск
 #   --whisper-model <имя>   модель распознавания
 #   --notes                 только конспекты: без голосовых команд и рук на компьютере
 #   --lecture-language <код> язык лекций (he, ru, en…) — для модели лекций
@@ -31,7 +32,8 @@ APP_DIR="$HOME/Applications/Rujarvis.app"
 AGENT_PLIST="$HOME/Library/LaunchAgents/com.rujarvis.app.plist"
 
 LANGUAGE="ru"
-BRANCH="main"
+BRANCH=""
+VERSION=""
 WHISPER_MODEL=""
 EDITION=""
 LECTURE_LANGUAGE=""
@@ -64,7 +66,8 @@ usage() {
 Установка Rujarvis на macOS.
 
   --language ru|en        язык голоса и интерфейса (по умолчанию ru)
-  --branch <ветка>        какую ветку ставить (по умолчанию main)
+  --version <выпуск>      какой выпуск ставить: тег вида v0.3.0 (по умолчанию — последний)
+  --branch <ветка>        ветка для разработки и проб: ставится её вершина, а не выпуск
   --whisper-model <имя>   модель распознавания
   --notes                 только конспекты: без голосовых команд и рук на компьютере
   --edition full|notes    то же явно; без ключа — как в прежней установке
@@ -82,6 +85,7 @@ parse_args() {
     case "$1" in
       --language)      LANGUAGE="${2:-ru}"; shift 2 ;;
       --branch)        BRANCH="${2:-main}"; shift 2 ;;
+      --version)       VERSION="${2:-}"; shift 2 ;;
       --whisper-model) WHISPER_MODEL="${2:-}"; shift 2 ;;
       --notes)         EDITION="notes"; shift ;;
       --edition)       EDITION="${2:-}"; shift 2 ;;
@@ -98,6 +102,10 @@ parse_args() {
     ru|en) ;;
     *) die "Язык должен быть ru или en, а не «$LANGUAGE»." ;;
   esac
+
+  if [ -n "$VERSION" ] && ! printf '%s' "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+    die "Выпуск — тег вида v0.3.0, а не «$VERSION»."
+  fi
   case "$EDITION" in
     ''|full|notes) ;;
     *) die "Вариант должен быть full или notes, а не «$EDITION»." ;;
@@ -273,18 +281,62 @@ if stop_running_jarvis; then
   else ok 'Работающий Джарвис закрыт; после установки запустите его ярлыком.'; fi
 fi
 
+# Последний выпуск на GitHub: старший тег вида v1.2.3; выпусков нет или GitHub
+# не ответил — пусто.
+#
+# Ставится выпуск, а не вершина main: в main попадает работа, которую ещё
+# никто не проверил вживую, и сломанный коммит ломал бы каждого, кто поставил
+# или обновил Джарвиса в тот же час. Сортировка — по числам (`sort -t. -n`),
+# а не `sort -V`: его на старых macOS нет.
+latest_release() {
+  git ls-remote --tags --refs "$REPO_URL" 'v*' 2>/dev/null \
+    | sed -n 's#.*refs/tags/v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' \
+    | sort -t. -k1,1n -k2,2n -k3,3n \
+    | tail -n 1 \
+    | sed 's/^/v/'
+}
+
 step 'Получаю исходники'
-if [ -d "$SOURCE_DIR/.git" ]; then
-  note "Обновляю $SOURCE_DIR"
-  # Клон делается с `--depth 1 --branch`, а это подразумевает
-  # `--single-branch`: обычный `fetch origin <ветка>` не заводит
-  # `origin/<ветка>`, и `checkout` падал с «pathspec did not match» — сменить
-  # ветку без удаления папки было нельзя. Refspec заводит ссылку явно, а
-  # `checkout -B` переводит на неё; отдельный `pull` после этого не нужен.
-  git -C "$SOURCE_DIR" fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"     || die 'Не удалось выполнить: git fetch'
-  # Повторный запуск обязан довести до вершины ветки, а не умереть на полпути.
+
+# Что ставим: названный выпуск, названная ветка или — по умолчанию — последний выпуск.
+REF=""
+if [ -n "$VERSION" ]; then
+  REF="$VERSION"
+elif [ -z "$BRANCH" ]; then
+  REF="$(latest_release || true)"
+  if [ -z "$REF" ]; then
+    BRANCH="main"
+    note 'Выпусков на GitHub пока нет (или он не ответил) — ставлю вершину ветки main.'
+  fi
+fi
+if [ -n "$REF" ]; then WHAT="выпуск $REF"; else WHAT="ветка $BRANCH"; fi
+
+# Оборванная установка: окно закрыли посреди `git clone`, и в папке остался
+# обрубок — без .git или с .git, в котором нет ни одного коммита. Повторный
+# запуск падал на нём, и человеку оставалось удалять папку руками. В `src`
+# лежат только исходники и сборка — данные, модели и настройки в соседних
+# папках, — так что обрубок можно убрать и начать заново.
+PREVIOUS_COMMIT=""
+PREVIOUS_BRANCH=""
+if [ -e "$SOURCE_DIR" ]; then
+  if [ -d "$SOURCE_DIR/.git" ]; then
+    # `--git-dir`, а не `-C`: с пустым .git git пошёл бы искать репозиторий выше
+    # по папкам и нашёл бы чужой — обрубок сошёл бы за целую установку.
+    PREVIOUS_COMMIT="$(git --git-dir "$SOURCE_DIR/.git" rev-parse --verify --quiet HEAD 2>/dev/null || true)"
+  fi
+  if [ -z "$PREVIOUS_COMMIT" ]; then
+    note "В $SOURCE_DIR — оборванная прошлая установка. Убираю и скачиваю заново."
+    rm -rf "$SOURCE_DIR"
+  else
+    PREVIOUS_BRANCH="$(git -C "$SOURCE_DIR" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+  fi
+fi
+
+if [ -n "$PREVIOUS_COMMIT" ]; then
+  note "Обновляю $SOURCE_DIR ($WHAT)"
+  # Повторный запуск обязан довести до нужной версии, а не умереть на полпути.
   #
-  # `checkout -B` падает с «would be overwritten», если в папке остались чужие
+  # `checkout` падает с «would be overwritten», если в папке остались чужие
   # правки — а они там появляются сами: сборка, скачанные модели, случайно
   # тронутый файл. Установщик — не место для разбора чужих изменений, но и
   # молчать нельзя: если человек правил код сам, он должен узнать, куда это
@@ -295,16 +347,38 @@ if [ -d "$SOURCE_DIR/.git" ]; then
     warn 'Вернуть: git -C "'"$SOURCE_DIR"'" stash list, затем git stash pop.'
     git -C "$SOURCE_DIR" stash push -m "$stash_name" >/dev/null 2>&1 || true
   fi
-  git -C "$SOURCE_DIR" checkout -B "$BRANCH" "origin/$BRANCH"     || die 'Не удалось выполнить: git checkout'
-  # Вершина ветки, а не «что-то из неё»: между fetch и checkout ничего не
-  # пропало, и человек получает ровно то, что лежит в origin сейчас.
-  git -C "$SOURCE_DIR" reset --hard "origin/$BRANCH" >/dev/null     || die 'Не удалось выполнить: git reset'
+  if [ -n "$REF" ]; then
+    git -C "$SOURCE_DIR" fetch --no-tags origin "+refs/tags/$REF:refs/tags/$REF"     || die 'Не удалось выполнить: git fetch'
+    # Установка новее выпуска (стояла на вершине main до первых выпусков) —
+    # назад не ставим: данные новой версии старая может не понять.
+    mine="$(git -C "$SOURCE_DIR" log -1 --format=%ct HEAD 2>/dev/null || echo 0)"
+    theirs="$(git -C "$SOURCE_DIR" log -1 --format=%ct "refs/tags/$REF" 2>/dev/null || echo 0)"
+    if [ -z "$VERSION" ] && [ "$mine" -gt "$theirs" ]; then
+      note "Установленная версия новее выпуска $REF — оставляю её. Поставить именно выпуск: --version $REF"
+    else
+      git -C "$SOURCE_DIR" checkout --detach "refs/tags/$REF" >/dev/null 2>&1     || die 'Не удалось выполнить: git checkout'
+      git -C "$SOURCE_DIR" reset --hard "refs/tags/$REF" >/dev/null     || die 'Не удалось выполнить: git reset'
+    fi
+  else
+    # Клон делается с `--depth 1 --branch`, а это подразумевает
+    # `--single-branch`: обычный `fetch origin <ветка>` не заводит
+    # `origin/<ветка>`, и `checkout` падал с «pathspec did not match» — сменить
+    # ветку без удаления папки было нельзя. Refspec заводит ссылку явно, а
+    # `checkout -B` переводит на неё; отдельный `pull` после этого не нужен.
+    git -C "$SOURCE_DIR" fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"     || die 'Не удалось выполнить: git fetch'
+    git -C "$SOURCE_DIR" checkout -B "$BRANCH" "origin/$BRANCH"     || die 'Не удалось выполнить: git checkout'
+    # Вершина ветки, а не «что-то из неё»: между fetch и checkout ничего не
+    # пропало, и человек получает ровно то, что лежит в origin сейчас.
+    git -C "$SOURCE_DIR" reset --hard "origin/$BRANCH" >/dev/null     || die 'Не удалось выполнить: git reset'
+  fi
 else
   mkdir -p "$INSTALL_ROOT"
-  git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$SOURCE_DIR" || die 'Не удалось выполнить: git clone'
+  # `--branch` принимает и тег: клон встаёт прямо на выпуск.
+  git clone --depth 1 --branch "${REF:-$BRANCH}" "$REPO_URL" "$SOURCE_DIR" || die 'Не удалось выполнить: git clone'
 fi
 [ -f "$SOURCE_DIR/app/main.ts" ] \
-  || die "В ветке «$BRANCH» нет приложения Rujarvis (app/main.ts). Укажите нужную ветку через --branch."
+  || die "В «$WHAT» нет приложения Rujarvis (app/main.ts). Укажите выпуск через --version или ветку через --branch."
+NEW_COMMIT="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
 ok "Исходники: $SOURCE_DIR"
 
 # --- версия Node -------------------------------------------------------------
@@ -393,8 +467,29 @@ fi
 # --- сборка ------------------------------------------------------------------
 
 step 'Ставлю зависимости и собираю'
-( cd "$SOURCE_DIR" && pnpm install --frozen-lockfile ) || die 'Не удалось выполнить: pnpm install'
-( cd "$SOURCE_DIR" && pnpm build ) || die 'Не удалось выполнить: pnpm build'
+# Прежняя версия запоминается: новая не собралась — возвращаемся на неё.
+# Раньше после неудачной сборки исходники оставались новыми, а сборки не было
+# никакой: Джарвис не запускался вовсе, пока кто-нибудь не починит main.
+mkdir -p "$INSTALL_ROOT/update"
+[ -n "$PREVIOUS_COMMIT" ] && printf '%s\n' "$PREVIOUS_COMMIT" > "$INSTALL_ROOT/update/previous-version.txt"
+build_app() { ( cd "$SOURCE_DIR" && pnpm install --frozen-lockfile && pnpm build ); }
+if ! build_app; then
+  if [ -z "$PREVIOUS_COMMIT" ] || [ "$PREVIOUS_COMMIT" = "$NEW_COMMIT" ]; then
+    die 'Не удалось выполнить: pnpm install и pnpm build'
+  fi
+  warn 'Новая версия не собралась.'
+  warn "Возвращаю прежнюю версию ($(printf '%s' "$PREVIOUS_COMMIT" | cut -c1-7)) и собираю её."
+  if [ -n "$PREVIOUS_BRANCH" ]; then
+    git -C "$SOURCE_DIR" checkout -f -B "$PREVIOUS_BRANCH" "$PREVIOUS_COMMIT" >/dev/null 2>&1 || die 'Не удалось вернуть прежнюю версию: git checkout'
+  else
+    git -C "$SOURCE_DIR" checkout -f --detach "$PREVIOUS_COMMIT" >/dev/null 2>&1 || die 'Не удалось вернуть прежнюю версию: git checkout'
+  fi
+  build_app || die 'Не собралась и прежняя версия. Запустите установщик ещё раз.'
+  ok 'Прежняя версия собрана и работает как раньше.'
+  # Программа в ~/Applications указывает на те же исходники — её и запускаем.
+  if [ "$LAUNCH" = "1" ] && [ -d "$APP_DIR" ]; then open "$APP_DIR" || true; fi
+  die 'Обновление не удалось: новая версия не собралась. Возвращена прежняя версия — Джарвис работает как раньше.'
+fi
 ok 'Приложение собрано.'
 
 # Запасной браузер, если своего на машине нет.

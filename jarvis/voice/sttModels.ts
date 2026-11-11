@@ -26,6 +26,12 @@ export interface WhisperModelDefinition {
   rootDirName: string;
   /** Archive size in bytes, as served. */
   downloadBytes: number;
+  /**
+   * SHA-256 архива от издателя; сверяется до распаковки. У этих пяти архивов
+   * (релиз `asr-models`, выложены в 2024 году) GitHub суммы не объявляет —
+   * пока сверяется только размер. Появится сумма — вписать сюда.
+   */
+  sha256?: string;
   /** Rough resident memory for the int8 export. */
   approximateRamMb: number;
 }

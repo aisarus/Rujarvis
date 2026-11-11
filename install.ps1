@@ -30,8 +30,13 @@
 .PARAMETER InstallRoot
     Папка Джарвиса. По умолчанию %LOCALAPPDATA%\Rujarvis.
 
+.PARAMETER Version
+    Выпуск, который ставить: тег вида v0.3.0. По умолчанию — последний выпуск;
+    пока выпусков нет — вершина ветки main.
+
 .PARAMETER Branch
-    Ветка репозитория. По умолчанию main.
+    Ветка репозитория — для разработки и проб: ставится её вершина, а не
+    выпуск. Без параметра ставится выпуск.
 
 .PARAMETER WhisperModel
     Модель распознавания: tiny, base, small, turbo, medium.
@@ -62,7 +67,9 @@ param(
     [ValidateSet('ru', 'en')]
     [string] $Language = 'ru',
     [string] $InstallRoot = (Join-Path $env:LOCALAPPDATA 'Rujarvis'),
-    [string] $Branch = 'main',
+    [string] $Branch = '',
+    [ValidatePattern('^(v\d+\.\d+\.\d+)?$')]
+    [string] $Version = '',
     [ValidateSet('tiny', 'base', 'small', 'turbo', 'medium')]
     [string] $WhisperModel,
     [ValidatePattern('^[a-z]{2,3}$')]
@@ -83,6 +90,18 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
 $RepoUrl = 'https://github.com/aisarus/Rujarvis.git'
 $SourceDir = Join-Path $InstallRoot 'src'
+
+# Своя папка установки (-InstallRoot) — это и папка данных Джарвиса. Раньше
+# установщик клал туда только исходники, а настройки, модели и журнал всё
+# равно уезжали в %LOCALAPPDATA%\Rujarvis: установка раскалывалась надвое.
+# JARVIS_HOME переносит папку Джарвиса целиком — для шагов установщика здесь,
+# а для самой программы — ключом --jarvis-home в ярлыке (ниже).
+$DefaultRoot = Join-Path $env:LOCALAPPDATA 'Rujarvis'
+$InstallRoot = [System.IO.Path]::GetFullPath($InstallRoot).TrimEnd('\')
+$CustomRoot = $InstallRoot -ine [System.IO.Path]::GetFullPath($DefaultRoot).TrimEnd('\')
+$SourceDir = Join-Path $InstallRoot 'src'
+if ($CustomRoot) { $env:JARVIS_HOME = $InstallRoot }
+$HomeArgument = $(if ($CustomRoot) { " --jarvis-home=`"$InstallRoot`"" } else { '' })
 
 # Вариант без параметра — из настроек прежней установки: кнопка «Обновить»
 # запускает этот же установщик, и тестер с вариантом «только конспекты» после
@@ -730,25 +749,128 @@ if (Stop-RunningJarvis -SourceDir $SourceDir) {
     else { Write-Ok 'Работающий Джарвис закрыт; после установки он запустится заново.' }
 }
 
+<#
+    Последний выпуск на GitHub: старший тег вида v1.2.3. Выпусков нет или
+    GitHub не ответил — $null.
+
+    Ставится выпуск, а не вершина main: в main попадает работа, которую ещё
+    никто не проверил вживую, и сломанный коммит ломал бы каждого, кто
+    поставил или обновил Джарвиса в тот же час.
+#>
+function Get-LatestRelease {
+    param([Parameter(Mandatory)] [string] $RepoUrl)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $lines = @(& git ls-remote --tags --refs $RepoUrl 'v*' 2>&1 | ForEach-Object { "$_" })
+        if ($LASTEXITCODE -ne 0) { return $null }
+    }
+    finally {
+        $ErrorActionPreference = $prev
+    }
+    $best = $null
+    $bestVersion = $null
+    foreach ($line in $lines) {
+        if ($line -match 'refs/tags/(v(\d+)\.(\d+)\.(\d+))$') {
+            $candidate = New-Object System.Version ([int]$Matches[2]), ([int]$Matches[3]), ([int]$Matches[4])
+            if (($null -eq $bestVersion) -or ($candidate -gt $bestVersion)) {
+                $bestVersion = $candidate
+                $best = $Matches[1]
+            }
+        }
+    }
+    return $best
+}
+
+function Get-GitOutput {
+    # Одна строка вывода git; не вышло — $null. stderr не считается исключением (см. Invoke-Quiet).
+    param([Parameter(Mandatory)] [string[]] $Arguments)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = @(& git @Arguments 2>$null | ForEach-Object { "$_" })
+        if ($LASTEXITCODE -ne 0) { return $null }
+        return ($out | Select-Object -First 1)
+    }
+    catch { return $null }
+    finally {
+        $ErrorActionPreference = $prev
+    }
+}
+
 Write-Step 'Получаю исходники'
-if (Test-Path (Join-Path $SourceDir '.git')) {
-    Write-Note "Обновляю $SourceDir"
-    # Клон делается с `--depth 1 --branch`, а это подразумевает
-    # `--single-branch`: обычный `fetch origin <ветка>` не заводит
-    # `origin/<ветка>`, и `checkout` падал с «pathspec did not match» — сменить
-    # ветку без удаления папки было нельзя. Refspec заводит ссылку явно, а
-    # `checkout -B` переводит на неё; отдельный `pull` после этого не нужен.
-    Invoke-Checked -FilePath 'git' -Arguments @(
-        '-C', $SourceDir, 'fetch', 'origin', "+refs/heads/${Branch}:refs/remotes/origin/${Branch}") -What 'git fetch'
-    Invoke-Checked -FilePath 'git' -Arguments @(
-        '-C', $SourceDir, 'checkout', '-B', $Branch, "origin/${Branch}") -What 'git checkout'
+
+# Что ставим: названный выпуск, названная ветка или — по умолчанию — последний выпуск.
+$Ref = $null
+if ($Version) { $Ref = $Version }
+elseif (-not $Branch) {
+    $Ref = Get-LatestRelease -RepoUrl $RepoUrl
+    if (-not $Ref) {
+        $Branch = 'main'
+        Write-Note 'Выпусков на GitHub пока нет (или он не ответил) — ставлю вершину ветки main.'
+    }
+}
+$What = $(if ($Ref) { "выпуск $Ref" } else { "ветка $Branch" })
+
+# Оборванная установка: окно закрыли посреди `git clone`, и в папке остался
+# обрубок — без .git или с .git, в котором нет ни одного коммита. Повторный
+# запуск раньше падал на нём («destination path already exists» или «fetch»),
+# и человеку оставалось удалять папку руками. В `src` лежат только исходники
+# и сборка — данные, модели и настройки в соседних папках, — так что обрубок
+# можно убрать и начать заново.
+$PreviousCommit = $null
+if (Test-Path $SourceDir) {
+    if (Test-Path (Join-Path $SourceDir '.git')) {
+        # `--git-dir`, а не `-C`: с пустым .git git пошёл бы искать репозиторий выше по
+        # папкам — и нашёл бы чужой (у человека, чья домашняя папка сама под git,
+        # так и вышло на проверке): обрубок сошёл бы за целую установку.
+        $PreviousCommit = Get-GitOutput -Arguments @('--git-dir', (Join-Path $SourceDir '.git'), 'rev-parse', '--verify', '--quiet', 'HEAD')
+    }
+    if (-not $PreviousCommit) {
+        Write-Note "В $SourceDir — оборванная прошлая установка. Убираю и скачиваю заново."
+        Remove-Item -LiteralPath $SourceDir -Recurse -Force
+    }
+}
+$PreviousBranch = $null
+if ($PreviousCommit) {
+    $PreviousBranch = Get-GitOutput -Arguments @('-C', $SourceDir, 'symbolic-ref', '--quiet', '--short', 'HEAD')
+}
+
+if ($PreviousCommit) {
+    Write-Note "Обновляю $SourceDir ($What)"
+    if ($Ref) {
+        Invoke-Checked -FilePath 'git' -Arguments @(
+            '-C', $SourceDir, 'fetch', '--no-tags', 'origin', "+refs/tags/${Ref}:refs/tags/${Ref}") -What 'git fetch'
+        # Установка новее выпуска (стояла на вершине main до первых выпусков) —
+        # назад не ставим: данные новой версии старая может не понять.
+        $mine = Get-GitOutput -Arguments @('-C', $SourceDir, 'log', '-1', '--format=%ct', 'HEAD')
+        $theirs = Get-GitOutput -Arguments @('-C', $SourceDir, 'log', '-1', '--format=%ct', "refs/tags/$Ref")
+        if ((-not $Version) -and $mine -and $theirs -and ([long]$mine -gt [long]$theirs)) {
+            Write-Note "Установленная версия новее выпуска $Ref — оставляю её. Поставить именно выпуск: -Version $Ref"
+        } else {
+            Invoke-Checked -FilePath 'git' -Arguments @('-C', $SourceDir, 'checkout', '--detach', "refs/tags/$Ref") -What 'git checkout'
+        }
+    } else {
+        # Клон делается с `--depth 1 --branch`, а это подразумевает
+        # `--single-branch`: обычный `fetch origin <ветка>` не заводит
+        # `origin/<ветка>`, и `checkout` падал с «pathspec did not match» — сменить
+        # ветку без удаления папки было нельзя. Refspec заводит ссылку явно, а
+        # `checkout -B` переводит на неё; отдельный `pull` после этого не нужен.
+        Invoke-Checked -FilePath 'git' -Arguments @(
+            '-C', $SourceDir, 'fetch', 'origin', "+refs/heads/${Branch}:refs/remotes/origin/${Branch}") -What 'git fetch'
+        Invoke-Checked -FilePath 'git' -Arguments @(
+            '-C', $SourceDir, 'checkout', '-B', $Branch, "origin/${Branch}") -What 'git checkout'
+    }
 } else {
     New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
-    Invoke-Checked -FilePath 'git' -Arguments @('clone', '--depth', '1', '--branch', $Branch, $RepoUrl, $SourceDir) -What 'git clone'
+    # `--branch` принимает и тег: клон встаёт прямо на выпуск.
+    $cloneRef = $(if ($Ref) { $Ref } else { $Branch })
+    Invoke-Checked -FilePath 'git' -Arguments @('clone', '--depth', '1', '--branch', $cloneRef, $RepoUrl, $SourceDir) -What 'git clone'
 }
 if (-not (Test-Path (Join-Path $SourceDir 'app/main.ts'))) {
-    throw "В ветке '$Branch' нет приложения Rujarvis (app/main.ts). Укажите нужную ветку через -Branch."
+    throw "В «$What» нет приложения Rujarvis (app/main.ts). Укажите выпуск через -Version или ветку через -Branch."
 }
+$NewCommit = Get-GitOutput -Arguments @('-C', $SourceDir, 'rev-parse', 'HEAD')
 Write-Ok "Исходники: $SourceDir"
 
 Assert-NodeVersion -SourceDir $SourceDir
@@ -777,8 +899,38 @@ function Test-NvidiaGpu {
 Push-Location $SourceDir
 try {
     Write-Step 'Ставлю зависимости и собираю'
-    Invoke-Checked -FilePath 'pnpm' -Arguments @('install', '--frozen-lockfile') -What 'pnpm install'
-    Invoke-Checked -FilePath 'pnpm' -Arguments @('build') -What 'pnpm build'
+    # Прежняя версия запоминается: новая не собралась — возвращаемся на неё.
+    # Раньше после неудачной сборки исходники оставались новыми, а сборки не
+    # было никакой: Джарвис не запускался вовсе, пока кто-нибудь не починит main.
+    $updateDir = Join-Path $InstallRoot 'update'
+    New-Item -ItemType Directory -Path $updateDir -Force | Out-Null
+    if ($PreviousCommit) {
+        Set-Content -LiteralPath (Join-Path $updateDir 'previous-version.txt') -Value $PreviousCommit -Encoding ASCII
+    }
+    try {
+        Invoke-Checked -FilePath 'pnpm' -Arguments @('install', '--frozen-lockfile') -What 'pnpm install'
+        Invoke-Checked -FilePath 'pnpm' -Arguments @('build') -What 'pnpm build'
+    }
+    catch {
+        $reason = $_.Exception.Message
+        if ((-not $PreviousCommit) -or ($PreviousCommit -eq $NewCommit)) { throw }
+        Write-Note "Новая версия не собралась: $reason"
+        Write-Note "Возвращаю прежнюю версию ($($PreviousCommit.Substring(0, 7))) и собираю её."
+        if ($PreviousBranch) {
+            Invoke-Checked -FilePath 'git' -Arguments @('checkout', '-f', '-B', $PreviousBranch, $PreviousCommit) -What 'git checkout (откат)'
+        } else {
+            Invoke-Checked -FilePath 'git' -Arguments @('checkout', '-f', '--detach', $PreviousCommit) -What 'git checkout (откат)'
+        }
+        Invoke-Checked -FilePath 'pnpm' -Arguments @('install', '--frozen-lockfile') -What 'pnpm install (откат)'
+        Invoke-Checked -FilePath 'pnpm' -Arguments @('build') -What 'pnpm build (откат)'
+        Write-Ok 'Прежняя версия собрана и работает как раньше.'
+        if (-not $NoLaunch) {
+            $oldElectron = Join-Path $SourceDir 'node_modules\electron\dist\electron.exe'
+            $oldEntry = Join-Path $SourceDir 'dist\app\main.cjs'
+            if (Test-Path $oldElectron) { Start-Process -FilePath $oldElectron -ArgumentList "`"$oldEntry`"$HomeArgument" -WorkingDirectory $SourceDir }
+        }
+        throw "Обновление не удалось: новая версия не собралась ($reason). Возвращена прежняя версия — Джарвис работает как раньше."
+    }
     Write-Ok 'Приложение собрано.'
 
     Write-Step ($(if ($NotesOnly) { 'Настраиваю вариант «только конспекты»' } else { 'Скачиваю модели речи' }))
@@ -839,7 +991,7 @@ $icon = Join-Path $SourceDir 'resources\icon.ico'
 if (-not (Test-Path $electron)) { throw "Electron не найден: $electron. Запустите установщик снова." }
 
 $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Rujarvis.lnk'
-New-Shortcut -Path $startMenu -Target $electron -Arguments "`"$entry`"" -WorkingDirectory $SourceDir -Icon $icon
+New-Shortcut -Path $startMenu -Target $electron -Arguments "`"$entry`"$HomeArgument" -WorkingDirectory $SourceDir -Icon $icon
 Write-Ok 'Ярлык в меню «Пуск»: Rujarvis'
 
 # Ярлык на рабочем столе, как на маке.
@@ -854,7 +1006,7 @@ Write-Ok 'Ярлык в меню «Пуск»: Rujarvis'
 $desktopDir = [Environment]::GetFolderPath('Desktop')
 if ($desktopDir -and (Test-Path $desktopDir)) {
     $desktop = Join-Path $desktopDir 'Rujarvis.lnk'
-    New-Shortcut -Path $desktop -Target $electron -Arguments "`"$entry`"" -WorkingDirectory $SourceDir -Icon $icon
+    New-Shortcut -Path $desktop -Target $electron -Arguments "`"$entry`"$HomeArgument" -WorkingDirectory $SourceDir -Icon $icon
     Write-Ok "Ярлык на рабочем столе: $desktop"
 } else {
     # Не находим — говорим об этом, а не молчим: установка от этого не
@@ -864,7 +1016,7 @@ if ($desktopDir -and (Test-Path $desktopDir)) {
 
 $startup = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\Rujarvis.lnk'
 if ($Autostart) {
-    New-Shortcut -Path $startup -Target $electron -Arguments "`"$entry`"" -WorkingDirectory $SourceDir -Icon $icon
+    New-Shortcut -Path $startup -Target $electron -Arguments "`"$entry`"$HomeArgument" -WorkingDirectory $SourceDir -Icon $icon
     Write-Ok 'Запуск при входе в Windows включён.'
 }
 
@@ -879,5 +1031,5 @@ Write-Host "  Лог:            $(Join-Path $InstallRoot 'logs\jarvis.log')" -F
 Write-Host ''
 
 if (-not $NoLaunch) {
-    Start-Process -FilePath $electron -ArgumentList "`"$entry`"" -WorkingDirectory $SourceDir
+    Start-Process -FilePath $electron -ArgumentList "`"$entry`"$HomeArgument" -WorkingDirectory $SourceDir
 }

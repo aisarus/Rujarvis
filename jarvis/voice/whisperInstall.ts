@@ -29,6 +29,7 @@ export async function installWhisperModel(options: InstallWhisperOptions): Promi
     installRoot: options.installRoot,
     rootDirName: model.rootDirName,
     expectedBytes: model.downloadBytes,
+    sha256: model.sha256,
     isInstalled: () => isWhisperModelInstalled(options.installRoot, options.modelId),
     onProgress: options.onProgress,
     signal: options.signal,

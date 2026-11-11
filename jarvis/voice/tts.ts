@@ -23,15 +23,21 @@ export interface VoiceDefinition {
   /** Файл модели внутри папки голоса. */
   modelFile: string;
   downloadBytes: number;
+  /**
+   * SHA-256 архива, как её объявляет GitHub у файла релиза `tts-models`
+   * (сверено 10.11.2026). У GLaDOS (выложен в 2023 году) суммы там нет —
+   * сверяется только размер.
+   */
+  sha256?: string;
 }
 
 export const VOICES: readonly VoiceDefinition[] = [
-  { id: 'vits-piper-ru_RU-irina-medium', language: 'ru', label: 'Ирина', modelFile: 'ru_RU-irina-medium.onnx', downloadBytes: 67_153_308 },
-  { id: 'vits-piper-ru_RU-dmitri-medium', language: 'ru', label: 'Дмитрий', modelFile: 'ru_RU-dmitri-medium.onnx', downloadBytes: 67_188_551 },
-  { id: 'vits-piper-ru_RU-ruslan-medium', language: 'ru', label: 'Руслан', modelFile: 'ru_RU-ruslan-medium.onnx', downloadBytes: 67_210_684 },
-  { id: 'vits-piper-ru_RU-denis-medium', language: 'ru', label: 'Денис', modelFile: 'ru_RU-denis-medium.onnx', downloadBytes: 67_190_991 },
-  { id: 'vits-piper-en_US-lessac-medium', language: 'en', label: 'Lessac', modelFile: 'en_US-lessac-medium.onnx', downloadBytes: 67_230_653 },
-  { id: 'vits-piper-en_US-libritts_r-medium', language: 'en', label: 'LibriTTS', modelFile: 'en_US-libritts_r-medium.onnx', downloadBytes: 82_038_311 },
+  { id: 'vits-piper-ru_RU-irina-medium', language: 'ru', label: 'Ирина', modelFile: 'ru_RU-irina-medium.onnx', downloadBytes: 67_153_308, sha256: '1fc0f54e5e084fe287c07909f2f6e0ba6d857864cf800e3ab80286a4e8233008' },
+  { id: 'vits-piper-ru_RU-dmitri-medium', language: 'ru', label: 'Дмитрий', modelFile: 'ru_RU-dmitri-medium.onnx', downloadBytes: 67_188_551, sha256: 'c86d0803737de13d441923ff3b3f309482fab8d7af3ec85949942809eb9a3660' },
+  { id: 'vits-piper-ru_RU-ruslan-medium', language: 'ru', label: 'Руслан', modelFile: 'ru_RU-ruslan-medium.onnx', downloadBytes: 67_210_684, sha256: '0690b1cad01f86e8db9ba988af24898bdc1af774e23cb2e46b9c730269b6fd83' },
+  { id: 'vits-piper-ru_RU-denis-medium', language: 'ru', label: 'Денис', modelFile: 'ru_RU-denis-medium.onnx', downloadBytes: 67_190_991, sha256: 'efa4c18e0b5e32b81d1b6df36b9d312831e5d545200e27848ef926a4cd930300' },
+  { id: 'vits-piper-en_US-lessac-medium', language: 'en', label: 'Lessac', modelFile: 'en_US-lessac-medium.onnx', downloadBytes: 67_230_653, sha256: '9e3febfacf0abf4270172d2958bcec246032b7e88efc2720840cc80c93de334e' },
+  { id: 'vits-piper-en_US-libritts_r-medium', language: 'en', label: 'LibriTTS', modelFile: 'en_US-libritts_r-medium.onnx', downloadBytes: 82_038_311, sha256: '10dc268f3e371696d721486123e2705a9fc1faa113491979fde4d88dba1f1b1c' },
   { id: 'vits-piper-en_US-glados', language: 'en', label: 'GLaDOS', modelFile: 'en_US-glados.onnx', downloadBytes: 67_208_137 },
 ];
 
@@ -99,6 +105,7 @@ export async function installVoice(
     installRoot,
     rootDirName: voice.id,
     expectedBytes: voice.downloadBytes,
+    sha256: voice.sha256,
     isInstalled: async () => isVoiceInstalled(installRoot, id),
     onProgress,
     signal,
