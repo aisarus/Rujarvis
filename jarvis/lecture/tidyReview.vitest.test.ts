@@ -416,8 +416,12 @@ describe('T5 reports must say what really happened', () => {
   it.runIf(process.platform === 'win32')('a note that could not be written leaves no temp file and no false undo entry (real file lock)', async () => {
     const b = bench('- plain', '- root x = 5');
     process.env.RV_LOCK = b.b;
-    const ps = spawn('powershell.exe', ['-NoProfile', '-Command', "$f=[IO.File]::Open($env:RV_LOCK,'Open','Read','Read'); Start-Sleep 8; $f.Close()"], { stdio: 'ignore', windowsHide: true });
-    await new Promise((r) => setTimeout(r, 2500));
+    // On a loaded machine PowerShell can outlast any fixed wait, so wait for its word that the lock is held.
+    const ps = spawn('powershell.exe', ['-NoProfile', '-Command', "$f=[IO.File]::Open($env:RV_LOCK,'Open','Read','Read'); [Console]::Out.WriteLine('locked'); [Console]::Out.Flush(); Start-Sleep 8; $f.Close()"], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    await new Promise<void>((resolve, reject) => {
+      ps.stdout.once('data', () => resolve());
+      ps.once('exit', (code) => reject(new Error(`the lock was never taken: PowerShell exited with ${code}`)));
+    });
     const state = await b.tidier().run();
     ps.kill();
     await new Promise((r) => setTimeout(r, 500));
