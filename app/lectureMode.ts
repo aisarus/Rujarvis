@@ -56,7 +56,7 @@ import { HearingMonitor, isSilentChunk } from '../jarvis/lecture/hearing';
 import { mediaSeconds } from '../jarvis/lecture/mediaSlices';
 import { LectureRecorder } from '../jarvis/lecture/recorder';
 import { lectureIncomplete, LectureSession, NOTES_WORDS, type LectureDeps, type NotesLanguage } from '../jarvis/lecture/session';
-import { createFinalSummarizer, createSummarizer } from '../jarvis/lecture/summarize';
+import { createFinalSummarizer, createSummarizer, signedOutBrains, signInAdvice, watchSignIn } from '../jarvis/lecture/summarize';
 import { lectureFolder, obsidianOpenUrl } from '../jarvis/lecture/vault';
 import type { NotesStyle } from '../jarvis/notes/style';
 import { tr } from '../jarvis/locale/language';
@@ -448,6 +448,18 @@ async function начатьЛекцию(subject: string | undefined, options: Le
     оповестить();
   };
 
+  // Агент вышел из аккаунта — строкой на плашке сразу: иначе человек узнаёт об
+  // этом вечером, над конспектом из одних заглушек.
+  const вход = (кто: Array<'claude' | 'codex'> | null): void => {
+    console.log(`[jarvis:lecture] вход: ${кто ? `не вошли — ${кто.join(', ')}` : 'снова есть'}`);
+    const л = лекция.value;
+    if (!л || идёт !== л) return;
+    л.строка = кто
+      ? `${signInAdvice(кто)} ${tr('Расшифровка пишется — пропущенные разделы допишу при следующем запуске Джарвиса.', 'The transcript is being written — I will fill in the missed sections the next time Jarvis starts.')}`
+      : tr('Вход есть — конспект снова собирается.', 'Signed in — the notes are being written again.');
+    оповестить();
+  };
+
   const folder = курс ? path.join(root, курс) : root;
   const session = new LectureSession(
     folder,
@@ -455,7 +467,7 @@ async function начатьЛекцию(subject: string | undefined, options: Le
     {
       transcribe,
       trouble: беда,
-      summarize: createSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
+      summarize: watchSignIn(createSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }), вход),
       summarizeFinal: createFinalSummarizer({ log: (строка) => console.log(`[jarvis:lecture] ${строка}`) }),
       lectureLanguage: языки.lecture,
       notesLanguage: языки.notes,
@@ -608,10 +620,15 @@ async function разложить(
       // конспекту не заготавливается; допишется — тогда.
       const чего = недописано(итог);
       console.error(`[jarvis:lecture] конспект не дописан: курс «${место.course}», лекция ${место.number}; ${чего}`);
+      // Вышел из аккаунта — «допишу при следующем запуске» без входа неправда.
+      const безВхода = signedOutBrains();
+      const дальше = безВхода.length
+        ? `${signInAdvice(безВхода)} ${tr('Запись и расшифровка целы — после входа допишу сам при следующем запуске Джарвиса.', 'The recording and transcript are safe — once you sign in, I will finish them the next time Jarvis starts.')}`
+        : tr('Запись и расшифровка целы — допишу сам при следующем запуске Джарвиса.', 'The recording and transcript are safe — I will finish them the next time Jarvis starts.');
       return (
         tr(
-          `Лекция записана и разложена (${тема}${место.course}, лекция ${место.number}), но конспект не дописан: ${чего}. Запись и расшифровка целы — допишу сам при следующем запуске Джарвиса.`,
-          `The lecture is recorded and filed (${тема}${место.course}, lecture ${место.number}), but the notes are not finished: ${чего}. The recording and transcript are safe — I will finish them the next time Jarvis starts.`,
+          `Лекция записана и разложена (${тема}${место.course}, лекция ${место.number}), но конспект не дописан: ${чего}. ${дальше}`,
+          `The lecture is recorded and filed (${тема}${место.course}, lecture ${место.number}), but the notes are not finished: ${чего}. ${дальше}`,
         ) + потерян
       );
     }
@@ -745,21 +762,35 @@ export async function recoverAbandonedLectures(options: LectureStartOptions, с�
     // попадает — у неё ещё нет свойств; только что разложенная выше — тоже.
     const недописанные = findIncompleteLectures(root).filter((ф) => !толькоЧто.has(path.resolve(ф)));
     if (недописанные.length) console.log(`[jarvis:lecture] недописанных лекций: ${недописанные.length} — дописываю`);
-    for (const заметка of недописанные) {
+    for (const [i, заметка] of недописанные.entries()) {
+      const начало = Date.now();
       try {
         const место = await completeLecture(заметка, чем);
         if (последняя && path.resolve(последняя.notesFile) === path.resolve(заметка)) последняя = { ...последняя, notesFile: место.notesFile };
         console.log(`[jarvis:lecture] недописанная лекция (${path.basename(место.notesFile)}): ${место.complete ? 'дописана' : 'всё ещё не дописана'}`);
-        if (!место.complete) continue;
-        учёба(место.notesFile);
-        сообщить(
-          tr(
-            `Дописал конспект, который не собрался в прошлый раз: ${место.course}, ${path.basename(место.notesFile, '.md')}.`,
-            `Finished the notes that failed last time: ${место.course}, ${path.basename(место.notesFile, '.md')}.`,
-          ),
-        );
+        if (место.complete) {
+          учёба(место.notesFile);
+          сообщить(
+            tr(
+              `Дописал конспект, который не собрался в прошлый раз: ${место.course}, ${path.basename(место.notesFile, '.md')}.`,
+              `Finished the notes that failed last time: ${место.course}, ${path.basename(место.notesFile, '.md')}.`,
+            ),
+          );
+          continue;
+        }
       } catch (error) {
         console.error(`[jarvis:lecture] недописанная лекция не дописалась (${path.basename(заметка)}): ${error instanceof Error ? error.message : String(error)}`);
+      }
+      // Вышел из аккаунта — остальные лекции упадут так же, раздел за разделом.
+      // Сказать один раз и ждать входа: следующий запуск начнёт заново.
+      const безВхода = signedOutBrains(начало);
+      if (безВхода.length) {
+        const ждут = недописанные.length - i;
+        console.log(`[jarvis:lecture] дописывание остановлено: не вошли — ${безВхода.join(', ')}; лекций ждёт: ${ждут}`);
+        сообщить(
+          `${tr(`Не могу дописать лекции (${ждут}):`, `Cannot finish the lectures (${ждут}):`)} ${signInAdvice(безВхода)} ${tr('Потом перезапустите Джарвиса — допишу сам.', 'Then restart Jarvis — I will finish them myself.')}`,
+        );
+        break;
       }
     }
   } finally {

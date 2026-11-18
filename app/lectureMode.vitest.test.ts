@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const папка = vi.hoisted(() => ({ путь: '' }));
 /** Чем модель отказывает; null — отвечает. */
-const поломка = vi.hoisted(() => ({ модель: null as string | null }));
+const поломка = vi.hoisted(() => ({ модель: null as string | null, вызовов: 0 }));
 
 vi.mock('electron', () => ({ shell: { openExternal: vi.fn(async () => undefined) } }));
 // Настоящий obsidian.json владельца указывает на его заметки: проверка туда не пишет.
@@ -19,12 +19,20 @@ vi.mock('../jarvis/lecture/vault', async (importOriginal) => ({
 }));
 
 // Модель конспекта понарошку: курс, тема и итог — без настоящего Claude Code.
-vi.mock('../jarvis/lecture/summarize', () => {
+vi.mock('../jarvis/lecture/summarize', async (importOriginal) => {
+  const настоящий = await importOriginal<typeof import('../jarvis/lecture/summarize')>();
   const модель = () => async (prompt: string) => {
-    if (поломка.модель) throw new Error(поломка.модель);
+    поломка.вызовов += 1;
+    if (поломка.модель) {
+      const ошибка = new Error(поломка.модель);
+      // Как настоящий выбор мозга: каждый ответ запоминается, отказ входа — тоже.
+      настоящий.rememberBrainOutcome('claude', ошибка);
+      throw ошибка;
+    }
+    настоящий.rememberBrainOutcome('claude', null);
     return prompt.includes('[!abstract]') ? 'Предмет: История\nТема: Аграрная революция\n\n## Кратко\nО земледелии.' : '### Земледелие\n- пункт';
   };
-  return { createClaudeSummarizer: модель, createFinalSummarizer: модель, createSummarizer: модель };
+  return { ...настоящий, createClaudeSummarizer: модель, createFinalSummarizer: модель, createSummarizer: модель };
 });
 
 const { feedLecture, finishLecture, latestNotesFile, lectureActive, lectureFromFile, lectureInfo, lectureState, onLectureFiled, onLectureState, recoverAbandonedLectures, startLecture } =
@@ -33,9 +41,12 @@ const { LectureSession } = await import('../jarvis/lecture/session');
 const { parseFrontmatter, renderFrontmatter } = await import('../jarvis/lecture/courses');
 const { encodeWav16 } = await import('../jarvis/voice/wav');
 const { readWavParts } = await import('../jarvis/lecture/mediaSlices');
+const { forgetBrainOutcomes } = await import('../jarvis/lecture/summarize');
 
 afterEach(async () => {
   поломка.модель = null;
+  поломка.вызовов = 0;
+  forgetBrainOutcomes();
   onLectureFiled(null);
   await finishLecture();
   if (папка.путь) await rm(папка.путь, { recursive: true, force: true });
@@ -281,6 +292,46 @@ describe('лекция не пропадает (ревью 10.11.2026)', () => {
       // Третий запуск — дописывать нечего.
       await recoverAbandonedLectures(options, (ещё) => сказано.push(ещё));
       expect(сказано).toHaveLength(1);
+    } finally {
+      await слух.закрыть();
+    }
+  });
+
+  it('Claude Code вышел из аккаунта: сказано, как войти; запуск не проваливает лекцию за лекцией', async () => {
+    // Тестер 11.11.2026: вход истёк, две пары — 44 заглушки и ни слова.
+    папка.путь = await mkdtemp(path.join(tmpdir(), 'jarvis-lecture-signin-'));
+    const слух = await поддельныйСлух();
+    const options = { home: папка.путь, outputDir: папка.путь, lectureLanguage: 'he', notesLanguage: 'ru' as const, mainEndpoint: () => слух.адрес };
+    const учёба: string[] = [];
+    onLectureFiled((файл) => учёба.push(файл));
+    try {
+      await mkdir(path.join(папка.путь, 'История'), { recursive: true });
+      поломка.модель = 'Claude Code вышел с кодом 1: Failed to authenticate: OAuth session expired and could not be refreshed';
+      for (let пара = 0; пара < 2; пара += 1) {
+        await startLecture('История', options);
+        feedLecture(речь(6), 16_000);
+        const ответ = await finishLecture();
+        expect(ответ).toMatch(/конспект не дописан/u);
+        // «Допишу при следующем запуске» без входа было бы неправдой.
+        expect(ответ).toMatch(/Claude Code вышел из аккаунта\. Войдите заново: .*claude auth login\. Запись и расшифровка целы — после входа допишу сам/u);
+      }
+
+      // Вход не вернулся: одна фраза на обе лекции, вторую даже не начинали.
+      const сказано: string[] = [];
+      поломка.вызовов = 0;
+      await recoverAbandonedLectures(options, (текст) => сказано.push(текст));
+      const наОдну = поломка.вызовов;
+      expect(сказано).toHaveLength(1);
+      expect(сказано[0]).toMatch(/^Не могу дописать лекции \(2\): Claude Code вышел из аккаунта\. .*claude auth login\. Потом перезапустите Джарвиса/u);
+      expect(учёба).toEqual([]);
+
+      // Вошёл — следующий запуск дописывает обе.
+      поломка.модель = null;
+      поломка.вызовов = 0;
+      await recoverAbandonedLectures(options, (текст) => сказано.push(текст));
+      expect(сказано.slice(1)).toHaveLength(2);
+      expect(учёба).toHaveLength(2);
+      expect(наОдну * 2).toBe(поломка.вызовов);
     } finally {
       await слух.закрыть();
     }

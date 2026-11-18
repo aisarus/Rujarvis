@@ -1,8 +1,83 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { brainFromArgs, brainOrder, codexFailure, codexSummaryArgs, createCodexSummarizer, forgetBrainOutcomes, looksSignedOut, rememberBrainOutcome, withFallback } from './summarize';
+import { currentLanguage, setLanguage } from '../locale/language';
+import {
+  brainFromArgs,
+  brainOrder,
+  codexFailure,
+  codexSummaryArgs,
+  createCodexSummarizer,
+  forgetBrainOutcomes,
+  looksSignedOut,
+  rememberBrainOutcome,
+  signedOutBrains,
+  signInAdvice,
+  watchSignIn,
+  withFallback,
+} from './summarize';
 
 afterEach(() => forgetBrainOutcomes());
+
+describe('агент вышел из аккаунта', () => {
+  const ВХОД = 'Claude Code вышел с кодом 1: Failed to authenticate: OAuth session expired and could not be refreshed';
+  const язык = currentLanguage();
+  afterEach(() => setLanguage(язык));
+
+  /** Как настоящий выбор мозга: каждый ответ запоминается. */
+  function мозг(ответы: Array<string | Error>): (prompt: string) => Promise<string> {
+    return async () => {
+      const ответ = ответы.shift() ?? 'раздел';
+      if (ответ instanceof Error) {
+        rememberBrainOutcome('claude', ответ);
+        throw ответ;
+      }
+      rememberBrainOutcome('claude', null);
+      return ответ;
+    };
+  }
+
+  it('кто не вошёл — по отказу входа, удача стирает, лимит не в счёт', () => {
+    const t = 5_000_000;
+    rememberBrainOutcome('claude', new Error(ВХОД), t);
+    rememberBrainOutcome('codex', new Error('usage limit reached'), t);
+    expect(signedOutBrains(t - 1)).toEqual(['claude']);
+    // Отказ раньше заданного момента — не этого вызова.
+    expect(signedOutBrains(t + 1)).toEqual([]);
+    rememberBrainOutcome('claude', null, t + 10);
+    expect(signedOutBrains(t - 1)).toEqual([]);
+  });
+
+  it('совет — командой входа, где её набрать — по системе', () => {
+    setLanguage('ru');
+    expect(signInAdvice(['claude'], 'win32')).toBe('Claude Code вышел из аккаунта. Войдите заново: в PowerShell введите claude auth login.');
+    expect(signInAdvice(['claude'], 'darwin')).toContain('в Терминале введите claude auth login');
+    expect(signInAdvice(['claude', 'codex'], 'win32')).toBe(
+      'Claude Code и Codex вышли из аккаунта. Войдите заново: в PowerShell введите claude auth login, потом codex login.',
+    );
+    setLanguage('en');
+    expect(signInAdvice(['codex'], 'win32')).toBe('Codex is signed out. Sign in again: in PowerShell type codex login.');
+  });
+
+  it('разделы падают на входе — сказать один раз; раздел собрался — снять', async () => {
+    const сказано: Array<Array<string> | null> = [];
+    const раздел = watchSignIn(мозг([new Error(ВХОД), new Error(ВХОД), new Error(ВХОД), 'раздел 4']), (кто) => сказано.push(кто));
+    for (let i = 0; i < 3; i += 1) await expect(раздел('p')).rejects.toThrow(/authenticate/u);
+    // 44 заглушки у тестера — и одна строка на плашке, а не 44.
+    expect(сказано).toEqual([['claude']]);
+    await expect(раздел('p')).resolves.toBe('раздел 4');
+    expect(сказано).toEqual([['claude'], null]);
+  });
+
+  it('другая беда раздела и старый отказ входа — молчать', async () => {
+    const сказано: Array<Array<string> | null> = [];
+    // Отказ входа минуту назад — от прошлого вызова; этот раздел упал по таймауту.
+    rememberBrainOutcome('claude', new Error(ВХОД), Date.now() - 60_000);
+    const раздел = watchSignIn(мозг([new Error('Claude Code не ответил за 180 с'), 'раздел']), (кто) => сказано.push(кто));
+    await expect(раздел('p')).rejects.toThrow(/180/u);
+    await expect(раздел('p')).resolves.toBe('раздел');
+    expect(сказано).toEqual([]);
+  });
+});
 
 describe('кто пишет конспект', () => {
   it('«сам» — установленные, Claude Code первым', () => {

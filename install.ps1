@@ -725,6 +725,26 @@ function Stop-RunningJarvis {
     throw 'Джарвис не закрылся за 20 секунд. Закройте его из трея и запустите установку снова.'
 }
 
+function Start-Jarvis {
+    <#
+    Запустить Джарвиса отдельно от окна установки.
+
+    Electron на Windows цепляется к консоли того, кто его запустил. Окно
+    установки или обновления тогда не закрывается, пока работает Джарвис, и
+    в нём бежит его журнал. Тестер 17.11.2026 после «Обновить» прислал
+    снимок такого окна и решил, что ошибки — это само обновление. Цепляние
+    проверено живьём: процесс Electron, запущенный отсюда, стоит в списке
+    процессов консоли, а с ELECTRON_NO_ATTACH_CONSOLE=1 — нет. Переменная
+    живёт в процессе установщика и достаётся только его детям.
+    #>
+    param(
+        [Parameter(Mandatory)] [string] $Electron,
+        [Parameter(Mandatory)] [string] $Entry
+    )
+    $env:ELECTRON_NO_ATTACH_CONSOLE = '1'
+    Start-Process -FilePath $Electron -ArgumentList "`"$Entry`"$HomeArgument" -WorkingDirectory $SourceDir
+}
+
 
 # ---------------------------------------------------------------------------
 
@@ -950,7 +970,7 @@ try {
         if (-not $NoLaunch) {
             $oldElectron = Join-Path $SourceDir 'node_modules\electron\dist\electron.exe'
             $oldEntry = Join-Path $SourceDir 'dist\app\main.cjs'
-            if (Test-Path $oldElectron) { Start-Process -FilePath $oldElectron -ArgumentList "`"$oldEntry`"$HomeArgument" -WorkingDirectory $SourceDir }
+            if (Test-Path $oldElectron) { Start-Jarvis -Electron $oldElectron -Entry $oldEntry }
         }
         throw "Обновление не удалось: новая версия не собралась ($reason). Возвращена прежняя версия — Джарвис работает как раньше."
     }
@@ -1054,5 +1074,5 @@ Write-Host "  Лог:            $(Join-Path $InstallRoot 'logs\jarvis.log')" -F
 Write-Host ''
 
 if (-not $NoLaunch) {
-    Start-Process -FilePath $electron -ArgumentList "`"$entry`"$HomeArgument" -WorkingDirectory $SourceDir
+    Start-Jarvis -Electron $electron -Entry $entry
 }

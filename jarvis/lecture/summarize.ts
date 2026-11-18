@@ -180,6 +180,65 @@ export function brainOrder(
 const ИМЯ = { claude: 'Claude Code', codex: 'Codex' } as const;
 
 /**
+ * Кто ответил отказом входа не раньше `since` (по умолчанию — за последнюю
+ * четверть часа) и с тех пор ни разу не ответил удачно.
+ */
+export function signedOutBrains(since = Date.now() - ПОМНИТЬ_МС): Array<'claude' | 'codex'> {
+  return (['claude', 'codex'] as const).filter((cli) => (неВошли.get(cli) ?? -Infinity) >= since);
+}
+
+/**
+ * Что сказать человеку, когда агент вышел из аккаунта.
+ *
+ * Командой, а не кнопкой настроек: кнопка «Войти» видна, только пока
+ * `claude auth status` не подтвердил вход, а вход, который уже не продлить,
+ * он может ещё считать живым.
+ */
+export function signInAdvice(clis: ReadonlyArray<'claude' | 'codex'>, platform: NodeJS.Platform = process.platform): string {
+  const где = platform === 'darwin' ? tr('в Терминале', 'in Terminal') : tr('в PowerShell', 'in PowerShell');
+  const кто = clis.map((cli) => ИМЯ[cli]).join(tr(' и ', ' and '));
+  const команды = clis.map((cli) => (cli === 'claude' ? 'claude auth login' : 'codex login')).join(tr(', потом ', ', then '));
+  return clis.length > 1
+    ? tr(`${кто} вышли из аккаунта. Войдите заново: ${где} введите ${команды}.`, `${кто} are signed out. Sign in again: ${где} type ${команды}.`)
+    : tr(`${кто} вышел из аккаунта. Войдите заново: ${где} введите ${команды}.`, `${кто} is signed out. Sign in again: ${где} type ${команды}.`);
+}
+
+/**
+ * Разделы с присмотром за входом: агент вышел из аккаунта — `onChange` один
+ * раз узнаёт, кто именно; первый удачный раздел после этого — `null`.
+ *
+ * У тестера 11.11.2026 истёк вход в Claude Code: за две пары 44 заглушки
+ * «Раздел не собрался», а на плашке — ни слова. Из всех бед раздела только
+ * эту человек может исправить сам и сразу; таймаут и лимит допишутся при
+ * следующем запуске без него. Отказ входа считается только свой, этого
+ * вызова: старая метка не должна пугать человека, который уже вошёл.
+ */
+export function watchSignIn(
+  summarize: (prompt: string) => Promise<string>,
+  onChange: (signedOut: Array<'claude' | 'codex'> | null) => void,
+): (prompt: string) => Promise<string> {
+  let сказано = false;
+  return async (prompt) => {
+    const начало = Date.now();
+    try {
+      const ответ = await summarize(prompt);
+      if (сказано) {
+        сказано = false;
+        onChange(null);
+      }
+      return ответ;
+    } catch (error) {
+      const кто = signedOutBrains(начало);
+      if (кто.length > 0 && !сказано) {
+        сказано = true;
+        onChange(кто);
+      }
+      throw error;
+    }
+  };
+}
+
+/**
  * Раздел (или итог — `final`) тем мозгом, что выбран в настройках.
  *
  * Выбор читается при каждом вызове: сменил человек Claude на Codex посреди

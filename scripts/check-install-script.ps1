@@ -527,6 +527,46 @@ finally {
     Remove-Item -LiteralPath $srcProbe -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# Джарвис запускается только через Start-Jarvis: иначе Electron цепляется к
+# консоли установщика, и окно обновления остаётся висеть с его журналом.
+Write-Host 'Запуск Джарвиса из установщика:'
+$launches = @($ast.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Start-Process'
+}, $true))
+$outside = @($launches | Where-Object {
+    $parent = $_.Parent
+    while ($parent -and -not ($parent -is [System.Management.Automation.Language.FunctionDefinitionAst])) { $parent = $parent.Parent }
+    -not ($parent -and $parent.Name -eq 'Start-Jarvis')
+})
+Assert-That 'Start-Process — только внутри Start-Jarvis' ($launches.Count -ge 1 -and $outside.Count -eq 0)
+$jarvisCalls = @($ast.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Start-Jarvis'
+}, $true))
+Assert-That 'оба запуска — и после установки, и после отката — через Start-Jarvis' ($jarvisCalls.Count -eq 2)
+
+$savedAttach = $env:ELECTRON_NO_ATTACH_CONSOLE
+try {
+    Remove-Item Env:ELECTRON_NO_ATTACH_CONSOLE -ErrorAction SilentlyContinue
+    $global:launched = $null
+    function Start-Process {
+        param([string] $FilePath, [string] $ArgumentList, [string] $WorkingDirectory)
+        $global:launched = @{ File = $FilePath; Args = $ArgumentList; Dir = $WorkingDirectory; NoAttach = $env:ELECTRON_NO_ATTACH_CONSOLE }
+    }
+    $HomeArgument = ' --jarvis-home="D:\J"'
+    $SourceDir = 'D:\J\src'
+    Start-Jarvis -Electron 'D:\J\src\electron.exe' -Entry 'D:\J\src\dist\app\main.cjs'
+    Assert-That 'Electron не цепляется к консоли (ELECTRON_NO_ATTACH_CONSOLE=1)' ($global:launched -and $global:launched.NoAttach -eq '1')
+    Assert-That 'запуск — тот же: Electron, точка входа в кавычках, папка Джарвиса' (
+        $global:launched -and $global:launched.File -eq 'D:\J\src\electron.exe' -and
+        $global:launched.Args -eq '"D:\J\src\dist\app\main.cjs" --jarvis-home="D:\J"' -and $global:launched.Dir -eq 'D:\J\src')
+}
+finally {
+    Remove-Item Function:Start-Process -ErrorAction SilentlyContinue
+    if ($null -ne $savedAttach) { $env:ELECTRON_NO_ATTACH_CONSOLE = $savedAttach } else { Remove-Item Env:ELECTRON_NO_ATTACH_CONSOLE -ErrorAction SilentlyContinue }
+}
+
 if ($failures -gt 0) {
     Write-Host "Провалено проверок: $failures" -ForegroundColor Red
     exit 1
